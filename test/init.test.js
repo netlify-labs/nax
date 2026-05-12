@@ -85,6 +85,7 @@ test('ensureNetlifyProject supports dry create without a real site id', () => {
 test('ensureNetlifyProject delegates default interactive setup to netlify init', () => {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'nax-init-test-'))
   const calls = []
+  const notices = []
   let initialized = false
 
   const result = ensureNetlifyProject({
@@ -104,10 +105,14 @@ test('ensureNetlifyProject delegates default interactive setup to netlify init',
           }
         : null
     },
+    initNotice(projectRoot) {
+      notices.push(projectRoot)
+    },
   })
 
   assert.equal(result.status, 'initialized')
   assert.equal(result.siteId, 'site-after-init')
+  assert.deepEqual(notices, [tmp])
   assert.deepEqual(calls.map((call) => call.args), [['init']])
   assert.equal(calls[0].command, 'netlify')
   assert.equal(calls[0].options.stdio, 'inherit')

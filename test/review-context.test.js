@@ -6,6 +6,7 @@ const {
   formatRepositorySnapshot,
   formatReviewContract,
   formatWorkingTreeSummary,
+  resolveRemoteBranchSha,
 } = require('../lib/review-context')
 
 test('formatWorkingTreeSummary reports clean state', () => {
@@ -50,6 +51,52 @@ test('formatRepositorySnapshot renders core repo facts', () => {
   assert.match(snapshot, /Prompt generated at: `2026-04-25T18:00:00\.000Z`/)
   assert.doesNotMatch(snapshot, /Repository root:/)
   assert.doesNotMatch(snapshot, /Local working tree/)
+})
+
+test('formatRepositorySnapshot can include the pinned remote source', () => {
+  const snapshot = formatRepositorySnapshot({
+    repoRoot: '/tmp/repo',
+    branch: 'master',
+    pinnedSha: 'deadbeef',
+    pinnedSource: 'origin/master',
+    generatedAt: '2026-04-25T18:00:00.000Z',
+  })
+
+  assert.match(snapshot, /Pinned source: `origin\/master`/)
+})
+
+test('resolveRemoteBranchSha uses upstream branch when available', () => {
+  const calls = []
+  const result = resolveRemoteBranchSha({
+    repoRoot: '/tmp/repo',
+    branch: 'feature/test',
+    run(command, args, options) {
+      calls.push({ command, args, options })
+      if (args[0] === 'rev-parse' && args.includes('--show-toplevel')) {
+        return { status: 0, stdout: '/tmp/repo', stderr: '', detail: '/tmp/repo' }
+      }
+      if (args[0] === 'rev-parse' && args.includes('@{u}')) {
+        return { status: 0, stdout: 'upstream/feature/test', stderr: '', detail: 'upstream/feature/test' }
+      }
+      if (args[0] === 'ls-remote') {
+        return {
+          status: 0,
+          stdout: '0123456789abcdef0123456789abcdef01234567\trefs/heads/feature/test',
+          stderr: '',
+          detail: '',
+        }
+      }
+      throw new Error(`unexpected command ${command} ${args.join(' ')}`)
+    },
+  })
+
+  assert.deepEqual(result, {
+    sha: '0123456789abcdef0123456789abcdef01234567',
+    remote: 'upstream',
+    branch: 'feature/test',
+    ref: 'upstream/feature/test',
+  })
+  assert.deepEqual(calls.at(-1).args, ['ls-remote', '--heads', 'upstream', 'feature/test'])
 })
 
 test('formatMergeStateLedger renders a markdown table for open prs', () => {

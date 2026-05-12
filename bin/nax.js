@@ -15,7 +15,7 @@ const {
   resolveRepo,
   titleCase,
 } = require('../lib/prompts')
-const { buildAutomaticContext } = require('../lib/review-context')
+const { buildAutomaticContext, resolveRemoteBranchSha } = require('../lib/review-context')
 const {
   assertCrossReviewComplete,
   fetchRoundResults,
@@ -68,6 +68,8 @@ function readAutoContext(options) {
     repo: resolveRepo(options.repo),
     repoRoot: options.repoRoot,
     sha: options.sha,
+    pinnedSha: options.pinnedSha,
+    pinnedSource: options.pinnedSource,
     prLimit: options.prLimit,
   })
 }
@@ -107,6 +109,49 @@ function fetchRoundResultsForOptions(options, { embedAll } = {}) {
 }
 
 function readContext(options) {
+  return joinContext(readAutoContext(options), readManualContext(options))
+}
+
+function remotePinnedOptions({ options, projectRoot, transport }) {
+  if (options.autoContext === false || options.sha || options.pinnedSha) return options
+  if (transport !== 'local' && transport !== 'github') return options
+  const branch = currentGitBranch(projectRoot)
+  const pinned = resolveRemoteBranchSha({ repoRoot: projectRoot, branch })
+  return {
+    ...options,
+    pinnedSha: pinned.sha,
+    pinnedSource: pinned.ref,
+  }
+}
+
+function buildFlowRunContext({ options, projectRoot, transport }) {
+  const contextOptions = remotePinnedOptions({ options, projectRoot, transport })
+  const automatic = readAutoContext(contextOptions)
+  const manual = readManualContext(options)
+  return {
+    automatic,
+    manual,
+    combined: joinContext(automatic, manual),
+    pinnedSha: contextOptions.pinnedSha || contextOptions.sha || '',
+    pinnedSource: contextOptions.pinnedSource || (contextOptions.sha ? 'explicit --sha' : ''),
+  }
+}
+
+function extractSavedContextFromPrompt(promptText) {
+  const marker = '\n## Additional Context\n\n'
+  const index = String(promptText || '').lastIndexOf(marker)
+  if (index === -1) return ''
+  return String(promptText).slice(index + marker.length).trim()
+}
+
+function contextForRunState(runState, options) {
+  if (runState.context?.combined) return runState.context.combined
+  for (const step of runState.steps || []) {
+    for (const run of step.runs || []) {
+      const saved = extractSavedContextFromPrompt(run.promptText)
+      if (saved) return saved
+    }
+  }
   return joinContext(readAutoContext(options), readManualContext(options))
 }
 
@@ -1124,7 +1169,7 @@ async function executeGithubFlow({ flow, steps, options, runState }) {
   const date = options.date || getLocalDate()
   const timeoutMinutes = Number.parseInt(options.timeoutMinutes || '25', 10)
   const completedStepStates = new Map()
-  const baseContext = joinContext(readAutoContext(options), readManualContext(options))
+  const baseContext = contextForRunState(runState, options)
 
   for (const step of steps) {
     const prompt = loadStepPrompt(flow, step)
@@ -1279,7 +1324,7 @@ async function completeLocalStep({ stepState, step, options, projectRoot, netlif
 
 async function executeLocalFlow({ flow, steps, options, runState, projectRoot, completedStepStates = new Map() }) {
   const date = options.date || getLocalDate()
-  const baseContext = joinContext(readAutoContext(options), readManualContext(options))
+  const baseContext = contextForRunState(runState, options)
   const branch = currentGitBranch(projectRoot)
   const netlify = buildNetlifyEnv({ projectRoot })
 
@@ -1465,6 +1510,7 @@ async function handleRun(flowId, options) {
   const configuredFlow = prepared.flow
   const configuredOptions = prepared.options
   const steps = prepared.steps
+  const runContext = buildFlowRunContext({ options: configuredOptions, projectRoot, transport })
 
   const runState = createRunState({
     projectRoot,
@@ -1475,6 +1521,7 @@ async function handleRun(flowId, options) {
       projectRoot,
     },
   })
+  runState.context = runContext
   saveRunState(runState)
   console.log(`Run ${runState.runId}`)
   console.log(`Flow: ${configuredFlow.title}`)

@@ -7,6 +7,7 @@ const {
   latestSessionFromList,
   normalizeCompletedRun,
   waitForLocalAgentRuns,
+  showAgentRun,
 } = require('../lib/local-runner')
 
 test('latestSessionFromList accepts array and sessions wrapper responses', () => {
@@ -92,6 +93,59 @@ test('normalizeCompletedRun prefers latest session result and links', () => {
   assert.equal(normalized.resultText, 'session result')
   assert.equal(normalized.deployUrl, 'https://deploy.example')
   assert.equal(normalized.prUrl, 'https://github.com/o/r/pull/1')
+})
+
+test('showAgentRun treats CLI failures as retryable poll errors', () => {
+  const shown = showAgentRun({
+    projectRoot: '/tmp/project',
+    runnerId: 'runner-1',
+    siteId: 'site-123',
+    env: {},
+    runCommand() {
+      return { status: 1, stdout: '', stderr: 'temporary API failure' }
+    },
+  })
+
+  assert.equal(shown.state, '')
+  assert.equal(shown.commandError, true)
+  assert.equal(shown.error, 'temporary API failure')
+})
+
+test('waitForLocalAgentRuns retries transient poll errors', async () => {
+  let showCount = 0
+  const progress = []
+  const result = await waitForLocalAgentRuns({
+    projectRoot: '/tmp/project',
+    siteId: 'site-123',
+    env: {},
+    timeoutMinutes: 1,
+    initialDelayMs: 0,
+    pollIntervalMs: 1,
+    runs: [{ agent: 'claude', runnerId: 'runner-1', status: 'submitted', resultText: '' }],
+    onProgress(event) {
+      progress.push(event.message)
+    },
+    runCommand(command, args) {
+      if (args[0] === 'agents:show') {
+        showCount += 1
+        if (showCount === 1) return { status: 1, stdout: '', stderr: 'temporary API failure' }
+        return {
+          status: 0,
+          stdout: JSON.stringify({ id: 'runner-1', state: 'completed' }),
+          stderr: '',
+        }
+      }
+      return {
+        status: 0,
+        stdout: JSON.stringify({ sessions: [{ id: 'session-1', result: 'done' }] }),
+        stderr: '',
+      }
+    },
+  })
+
+  assert.equal(result[0].status, 'completed')
+  assert.equal(result[0].resultText, 'done')
+  assert.match(progress[0], /poll failed, retrying/)
 })
 
 test('waitForLocalAgentRuns returns completed runs after polling terminal state', async () => {

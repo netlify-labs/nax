@@ -9,7 +9,7 @@
   },
   "scripts": {
     "start": "node bin/nax.js",
-    "check": "node --check bin/nax.js && node --check lib/prompts.js && node --check lib/multiline.js && node --check lib/review-context.js && node --check lib/round-results.js && node --check lib/issue-groups.js && node --check lib/comment-markers.js && node --check lib/flows.js && node --check lib/transports.js && node --check lib/run-state.js && node --check lib/init.js",
+    "check": "node --check bin/nax.js && node --check lib/prompts.js && node --check lib/multiline.js && node --check lib/review-context.js && node --check lib/round-results.js && node --check lib/issue-groups.js && node --check lib/comment-markers.js && node --check lib/flows.js && node --check lib/transports.js && node --check lib/run-state.js && node --check lib/init.js && node --check lib/local-runner.js",
     "dry-run": "node bin/nax.js issue review --dry --force",
     "test": "node --test"
   },

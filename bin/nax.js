@@ -28,6 +28,13 @@ const { WAIT_FOR_AGENT_RESULTS, listFlows, loadFlow, loadStepPrompt } = require(
 const { createRunState, saveRunState } = require('../lib/run-state')
 const { detectTransports, formatTransportSetupHelp, resolveTransport } = require('../lib/transports')
 const { enableGitHubActionsSetup, initSite } = require('../lib/init')
+const {
+  buildNetlifyEnv,
+  createAgentRun,
+  createAgentSession,
+  currentGitBranch,
+  waitForLocalAgentRuns,
+} = require('../lib/local-runner')
 
 const ROUND_LABEL_BY_PROMPT = {
   'cross-review': 'Round 1 Outputs',
@@ -858,6 +865,10 @@ function issueNumbersFromStep(stepState) {
     .filter((number) => Number.isFinite(number))
 }
 
+function runsFromStep(stepState) {
+  return Array.isArray(stepState?.runs) ? stepState.runs : []
+}
+
 function uniqueNumbers(numbers) {
   return [...new Set(numbers.filter((number) => Number.isFinite(number)))]
 }
@@ -869,6 +880,66 @@ function sourceIssueNumbersForStep(step, completedStepStates) {
     numbers.push(...issueNumbersFromStep(completedStepStates.get(input.step)))
   }
   return uniqueNumbers(numbers)
+}
+
+function sourceRunsForStep(step, completedStepStates) {
+  if (!Array.isArray(step.input)) return []
+  const runs = []
+  const seen = new Set()
+  for (const input of step.input) {
+    for (const run of runsFromStep(completedStepStates.get(input.step))) {
+      const key = run.runnerId || `${run.agent}:${run.stepId || input.step}:${runs.length}`
+      if (seen.has(key)) continue
+      seen.add(key)
+      runs.push({ ...run, sourceStep: input.step })
+    }
+  }
+  return runs
+}
+
+function formatLocalRunResults(runs) {
+  const completed = runs.filter((run) => run.resultText && run.resultText.trim())
+  if (completed.length === 0) return ''
+
+  const parts = ['## Prior Agent Results']
+  for (const run of completed) {
+    const source = run.sourceStep ? ` from ${run.sourceStep}` : ''
+    const title = `${titleCase(run.agent || 'agent')}${source}`
+    parts.push(
+      '',
+      `<details>`,
+      `<summary>${title}</summary>`,
+      '',
+      run.resultText.trim(),
+      '',
+      `</details>`,
+    )
+  }
+  return parts.join('\n')
+}
+
+function buildLocalAgentPrompt({ model, prompt, context, roundResults }) {
+  const summaryLabel = `${titleCase(prompt.name)} instructions`
+  const parts = [
+    `${titleCase(model)}: ${prompt.instruction}`.trim(),
+    '',
+    '<details>',
+    `<summary>${summaryLabel}</summary>`,
+    '',
+    prompt.body,
+    '',
+    '</details>',
+  ]
+
+  if (roundResults && roundResults.trim()) {
+    parts.push('', '---', '', roundResults.trim())
+  }
+
+  if (context && context.trim()) {
+    parts.push('', '---', '', '## Additional Context', '', context.trim())
+  }
+
+  return parts.join('\n')
 }
 
 function parseIssueNumberFromUrl(url) {
@@ -1036,6 +1107,123 @@ async function executeGithubFlow({ flow, steps, options, runState }) {
   }
 }
 
+async function executeLocalFlow({ flow, steps, options, runState, projectRoot }) {
+  const date = options.date || getLocalDate()
+  const timeoutMinutes = Number.parseInt(options.timeoutMinutes || '25', 10)
+  const completedStepStates = new Map()
+  const baseContext = joinContext(readAutoContext(options), readManualContext(options))
+  const branch = currentGitBranch(projectRoot)
+  const netlify = buildNetlifyEnv({ projectRoot })
+
+  for (const step of steps) {
+    const prompt = loadStepPrompt(flow, step)
+    const stepState = {
+      id: step.id,
+      title: step.title,
+      action: step.action,
+      agents: step.agents,
+      status: 'running',
+      runs: [],
+    }
+    runState.steps.push(stepState)
+    saveRunState(runState)
+
+    const sourceRuns = sourceRunsForStep(step, completedStepStates)
+    const roundResults = formatLocalRunResults(sourceRuns)
+    const runs = step.agents.map((agent) => {
+      const followUpRun = step.submit === 'follow-up'
+        ? sourceRuns.find((sourceRun) => sourceRun.agent === agent && sourceRun.runnerId)
+        : null
+      const promptText = buildLocalAgentPrompt({
+        model: agent,
+        prompt,
+        context: baseContext,
+        roundResults,
+        date,
+      })
+      return {
+        transport: 'local',
+        agent,
+        status: options.dryRun ? 'dry-run' : 'pending',
+        promptText,
+        resultText: '',
+        runnerId: '',
+        issueUrl: '',
+        commentUrl: '',
+        prUrl: '',
+        deployUrl: '',
+        existingRunnerId: followUpRun?.runnerId || '',
+        raw: {
+          stepId: step.id,
+          promptName: prompt.name,
+        },
+      }
+    })
+
+    console.log(`\nRun local agents: ${step.title}`)
+    for (const run of runs) {
+      console.log(`\n- ${titleCase(run.agent)} ${prompt.title}`)
+      console.log(`  prompt: ${prompt.name}`)
+      console.log(`  body: ${run.promptText.length} chars`)
+    }
+
+    if (options.dryRun) {
+      stepState.status = 'dry-run'
+      stepState.runs = runs
+      completedStepStates.set(step.id, stepState)
+      saveRunState(runState)
+      continue
+    }
+
+    for (const run of runs) {
+      const created = run.existingRunnerId
+        ? createAgentSession({
+            projectRoot,
+            runnerId: run.existingRunnerId,
+            promptText: run.promptText,
+            agent: run.agent,
+            env: netlify.env,
+          })
+        : createAgentRun({
+            projectRoot,
+            promptText: run.promptText,
+            agent: run.agent,
+            branch,
+            siteId: netlify.siteId,
+            env: netlify.env,
+          })
+      run.status = 'submitted'
+      run.runnerId = created.runnerId
+      run.raw[run.existingRunnerId ? 'session' : 'create'] = created.raw
+      console.log(`${titleCase(run.agent)} ${prompt.title}: ${created.runnerId}${run.existingRunnerId ? ' (follow-up)' : ''}`)
+      stepState.runs.push(run)
+      saveRunState(runState)
+    }
+
+    if (step.waitFor === WAIT_FOR_AGENT_RESULTS) {
+      const completedRuns = await waitForLocalAgentRuns({
+        projectRoot,
+        runs: stepState.runs,
+        siteId: netlify.siteId,
+        env: netlify.env,
+        timeoutMinutes,
+        onProgress: (event) => console.log(event.message),
+      })
+      stepState.runs = completedRuns
+    }
+
+    stepState.status = stepState.runs.every((run) => run.status === 'completed' || run.status === 'dry-run')
+      ? 'completed'
+      : 'failed'
+    completedStepStates.set(step.id, stepState)
+    saveRunState(runState)
+
+    if (stepState.status !== 'completed' && stepState.status !== 'dry-run') {
+      throw new Error(`Local step "${step.id}" did not complete successfully.`)
+    }
+  }
+}
+
 async function handleRun(flowId, options) {
   const projectRoot = path.resolve(options.projectRoot || process.cwd())
   const resolvedFlowId = flowId || (process.stdin.isTTY ? await pickFlowInteractively() : 'review-cycle')
@@ -1075,12 +1263,12 @@ async function handleRun(flowId, options) {
   console.log(`Transport: ${transport}`)
   console.log(`State: ${path.join(runState.dir, 'run.json')}`)
 
-  if (transport === 'local') {
-    throw new Error('Running locally on this machine is detected and selectable, but execution is not implemented yet. Choose GitHub Actions for now.')
-  }
-
   const steps = findStepRange(flow, flowOptions)
-  await executeGithubFlow({ flow, steps, options: flowOptions, runState })
+  if (transport === 'local') {
+    await executeLocalFlow({ flow, steps, options: flowOptions, runState, projectRoot })
+  } else {
+    await executeGithubFlow({ flow, steps, options: flowOptions, runState })
+  }
 
   if (flowOptions.notify) {
     spawnSync('osascript', ['-e', `display notification "Flow ${flow.title} finished" with title "nax"`])

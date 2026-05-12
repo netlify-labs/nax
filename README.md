@@ -25,7 +25,7 @@ Set up a repository for GitHub Actions transport:
 nax init
 ```
 
-`nax init` links or creates the Netlify project first. Then it asks whether to enable GitHub Actions. If enabled, it writes `.github/workflows/netlify-agents.yml` when it is missing and sets the `NETLIFY_SITE_ID` and `NETLIFY_AUTH_TOKEN` GitHub Actions secrets. It uses the current Netlify CLI login token; if that token is missing, run `netlify login` first or set `NETLIFY_AUTH_TOKEN`.
+`nax init` runs the normal Netlify CLI site initialization flow first when no site is linked. Then it asks whether to enable GitHub Actions. If enabled, it writes `.github/workflows/netlify-agents.yml` when it is missing and sets the `NETLIFY_SITE_ID` and `NETLIFY_AUTH_TOKEN` GitHub Actions secrets. It uses the current Netlify CLI login token; if that token is missing, run `netlify login` first or set `NETLIFY_AUTH_TOKEN`.
 
 Run a named workflow:
 

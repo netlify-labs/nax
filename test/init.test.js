@@ -82,6 +82,37 @@ test('ensureNetlifyProject supports dry create without a real site id', () => {
   assert.equal(result.siteName, 'example-app')
 })
 
+test('ensureNetlifyProject delegates default interactive setup to netlify init', () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'nax-init-test-'))
+  const calls = []
+  let initialized = false
+
+  const result = ensureNetlifyProject({
+    projectRoot: tmp,
+    runCommand(command, args, options) {
+      calls.push({ command, args, options })
+      initialized = true
+      return { status: 0 }
+    },
+    readProject() {
+      return initialized
+        ? {
+            siteId: 'site-after-init',
+            siteName: 'after-init',
+            adminUrl: 'https://app.netlify.com/projects/after-init',
+            accountName: 'Netlify Labs',
+          }
+        : null
+    },
+  })
+
+  assert.equal(result.status, 'initialized')
+  assert.equal(result.siteId, 'site-after-init')
+  assert.deepEqual(calls.map((call) => call.args), [['init']])
+  assert.equal(calls[0].command, 'netlify')
+  assert.equal(calls[0].options.stdio, 'inherit')
+})
+
 test('initProject can skip GitHub Actions setup after site linking', () => {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'nax-init-test-'))
   fs.mkdirSync(path.join(tmp, '.git'))

@@ -20,7 +20,7 @@ steps:
       - claude
       - gemini
       - codex
-    waitFor: terminal-result
+    waitFor: agent-results
 
   - id: cross-review
     title: Cross Review
@@ -34,7 +34,7 @@ steps:
     input:
       - step: review
         results: all
-    waitFor: terminal-result
+    waitFor: agent-results
 
   - id: synthesize
     title: Summarize Consensus
@@ -48,4 +48,4 @@ steps:
         results: all
       - step: cross-review
         results: all
-    waitFor: terminal-result
+    waitFor: agent-results

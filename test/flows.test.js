@@ -15,6 +15,7 @@ test('loadFlow reads flow.yml via configorama and normalizes steps', async () =>
   assert.deepEqual(flow.steps.map((step) => step.id), ['review', 'cross-review', 'synthesize'])
   assert.deepEqual(flow.steps[0].agents, ['claude', 'gemini', 'codex'])
   assert.deepEqual(flow.steps[2].agents, ['codex'])
+  assert.equal(flow.steps[0].waitFor, 'agent-results')
 })
 
 test('listFlows discovers flow directories', async () => {
@@ -46,7 +47,7 @@ test('loadFlow accepts json flow files through configorama', async () => {
   assert.equal(loadStepPrompt(flow, flow.steps[0]).title, 'One')
 })
 
-test('loadFlow rejects non-terminal wait modes', async () => {
+test('loadFlow rejects unsupported wait modes', async () => {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'nax-flow-test-'))
   const flowDir = path.join(tmp, 'bad-flow')
   fs.mkdirSync(flowDir, { recursive: true })
@@ -62,6 +63,6 @@ test('loadFlow rejects non-terminal wait modes', async () => {
 
   await assert.rejects(
     () => loadFlow('bad-flow', { flowsDir: tmp }),
-    /Only "terminal-result" is supported/,
+    /Only "agent-results" is supported/,
   )
 })

@@ -24,10 +24,10 @@ const {
 } = require('../lib/round-results')
 const { formatGroupHint, listRecentIssueGroups } = require('../lib/issue-groups')
 const { multiline } = require('../lib/multiline')
-const { listFlows, loadFlow, loadStepPrompt } = require('../lib/flows')
+const { WAIT_FOR_AGENT_RESULTS, listFlows, loadFlow, loadStepPrompt } = require('../lib/flows')
 const { createRunState, saveRunState } = require('../lib/run-state')
 const { detectTransports, formatTransportSetupHelp, resolveTransport } = require('../lib/transports')
-const { initProject } = require('../lib/init')
+const { enableGitHubActionsSetup, initSite } = require('../lib/init')
 
 const ROUND_LABEL_BY_PROMPT = {
   'cross-review': 'Round 1 Outputs',
@@ -1014,7 +1014,7 @@ async function executeGithubFlow({ flow, steps, options, runState }) {
       }
     }
 
-    if (step.waitFor === 'terminal-result') {
+    if (step.waitFor === WAIT_FOR_AGENT_RESULTS) {
       const issueNumbers = stepState.runs.map((run) => run.issueNumber).filter((number) => Number.isFinite(number))
       const results = await waitForGithubStep({ repo, issueNumbers, step, timeoutMinutes })
       for (const run of stepState.runs) {
@@ -1096,6 +1096,13 @@ function printInitResult(result, { dryRun = false } = {}) {
   } else if (result.netlify.siteName) {
     console.log(`Netlify project: ${result.netlify.siteName}`)
   }
+  if (result.netlify.siteName && result.netlify.siteId) console.log(`Netlify project: ${result.netlify.siteName}`)
+  if (result.netlify.siteUrl) console.log(`Netlify URL: ${result.netlify.siteUrl}`)
+  if (result.netlify.adminUrl) console.log(`Netlify admin: ${result.netlify.adminUrl}`)
+  if (result.netlify.accountName || result.netlify.accountEmail) {
+    const account = [result.netlify.accountName, result.netlify.accountEmail && `<${result.netlify.accountEmail}>`].filter(Boolean).join(' ')
+    console.log(`Netlify account: ${account}`)
+  }
   console.log(`Netlify link: ${result.netlify.status}`)
   console.log(`GitHub Actions: ${result.githubActions ? 'enabled' : 'skipped'}`)
   if (result.workflow) {
@@ -1120,18 +1127,28 @@ async function shouldEnableGithubActions(options) {
 }
 
 async function handleInit(options) {
-  const githubActions = await shouldEnableGithubActions(options)
-  const result = initProject({
+  const site = initSite({
     projectRoot: options.projectRoot || process.cwd(),
     repo: options.repo,
     siteId: options.siteId,
     siteName: options.siteName,
     create: options.create === true,
+    dryRun: options.dryRun === true,
+  })
+  const githubActions = await shouldEnableGithubActions(options)
+  if (!githubActions) {
+    printInitResult(site, { dryRun: options.dryRun })
+    return
+  }
+
+  const result = enableGitHubActionsSetup({
+    projectRoot: site.projectRoot,
+    repo: options.repo,
+    netlify: site.netlify,
+    siteId: options.siteId,
     force: options.force === true || options.yes === true,
     dryRun: options.dryRun === true,
     skipSecrets: options.skipSecrets === true,
-    githubActions,
-    interactive: process.stdin.isTTY,
   })
   printInitResult(result, { dryRun: options.dryRun })
 }

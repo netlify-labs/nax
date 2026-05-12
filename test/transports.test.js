@@ -25,12 +25,12 @@ test('hasAgentRunnerAction returns false when workflow is absent', () => {
   assert.equal(hasAgentRunnerAction(tmp), false)
 })
 
-test('hasLocalNetlifySite accepts env site id or local netlify files', () => {
+test('hasLocalNetlifySite accepts env site id but not unlinked build config', () => {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'nax-transport-test-'))
   assert.equal(hasLocalNetlifySite(tmp, { NETLIFY_SITE_ID: 'site-1' }), true)
   assert.equal(hasLocalNetlifySite(tmp, {}), false)
   fs.writeFileSync(path.join(tmp, 'netlify.toml'), '[build]\n')
-  assert.equal(hasLocalNetlifySite(tmp, {}), true)
+  assert.equal(hasLocalNetlifySite(tmp, {}), false)
 })
 
 test('resolveTransport honors explicit transports and auto-picks available transport', () => {

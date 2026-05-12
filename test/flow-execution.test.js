@@ -52,3 +52,20 @@ test('firstRunnableStepIndex finds incomplete saved local step', () => {
 
   assert.equal(_private.firstRunnableStepIndex(flow, runState), 1)
 })
+
+test('withSelectedAgents filters each workflow step and runnableSteps drops empty steps', () => {
+  const flow = {
+    defaults: { agents: ['claude', 'gemini', 'codex'] },
+    steps: [
+      { id: 'review', agents: ['claude', 'gemini', 'codex'] },
+      { id: 'synthesize', agents: ['codex'] },
+    ],
+  }
+
+  assert.deepEqual(_private.flowAgents(flow), ['claude', 'gemini', 'codex'])
+
+  const filtered = _private.withSelectedAgents(flow, ['claude', 'gemini'])
+  assert.deepEqual(filtered.steps[0].agents, ['claude', 'gemini'])
+  assert.deepEqual(filtered.steps[1].agents, [])
+  assert.deepEqual(_private.runnableSteps(filtered, {}).map((step) => step.id), ['review'])
+})

@@ -845,6 +845,124 @@ async function collectFlowOptions(flow, options) {
   return resolved
 }
 
+function flowAgents(flow) {
+  const agents = []
+  for (const agent of normalizeArray(flow.defaults?.agents)) agents.push(agent)
+  for (const step of flow.steps || []) {
+    for (const agent of normalizeArray(step.agents)) agents.push(agent)
+  }
+  return [...new Set(agents.filter(Boolean))]
+}
+
+function normalizeArray(value) {
+  return Array.isArray(value) ? value : []
+}
+
+function withSelectedAgents(flow, selectedAgents) {
+  const selected = new Set(selectedAgents)
+  return {
+    ...flow,
+    defaults: {
+      ...flow.defaults,
+      agents: normalizeArray(flow.defaults?.agents).filter((agent) => selected.has(agent)),
+    },
+    steps: flow.steps.map((step) => ({
+      ...step,
+      agents: normalizeArray(step.agents).filter((agent) => selected.has(agent)),
+    })),
+  }
+}
+
+function runnableSteps(flow, options) {
+  return findStepRange(flow, options).filter((step) => normalizeArray(step.agents).length > 0)
+}
+
+function printFlowPlan({ flow, steps, transport, context }) {
+  console.log('')
+  console.log(`Flow: ${flow.title}`)
+  console.log(`Run location: ${transport === 'local' ? 'Locally on this machine' : 'In GitHub Actions'}`)
+  console.log('Steps:')
+  for (const step of steps) {
+    console.log(`- ${step.title}: ${step.agents.map(titleCase).join(', ')}`)
+  }
+  console.log(`Additional context: ${context && context.trim() ? 'yes' : 'no'}`)
+}
+
+async function prepareInteractiveFlowRun({ flow, options, transport }) {
+  if (!process.stdin.isTTY || options.yes) {
+    const selected = parseCsv(options.models)
+    const configuredFlow = selected.length > 0 ? withSelectedAgents(flow, selected) : flow
+    const steps = runnableSteps(configuredFlow, options)
+    if (steps.length === 0) {
+      throw new Error('No workflow steps have selected agents.')
+    }
+    return {
+      flow: configuredFlow,
+      options,
+      steps,
+    }
+  }
+
+  const clack = require('@clack/prompts')
+  const agents = flowAgents(flow)
+  let selectedAgents = parseCsv(options.models)
+  if (selectedAgents.length === 0) {
+    const selected = await clack.multiselect({
+      message: 'Choose Netlify agent models',
+      options: agents.map((agent) => ({
+        value: agent,
+        label: titleCase(agent),
+      })),
+      initialValues: agents,
+      required: true,
+    })
+    if (clack.isCancel(selected)) process.exit(0)
+    selectedAgents = selected
+  }
+
+  let manualContext = readManualContext(options)
+  if (!manualContext && options.contextPrompt !== false) {
+    manualContext = await multiline({
+      message: 'Additional context/instructions (optional)',
+      placeholder: 'Hit enter to proceed. Ok if this is empty.',
+    })
+  }
+
+  const configuredOptions = {
+    ...options,
+    context: manualContext || options.context,
+    models: selectedAgents.join(','),
+  }
+  const configuredFlow = withSelectedAgents(flow, selectedAgents)
+  const steps = runnableSteps(configuredFlow, configuredOptions)
+  if (steps.length === 0) {
+    throw new Error('No workflow steps have selected agents.')
+  }
+
+  printFlowPlan({
+    flow: configuredFlow,
+    steps,
+    transport,
+    context: manualContext,
+  })
+
+  const confirmed = await clack.confirm({
+    message: 'Start this workflow?',
+    initialValue: true,
+  })
+  if (clack.isCancel(confirmed)) process.exit(0)
+  if (!confirmed) {
+    console.log('Cancelled')
+    process.exit(0)
+  }
+
+  return {
+    flow: configuredFlow,
+    options: configuredOptions,
+    steps,
+  }
+}
+
 function findStepRange(flow, options) {
   let steps = flow.steps
   if (options.step) {
@@ -1333,30 +1451,34 @@ async function handleRun(flowId, options) {
     )
   }
 
+  const prepared = await prepareInteractiveFlowRun({ flow, options: flowOptions, transport })
+  const configuredFlow = prepared.flow
+  const configuredOptions = prepared.options
+  const steps = prepared.steps
+
   const runState = createRunState({
     projectRoot,
-    flow,
+    flow: configuredFlow,
     transport,
     options: {
-      ...flowOptions,
+      ...configuredOptions,
       projectRoot,
     },
   })
   saveRunState(runState)
   console.log(`Run ${runState.runId}`)
-  console.log(`Flow: ${flow.title}`)
+  console.log(`Flow: ${configuredFlow.title}`)
   console.log(`Transport: ${transport}`)
   console.log(`State: ${path.join(runState.dir, 'run.json')}`)
 
-  const steps = findStepRange(flow, flowOptions)
   if (transport === 'local') {
-    await executeLocalFlow({ flow, steps, options: flowOptions, runState, projectRoot })
+    await executeLocalFlow({ flow: configuredFlow, steps, options: configuredOptions, runState, projectRoot })
   } else {
-    await executeGithubFlow({ flow, steps, options: flowOptions, runState })
+    await executeGithubFlow({ flow: configuredFlow, steps, options: configuredOptions, runState })
   }
 
-  if (flowOptions.notify) {
-    spawnSync('osascript', ['-e', `display notification "Flow ${flow.title} finished" with title "nax"`])
+  if (configuredOptions.notify) {
+    spawnSync('osascript', ['-e', `display notification "Flow ${configuredFlow.title} finished" with title "nax"`])
   }
 }
 
@@ -1578,8 +1700,11 @@ module.exports = {
   _private: {
     completedStepMapFromRunState,
     firstRunnableStepIndex,
+    flowAgents,
+    runnableSteps,
     sourceIssueNumbersForStep,
     sourceRunsForStep,
+    withSelectedAgents,
     uniqueNumbers,
   },
 }

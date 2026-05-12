@@ -25,7 +25,7 @@ const {
 const { formatGroupHint, listRecentIssueGroups } = require('../lib/issue-groups')
 const { multiline } = require('../lib/multiline')
 const { WAIT_FOR_AGENT_RESULTS, listFlows, loadFlow, loadStepPrompt } = require('../lib/flows')
-const { createRunState, saveRunState } = require('../lib/run-state')
+const { createRunState, findLatestUnfinishedLocalRun, saveRunState } = require('../lib/run-state')
 const { detectTransports, formatTransportSetupHelp, resolveTransport } = require('../lib/transports')
 const { enableGitHubActionsSetup, initSite } = require('../lib/init')
 const {
@@ -942,6 +942,31 @@ function buildLocalAgentPrompt({ model, prompt, context, roundResults }) {
   return parts.join('\n')
 }
 
+function completedStepMapFromRunState(runState) {
+  const completed = new Map()
+  for (const step of runState.steps || []) {
+    if (step.status === 'completed' || step.status === 'dry-run') {
+      completed.set(step.id, step)
+    }
+  }
+  return completed
+}
+
+function firstRunnableStepIndex(flow, runState) {
+  const byId = new Map((runState.steps || []).map((step) => [step.id, step]))
+  for (let index = 0; index < flow.steps.length; index += 1) {
+    const saved = byId.get(flow.steps[index].id)
+    if (!saved || saved.status !== 'completed' && saved.status !== 'dry-run') return index
+  }
+  return flow.steps.length
+}
+
+function localStepStatus(stepState) {
+  return stepState.runs.every((run) => run.status === 'completed' || run.status === 'dry-run')
+    ? 'completed'
+    : 'failed'
+}
+
 function parseIssueNumberFromUrl(url) {
   const match = String(url || '').match(/\/issues\/(\d+)(?:#.*)?$/)
   return match ? Number(match[1]) : null
@@ -1107,10 +1132,25 @@ async function executeGithubFlow({ flow, steps, options, runState }) {
   }
 }
 
-async function executeLocalFlow({ flow, steps, options, runState, projectRoot }) {
-  const date = options.date || getLocalDate()
+async function completeLocalStep({ stepState, step, options, projectRoot, netlify }) {
   const timeoutMinutes = Number.parseInt(options.timeoutMinutes || '25', 10)
-  const completedStepStates = new Map()
+  if (step.waitFor === WAIT_FOR_AGENT_RESULTS && stepState.runs.some((run) => run.runnerId && !['completed', 'failed', 'timeout', 'dry-run'].includes(run.status))) {
+    const completedRuns = await waitForLocalAgentRuns({
+      projectRoot,
+      runs: stepState.runs,
+      siteId: netlify.siteId,
+      env: netlify.env,
+      timeoutMinutes,
+      onProgress: (event) => console.log(event.message),
+    })
+    stepState.runs = completedRuns
+  }
+  stepState.status = localStepStatus(stepState)
+  return stepState
+}
+
+async function executeLocalFlow({ flow, steps, options, runState, projectRoot, completedStepStates = new Map() }) {
+  const date = options.date || getLocalDate()
   const baseContext = joinContext(readAutoContext(options), readManualContext(options))
   const branch = currentGitBranch(projectRoot)
   const netlify = buildNetlifyEnv({ projectRoot })
@@ -1200,21 +1240,7 @@ async function executeLocalFlow({ flow, steps, options, runState, projectRoot })
       saveRunState(runState)
     }
 
-    if (step.waitFor === WAIT_FOR_AGENT_RESULTS) {
-      const completedRuns = await waitForLocalAgentRuns({
-        projectRoot,
-        runs: stepState.runs,
-        siteId: netlify.siteId,
-        env: netlify.env,
-        timeoutMinutes,
-        onProgress: (event) => console.log(event.message),
-      })
-      stepState.runs = completedRuns
-    }
-
-    stepState.status = stepState.runs.every((run) => run.status === 'completed' || run.status === 'dry-run')
-      ? 'completed'
-      : 'failed'
+    await completeLocalStep({ stepState, step, options, projectRoot, netlify })
     completedStepStates.set(step.id, stepState)
     saveRunState(runState)
 
@@ -1224,10 +1250,69 @@ async function executeLocalFlow({ flow, steps, options, runState, projectRoot })
   }
 }
 
+async function resumeLocalFlow({ flow, runState, projectRoot }) {
+  const options = runState.options || {}
+  const netlify = buildNetlifyEnv({ projectRoot })
+  const completedStepStates = completedStepMapFromRunState(runState)
+  const startIndex = firstRunnableStepIndex(flow, runState)
+  if (startIndex >= flow.steps.length) {
+    console.log(`Run ${runState.runId} is already complete.`)
+    return
+  }
+
+  const step = flow.steps[startIndex]
+  const stepState = (runState.steps || []).find((candidate) => candidate.id === step.id)
+  if (stepState && stepState.runs?.some((run) => run.runnerId && !['completed', 'failed', 'timeout', 'dry-run'].includes(run.status))) {
+    console.log(`Resuming ${runState.runId}`)
+    console.log(`Flow: ${flow.title}`)
+    console.log(`State: ${path.join(runState.dir, 'run.json')}`)
+    console.log(`Continue polling: ${step.title}`)
+    await completeLocalStep({ stepState, step, options, projectRoot, netlify })
+    completedStepStates.set(step.id, stepState)
+    saveRunState(runState)
+    if (stepState.status !== 'completed' && stepState.status !== 'dry-run') {
+      throw new Error(`Local step "${step.id}" did not complete successfully.`)
+    }
+    await executeLocalFlow({
+      flow,
+      steps: flow.steps.slice(startIndex + 1),
+      options,
+      runState,
+      projectRoot,
+      completedStepStates,
+    })
+    return
+  }
+
+  await executeLocalFlow({
+    flow,
+    steps: flow.steps.slice(startIndex),
+    options,
+    runState,
+    projectRoot,
+    completedStepStates,
+  })
+}
+
 async function handleRun(flowId, options) {
   const projectRoot = path.resolve(options.projectRoot || process.cwd())
   const resolvedFlowId = flowId || (process.stdin.isTTY ? await pickFlowInteractively() : 'review-cycle')
   const flow = await loadFlow(resolvedFlowId)
+
+  const resumable = findLatestUnfinishedLocalRun(projectRoot, { flowId: flow.id })
+  if (resumable && process.stdin.isTTY && !options.yes && !options.dryRun) {
+    const clack = require('@clack/prompts')
+    const selected = await clack.confirm({
+      message: `Found unfinished local run ${resumable.runId}. Resume and complete it?`,
+      initialValue: true,
+    })
+    if (clack.isCancel(selected)) process.exit(0)
+    if (selected) {
+      await resumeLocalFlow({ flow, runState: resumable, projectRoot })
+      return
+    }
+  }
+
   const flowOptions = await collectFlowOptions(flow, options)
   const detections = detectTransports({ projectRoot })
   const requestedTransport = flowOptions.transport || flow.defaults.transport
@@ -1491,7 +1576,10 @@ module.exports = {
   parseGitHubPullRequestUrl,
   resolveCommentTarget,
   _private: {
+    completedStepMapFromRunState,
+    firstRunnableStepIndex,
     sourceIssueNumbersForStep,
+    sourceRunsForStep,
     uniqueNumbers,
   },
 }

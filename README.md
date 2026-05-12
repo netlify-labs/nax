@@ -1,114 +1,84 @@
 # netlify-agent-executor
 
-`nax` (Netlify Agent eXecutor) creates Netlify agent-runner GitHub issues from reusable prompt templates.
+`nax` runs multi step Netlify agent workflows using the worlds leading AI models.
 
-This is intentionally isolated from the app workspace. Install dependencies inside this folder:
+It is workflow-first: `nax` shows the workflows in `flows/*/flow.yml`, asks where to run them, then runs each step in order. Steps wait for completed Netlify Agent Runner results before the next step starts.
+
+## Install
 
 ```bash
-cd netlify-agent-executor
+cd /Users/david/dotfiles/clis/netlify-agent-executor
 npm install
 ```
 
-Run the interactive chooser:
+## Run
+
+Interactive:
 
 ```bash
-npm start
+nax
 ```
 
-Create the default review swarm issues after previewing them:
+Set up a repository for GitHub Actions transport:
 
 ```bash
-npm run dry-run
-nax issue review --yes
+nax init
 ```
 
-Useful flags:
+`nax init` links or creates the Netlify project first. Then it asks whether to enable GitHub Actions. If enabled, it writes `.github/workflows/netlify-agents.yml` when it is missing and sets the `NETLIFY_SITE_ID` and `NETLIFY_AUTH_TOKEN` GitHub Actions secrets. It uses the current Netlify CLI login token; if that token is missing, run `netlify login` first or set `NETLIFY_AUTH_TOKEN`.
+
+Run a named workflow:
 
 ```bash
-nax issue review \
-  --models claude,gemini,codex \
-  --context "Focus on the latest message center work" \
-  --sha "$(git rev-parse HEAD)" \
-  --label agent-review \
-  --dry-run
+nax review-cycle
+nax run review-cycle
 ```
 
-By default, every `issue` and `comment` workflow now auto-injects:
-
-- a **review-only contract**
-- the **pinned git SHA** (default: current `HEAD`)
-- a **repository snapshot**
-- an **open PR merge-state ledger**
-
-This keeps all reviewer rounds anchored to the same commit and gives synthesis explicit PR-state context. Disable it only if you intentionally want a free-form prompt:
+Preview without creating GitHub issues or comments:
 
 ```bash
-nax issue review --no-auto-context --dry-run
+nax review-cycle --dry --force
 ```
 
-Post follow-up prompts back onto existing model-specific issues:
+Choose where the workflow runs:
 
 ```bash
-nax comment cross-review \
-  --repo netlify-labs/gmail-emailer \
-  --issues 29,30,31 \
-  --sha "$(git rev-parse HEAD)" \
-  --context-file ./round-1-context.md \
-  --yes
+nax review-cycle --where github-actions
+nax review-cycle --where local-machine
 ```
 
-If the issue thread already has a Netlify runner comment saying a PR was opened, `nax comment ...` will automatically redirect the follow-up `@netlify` prompt to that linked PR instead of posting another dead-end issue comment.
+`github-actions` currently requires a workflow in the target repository that uses `netlify-labs/agent-runner-action`. `local-machine` is detected when Netlify CLI has a linked local site; execution support is still being wired up.
 
-Create a single consensus-summary issue after the cross-review round:
+## Setup Hints
+
+For GitHub Actions:
+
+1. Run `nax init` from the repository root.
+2. Commit `.github/workflows/netlify-agents.yml`.
+3. Run `nax`.
+
+For local execution:
+
+1. Install and log in to Netlify CLI: `netlify login`.
+2. Link the repo to a Netlify site: `netlify link`.
+3. Run `nax` from the repository root and choose `Locally on this machine`.
+
+## Workflows
+
+Workflows live in `flows/<workflow-id>/flow.yml`.
+
+Prompts for a workflow live beside it, usually in `flows/<workflow-id>/prompts/*.md`.
+
+List workflows:
 
 ```bash
-nax issue summarize-consensus \
-  --repo netlify-labs/gmail-emailer \
-  --models claude \
-  --sha "$(git rev-parse HEAD)" \
-  --from-issues 29,30,31 \
-  --yes
+nax list
 ```
 
-Useful context-related flags:
-
-```bash
---sha <rev>          # pin reviewers to an explicit git revision
---repo-root <path>   # choose which local repo to inspect for SHA/status
---pr-limit <count>   # cap the number of open PRs in the merge-state ledger
---no-auto-context    # disable the review contract / SHA snapshot / PR ledger
-```
-
-Prompt templates live in `prompts/*.md`. Each template supports simple frontmatter:
-
-```markdown
----
-title: Review
-description: Short picker hint
-instruction: please review and access current setup
----
-
-Prompt body...
-```
-
-The generated issue title format is:
+Current workflow:
 
 ```text
-YYYY-MM-DD Model PromptTitle
+review-cycle
 ```
 
-The generated issue body starts with:
-
-```text
-@netlify model instruction
-```
-
-For comments on existing issues, `nax comment ... --issues 29,30,31` infers the model from each issue title (for example `2026-04-24 Claude Review`) and builds the same `@netlify model instruction` header automatically for each comment.
-
-The prompts themselves now ask for:
-
-- a repository-state section that verifies the pinned SHA
-- a structured findings / structured consensus JSON block
-- prose sections for human-readable reasoning
-- explicit separation between defects and polish
-- a short list of rejected items
+This runs review, cross-review, and consensus synthesis as one ordered flow.

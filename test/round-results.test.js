@@ -92,14 +92,38 @@ test('pickAgentReplyComments prefers runner result-marker matches when present',
   assert.deepEqual(replies.map((r) => r.url), ['https://x/result-1', 'https://x/result-2'])
 })
 
-test('pickAgentReplyComments fallback keeps the legacy single-comment status (which contains the full result) but excludes history TOC', () => {
+test('pickAgentReplyComments excludes status and history comments when no result marker exists', () => {
   const comments = [
     { body: '@netlify claude please review\n<!-- netlify-workflow-prompt:review:claude:2026-05-07 -->', url: 'https://x/prompt' },
     { body: '### Run #1 result narrative\n<!-- netlify-agent-run-status -->', url: 'https://x/status' },
     { body: 'TOC\n<!-- netlify-agent-run-history -->', url: 'https://x/history' },
   ]
   const replies = pickAgentReplyComments(comments, { all: true })
-  assert.deepEqual(replies.map((r) => r.url), ['https://x/status'])
+  assert.deepEqual(replies.map((r) => r.url), [])
+})
+
+test('pickAgentReplyComments does not treat in-progress status comments as replies', () => {
+  const comments = [
+    { body: '@netlify codex please review\n<!-- netlify-workflow-prompt:review:codex:2026-05-12 -->', url: 'https://x/prompt' },
+    {
+      body:
+        '### Netlify Agent Run Status\n\n' +
+        'Netlify Agent Runners is cogitating...\n\n' +
+        '<!-- netlify-agent-runner-id:runner123 -->\n' +
+        '<!-- netlify-agent-run-status -->',
+      url: 'https://x/status',
+    },
+  ]
+  assert.deepEqual(pickAgentReplyComments(comments, { all: true }), [])
+})
+
+test('pickAgentReplyComments requireResultMarker ignores status-only comments', () => {
+  const comments = [
+    { body: '### status\n<!-- netlify-agent-run-status -->', url: 'https://x/status' },
+    { body: '### complete\n<!-- netlify-agent-run-result:runner123:session456 -->', url: 'https://x/result' },
+  ]
+  const replies = pickAgentReplyComments(comments, { all: true, requireResultMarker: true })
+  assert.deepEqual(replies.map((r) => r.url), ['https://x/result'])
 })
 
 test('formatRoundResults produces collapsible details with single-reply summary', () => {

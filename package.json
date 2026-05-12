@@ -1,7 +1,7 @@
 {
   "name": "netlify-agent-executor",
   "version": "0.1.0",
-  "description": "Netlify Agent eXecutor: create agent workflow issues from reusable prompt templates.",
+  "description": "Run multi step Netlify agent workflows using the worlds leading AI models.",
   "private": true,
   "type": "commonjs",
   "bin": {
@@ -9,12 +9,13 @@
   },
   "scripts": {
     "start": "node bin/nax.js",
-    "check": "node --check bin/nax.js && node --check lib/prompts.js && node --check lib/multiline.js && node --check lib/review-context.js && node --check lib/round-results.js && node --check lib/issue-groups.js && node --check lib/comment-markers.js",
-    "dry-run": "node bin/nax.js issue review --dry-run --yes",
+    "check": "node --check bin/nax.js && node --check lib/prompts.js && node --check lib/multiline.js && node --check lib/review-context.js && node --check lib/round-results.js && node --check lib/issue-groups.js && node --check lib/comment-markers.js && node --check lib/flows.js && node --check lib/transports.js && node --check lib/run-state.js && node --check lib/init.js",
+    "dry-run": "node bin/nax.js issue review --dry --force",
     "test": "node --test"
   },
   "dependencies": {
     "@clack/prompts": "^0.11.0",
-    "commander": "^14.0.3"
+    "commander": "^14.0.3",
+    "configorama": "^0.9.15"
   }
 }

@@ -1,0 +1,73 @@
+const test = require('node:test')
+const assert = require('node:assert/strict')
+const fs = require('fs')
+const os = require('os')
+const path = require('path')
+
+const {
+  detectTransports,
+  hasAgentRunnerAction,
+  hasLocalNetlifySite,
+  resolveTransport,
+  formatTransportSetupHelp,
+} = require('../lib/transports')
+
+test('hasAgentRunnerAction detects the Netlify action in workflow yaml', () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'nax-transport-test-'))
+  const workflows = path.join(tmp, '.github', 'workflows')
+  fs.mkdirSync(workflows, { recursive: true })
+  fs.writeFileSync(path.join(workflows, 'netlify-agents.yml'), 'steps:\n  - uses: netlify-labs/agent-runner-action@main\n')
+  assert.equal(hasAgentRunnerAction(tmp), true)
+})
+
+test('hasAgentRunnerAction returns false when workflow is absent', () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'nax-transport-test-'))
+  assert.equal(hasAgentRunnerAction(tmp), false)
+})
+
+test('hasLocalNetlifySite accepts env site id or local netlify files', () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'nax-transport-test-'))
+  assert.equal(hasLocalNetlifySite(tmp, { NETLIFY_SITE_ID: 'site-1' }), true)
+  assert.equal(hasLocalNetlifySite(tmp, {}), false)
+  fs.writeFileSync(path.join(tmp, 'netlify.toml'), '[build]\n')
+  assert.equal(hasLocalNetlifySite(tmp, {}), true)
+})
+
+test('resolveTransport honors explicit transports and auto-picks available transport', () => {
+  assert.equal(resolveTransport('github', []), 'github')
+  assert.equal(resolveTransport('github-actions', []), 'github')
+  assert.equal(resolveTransport('local', []), 'local')
+  assert.equal(resolveTransport('local-machine', []), 'local')
+  assert.equal(resolveTransport('auto', [
+    { id: 'github', available: false },
+    { id: 'local', available: true },
+  ]), 'local')
+  assert.throws(() => resolveTransport('bad', []), /Unknown run location/)
+})
+
+test('resolveTransport returns github fallback when auto has no available transports', () => {
+  assert.equal(resolveTransport('auto', [
+    { id: 'github', available: false },
+    { id: 'local', available: false },
+  ]), 'github')
+})
+
+test('detectTransports returns github and local entries', () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'nax-transport-test-'))
+  const transports = detectTransports({ projectRoot: tmp, env: {} })
+  assert.deepEqual(transports.map((transport) => transport.id), ['github', 'local'])
+})
+
+test('formatTransportSetupHelp includes setup steps for both transports', () => {
+  const help = formatTransportSetupHelp([
+    { id: 'github', title: 'In GitHub Actions', reason: 'No workflow detected.' },
+    { id: 'local', title: 'Locally on this machine', reason: 'No site context.' },
+  ])
+  assert.match(help, /To run in GitHub Actions:/)
+  assert.match(help, /netlify-labs\/agent-runner-action/)
+  assert.match(help, /NETLIFY_SITE_ID/)
+  assert.match(help, /NETLIFY_AUTH_TOKEN/)
+  assert.match(help, /To run locally on this machine:/)
+  assert.match(help, /netlify login/)
+  assert.match(help, /netlify link/)
+})

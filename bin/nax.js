@@ -4,7 +4,7 @@ const fs = require('fs')
 const os = require('os')
 const path = require('path')
 const { spawnSync } = require('child_process')
-const { Command } = require('commander')
+const { Command, Option } = require('commander')
 const {
   DEFAULT_MODELS,
   buildIssueBody,
@@ -24,6 +24,10 @@ const {
 } = require('../lib/round-results')
 const { formatGroupHint, listRecentIssueGroups } = require('../lib/issue-groups')
 const { multiline } = require('../lib/multiline')
+const { listFlows, loadFlow, loadStepPrompt } = require('../lib/flows')
+const { createRunState, saveRunState } = require('../lib/run-state')
+const { detectTransports, formatTransportSetupHelp, resolveTransport } = require('../lib/transports')
+const { initProject } = require('../lib/init')
 
 const ROUND_LABEL_BY_PROMPT = {
   'cross-review': 'Round 1 Outputs',
@@ -107,11 +111,52 @@ function shouldFetchResults(promptName) {
   return promptName === 'cross-review' || promptName === 'summarize-consensus'
 }
 
-function mergeCommandOptions(command, options) {
-  return {
-    ...(command.parent ? command.parent.opts() : {}),
-    ...options,
+function commandOptions(value) {
+  return value && typeof value.opts === 'function' ? value.opts() : value
+}
+
+function optionWasSet(command, name) {
+  if (!command || typeof command.getOptionValueSource !== 'function') return false
+  const source = command.getOptionValueSource(name)
+  return Boolean(source && source !== 'default')
+}
+
+function normalizeOptionAliases(resolved) {
+  if (resolved.dry && resolved.dryRun !== true) {
+    resolved.dryRun = true
   }
+  if (resolved.force && resolved.yes !== true) {
+    resolved.yes = true
+  }
+  if (resolved.where && !resolved.transport) {
+    resolved.transport = resolved.where
+  }
+  return resolved
+}
+
+function mergeCommandOptions(command, options) {
+  const local = commandOptions(options) || {}
+  const parentCommand = command?.parent
+  const parent = parentCommand && typeof parentCommand.opts === 'function' ? parentCommand.opts() : {}
+  const resolved = {
+    ...parent,
+    ...local,
+  }
+
+  for (const key of Object.keys(parent)) {
+    if (optionWasSet(parentCommand, key) && !optionWasSet(command, key)) {
+      resolved[key] = parent[key]
+    }
+  }
+
+  return normalizeOptionAliases(resolved)
+}
+
+function actionOptions(options, command) {
+  if (command && typeof command.opts === 'function') {
+    return mergeCommandOptions(command, command.opts())
+  }
+  return normalizeOptionAliases(commandOptions(options) || {})
 }
 
 function createIssue({ repo, title, body, labels }) {
@@ -327,8 +372,8 @@ function printCommentPlan(plan, { dryRun }) {
   }
 }
 
-function buildPlan({ promptName, options, context, roundResults, roundResultsRaw }) {
-  const prompt = loadPrompt(promptName)
+function buildPlan({ promptName, prompt: promptOverride, options, context, roundResults, roundResultsRaw }) {
+  const prompt = promptOverride || loadPrompt(promptName)
   const models = parseCsv(options.models).length > 0 ? parseCsv(options.models) : DEFAULT_MODELS
   const labels = parseCsv(options.labels || options.label)
   const date = options.date || getLocalDate()
@@ -356,8 +401,8 @@ function buildPlan({ promptName, options, context, roundResults, roundResultsRaw
   return { repo, labels, issues }
 }
 
-function buildCommentPlan({ promptName, options, context, roundResults }) {
-  const prompt = loadPrompt(promptName)
+function buildCommentPlan({ promptName, prompt: promptOverride, options, context, roundResults }) {
+  const prompt = promptOverride || loadPrompt(promptName)
   const repo = resolveRepo(options.repo)
   const runner = options.runner || '@netlify'
   const date = options.date || getLocalDate()
@@ -728,10 +773,367 @@ async function handleComment(promptName, options) {
   }
 }
 
-function handleList() {
-  for (const prompt of listPrompts()) {
-    console.log(`${prompt.name}\t${prompt.title}\t${prompt.description}`)
+async function handleList() {
+  for (const flow of await listFlows()) {
+    console.log(`${flow.id}\t${flow.title}\t${flow.description}`)
   }
+}
+
+async function pickFlowInteractively() {
+  const clack = require('@clack/prompts')
+  const flows = await listFlows()
+  if (flows.length === 0) {
+    throw new Error('No flows found in flows/*/flow.yml')
+  }
+  const selected = await clack.select({
+    message: 'Choose workflow',
+    options: flows.map((flow) => ({
+      value: flow.id,
+      label: flow.title,
+      hint: flow.description,
+    })),
+  })
+  if (clack.isCancel(selected)) process.exit(0)
+  return selected
+}
+
+async function chooseTransportInteractively({ requested, projectRoot }) {
+  const clack = require('@clack/prompts')
+  const detections = detectTransports({ projectRoot })
+  if (requested && requested !== 'auto') return requested
+
+  const available = detections.filter((transport) => transport.available)
+  if (available.length === 1) return available[0].id
+  if (available.length === 0) {
+    throw new Error(formatTransportSetupHelp(detections))
+  }
+
+  const selected = await clack.select({
+    message: 'Where do you want to run the workflow?',
+    options: available.map((transport) => ({
+      value: transport.id,
+      label: transport.title,
+      hint: `ready — ${transport.reason}`,
+    })),
+  })
+  if (clack.isCancel(selected)) process.exit(0)
+  return selected
+}
+
+async function collectFlowOptions(flow, options) {
+  if (!process.stdin.isTTY || options.yes) return options
+  const clack = require('@clack/prompts')
+  const resolved = { ...options }
+  for (const [key, spec] of Object.entries(flow.options || {})) {
+    if (resolved[key]) continue
+    const required = spec && spec.required === true
+    if (!required) continue
+    const value = await clack.text({
+      message: spec.prompt || key,
+      validate: (input) => (input && input.trim() ? undefined : `${key} is required`),
+    })
+    if (clack.isCancel(value)) process.exit(0)
+    resolved[key] = value.trim()
+  }
+  return resolved
+}
+
+function findStepRange(flow, options) {
+  let steps = flow.steps
+  if (options.step) {
+    steps = steps.filter((step) => step.id === options.step)
+    if (steps.length === 0) throw new Error(`Unknown step "${options.step}" in flow "${flow.id}"`)
+  }
+  if (options.fromStep) {
+    const index = flow.steps.findIndex((step) => step.id === options.fromStep)
+    if (index === -1) throw new Error(`Unknown from-step "${options.fromStep}" in flow "${flow.id}"`)
+    steps = flow.steps.slice(index)
+  }
+  return steps
+}
+
+function issueNumbersFromStep(stepState) {
+  return (stepState?.runs || [])
+    .map((run) => run.issueNumber)
+    .filter((number) => Number.isFinite(number))
+}
+
+function uniqueNumbers(numbers) {
+  return [...new Set(numbers.filter((number) => Number.isFinite(number)))]
+}
+
+function sourceIssueNumbersForStep(step, completedStepStates) {
+  if (!Array.isArray(step.input)) return []
+  const numbers = []
+  for (const input of step.input) {
+    numbers.push(...issueNumbersFromStep(completedStepStates.get(input.step)))
+  }
+  return uniqueNumbers(numbers)
+}
+
+function parseIssueNumberFromUrl(url) {
+  const match = String(url || '').match(/\/issues\/(\d+)(?:#.*)?$/)
+  return match ? Number(match[1]) : null
+}
+
+async function waitForGithubStep({ repo, issueNumbers, step, timeoutMinutes }) {
+  if (!issueNumbers.length) return []
+  const deadline = Date.now() + timeoutMinutes * 60 * 1000
+  const pollMs = 15000
+
+  while (Date.now() < deadline) {
+    const results = fetchRoundResults({
+      repo,
+      issueNumbers,
+      embedAll: true,
+      requireResultMarker: true,
+    })
+    const complete = results.every((result) => (result.replies || []).length > 0)
+    if (complete) return results
+    console.log(`Waiting for ${step.title}: ${results.filter((r) => (r.replies || []).length > 0).length}/${results.length} complete`)
+    await new Promise((resolve) => setTimeout(resolve, pollMs))
+  }
+  throw new Error(`Timed out waiting for step "${step.id}" after ${timeoutMinutes} minutes`)
+}
+
+async function executeGithubFlow({ flow, steps, options, runState }) {
+  const repo = resolveRepo(options.repo)
+  const date = options.date || getLocalDate()
+  const timeoutMinutes = Number.parseInt(options.timeoutMinutes || '25', 10)
+  const completedStepStates = new Map()
+  const baseContext = joinContext(readAutoContext(options), readManualContext(options))
+
+  for (const step of steps) {
+    const prompt = loadStepPrompt(flow, step)
+    const stepState = {
+      id: step.id,
+      title: step.title,
+      action: step.action,
+      agents: step.agents,
+      status: 'running',
+      runs: [],
+    }
+    runState.steps.push(stepState)
+    saveRunState(runState)
+
+    const fromIssues = sourceIssueNumbersForStep(step, completedStepStates).join(',')
+    const targetIssues = step.action === 'comment' ? fromIssues : ''
+    const stepOptions = {
+      ...options,
+      repo,
+      date,
+      models: step.agents.join(','),
+      issues: targetIssues || options.issues,
+      issue: targetIssues || options.issue,
+      fromIssues,
+      fromIssue: fromIssues,
+      yes: true,
+      fetchResults: fromIssues ? options.fetchResults : false,
+    }
+    const roundResultsRaw = fetchRoundResultsForOptions(stepOptions, {
+      embedAll: shouldEmbedAllReplies(prompt.name),
+    })
+    const input = {
+      promptName: prompt.name,
+      prompt,
+      options: stepOptions,
+      context: baseContext,
+      roundResultsRaw,
+    }
+    const plan = buildAndMaybeFallbackPlan(
+      input,
+      step.action === 'comment' ? buildCommentPlan : buildPlan,
+    )
+
+    if (step.action === 'comment') {
+      printCommentPlan(plan, { dryRun: options.dryRun })
+    } else {
+      printPlan(plan, { dryRun: options.dryRun })
+    }
+
+    if (options.dryRun) {
+      stepState.status = 'dry-run'
+      stepState.runs = (plan.issues || []).map((issue) => ({
+        transport: 'github',
+        agent: issue.model,
+        status: 'dry-run',
+        promptText: issue.body,
+        resultText: '',
+        raw: issue,
+      }))
+      completedStepStates.set(step.id, stepState)
+      saveRunState(runState)
+      continue
+    }
+
+    if (step.action === 'comment') {
+      for (const issue of plan.issues) {
+        const url = createDiscussionComment({
+          repo: issue.targetRepo,
+          targetKind: issue.targetKind,
+          targetNumber: issue.targetNumber,
+          body: issue.body,
+        })
+        const issueNumber = Number(issue.issueNumber)
+        stepState.runs.push({
+          transport: 'github',
+          agent: issue.model,
+          status: 'submitted',
+          promptText: issue.body,
+          resultText: '',
+          issueNumber,
+          issueUrl: issue.issueUrl,
+          commentUrl: url,
+          prUrl: issue.targetKind === 'pr' ? issue.targetUrl : '',
+          raw: issue,
+        })
+        console.log(`#${issue.issueNumber} ${issue.issueTitle}: ${url}`)
+      }
+    } else {
+      for (const issue of plan.issues) {
+        const url = createIssue({
+          repo: plan.repo,
+          title: issue.title,
+          body: issue.body,
+          labels: plan.labels,
+        })
+        const issueNumber = parseIssueNumberFromUrl(url)
+        stepState.runs.push({
+          transport: 'github',
+          agent: issue.model,
+          status: 'submitted',
+          promptText: issue.body,
+          resultText: '',
+          issueNumber,
+          issueUrl: url,
+          commentUrl: '',
+          prUrl: '',
+          raw: issue,
+        })
+        console.log(`${issue.title}: ${url}`)
+      }
+    }
+
+    if (step.waitFor === 'terminal-result') {
+      const issueNumbers = stepState.runs.map((run) => run.issueNumber).filter((number) => Number.isFinite(number))
+      const results = await waitForGithubStep({ repo, issueNumbers, step, timeoutMinutes })
+      for (const run of stepState.runs) {
+        const result = results.find((item) => item.issueNumber === run.issueNumber)
+        const replies = result?.replies || []
+        const latest = replies[replies.length - 1]
+        run.status = latest ? 'completed' : 'timeout'
+        run.resultText = latest?.body || ''
+        run.commentUrl = latest?.url || run.commentUrl
+        run.rawResult = result || null
+      }
+    }
+
+    stepState.status = stepState.runs.every((run) => run.status === 'completed' || run.status === 'dry-run')
+      ? 'completed'
+      : 'submitted'
+    completedStepStates.set(step.id, stepState)
+    saveRunState(runState)
+  }
+}
+
+async function handleRun(flowId, options) {
+  const projectRoot = path.resolve(options.projectRoot || process.cwd())
+  const resolvedFlowId = flowId || (process.stdin.isTTY ? await pickFlowInteractively() : 'review-cycle')
+  const flow = await loadFlow(resolvedFlowId)
+  const flowOptions = await collectFlowOptions(flow, options)
+  const detections = detectTransports({ projectRoot })
+  const requestedTransport = flowOptions.transport || flow.defaults.transport
+  if ((requestedTransport === 'auto' || !requestedTransport) && detections.every((candidate) => !candidate.available)) {
+    throw new Error(formatTransportSetupHelp(detections))
+  }
+  const transport = process.stdin.isTTY
+    ? await chooseTransportInteractively({ requested: requestedTransport, projectRoot })
+    : resolveTransport(requestedTransport, detections)
+  const selectedDetection = detections.find((candidate) => candidate.id === transport)
+  if (!selectedDetection?.available) {
+    throw new Error(
+      [
+        `Transport "${transport}" is not available: ${selectedDetection?.reason || 'unknown reason'}`,
+        '',
+        formatTransportSetupHelp(detections),
+      ].join('\n'),
+    )
+  }
+
+  const runState = createRunState({
+    projectRoot,
+    flow,
+    transport,
+    options: {
+      ...flowOptions,
+      projectRoot,
+    },
+  })
+  saveRunState(runState)
+  console.log(`Run ${runState.runId}`)
+  console.log(`Flow: ${flow.title}`)
+  console.log(`Transport: ${transport}`)
+  console.log(`State: ${path.join(runState.dir, 'run.json')}`)
+
+  if (transport === 'local') {
+    throw new Error('Running locally on this machine is detected and selectable, but execution is not implemented yet. Choose GitHub Actions for now.')
+  }
+
+  const steps = findStepRange(flow, flowOptions)
+  await executeGithubFlow({ flow, steps, options: flowOptions, runState })
+
+  if (flowOptions.notify) {
+    spawnSync('osascript', ['-e', `display notification "Flow ${flow.title} finished" with title "nax"`])
+  }
+}
+
+function printInitResult(result, { dryRun = false } = {}) {
+  const prefix = dryRun ? 'Would initialize' : 'Initialized'
+  console.log(`${prefix}: ${result.projectRoot}`)
+  if (result.repo) console.log(`GitHub repo: ${result.repo}`)
+  if (result.netlify.siteId) {
+    console.log(`Netlify site ID: ${result.netlify.siteId}`)
+  } else if (result.netlify.siteName) {
+    console.log(`Netlify project: ${result.netlify.siteName}`)
+  }
+  console.log(`Netlify link: ${result.netlify.status}`)
+  console.log(`GitHub Actions: ${result.githubActions ? 'enabled' : 'skipped'}`)
+  if (result.workflow) {
+    console.log(`Workflow: ${path.relative(result.projectRoot, result.workflow.path)} (${result.workflow.status})`)
+  }
+  for (const secret of result.secrets) {
+    console.log(`Secret: ${secret.name} (${secret.status})`)
+  }
+}
+
+async function shouldEnableGithubActions(options) {
+  if (options.githubActions === true) return true
+  if (options.githubActions === false) return false
+  if (!process.stdin.isTTY || options.yes) return true
+  const clack = require('@clack/prompts')
+  const selected = await clack.confirm({
+    message: 'Enable GitHub Actions for this workflow?',
+    initialValue: true,
+  })
+  if (clack.isCancel(selected)) process.exit(0)
+  return selected === true
+}
+
+async function handleInit(options) {
+  const githubActions = await shouldEnableGithubActions(options)
+  const result = initProject({
+    projectRoot: options.projectRoot || process.cwd(),
+    repo: options.repo,
+    siteId: options.siteId,
+    siteName: options.siteName,
+    create: options.create === true,
+    force: options.force === true || options.yes === true,
+    dryRun: options.dryRun === true,
+    skipSecrets: options.skipSecrets === true,
+    githubActions,
+    interactive: process.stdin.isTTY,
+  })
+  printInitResult(result, { dryRun: options.dryRun })
 }
 
 function buildProgram() {
@@ -739,30 +1141,62 @@ function buildProgram() {
 
   program
     .name('nax')
-    .description('Create Netlify agent workflow issues from prompt templates')
-    .argument('[prompt]', 'Prompt name to run, e.g. review')
-    .option('--models <list>', `Comma-separated models (default: ${DEFAULT_MODELS.join(',')})`)
+    .description('Run multi step Netlify agent workflows using the worlds leading AI models')
+    .argument('[workflow]', 'Workflow to run, e.g. review-cycle')
     .option('--repo <owner/name>', 'GitHub repo; defaults to gh repo view')
-    .option('--date <yyyy-mm-dd>', 'Issue title date prefix; defaults to local date')
-    .option('--title <title>', 'Issue title suffix; defaults to prompt title')
-    .option('--context <text>', 'Additional context appended to each issue')
+    .option('--where <place>', 'Where to run: auto, github-actions, local-machine', 'auto')
+    .option('--dry', 'Preview the workflow without creating issues/comments')
+    .addOption(new Option('--dry-run', 'Hidden compatibility alias for --dry').hideHelp())
+    .option('--force', 'Skip confirmation prompts')
+    .addOption(new Option('--yes', 'Hidden compatibility alias for --force').hideHelp())
+    .option('--notify', 'Show a desktop notification when the flow finishes')
+    .action((workflow, options, command) => {
+      const resolvedOptions = actionOptions(options, command)
+      return handleRun(workflow || null, resolvedOptions)
+    })
+
+  program
+    .command('init')
+    .description('Set up this repository for nax workflows')
+    .option('--project-root <path>', 'Project root to initialize')
+    .option('--repo <owner/name>', 'GitHub repo; defaults to gh repo view')
+    .option('--site-id <id>', 'Link this directory to an existing Netlify site ID')
+    .option('--site-name <name>', 'Link to or create a Netlify project by name')
+    .option('--create', 'Create a new Netlify project if this directory is not linked')
+    .option('--dry', 'Preview setup without writing files or secrets')
+    .addOption(new Option('--dry-run', 'Hidden compatibility alias for --dry').hideHelp())
+    .option('--force', 'Overwrite an existing non-nax workflow file')
+    .addOption(new Option('--yes', 'Hidden compatibility alias for --force').hideHelp())
+    .option('--github-actions', 'Enable GitHub Actions transport setup')
+    .option('--no-github-actions', 'Only set up/link the Netlify site')
+    .option('--skip-secrets', 'Create/link project and workflow without setting GitHub secrets')
+    .action((options, command) => handleInit(actionOptions(options, command)))
+
+  program
+    .command('run [flow]')
+    .description('Run a multi-step workflow')
+    .option('--where <place>', 'Where to run: auto, github-actions, local-machine', 'auto')
+    .option('--project-root <path>', 'Project root for flow execution')
+    .option('--repo <owner/name>', 'GitHub repo; defaults to gh repo view')
+    .option('--context <text>', 'Additional context appended to each prompt')
     .option('--context-file <path>', 'Read additional context from a file')
-    .option('--from-issues <list>', 'Comma-separated source issue numbers; their latest agent reply is fetched and embedded as collapsible details')
-    .option('--from-issue <list>', 'Alias for --from-issues')
-    .option('--from-issues-heading <text>', 'Heading used for the embedded round-results section')
     .option('--sha <rev>', 'Pinned git revision injected into the review context (default: HEAD)')
-    .option('--repo-root <path>', 'Repository root used to compute the pinned SHA and working tree snapshot')
     .option('--pr-limit <count>', 'Maximum number of open PRs to include in the merge-state ledger', '10')
     .option('--label <list>', 'Comma-separated labels to add')
     .option('--labels <list>', 'Alias for --label')
     .option('--runner <mention>', 'Agent runner mention (default: @netlify)')
-    .option('--dry-run', 'Print issues without creating them')
-    .option('--yes', 'Skip confirmation')
+    .option('--date <yyyy-mm-dd>', 'Issue title date prefix; defaults to local date')
+    .option('--step <id>', 'Run only one flow step')
+    .option('--from-step <id>', 'Run from a flow step through the end')
+    .option('--timeout-minutes <count>', 'Minutes to wait for each step to complete', '25')
+    .option('--dry', 'Preview the workflow without creating issues/comments')
+    .addOption(new Option('--dry-run', 'Hidden compatibility alias for --dry').hideHelp())
+    .option('--force', 'Skip confirmation prompts')
+    .addOption(new Option('--yes', 'Hidden compatibility alias for --force').hideHelp())
+    .option('--notify', 'Show a desktop notification when the flow finishes')
     .option('--no-auto-context', 'Do not inject the automatic review contract, pinned SHA snapshot, or PR ledger')
-    .option('--no-context-prompt', 'Do not ask for free-form context in interactive mode')
-    .option('--no-fetch-results', 'Do not fetch round results from --from-issues')
-    .option('--skip-round-check', 'Skip the cross-review-completeness check for summarize-consensus')
-    .action((prompt, options) => handleIssue(prompt, options))
+    .option('--no-fetch-results', 'Do not fetch round results from prior steps')
+    .action((flow, options, command) => handleRun(flow, actionOptions(options, command)))
 
   program
     .command('issue [prompt]')
@@ -782,8 +1216,10 @@ function buildProgram() {
     .option('--label <list>', 'Comma-separated labels to add')
     .option('--labels <list>', 'Alias for --label')
     .option('--runner <mention>', 'Agent runner mention (default: @netlify)')
-    .option('--dry-run', 'Print issues without creating them')
-    .option('--yes', 'Skip confirmation')
+    .option('--dry', 'Print issues without creating them')
+    .addOption(new Option('--dry-run', 'Hidden compatibility alias for --dry').hideHelp())
+    .option('--force', 'Skip confirmation')
+    .addOption(new Option('--yes', 'Hidden compatibility alias for --force').hideHelp())
     .option('--no-auto-context', 'Do not inject the automatic review contract, pinned SHA snapshot, or PR ledger')
     .option('--no-context-prompt', 'Do not ask for free-form context in interactive mode')
     .option('--no-fetch-results', 'Do not fetch round results from --from-issues')
@@ -805,8 +1241,10 @@ function buildProgram() {
     .option('--repo-root <path>', 'Repository root used to compute the pinned SHA and working tree snapshot')
     .option('--pr-limit <count>', 'Maximum number of open PRs to include in the merge-state ledger', '10')
     .option('--runner <mention>', 'Agent runner mention (default: @netlify)')
-    .option('--dry-run', 'Print comments without creating them')
-    .option('--yes', 'Skip confirmation')
+    .option('--dry', 'Print comments without creating them')
+    .addOption(new Option('--dry-run', 'Hidden compatibility alias for --dry').hideHelp())
+    .option('--force', 'Skip confirmation')
+    .addOption(new Option('--yes', 'Hidden compatibility alias for --force').hideHelp())
     .option('--no-auto-context', 'Do not inject the automatic review contract, pinned SHA snapshot, or PR ledger')
     .option('--no-context-prompt', 'Do not ask for free-form context in interactive mode')
     .option('--no-fetch-results', 'Do not fetch round results from --from-issues')
@@ -814,8 +1252,13 @@ function buildProgram() {
 
   program
     .command('list')
-    .description('List available prompt templates')
+    .description('List available workflows')
     .action(handleList)
+
+  for (const hiddenCommandName of ['issue', 'comment']) {
+    const command = program.commands.find((candidate) => candidate.name() === hiddenCommandName)
+    if (command) command._hidden = true
+  }
 
   return program
 }
@@ -842,4 +1285,8 @@ module.exports = {
   parseCsv,
   parseGitHubPullRequestUrl,
   resolveCommentTarget,
+  _private: {
+    sourceIssueNumbersForStep,
+    uniqueNumbers,
+  },
 }

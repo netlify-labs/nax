@@ -1,0 +1,51 @@
+id: review-cycle
+title: Review Cycle
+description: Review, cross-review, and synthesize findings with multiple Netlify agents.
+
+defaults:
+  transport: auto
+  notify: false
+  agents:
+    - claude
+    - gemini
+    - codex
+
+steps:
+  - id: review
+    title: Review
+    prompt: prompts/review.md
+    action: issue
+    submit: new-run
+    agents:
+      - claude
+      - gemini
+      - codex
+    waitFor: terminal-result
+
+  - id: cross-review
+    title: Cross Review
+    prompt: prompts/cross-review.md
+    action: comment
+    submit: follow-up
+    agents:
+      - claude
+      - gemini
+      - codex
+    input:
+      - step: review
+        results: all
+    waitFor: terminal-result
+
+  - id: synthesize
+    title: Summarize Consensus
+    prompt: prompts/summarize-consensus.md
+    action: issue
+    submit: new-run
+    agents:
+      - codex
+    input:
+      - step: review
+        results: all
+      - step: cross-review
+        results: all
+    waitFor: terminal-result

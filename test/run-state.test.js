@@ -6,6 +6,7 @@ const path = require('path')
 
 const {
   findLatestUnfinishedLocalRun,
+  hasRepairableRuns,
   isUnfinishedLocalRun,
   listRunStates,
   saveRunState,
@@ -36,6 +37,17 @@ test('isUnfinishedLocalRun detects submitted local runner ids', () => {
   assert.equal(isUnfinishedLocalRun(runState('/tmp/x', {
     steps: [{ id: 'review', status: 'completed', runs: [{ runnerId: 'runner-1', status: 'completed' }] }],
   })), false)
+})
+
+test('isUnfinishedLocalRun detects failed local runs that can be repaired from runner ids', () => {
+  const step = {
+    id: 'review',
+    status: 'failed',
+    runs: [{ runnerId: 'runner-1', status: 'failed', resultText: '' }],
+  }
+
+  assert.equal(hasRepairableRuns(step), true)
+  assert.equal(isUnfinishedLocalRun(runState('/tmp/x', { steps: [step] })), true)
 })
 
 test('findLatestUnfinishedLocalRun returns newest unfinished local run', () => {

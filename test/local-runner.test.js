@@ -148,6 +148,41 @@ test('waitForLocalAgentRuns retries transient poll errors', async () => {
   assert.match(progress[0], /poll failed, retrying/)
 })
 
+test('waitForLocalAgentRuns keeps polling an error state until it resolves', async () => {
+  let showCount = 0
+  const result = await waitForLocalAgentRuns({
+    projectRoot: '/tmp/project',
+    siteId: 'site-123',
+    env: {},
+    timeoutMinutes: 1,
+    initialDelayMs: 0,
+    pollIntervalMs: 1,
+    runs: [{ agent: 'claude', runnerId: 'runner-1', status: 'submitted', resultText: '' }],
+    runCommand(command, args) {
+      if (args[0] === 'agents:show') {
+        showCount += 1
+        return {
+          status: 0,
+          stdout: JSON.stringify({
+            id: 'runner-1',
+            state: showCount === 1 ? 'error' : 'done',
+          }),
+          stderr: '',
+        }
+      }
+      return {
+        status: 0,
+        stdout: JSON.stringify({ sessions: [{ id: 'session-1', result: 'done' }] }),
+        stderr: '',
+      }
+    },
+  })
+
+  assert.equal(showCount, 2)
+  assert.equal(result[0].status, 'completed')
+  assert.equal(result[0].resultText, 'done')
+})
+
 test('waitForLocalAgentRuns returns completed runs after polling terminal state', async () => {
   const calls = []
   const result = await waitForLocalAgentRuns({

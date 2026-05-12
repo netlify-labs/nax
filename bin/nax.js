@@ -868,7 +868,9 @@ function withSelectedAgents(flow, selectedAgents) {
     },
     steps: flow.steps.map((step) => ({
       ...step,
-      agents: normalizeArray(step.agents).filter((agent) => selected.has(agent)),
+      agents: normalizeArray(step.agents).length > 0
+        ? normalizeArray(step.agents).filter((agent) => selected.has(agent))
+        : normalizeArray(step.agents),
     })),
   }
 }
@@ -1085,6 +1087,13 @@ function localStepStatus(stepState) {
     : 'failed'
 }
 
+function shouldPollLocalRun(run) {
+  if (!run.runnerId) return false
+  if (run.status === 'dry-run') return false
+  if (run.status === 'completed' && run.resultText) return false
+  return true
+}
+
 function parseIssueNumberFromUrl(url) {
   const match = String(url || '').match(/\/issues\/(\d+)(?:#.*)?$/)
   return match ? Number(match[1]) : null
@@ -1250,15 +1259,16 @@ async function executeGithubFlow({ flow, steps, options, runState }) {
   }
 }
 
-async function completeLocalStep({ stepState, step, options, projectRoot, netlify }) {
+async function completeLocalStep({ stepState, step, options, projectRoot, netlify, initialDelayMs }) {
   const timeoutMinutes = Number.parseInt(options.timeoutMinutes || '25', 10)
-  if (step.waitFor === WAIT_FOR_AGENT_RESULTS && stepState.runs.some((run) => run.runnerId && !['completed', 'failed', 'timeout', 'dry-run'].includes(run.status))) {
+  if (step.waitFor === WAIT_FOR_AGENT_RESULTS && stepState.runs.some(shouldPollLocalRun)) {
     const completedRuns = await waitForLocalAgentRuns({
       projectRoot,
       runs: stepState.runs,
       siteId: netlify.siteId,
       env: netlify.env,
       timeoutMinutes,
+      initialDelayMs,
       onProgress: (event) => console.log(event.message),
     })
     stepState.runs = completedRuns
@@ -1380,12 +1390,12 @@ async function resumeLocalFlow({ flow, runState, projectRoot }) {
 
   const step = flow.steps[startIndex]
   const stepState = (runState.steps || []).find((candidate) => candidate.id === step.id)
-  if (stepState && stepState.runs?.some((run) => run.runnerId && !['completed', 'failed', 'timeout', 'dry-run'].includes(run.status))) {
+  if (stepState && stepState.runs?.some(shouldPollLocalRun)) {
     console.log(`Resuming ${runState.runId}`)
     console.log(`Flow: ${flow.title}`)
     console.log(`State: ${path.join(runState.dir, 'run.json')}`)
-    console.log(`Continue polling: ${step.title}`)
-    await completeLocalStep({ stepState, step, options, projectRoot, netlify })
+    console.log(`Repair and continue: ${step.title}`)
+    await completeLocalStep({ stepState, step, options, projectRoot, netlify, initialDelayMs: 0 })
     completedStepStates.set(step.id, stepState)
     saveRunState(runState)
     if (stepState.status !== 'completed' && stepState.status !== 'dry-run') {

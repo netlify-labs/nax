@@ -18,7 +18,7 @@ test('sourceIssueNumbersForStep dedupes issue numbers across prior steps', () =>
   assert.deepEqual(_private.sourceIssueNumbersForStep(step, completed), [83, 84, 85])
 })
 
-test('sourceRunsForStep dedupes local runner ids across prior steps', () => {
+test('sourceRunsForStep keeps follow-up results per input step even when runner id is reused', () => {
   const completed = new Map([
     ['review', { runs: [{ agent: 'codex', runnerId: 'runner-1', resultText: 'done' }] }],
     ['cross-review', { runs: [{ agent: 'codex', runnerId: 'runner-1', resultText: 'done again' }] }],
@@ -32,6 +32,21 @@ test('sourceRunsForStep dedupes local runner ids across prior steps', () => {
 
   assert.deepEqual(_private.sourceRunsForStep(step, completed), [
     { agent: 'codex', runnerId: 'runner-1', resultText: 'done', sourceStep: 'review' },
+    { agent: 'codex', runnerId: 'runner-1', resultText: 'done again', sourceStep: 'cross-review' },
+  ])
+})
+
+test('sourceRunsForStep dedupes within a single input step', () => {
+  const completed = new Map([
+    ['review', { runs: [
+      { agent: 'codex', runnerId: 'runner-1', resultText: 'a' },
+      { agent: 'codex', runnerId: 'runner-1', resultText: 'b' },
+    ] }],
+  ])
+  const step = { input: [{ step: 'review', results: 'all' }] }
+
+  assert.deepEqual(_private.sourceRunsForStep(step, completed), [
+    { agent: 'codex', runnerId: 'runner-1', resultText: 'a', sourceStep: 'review' },
   ])
 })
 

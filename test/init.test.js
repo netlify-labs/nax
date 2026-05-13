@@ -135,3 +135,21 @@ test('initProject can skip GitHub Actions setup after site linking', () => {
   assert.equal(result.workflow, null)
   assert.deepEqual(result.secrets, [])
 })
+
+test('initProject dry-run does not require netlify binary', () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'nax-init-test-'))
+  fs.mkdirSync(path.join(tmp, '.git'))
+
+  const restorePath = process.env.PATH
+  process.env.PATH = ''
+  try {
+    assert.doesNotThrow(() => initProject({
+      projectRoot: tmp,
+      siteId: 'site-123',
+      githubActions: false,
+      dryRun: true,
+    }))
+  } finally {
+    process.env.PATH = restorePath
+  }
+})

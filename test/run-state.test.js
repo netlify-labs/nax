@@ -39,15 +39,30 @@ test('isUnfinishedLocalRun detects submitted local runner ids', () => {
   })), false)
 })
 
-test('isUnfinishedLocalRun detects failed local runs that can be repaired from runner ids', () => {
-  const step = {
+test('hasRepairableRuns ignores terminal failed and timeout runs', () => {
+  const failedStep = {
     id: 'review',
     status: 'failed',
     runs: [{ runnerId: 'runner-1', status: 'failed', resultText: '' }],
   }
+  const timeoutStep = {
+    id: 'review',
+    status: 'failed',
+    runs: [{ runnerId: 'runner-1', status: 'timeout', resultText: '' }],
+  }
 
-  assert.equal(hasRepairableRuns(step), true)
-  assert.equal(isUnfinishedLocalRun(runState('/tmp/x', { steps: [step] })), true)
+  assert.equal(hasRepairableRuns(failedStep), false)
+  assert.equal(hasRepairableRuns(timeoutStep), false)
+  assert.equal(isUnfinishedLocalRun(runState('/tmp/x', { steps: [failedStep] })), false)
+})
+
+test('hasRepairableRuns still flags in-flight submitted and running runs', () => {
+  assert.equal(hasRepairableRuns({
+    runs: [{ runnerId: 'runner-1', status: 'submitted' }],
+  }), true)
+  assert.equal(hasRepairableRuns({
+    runs: [{ runnerId: 'runner-1', status: 'running' }],
+  }), true)
 })
 
 test('findLatestUnfinishedLocalRun returns newest unfinished local run', () => {

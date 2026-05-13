@@ -1144,8 +1144,8 @@ function sourceIssueNumbersForStep(step, completedStepStates) {
 function sourceRunsForStep(step, completedStepStates) {
   if (!Array.isArray(step.input)) return []
   const runs = []
-  const seen = new Set()
   for (const input of step.input) {
+    const seen = new Set()
     for (const run of runsFromStep(completedStepStates.get(input.step))) {
       const key = run.runnerId || `${run.agent}:${run.stepId || input.step}:${runs.length}`
       if (seen.has(key)) continue
@@ -1229,6 +1229,7 @@ function localStepStatus(stepState) {
 function shouldPollLocalRun(run) {
   if (!run.runnerId) return false
   if (run.status === 'dry-run') return false
+  if (run.status === 'failed' || run.status === 'timeout') return false
   if (run.status === 'completed' && run.resultText) return false
   return true
 }
@@ -1645,7 +1646,11 @@ async function handleRun(flowId, options) {
   }
 
   if (configuredOptions.notify) {
-    spawnSync('osascript', ['-e', `display notification "Flow ${configuredFlow.title} finished" with title "nax"`])
+    if (process.platform === 'darwin') {
+      spawnSync('osascript', ['-e', `display notification "Flow ${configuredFlow.title} finished" with title "nax"`])
+    } else {
+      console.log(`--notify is only supported on macOS; skipping desktop notification.`)
+    }
   }
 }
 

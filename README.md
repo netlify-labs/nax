@@ -47,7 +47,7 @@ nax review-cycle --where github-actions
 nax review-cycle --where local-machine
 ```
 
-`github-actions` currently requires a workflow in the target repository that uses `netlify-labs/agent-runner-action`. `local-machine` is detected when Netlify CLI has a linked local site; execution support is still being wired up.
+`github-actions` requires a workflow in the target repository that uses `netlify-labs/agent-runner-action`. `local-machine` is detected when Netlify CLI has a linked local site and runs agents directly against the Netlify API using the locally authenticated CLI. Desktop notifications (`--notify`) are macOS-only.
 
 ## Setup Hints
 

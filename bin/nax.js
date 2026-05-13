@@ -1013,7 +1013,7 @@ function runnableSteps(flow, options) {
 function printFlowPlan({ flow, steps, transport, branch, context }) {
   console.log('')
   console.log(`Flow: ${flow.title}`)
-  console.log(`Run location: ${transport === 'local' ? 'Locally on this machine' : 'In GitHub Actions'}`)
+  console.log(`Orchestrated from: ${transport === 'local' ? 'This machine' : 'GitHub Actions'}`)
   console.log(`Branch: ${branch}`)
   console.log('Steps:')
   for (const step of steps) {

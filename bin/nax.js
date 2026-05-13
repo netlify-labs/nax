@@ -38,6 +38,9 @@ const {
 const ROUND_LABEL_BY_PROMPT = {
   'cross-review': 'Round 1 Outputs',
   'summarize-consensus': 'Round 2 Cross-Review Outputs',
+  'cross-score': 'Idea Proposals',
+  react: 'Ideas And Cross-Scores',
+  'synthesize-ideas': 'Idea Duel Outputs',
 }
 
 const GITHUB_ISSUE_BODY_LIMIT = 65536

@@ -4,7 +4,7 @@ const fs = require('fs')
 const os = require('os')
 const path = require('path')
 
-const { listFlows, loadFlow, loadStepPrompt } = require('../lib/flows')
+const { FLOW_PICKER_ORDER, listFlows, loadFlow, loadStepPrompt } = require('../lib/flows')
 
 test('loadFlow reads flow.yml via configorama and normalizes steps', async () => {
   const flow = await loadFlow('review')
@@ -21,7 +21,13 @@ test('loadFlow reads flow.yml via configorama and normalizes steps', async () =>
 test('listFlows discovers flow directories', async () => {
   const flows = await listFlows()
   assert.ok(flows.some((flow) => flow.id === 'review'))
+  assert.ok(flows.some((flow) => flow.id === 'ideas'))
   assert.ok(flows.some((flow) => flow.id === 'do-next'))
+})
+
+test('listFlows orders primary workflows for the picker', async () => {
+  const flows = await listFlows()
+  assert.deepEqual(flows.slice(0, FLOW_PICKER_ORDER.length).map((flow) => flow.id), FLOW_PICKER_ORDER)
 })
 
 test('loadStepPrompt resolves prompts relative to the flow directory', async () => {
@@ -40,6 +46,19 @@ test('loadFlow reads do-next workflow', async () => {
   assert.deepEqual(flow.steps[1].agents, ['codex'])
   assert.equal(loadStepPrompt(flow, flow.steps[0]).name, 'propose-next-task')
   assert.equal(loadStepPrompt(flow, flow.steps[1]).name, 'synthesize-next-task')
+})
+
+test('loadFlow reads ideas workflow', async () => {
+  const flow = await loadFlow('ideas')
+  assert.equal(flow.id, 'ideas')
+  assert.equal(flow.title, 'Ideas')
+  assert.deepEqual(flow.steps.map((step) => step.id), ['ideate', 'cross-score', 'react', 'synthesize'])
+  assert.deepEqual(flow.steps[0].agents, ['claude', 'gemini', 'codex'])
+  assert.deepEqual(flow.steps[3].agents, ['codex'])
+  assert.equal(loadStepPrompt(flow, flow.steps[0]).name, 'ideate')
+  assert.equal(loadStepPrompt(flow, flow.steps[1]).name, 'cross-score')
+  assert.equal(loadStepPrompt(flow, flow.steps[2]).name, 'react')
+  assert.equal(loadStepPrompt(flow, flow.steps[3]).name, 'synthesize-ideas')
 })
 
 test('loadFlow accepts json flow files through configorama', async () => {

@@ -1,0 +1,69 @@
+id: ideas
+title: Ideas
+description: Generate, cross-score, react to, and synthesize competing project improvement ideas.
+
+defaults:
+  transport: auto
+  notify: false
+  agents:
+    - claude
+    - gemini
+    - codex
+
+steps:
+  - id: ideate
+    title: Generate Ideas
+    prompt: prompts/ideate.md
+    action: issue
+    submit: new-run
+    agents:
+      - claude
+      - gemini
+      - codex
+    waitFor: agent-results
+
+  - id: cross-score
+    title: Cross Score Ideas
+    prompt: prompts/cross-score.md
+    action: comment
+    submit: follow-up
+    agents:
+      - claude
+      - gemini
+      - codex
+    input:
+      - step: ideate
+        results: all
+    waitFor: agent-results
+
+  - id: react
+    title: React To Scores
+    prompt: prompts/react.md
+    action: comment
+    submit: follow-up
+    agents:
+      - claude
+      - gemini
+      - codex
+    input:
+      - step: ideate
+        results: all
+      - step: cross-score
+        results: all
+    waitFor: agent-results
+
+  - id: synthesize
+    title: Synthesize Ideas
+    prompt: prompts/synthesize-ideas.md
+    action: issue
+    submit: new-run
+    agents:
+      - codex
+    input:
+      - step: ideate
+        results: all
+      - step: cross-score
+        results: all
+      - step: react
+        results: all
+    waitFor: agent-results

@@ -65,15 +65,17 @@ test('formatRepositorySnapshot can include the pinned remote source', () => {
   assert.match(snapshot, /Pinned source: `origin\/master`/)
 })
 
-test('resolveRemoteBranchSha uses upstream branch when available', () => {
+test('resolveRemoteBranchSha uses upstream branch for the current branch', () => {
   const calls = []
   const result = resolveRemoteBranchSha({
     repoRoot: '/tmp/repo',
-    branch: 'feature/test',
     run(command, args, options) {
       calls.push({ command, args, options })
       if (args[0] === 'rev-parse' && args.includes('--show-toplevel')) {
         return { status: 0, stdout: '/tmp/repo', stderr: '', detail: '/tmp/repo' }
+      }
+      if (args[0] === 'branch' && args.includes('--show-current')) {
+        return { status: 0, stdout: 'feature/test', stderr: '', detail: 'feature/test' }
       }
       if (args[0] === 'rev-parse' && args.includes('@{u}')) {
         return { status: 0, stdout: 'upstream/feature/test', stderr: '', detail: 'upstream/feature/test' }
@@ -97,6 +99,33 @@ test('resolveRemoteBranchSha uses upstream branch when available', () => {
     ref: 'upstream/feature/test',
   })
   assert.deepEqual(calls.at(-1).args, ['ls-remote', '--heads', 'upstream', 'feature/test'])
+})
+
+test('resolveRemoteBranchSha uses origin for an explicit branch', () => {
+  const calls = []
+  const result = resolveRemoteBranchSha({
+    repoRoot: '/tmp/repo',
+    branch: 'feature/test',
+    run(command, args) {
+      calls.push({ command, args })
+      if (args[0] === 'rev-parse' && args.includes('--show-toplevel')) {
+        return { status: 0, stdout: '/tmp/repo', stderr: '', detail: '/tmp/repo' }
+      }
+      if (args[0] === 'ls-remote') {
+        return {
+          status: 0,
+          stdout: 'abcdef0123456789abcdef0123456789abcdef01\trefs/heads/feature/test',
+          stderr: '',
+          detail: '',
+        }
+      }
+      throw new Error(`unexpected command ${command} ${args.join(' ')}`)
+    },
+  })
+
+  assert.equal(result.sha, 'abcdef0123456789abcdef0123456789abcdef01')
+  assert.equal(result.ref, 'origin/feature/test')
+  assert.deepEqual(calls.at(-1).args, ['ls-remote', '--heads', 'origin', 'feature/test'])
 })
 
 test('formatMergeStateLedger renders a markdown table for open prs', () => {

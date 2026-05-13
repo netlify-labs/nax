@@ -112,10 +112,48 @@ function readContext(options) {
   return joinContext(readAutoContext(options), readManualContext(options))
 }
 
+function isPullRequestSelector(value) {
+  return /^#?\d+$/.test(String(value || '').trim())
+}
+
+function resolvePullRequestBranch({ selector, repo, projectRoot }) {
+  const number = String(selector).trim().replace(/^#/, '')
+  const result = spawnSync(
+    'gh',
+    ['pr', 'view', number, '--repo', repo, '--json', 'headRefName', '--jq', '.headRefName'],
+    { cwd: projectRoot, encoding: 'utf8' },
+  )
+  const branch = (result.stdout || '').trim()
+  if (result.status !== 0 || !branch) {
+    const detail = (result.stderr || result.stdout || '').trim()
+    throw new Error(`Could not resolve PR #${number} branch${detail ? `: ${detail}` : ''}`)
+  }
+  return branch
+}
+
+function resolveWorkflowBranch({ options, projectRoot }) {
+  const requested = String(options.branch || '').trim()
+  if (!requested) {
+    const branch = currentGitBranch(projectRoot)
+    if (!branch) throw new Error('Could not resolve the current git branch. Pass --branch <name> explicitly.')
+    return { branch, source: 'current-branch' }
+  }
+
+  if (isPullRequestSelector(requested)) {
+    const repo = resolveRepo(options.repo)
+    return {
+      branch: resolvePullRequestBranch({ selector: requested, repo, projectRoot }),
+      source: `pr-${requested.replace(/^#/, '')}`,
+    }
+  }
+
+  return { branch: requested, source: 'explicit-branch' }
+}
+
 function remotePinnedOptions({ options, projectRoot, transport }) {
   if (options.autoContext === false || options.sha || options.pinnedSha) return options
   if (transport !== 'local' && transport !== 'github') return options
-  const branch = currentGitBranch(projectRoot)
+  const branch = options.branch || currentGitBranch(projectRoot)
   const pinned = resolveRemoteBranchSha({ repoRoot: projectRoot, branch })
   return {
     ...options,
@@ -153,6 +191,53 @@ function contextForRunState(runState, options) {
     }
   }
   return joinContext(readAutoContext(options), readManualContext(options))
+}
+
+function readRemoteInvisibleGitState(projectRoot) {
+  const result = spawnSync('git', ['status', '--short', '--branch'], {
+    cwd: projectRoot,
+    encoding: 'utf8',
+  })
+  if (result.status !== 0) return { dirty: false, lines: [] }
+
+  const lines = (result.stdout || '')
+    .split('\n')
+    .map((line) => line.trimEnd())
+    .filter(Boolean)
+  const branchLine = lines.find((line) => line.startsWith('##')) || ''
+  const fileLines = lines.filter((line) => !line.startsWith('##'))
+  const hasUnpushedCommits = /\[(?:ahead|gone)\b/.test(branchLine)
+  const displayLines = [
+    ...(hasUnpushedCommits ? [branchLine] : []),
+    ...fileLines,
+  ]
+
+  return {
+    dirty: hasUnpushedCommits || fileLines.length > 0,
+    lines: displayLines,
+  }
+}
+
+async function confirmRemoteRunnerCanMissLocalChanges({ projectRoot, branch, options }) {
+  if (!process.stdin.isTTY || options.yes || options.dryRun) return
+
+  const state = readRemoteInvisibleGitState(projectRoot)
+  if (!state.dirty) return
+
+  const clack = require('@clack/prompts')
+  console.log('')
+  console.log('Local git state not visible to remote Netlify agent runners:')
+  for (const line of state.lines) {
+    console.log(`  ${line}`)
+  }
+  const confirmed = await clack.confirm({
+    message: `You have uncommitted or unpushed changes on '${branch}' branch that remote Netlify agent runners will not know about. Do you want to continue?`,
+    initialValue: false,
+  })
+  if (clack.isCancel(confirmed) || !confirmed) {
+    console.log('Cancelled')
+    process.exit(0)
+  }
 }
 
 function shouldEmbedAllReplies(promptName) {
@@ -924,10 +1009,11 @@ function runnableSteps(flow, options) {
   return findStepRange(flow, options).filter((step) => normalizeArray(step.agents).length > 0)
 }
 
-function printFlowPlan({ flow, steps, transport, context }) {
+function printFlowPlan({ flow, steps, transport, branch, context }) {
   console.log('')
   console.log(`Flow: ${flow.title}`)
   console.log(`Run location: ${transport === 'local' ? 'Locally on this machine' : 'In GitHub Actions'}`)
+  console.log(`Branch: ${branch}`)
   console.log('Steps:')
   for (const step of steps) {
     console.log(`- ${step.title}: ${step.agents.map(titleCase).join(', ')}`)
@@ -935,7 +1021,7 @@ function printFlowPlan({ flow, steps, transport, context }) {
   console.log(`Additional context: ${context && context.trim() ? 'yes' : 'no'}`)
 }
 
-async function prepareInteractiveFlowRun({ flow, options, transport }) {
+async function prepareInteractiveFlowRun({ flow, options, transport, projectRoot }) {
   if (!process.stdin.isTTY || options.yes) {
     const selected = parseCsv(options.models)
     const configuredFlow = selected.length > 0 ? withSelectedAgents(flow, selected) : flow
@@ -990,7 +1076,14 @@ async function prepareInteractiveFlowRun({ flow, options, transport }) {
     flow: configuredFlow,
     steps,
     transport,
+    branch: configuredOptions.branch,
     context: manualContext,
+  })
+
+  await confirmRemoteRunnerCanMissLocalChanges({
+    projectRoot,
+    branch: configuredOptions.branch,
+    options: configuredOptions,
   })
 
   const confirmed = await clack.confirm({
@@ -1325,7 +1418,7 @@ async function completeLocalStep({ stepState, step, options, projectRoot, netlif
 async function executeLocalFlow({ flow, steps, options, runState, projectRoot, completedStepStates = new Map() }) {
   const date = options.date || getLocalDate()
   const baseContext = contextForRunState(runState, options)
-  const branch = currentGitBranch(projectRoot)
+  const branch = options.branch || currentGitBranch(projectRoot)
   const netlify = buildNetlifyEnv({ projectRoot })
 
   for (const step of steps) {
@@ -1506,7 +1599,14 @@ async function handleRun(flowId, options) {
     )
   }
 
-  const prepared = await prepareInteractiveFlowRun({ flow, options: flowOptions, transport })
+  const resolvedBranch = resolveWorkflowBranch({ options: flowOptions, projectRoot })
+  const branchOptions = {
+    ...flowOptions,
+    branch: resolvedBranch.branch,
+    branchSource: resolvedBranch.source,
+  }
+
+  const prepared = await prepareInteractiveFlowRun({ flow, options: branchOptions, transport, projectRoot })
   const configuredFlow = prepared.flow
   const configuredOptions = prepared.options
   const steps = prepared.steps
@@ -1522,10 +1622,13 @@ async function handleRun(flowId, options) {
     },
   })
   runState.context = runContext
+  runState.branch = configuredOptions.branch
+  runState.branchSource = configuredOptions.branchSource
   saveRunState(runState)
   console.log(`Run ${runState.runId}`)
   console.log(`Flow: ${configuredFlow.title}`)
   console.log(`Transport: ${transport}`)
+  console.log(`Branch: ${configuredOptions.branch}`)
   console.log(`State: ${path.join(runState.dir, 'run.json')}`)
 
   if (transport === 'local') {
@@ -1613,6 +1716,7 @@ function buildProgram() {
     .description('Run multi step Netlify agent workflows using the worlds leading AI models')
     .argument('[workflow]', 'Workflow to run, e.g. review-cycle')
     .option('--repo <owner/name>', 'GitHub repo; defaults to gh repo view')
+    .option('--branch <branch-or-pr>', 'Git branch or PR number to run in Netlify agent runners')
     .option('--where <place>', 'Where to run: auto, github-actions, local-machine', 'auto')
     .option('--dry', 'Preview the workflow without creating issues/comments')
     .addOption(new Option('--dry-run', 'Hidden compatibility alias for --dry').hideHelp())
@@ -1647,9 +1751,10 @@ function buildProgram() {
     .option('--where <place>', 'Where to run: auto, github-actions, local-machine', 'auto')
     .option('--project-root <path>', 'Project root for flow execution')
     .option('--repo <owner/name>', 'GitHub repo; defaults to gh repo view')
+    .option('--branch <branch-or-pr>', 'Git branch or PR number to run in Netlify agent runners')
     .option('--context <text>', 'Additional context appended to each prompt')
     .option('--context-file <path>', 'Read additional context from a file')
-    .option('--sha <rev>', 'Pinned git revision injected into the review context (default: HEAD)')
+    .option('--sha <rev>', 'Override the pinned git revision injected into the review context')
     .option('--pr-limit <count>', 'Maximum number of open PRs to include in the merge-state ledger', '10')
     .option('--label <list>', 'Comma-separated labels to add')
     .option('--labels <list>', 'Alias for --label')
@@ -1679,7 +1784,7 @@ function buildProgram() {
     .option('--from-issues <list>', 'Comma-separated source issue numbers; their latest agent reply is fetched and embedded as collapsible details')
     .option('--from-issue <list>', 'Alias for --from-issues')
     .option('--from-issues-heading <text>', 'Heading used for the embedded round-results section')
-    .option('--sha <rev>', 'Pinned git revision injected into the review context (default: HEAD)')
+    .option('--sha <rev>', 'Override the pinned git revision injected into the review context')
     .option('--repo-root <path>', 'Repository root used to compute the pinned SHA and working tree snapshot')
     .option('--pr-limit <count>', 'Maximum number of open PRs to include in the merge-state ledger', '10')
     .option('--label <list>', 'Comma-separated labels to add')
@@ -1706,7 +1811,7 @@ function buildProgram() {
     .option('--from-issues <list>', 'Comma-separated source issue numbers; their latest agent reply is fetched and embedded as collapsible details (defaults to --issues for cross-review)')
     .option('--from-issue <list>', 'Alias for --from-issues')
     .option('--from-issues-heading <text>', 'Heading used for the embedded round-results section')
-    .option('--sha <rev>', 'Pinned git revision injected into the review context (default: HEAD)')
+    .option('--sha <rev>', 'Override the pinned git revision injected into the review context')
     .option('--repo-root <path>', 'Repository root used to compute the pinned SHA and working tree snapshot')
     .option('--pr-limit <count>', 'Maximum number of open PRs to include in the merge-state ledger', '10')
     .option('--runner <mention>', 'Agent runner mention (default: @netlify)')

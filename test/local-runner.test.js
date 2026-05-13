@@ -4,6 +4,7 @@ const assert = require('node:assert/strict')
 const {
   createAgentRun,
   createAgentSession,
+  formatCommandForError,
   latestSessionFromList,
   normalizeCompletedRun,
   waitForLocalAgentRuns,
@@ -14,6 +15,17 @@ test('latestSessionFromList accepts array and sessions wrapper responses', () =>
   assert.deepEqual(latestSessionFromList([{ id: 's1' }, { id: 's2' }]), { id: 's2' })
   assert.deepEqual(latestSessionFromList({ sessions: [{ id: 's3' }] }), { id: 's3' })
   assert.deepEqual(latestSessionFromList({}), {})
+})
+
+test('formatCommandForError redacts prompt and API payload values', () => {
+  assert.equal(
+    formatCommandForError('netlify', ['agents:create', '--prompt', 'secret prompt', '--agent', 'codex']),
+    'netlify agents:create --prompt <redacted> --agent codex',
+  )
+  assert.equal(
+    formatCommandForError('netlify', ['api', 'createAgentRunnerSession', '--data', '{"prompt":"secret"}']),
+    'netlify api createAgentRunnerSession --data <redacted>',
+  )
 })
 
 test('createAgentRun invokes netlify agents:create with prompt, agent, project, and branch', () => {
@@ -45,6 +57,7 @@ test('createAgentRun invokes netlify agents:create with prompt, agent, project, 
     '--prompt',
     'Review this repo',
   ])
+  assert.equal(calls[0].options.timeout, 120000)
 })
 
 test('createAgentSession invokes Netlify follow-up session API', () => {
@@ -65,6 +78,7 @@ test('createAgentSession invokes Netlify follow-up session API', () => {
   assert.equal(created.state, 'running')
   assert.equal(calls[0].command, 'netlify')
   assert.deepEqual(calls[0].args.slice(0, 3), ['api', 'createAgentRunnerSession', '--data'])
+  assert.equal(calls[0].options.timeout, 120000)
   assert.deepEqual(JSON.parse(calls[0].args[3]), {
     agent_runner_id: 'runner-1',
     body: {

@@ -8,6 +8,20 @@ instruction: please identify and recommend the most logical next development tas
 
 After completing the task above, **Your next task: Identify and recommend the most logical next development task based on the current project state and goals.**
 
+## Understand 
+
+Thoroughly explore this codebase. I need to understand:
+
+1. Overall architecture and module structure
+2. How data flows through the system (input → processing → output)
+3. Key data structures (the 3-5 types everything revolves around)
+4. The integration points (external APIs, databases, file I/O)
+5. Configuration system (env vars, config files, CLI flags)
+6. Test infrastructure
+
+Focus on src/ directory structure and main modules. Map out how the pieces fit together.
+Be very thorough - I need a complete mental model of how this codebase works.
+
 ## File Existence Check
 
 Check for key documentation files first:
@@ -40,17 +54,5 @@ Your response should clearly state:
 1. **Recommended Next Task:** [Describe the task]
 2. **Reasoning:** [Explain why this task is recommended]
 3. **Alternative Tasks:** [Briefly list 1-2 other potential tasks considered]
-
-## Repository State
-
-The **Additional Context** section contains a pinned commit SHA and repository snapshot.
-
-Before doing substantial analysis, verify `git rev-parse HEAD`. If the checked-out SHA does not exactly match the pinned SHA, evaluate repository drift:
-
-- Run `git merge-base --is-ancestor <pinned_sha> HEAD`.
-- If the pinned SHA is not an ancestor of `HEAD`, stop and return a repository-state mismatch report.
-- If it is an ancestor, run `git rev-list --count <pinned_sha>..HEAD`.
-- Continue only when the runner is 1-5 commits ahead and `git diff --shortstat <pinned_sha>..HEAD` is not obviously huge.
-- Stop when drift is more than 5 commits or the diff is large enough that the recommendation would be unreliable.
 
 **REMEMBER: Your goal is to provide a well-reasoned recommendation for the single most impactful next development task.**

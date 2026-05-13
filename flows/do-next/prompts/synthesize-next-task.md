@@ -17,18 +17,6 @@ The **Prior Agent Results** section contains first-round recommendations from Cl
 3. Choose the single most logical and impactful next task.
 4. Keep the recommendation concrete enough that a developer can start immediately.
 
-## Repository State
-
-The **Additional Context** section contains a pinned commit SHA and repository snapshot.
-
-Before doing substantial synthesis, verify `git rev-parse HEAD`. If the checked-out SHA does not exactly match the pinned SHA, evaluate repository drift:
-
-- Run `git merge-base --is-ancestor <pinned_sha> HEAD`.
-- If the pinned SHA is not an ancestor of `HEAD`, stop and return a repository-state mismatch report.
-- If it is an ancestor, run `git rev-list --count <pinned_sha>..HEAD`.
-- Continue only when the runner is 1-5 commits ahead and `git diff --shortstat <pinned_sha>..HEAD` is not obviously huge.
-- Stop when drift is more than 5 commits or the diff is large enough that synthesis would be unreliable.
-
 ## Output
 
 Write a concise report with:

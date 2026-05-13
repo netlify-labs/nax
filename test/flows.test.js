@@ -7,9 +7,9 @@ const path = require('path')
 const { listFlows, loadFlow, loadStepPrompt } = require('../lib/flows')
 
 test('loadFlow reads flow.yml via configorama and normalizes steps', async () => {
-  const flow = await loadFlow('review-cycle')
-  assert.equal(flow.id, 'review-cycle')
-  assert.equal(flow.title, 'Review Cycle')
+  const flow = await loadFlow('review')
+  assert.equal(flow.id, 'review')
+  assert.equal(flow.title, 'Review')
   assert.equal(flow.defaults.transport, 'auto')
   assert.deepEqual(flow.defaults.agents, ['claude', 'gemini', 'codex'])
   assert.deepEqual(flow.steps.map((step) => step.id), ['review', 'cross-review', 'synthesize'])
@@ -20,14 +20,26 @@ test('loadFlow reads flow.yml via configorama and normalizes steps', async () =>
 
 test('listFlows discovers flow directories', async () => {
   const flows = await listFlows()
-  assert.ok(flows.some((flow) => flow.id === 'review-cycle'))
+  assert.ok(flows.some((flow) => flow.id === 'review'))
+  assert.ok(flows.some((flow) => flow.id === 'do-next'))
 })
 
 test('loadStepPrompt resolves prompts relative to the flow directory', async () => {
-  const flow = await loadFlow('review-cycle')
+  const flow = await loadFlow('review')
   const prompt = loadStepPrompt(flow, flow.steps[1])
   assert.equal(prompt.name, 'cross-review')
   assert.match(prompt.body, /Cross Reference Review/)
+})
+
+test('loadFlow reads do-next workflow', async () => {
+  const flow = await loadFlow('do-next')
+  assert.equal(flow.id, 'do-next')
+  assert.equal(flow.title, 'Do Next')
+  assert.deepEqual(flow.steps.map((step) => step.id), ['propose', 'synthesize'])
+  assert.deepEqual(flow.steps[0].agents, ['claude', 'gemini', 'codex'])
+  assert.deepEqual(flow.steps[1].agents, ['codex'])
+  assert.equal(loadStepPrompt(flow, flow.steps[0]).name, 'propose-next-task')
+  assert.equal(loadStepPrompt(flow, flow.steps[1]).name, 'synthesize-next-task')
 })
 
 test('loadFlow accepts json flow files through configorama', async () => {

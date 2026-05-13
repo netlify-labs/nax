@@ -1,0 +1,35 @@
+id: do-next
+title: Do Next
+description: Ask multiple agents to recommend the next development task, then synthesize one ranked recommendation.
+
+defaults:
+  transport: auto
+  notify: false
+  agents:
+    - claude
+    - gemini
+    - codex
+
+steps:
+  - id: propose
+    title: Propose Next Task
+    prompt: prompts/propose-next-task.md
+    action: issue
+    submit: new-run
+    agents:
+      - claude
+      - gemini
+      - codex
+    waitFor: agent-results
+
+  - id: synthesize
+    title: Synthesize Next Task
+    prompt: prompts/synthesize-next-task.md
+    action: issue
+    submit: new-run
+    agents:
+      - codex
+    input:
+      - step: propose
+        results: all
+    waitFor: agent-results

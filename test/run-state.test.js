@@ -18,8 +18,8 @@ function runState(tmp, overrides = {}) {
   return {
     schemaVersion: 1,
     runId,
-    flowId: 'review-cycle',
-    flowTitle: 'Review Cycle',
+    flowId: 'review',
+    flowTitle: 'Review',
     transport: 'local',
     projectRoot: tmp,
     createdAt: overrides.createdAt || '2026-05-12T00:00:00.000Z',
@@ -80,7 +80,7 @@ test('findLatestUnfinishedLocalRun returns newest unfinished local run', () => {
   }))
 
   assert.deepEqual(listRunStates(tmp).map((state) => state.runId), ['new', 'old'])
-  assert.equal(findLatestUnfinishedLocalRun(tmp, { flowId: 'review-cycle' }).runId, 'new')
+  assert.equal(findLatestUnfinishedLocalRun(tmp, { flowId: 'review' }).runId, 'new')
 })
 
 test('dismissRunState marks unfinished runs ignored by resume detection', () => {
@@ -98,5 +98,5 @@ test('dismissRunState marks unfinished runs ignored by resume detection', () => 
   assert.equal(dismissed.dismissedAt, '2026-05-12T02:00:00.000Z')
   assert.equal(dismissed.dismissReason, 'user-declined-resume')
   assert.equal(isUnfinishedLocalRun(dismissed), false)
-  assert.equal(findLatestUnfinishedLocalRun(tmp, { flowId: 'review-cycle' }), null)
+  assert.equal(findLatestUnfinishedLocalRun(tmp, { flowId: 'review' }), null)
 })

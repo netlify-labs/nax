@@ -1570,7 +1570,7 @@ async function resumeLocalFlow({ flow, runState, projectRoot }) {
 
 async function handleRun(flowId, options) {
   const projectRoot = path.resolve(options.projectRoot || process.cwd())
-  const resolvedFlowId = flowId || (process.stdin.isTTY ? await pickFlowInteractively() : 'review-cycle')
+  const resolvedFlowId = flowId || (process.stdin.isTTY ? await pickFlowInteractively() : 'review')
   const flow = await loadFlow(resolvedFlowId)
 
   const resumable = findLatestUnfinishedLocalRun(projectRoot, { flowId: flow.id })
@@ -1728,7 +1728,7 @@ function buildProgram() {
   program
     .name('nax')
     .description('Run multi step Netlify agent workflows using the worlds leading AI models')
-    .argument('[workflow]', 'Workflow to run, e.g. review-cycle')
+    .argument('[workflow]', 'Workflow to run, e.g. review')
     .option('--repo <owner/name>', 'GitHub repo; defaults to gh repo view')
     .option('--branch <branch-or-pr>', 'Git branch or PR number to run in Netlify agent runners')
     .option('--where <place>', 'Where to run: auto, github-actions, local-machine', 'auto')

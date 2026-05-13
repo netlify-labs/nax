@@ -1,5 +1,5 @@
-id: review-cycle
-title: Review Cycle
+id: review
+title: Review
 description: Review, cross-review, and synthesize findings with multiple Netlify agents.
 
 defaults:

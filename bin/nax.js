@@ -25,7 +25,7 @@ const {
 const { formatGroupHint, listRecentIssueGroups } = require('../lib/issue-groups')
 const { multiline } = require('../lib/multiline')
 const { WAIT_FOR_AGENT_RESULTS, listFlows, loadFlow, loadStepPrompt } = require('../lib/flows')
-const { createRunState, findLatestUnfinishedLocalRun, saveRunState } = require('../lib/run-state')
+const { createRunState, dismissRunState, findLatestUnfinishedLocalRun, saveRunState } = require('../lib/run-state')
 const { detectTransports, formatTransportSetupHelp, resolveTransport } = require('../lib/transports')
 const { enableGitHubActionsSetup, initSite } = require('../lib/init')
 const {
@@ -1585,6 +1585,8 @@ async function handleRun(flowId, options) {
       await resumeLocalFlow({ flow, runState: resumable, projectRoot })
       return
     }
+    dismissRunState(resumable)
+    console.log(`Dismissed unfinished run ${resumable.runId}`)
   }
 
   const flowOptions = await collectFlowOptions(flow, options)

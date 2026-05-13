@@ -5,6 +5,7 @@ const os = require('os')
 const path = require('path')
 
 const {
+  dismissRunState,
   findLatestUnfinishedLocalRun,
   hasRepairableRuns,
   isUnfinishedLocalRun,
@@ -80,4 +81,22 @@ test('findLatestUnfinishedLocalRun returns newest unfinished local run', () => {
 
   assert.deepEqual(listRunStates(tmp).map((state) => state.runId), ['new', 'old'])
   assert.equal(findLatestUnfinishedLocalRun(tmp, { flowId: 'review-cycle' }).runId, 'new')
+})
+
+test('dismissRunState marks unfinished runs ignored by resume detection', () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'nax-run-state-dismiss-test-'))
+  const state = saveRunState(runState(tmp, {
+    runId: 'dismiss-me',
+    steps: [{ id: 'review', status: 'running', runs: [{ runnerId: 'runner-1', status: 'submitted' }] }],
+  }))
+
+  const dismissed = dismissRunState(state, {
+    now: new Date('2026-05-12T02:00:00.000Z'),
+  })
+
+  assert.equal(dismissed.status, 'dismissed')
+  assert.equal(dismissed.dismissedAt, '2026-05-12T02:00:00.000Z')
+  assert.equal(dismissed.dismissReason, 'user-declined-resume')
+  assert.equal(isUnfinishedLocalRun(dismissed), false)
+  assert.equal(findLatestUnfinishedLocalRun(tmp, { flowId: 'review-cycle' }), null)
 })

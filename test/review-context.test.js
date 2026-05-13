@@ -36,6 +36,8 @@ test('formatReviewContract includes read-only constraints and pinned sha', () =>
   assert.match(contract, /Mode: `review-only`/)
   assert.match(contract, /Pinned commit SHA: `abc123`/)
   assert.match(contract, /Do not edit files/)
+  assert.match(contract, /fast-forward descendant/)
+  assert.match(contract, /more than 5 commits/)
 })
 
 test('formatRepositorySnapshot renders core repo facts', () => {

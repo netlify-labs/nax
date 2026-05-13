@@ -25,7 +25,12 @@ Your task is to produce the clearest possible synthesis of what the models colle
 4. Before concluding, verify the working tree is clean with `git status --short`.
 5. If the working tree is not clean at the end of synthesis, stop and return a repository-state violation instead of a normal synthesis report.
 6. If you inspect repository code directly, verify the checked-out `git rev-parse HEAD` first.
-7. If the checked-out SHA does **not** exactly match the pinned SHA from the Additional Context, stop and return a repository-state mismatch report instead of synthesizing against a different tree.
+7. If the checked-out SHA does **not** exactly match the pinned SHA from the Additional Context, evaluate repository drift before deciding whether to stop:
+   - Run `git merge-base --is-ancestor <pinned_sha> HEAD`.
+   - If the pinned SHA is not an ancestor of `HEAD`, stop and return a repository-state mismatch report.
+   - If it is an ancestor, run `git rev-list --count <pinned_sha>..HEAD`.
+   - Continue only when the runner is 1-5 commits ahead and `git diff --shortstat <pinned_sha>..HEAD` is not obviously huge.
+   - Stop when drift is more than 5 commits or the diff is large enough that synthesis against the pinned review context would be unreliable.
 8. Use the merge-state ledger to separate merged reality from PR-only or branch-only claims.
 
 ## Goals
@@ -75,8 +80,10 @@ Write a report with these sections:
 - `pinned_sha`
 - `checked_out_sha`
 - `state_match`: `yes` or `no`
+- `drift_commits`: number of commits from pinned SHA to checked-out SHA, or `0`
+- `drift_acceptable`: `yes` or `no`
 - `git_status_clean`: `yes` or `no`
-- If `state_match` is `no`, stop here.
+- If `state_match` is `no` and `drift_acceptable` is `no`, stop here.
 - If `git_status_clean` is `no`, stop here.
 
 ## 2. Structured Consensus

@@ -20,7 +20,12 @@ This run is **review-only**.
 8. If the working tree is not clean at the end of the review, stop and return a repository-state violation instead of a normal review.
 9. The **Additional Context** includes a pinned commit SHA and repository snapshot.
 10. Before doing substantial analysis, verify `git rev-parse HEAD`.
-11. If the checked-out SHA does **not** exactly match the pinned SHA, stop and return a repository-state mismatch report instead of reviewing a different tree.
+11. If the checked-out SHA does **not** exactly match the pinned SHA, evaluate repository drift before deciding whether to stop:
+    - Run `git merge-base --is-ancestor <pinned_sha> HEAD`.
+    - If the pinned SHA is not an ancestor of `HEAD`, stop and return a repository-state mismatch report.
+    - If it is an ancestor, run `git rev-list --count <pinned_sha>..HEAD`.
+    - Continue only when the runner is 1-5 commits ahead and `git diff --shortstat <pinned_sha>..HEAD` is not obviously huge.
+    - Stop when drift is more than 5 commits or the diff is large enough that findings against the pinned context would be unreliable.
 
 ## Cross-Cutting Output Requirements
 
@@ -28,8 +33,10 @@ This run is **review-only**.
   - `pinned_sha`
   - `checked_out_sha`
   - `state_match`: `yes` or `no`
+  - `drift_commits`: number of commits from pinned SHA to checked-out SHA, or `0`
+  - `drift_acceptable`: `yes` or `no`
   - `git_status_clean`: `yes` or `no`
-  - If `state_match` is `no`, stop there.
+  - If `state_match` is `no` and `drift_acceptable` is `no`, stop there.
   - If `git_status_clean` is `no`, stop there.
 - Then emit `## 2. Structured Findings` as a fenced JSON block.
 - After the JSON block, keep the normal prose sections from Explore, Review, and Improve.

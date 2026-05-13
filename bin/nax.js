@@ -231,7 +231,9 @@ async function confirmRemoteRunnerCanMissLocalChanges({ projectRoot, branch, opt
     console.log(`  ${line}`)
   }
   const confirmed = await clack.confirm({
-    message: `You have uncommitted or unpushed changes on '${branch}' branch that remote Netlify agent runners will not know about. Do you want to continue?`,
+    message: `You have uncommitted or unpushed changes on '${branch}' branch that remote Netlify agent runners will not know about.`,
+    active: 'Yes, continue anyway',
+    inactive: 'No, cancel',
     initialValue: false,
   })
   if (clack.isCancel(confirmed) || !confirmed) {

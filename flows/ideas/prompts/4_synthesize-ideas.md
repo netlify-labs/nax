@@ -10,7 +10,7 @@ You are the final synthesis pass for a multi-agent idea duel. The **Prior Agent 
 
 1. First-round ideas.
 2. Cross-scores.
-3. Reactions, concessions, defenses, and blind spot ideas.
+3. Reactions, concessions, rebuttals, steelman arguments, attacks, and blind spot ideas.
 
 This is **analysis-only**. Do not edit files, do not stage files, do not commit, and do not open or update PRs.
 
@@ -22,6 +22,9 @@ Build a ranked synthesis that uses disagreement as signal. Do not simply average
 - High average score with high disagreement: contested but potentially valuable.
 - Low scores from every reviewer: likely kill.
 - Post-reveal concessions: high-signal evidence that an idea improved or collapsed under scrutiny.
+- Rebuttals: if a defense is concrete and technically specific, preserve the idea as contested instead of killing it too quickly.
+- Steelman arguments: if an opponent can argue for an idea better than its originator, boost confidence.
+- Attacks: if multiple agents identify the same hidden cost, discount the idea.
 - Blind spot ideas: ideas that emerged from the debate rather than the first round.
 
 Use these categories:
@@ -31,6 +34,26 @@ Use these categories:
 - `SPLIT`: one model loves it and another has substantial concerns.
 - `CONTESTED`: useful disagreement; needs human decision.
 - `CONSENSUS KILL`: broadly scored below 400 or rejected after reveal.
+
+## Synthesis Process
+
+1. Build a score matrix for every idea: origin, self-rank if available, reviewer scores, average, score gap, verdict, and post-reveal adjustment.
+2. Interpret score gaps:
+   - `<100`: strong agreement
+   - `100-250`: mild disagreement
+   - `250-400`: significant disagreement
+   - `>400`: fundamental disagreement
+3. Check for score inflation and deflation. Do not blindly trust a model that gave every idea similar scores.
+4. Identify independent convergence where multiple agents proposed essentially the same improvement.
+5. Integrate blind spot ideas, but mark them as not cross-scored unless reactions contain clear support.
+6. Account for known model tendencies without overfitting:
+   - Claude may under-rate bold ideas out of caution.
+   - Codex may over-rate implementation-heavy ideas.
+   - Gemini may over-emphasize breadth.
+7. Prefer ideas that are useful, pragmatic, and accretive over ideas that are only clever.
+8. Do not create task tracker items. If the project appears to use a task tracker, you may suggest optional task titles, but the recommendations must stand without that tooling.
+
+Use ultrathink.
 
 ## Output
 
@@ -45,6 +68,8 @@ Then write `## Structured Synthesis` as a fenced JSON block:
       "rank": 1,
       "idea_id_or_title": "CODEX-1",
       "verdict": "CONSENSUS WIN",
+      "average_score": 850,
+      "score_gap": 90,
       "why": "Why this survived",
       "first_steps": ["Concrete first step", "Concrete second step"],
       "risk": "Main implementation risk"
@@ -54,6 +79,8 @@ Then write `## Structured Synthesis` as a fenced JSON block:
     {
       "idea_id_or_title": "GEMINI-2",
       "why_contested": "The disagreement signal",
+      "strongest_case_for": "Best argument in favor",
+      "strongest_case_against": "Best argument against",
       "decision_needed": "What a human should decide"
     }
   ],
@@ -71,15 +98,22 @@ Then write `## Structured Synthesis` as a fenced JSON block:
   ],
   "recommended_next_steps": [
     "Immediate concrete action"
+  ],
+  "optional_task_titles": [
+    "Task title only if the project uses a task tracker"
   ]
 }
 ```
 
 After the JSON, include:
 
-1. **Score Matrix:** compact table with each idea, origin, reviewer scores if available, average, disagreement gap, and verdict.
-2. **Top Recommendations:** ranked plan with implementation shape.
-3. **Rejected Ideas:** ideas that should not consume attention.
-4. **Meta-Analysis:** where the agents disagreed and what that says about the project.
+1. **Methodology:** agents, phases, and how many ideas were considered.
+2. **Score Matrix:** compact table with each idea, origin, reviewer scores if available, average, disagreement gap, and verdict.
+3. **Consensus Winners:** ranked winners with average scores and first steps.
+4. **Contested Ideas:** strongest argument on each side; leave these for human judgment.
+5. **Killed Ideas:** ideas that should not consume attention.
+6. **Blind Spot Ideas:** genuinely new ideas that emerged from the adversarial process.
+7. **Meta-Analysis:** where the agents disagreed, what model biases showed up, and what that says about the project.
+8. **Recommended Next Steps:** top 3-5 actions with implementation notes.
 
-Do not create Beads tasks. You may suggest Beads titles for the top winners if the project uses Beads.
+Do not create task tracker items. Optional task titles are fine only when the project already appears to use a task tracker.

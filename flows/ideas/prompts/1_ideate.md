@@ -42,7 +42,7 @@ Do not read randomly. Build a mental model from documentation, entry points, and
 
 Use code as the ground truth and docs as the measuring stick:
 
-1. Determine what the project claims to do from README, plans, docs, and task tracker context.
+1. Determine what the project claims to do from README, plans, docs, and task tracker context if that context is visible in this runner.
 2. Determine what is actually implemented and working from code, tests, config, and recent commits.
 3. Identify gaps between the vision and reality:
    - working end-to-end capabilities
@@ -50,20 +50,21 @@ Use code as the ground truth and docs as the measuring stick:
    - missing workflows
    - broken or risky assumptions
    - docs that overstate current behavior
-4. If a task tracker exists, determine whether open/in-progress tasks would close the gap. Explicitly call out goals not covered by any existing task.
+4. If a task tracker is visible in this runner, determine whether open/in-progress tasks would close the gap. Explicitly call out goals not covered by any existing task. If no tracker is visible, continue without it.
 5. Be brutally honest. Do not turn aspirational docs into evidence that the code works.
 
-### 3. Work Graph And Priority Protocol
+### 3. Optional Work Graph And Priority Protocol
 
-If `.beads/` exists and the tools are available:
+Most Agent Runner environments will not have the user's local task tracker. Treat task graph context as optional:
 
-1. Run `bv --robot-triage` or `bv --robot-next` to understand the current graph.
+1. If `.beads/` exists and `bv` is available, run `bv --robot-triage` or `bv --robot-next` to understand the current graph.
 2. Never run bare `bv`; it launches an interactive TUI.
-3. Use `br ready`, `br list`, or `br list --status=open` if useful.
+3. If `.beads/` exists and `br` is available, use `br ready`, `br list`, or `br list --status=open` if useful.
 4. Look for PageRank/betweenness bottlenecks, blockers, cycles, stale work, priority mismatches, and existing commitments that your ideas should respect.
-5. Do **not** create or modify beads in this ideation run. Only use the graph as context.
+5. If the task tracker is absent, inaccessible, or the commands fail, do not stop and do not treat that as a project problem. Record `task_tracker_available: no` and continue from code/docs.
+6. Do **not** create or modify task tracker items in this ideation run. Only use the graph as context when it is actually available.
 
-If Beads/BV is unavailable, state that clearly and continue.
+If task tracker context is unavailable, state that briefly and continue.
 
 ### 4. Multi-Lens Analysis Protocol
 
@@ -103,6 +104,8 @@ Generate 20-30 possible ideas privately, then winnow to your top 5. Favor ideas 
 
 Avoid generic cleanup unless it unlocks a concrete capability or removes a real source of pain.
 
+Use ultrathink.
+
 ## Output
 
 Start with `## Repository State`:
@@ -111,7 +114,7 @@ Start with `## Repository State`:
 - `checked_out_sha`
 - `state_match`: `yes`, `minor_drift`, or `no`
 - `git_status_clean`: `yes` or `no`
-- `beads_available`: `yes` or `no`
+- `task_tracker_available`: `yes` or `no`
 
 Then write `## Architecture Report` with:
 
@@ -127,7 +130,7 @@ Then write `## Reality Check` with:
 
 - what is working now
 - what is partial, stubbed, missing, or risky
-- whether existing task tracker work appears to cover the gaps
+- whether existing task tracker work appears to cover the gaps, if task tracker context was available
 - most important mismatch between project vision and current code
 
 Then write `## Idea Selection Rationale` explaining what signals drove your winnowing.

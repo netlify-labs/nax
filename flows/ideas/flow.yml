@@ -13,7 +13,7 @@ defaults:
 steps:
   - id: ideate
     title: Generate Ideas
-    prompt: prompts/ideate.md
+    prompt: prompts/1_ideate.md
     action: issue
     submit: new-run
     agents:
@@ -24,7 +24,7 @@ steps:
 
   - id: cross-score
     title: Cross Score Ideas
-    prompt: prompts/cross-score.md
+    prompt: prompts/2_cross-score.md
     action: comment
     submit: follow-up
     agents:
@@ -38,7 +38,7 @@ steps:
 
   - id: react
     title: React To Scores
-    prompt: prompts/react.md
+    prompt: prompts/3_react.md
     action: comment
     submit: follow-up
     agents:
@@ -54,7 +54,7 @@ steps:
 
   - id: synthesize
     title: Synthesize Ideas
-    prompt: prompts/synthesize-ideas.md
+    prompt: prompts/4_synthesize-ideas.md
     action: issue
     submit: new-run
     agents:

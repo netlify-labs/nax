@@ -1,7 +1,7 @@
 const test = require('node:test')
 const assert = require('node:assert/strict')
 
-const { buildIssueBody, buildIssueTitle, loadPrompt } = require('../lib/prompts')
+const { buildIssueBody, buildIssueTitle, listPromptNames, loadPrompt } = require('../lib/prompts')
 
 const fakePrompt = {
   name: 'summarize-consensus',
@@ -115,4 +115,10 @@ test('loadPrompt returns the summarize-consensus template intact', () => {
   const prompt = loadPrompt('summarize-consensus')
   assert.equal(prompt.name, 'summarize-consensus')
   assert.match(prompt.body, /Cross Reference Synthesis/)
+})
+
+test('loadPrompt resolves numbered prompt filenames with clean names', () => {
+  assert.ok(listPromptNames().includes('review'))
+  assert.equal(loadPrompt('review').name, 'review')
+  assert.match(loadPrompt('review').path, /1_review\.md$/)
 })

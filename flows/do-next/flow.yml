@@ -13,7 +13,7 @@ defaults:
 steps:
   - id: propose
     title: Propose Next Task
-    prompt: prompts/propose-next-task.md
+    prompt: prompts/1_propose-next-task.md
     action: issue
     submit: new-run
     agents:
@@ -24,7 +24,7 @@ steps:
 
   - id: synthesize
     title: Synthesize Next Task
-    prompt: prompts/synthesize-next-task.md
+    prompt: prompts/2_synthesize-next-task.md
     action: issue
     submit: new-run
     agents:

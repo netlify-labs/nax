@@ -13,7 +13,7 @@ defaults:
 steps:
   - id: review
     title: Review
-    prompt: prompts/review.md
+    prompt: prompts/1_review.md
     action: issue
     submit: new-run
     agents:
@@ -24,7 +24,7 @@ steps:
 
   - id: cross-review
     title: Cross Review
-    prompt: prompts/cross-review.md
+    prompt: prompts/2_cross-review.md
     action: comment
     submit: follow-up
     agents:
@@ -38,7 +38,7 @@ steps:
 
   - id: synthesize
     title: Summarize Consensus
-    prompt: prompts/summarize-consensus.md
+    prompt: prompts/3_summarize-consensus.md
     action: issue
     submit: new-run
     agents:

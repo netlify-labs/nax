@@ -3,12 +3,15 @@ const assert = require('node:assert/strict')
 
 const {
   createAgentRun,
+  createAgentRunAsync,
   createAgentSession,
+  createAgentSessionAsync,
   formatCommandForError,
   latestSessionFromList,
   normalizeCompletedRun,
   waitForLocalAgentRuns,
   showAgentRun,
+  submitLocalAgentRun,
 } = require('../lib/local-runner')
 
 test('latestSessionFromList accepts array and sessions wrapper responses', () => {
@@ -60,6 +63,26 @@ test('createAgentRun invokes netlify agents:create with prompt, agent, project, 
   assert.equal(calls[0].options.timeout, 120000)
 })
 
+test('createAgentRunAsync invokes netlify agents:create with async runner', async () => {
+  const calls = []
+  const created = await createAgentRunAsync({
+    projectRoot: '/tmp/project',
+    promptText: 'Review async',
+    agent: 'gemini',
+    branch: 'master',
+    siteId: 'site-123',
+    env: {},
+    async runCommand(command, args, options) {
+      calls.push({ command, args, options })
+      return { status: 0, stdout: JSON.stringify({ id: 'runner-async', state: 'running' }), stderr: '' }
+    },
+  })
+
+  assert.equal(created.runnerId, 'runner-async')
+  assert.equal(calls[0].command, 'netlify')
+  assert.equal(calls[0].options.timeout, 120000)
+})
+
 test('createAgentSession invokes Netlify follow-up session API', () => {
   const calls = []
   const created = createAgentSession({
@@ -86,6 +109,48 @@ test('createAgentSession invokes Netlify follow-up session API', () => {
       agent: 'claude',
     },
   })
+})
+
+test('createAgentSessionAsync invokes Netlify follow-up session API with async runner', async () => {
+  const calls = []
+  const created = await createAgentSessionAsync({
+    projectRoot: '/tmp/project',
+    runnerId: 'runner-1',
+    promptText: 'Cross review async',
+    agent: 'claude',
+    env: {},
+    async runCommand(command, args, options) {
+      calls.push({ command, args, options })
+      return { status: 0, stdout: JSON.stringify({ id: 'session-async', state: 'running' }), stderr: '' }
+    },
+  })
+
+  assert.equal(created.runnerId, 'runner-1')
+  assert.equal(created.state, 'running')
+  assert.equal(calls[0].options.timeout, 120000)
+})
+
+test('submitLocalAgentRun returns a submitted run with create metadata', async () => {
+  const submitted = await submitLocalAgentRun({
+    projectRoot: '/tmp/project',
+    branch: 'master',
+    siteId: 'site-123',
+    env: {},
+    run: {
+      agent: 'codex',
+      promptText: 'Review',
+      status: 'pending',
+      runnerId: '',
+      raw: { stepId: 'review' },
+    },
+    async runCommand() {
+      return { status: 0, stdout: JSON.stringify({ id: 'runner-1', state: 'running' }), stderr: '' }
+    },
+  })
+
+  assert.equal(submitted.status, 'submitted')
+  assert.equal(submitted.runnerId, 'runner-1')
+  assert.equal(submitted.raw.create.id, 'runner-1')
 })
 
 test('normalizeCompletedRun prefers latest session result and links', () => {

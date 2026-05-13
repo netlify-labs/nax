@@ -30,9 +30,8 @@ const { detectTransports, formatTransportSetupHelp, resolveTransport } = require
 const { enableGitHubActionsSetup, initSite } = require('../lib/init')
 const {
   buildNetlifyEnv,
-  createAgentRun,
-  createAgentSession,
   currentGitBranch,
+  submitLocalAgentRun,
   waitForLocalAgentRuns,
 } = require('../lib/local-runner')
 
@@ -1483,29 +1482,35 @@ async function executeLocalFlow({ flow, steps, options, runState, projectRoot, c
       continue
     }
 
-    for (const run of runs) {
-      const created = run.existingRunnerId
-        ? createAgentSession({
-            projectRoot,
-            runnerId: run.existingRunnerId,
-            promptText: run.promptText,
-            agent: run.agent,
-            env: netlify.env,
-          })
-        : createAgentRun({
-            projectRoot,
-            promptText: run.promptText,
-            agent: run.agent,
-            branch,
-            siteId: netlify.siteId,
-            env: netlify.env,
-          })
-      run.status = 'submitted'
-      run.runnerId = created.runnerId
-      run.raw[run.existingRunnerId ? 'session' : 'create'] = created.raw
-      console.log(`${titleCase(run.agent)} ${prompt.title}: ${created.runnerId}${run.existingRunnerId ? ' (follow-up)' : ''}`)
-      stepState.runs.push(run)
-      saveRunState(runState)
+    const submissions = await Promise.allSettled(runs.map((run) => (
+      submitLocalAgentRun({
+        run,
+        projectRoot,
+        branch,
+        siteId: netlify.siteId,
+        env: netlify.env,
+      })
+    )))
+    const failedSubmission = submissions.find((result) => result.status === 'rejected')
+    const submittedRuns = submissions.map((result, index) => {
+      if (result.status === 'fulfilled') return result.value
+      return {
+        ...runs[index],
+        status: 'failed',
+        resultText: result.reason?.message || String(result.reason || 'Submission failed'),
+        raw: {
+          ...runs[index].raw,
+          submissionError: result.reason?.message || String(result.reason || 'Submission failed'),
+        },
+      }
+    })
+    for (const run of submittedRuns.filter((candidate) => candidate.runnerId)) {
+      console.log(`${titleCase(run.agent)} ${prompt.title}: ${run.runnerId}${run.existingRunnerId ? ' (follow-up)' : ''}`)
+    }
+    stepState.runs = submittedRuns
+    saveRunState(runState)
+    if (failedSubmission) {
+      throw failedSubmission.reason
     }
 
     await completeLocalStep({ stepState, step, options, projectRoot, netlify })

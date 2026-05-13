@@ -18,24 +18,35 @@ This step combines the original reveal, rebuttal, steelman, and blind-spot phase
 
 For your own ideas:
 
-1. Identify criticism you accept.
-2. Identify criticism you reject and explain why.
-3. Identify any idea where both other agents raised the same concern; treat that as high-signal.
+1. Identify criticism you accept. These concessions are the highest-signal output of this entire process — a model acknowledging its own blind spot is rare and valuable. When applicable, frame your reaction as one of these patterns:
+   - **Graceful Concession:** "they made a fair point, I revise downward"
+   - **Strategic Retreat:** "the core idea has merit; the implementation path I proposed does not"
+   - **Genuine Surprise:** "I had not considered the interaction with X — that changes my analysis"
+2. Identify criticism you reject. Use **Counter-Escalation** when the criticism actually strengthens your case ("the complexity they identified is the complexity this feature manages for the user"). Avoid **Defensive Deflection** ("they misunderstood me") unless the misreading is genuine — if you cannot defend on substance, the score stands.
+3. Identify any idea where multiple other agents raised the same concern. Treat that as overdetermined evidence and update accordingly.
 4. Revise your ranking if the cross-scores exposed a real blind spot.
-5. Defend only the ideas that still deserve defense after seeing the critiques.
-6. Pick your 1-2 most underrated ideas and make the strongest concrete rebuttal for them.
+5. Pick the **two ideas of yours that another agent scored lowest but that you still believe in** — these are the hills you are going to die on. Write a forceful, technically specific rebuttal for each. Cite specific files, functions, or code paths in this repository. Vague conviction is worthless; concrete mechanism is everything.
 
 For other agents' ideas:
 
-1. Pick the strongest idea another agent proposed and steelman it: make the best possible case, stronger than the originator did.
-2. Pick the weakest idea another agent proposed and explain the hidden cost or failure mode the originator missed.
-3. Be intellectually honest: if steelmanning changes your mind, say so.
+1. **Steelman another agent's strongest idea.** This is counterintuitive but load-bearing. You are not being asked whether you agree — you are being asked to demonstrate that you understand the idea deeply enough to advocate for it better than its creator did. Your steelman must include all five components:
+   - **Why this idea is actually brilliant:** the non-obvious insight it captures
+   - **The strongest implementation path:** how to build it for maximum impact, more specific than the originator proposed
+   - **The second-order benefits:** positive knock-on effects the originator did not articulate
+   - **Pre-emptive defense:** the two most likely objections, and why each is wrong or manageable
+   - **Honest residual concerns:** any weaknesses that remain after steelmanning that you genuinely could not argue away
+2. **Attack another agent's weakest idea.** Identify the hidden cost, failure mode, or second-order risk the originator missed. Be specific — name the mechanism, not the feeling.
+3. **Be intellectually honest.** If steelmanning changes your mind about an idea, say so explicitly. That is the most valuable signal this phase produces.
 
 For the whole set:
 
 1. Identify ideas that are stronger after adversarial scrutiny.
 2. Identify ideas that looked good initially but should be killed.
-3. Add 3-5 **blind spot ideas** that no first-round agent captured but the debate revealed. These should not be simple variants of existing ideas.
+3. Add 3-5 **blind spot ideas** that no first-round agent captured but the debate revealed. The adversarial pressure has expanded your understanding beyond the original framing. Work through three explicit angles to find them:
+   - **Gap analysis:** look at every agent's idea list side by side. What category of improvement is completely absent from every list? What user need or technical concern did everyone overlook?
+   - **Synthesis insight:** is there an idea that only becomes visible when something from one agent's list combines with something from another's? An idea that no list contains but the intersection points toward?
+   - **Contrarian take:** what did every agent implicitly assume was fine or out of scope that actually deserves to be questioned?
+   These must be genuinely new framings, not variants of previously proposed ideas. For each, explain why no agent thought of it originally and why it matters now.
 
 Use ultrathink.
 
@@ -56,6 +67,7 @@ Write `## Structured Reactions` as a fenced JSON block:
     {
       "idea_id": "CODEX-2",
       "defense": "Why the idea still deserves to survive",
+      "code_evidence": "Specific file:line references that ground the defense",
       "what_critics_missed": "Specific context, second-order effect, or implementation detail",
       "revised_confidence": "high|medium|low"
     }
@@ -63,9 +75,11 @@ Write `## Structured Reactions` as a fenced JSON block:
   "steelman": [
     {
       "idea_id": "GEMINI-1",
-      "strongest_case": "The strongest possible argument for another agent's idea",
-      "best_implementation_path": "How to build it for maximum value",
-      "residual_concern": "Honest concern that remains"
+      "why_brilliant": "The non-obvious insight the idea captures",
+      "best_implementation_path": "How to build it for maximum value, more specific than the originator proposed",
+      "second_order_benefits": "Positive knock-on effects the originator did not articulate",
+      "preemptive_defense": "Two most likely objections and why each is wrong or manageable",
+      "residual_concern": "Honest weakness that remains after steelmanning"
     }
   ],
   "attacks": [

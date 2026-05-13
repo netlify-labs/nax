@@ -43,15 +43,23 @@ Use these categories:
    - `100-250`: mild disagreement
    - `250-400`: significant disagreement
    - `>400`: fundamental disagreement
-3. Check for score inflation and deflation. Do not blindly trust a model that gave every idea similar scores.
-4. Identify independent convergence where multiple agents proposed essentially the same improvement.
-5. Integrate blind spot ideas, but mark them as not cross-scored unless reactions contain clear support.
-6. Account for known model tendencies without overfitting:
+3. Treat disagreement as information, not friction. Consensus is low-entropy/high-confidence; large gaps are high-entropy/high-information. Do not average disagreements away — preserve them as contested for human judgment.
+4. Check for score inflation and deflation. Do not blindly trust a model that gave every idea similar scores.
+5. **Detect shared blind spots.** When every agent scored an idea highly *and then* every agent downgraded it in the reactions phase, that pattern is the signature of a bias every model shares. Flag those ideas as `shared_blind_spot_risk: yes` and treat them with extra scrutiny.
+6. Identify independent convergence where multiple agents proposed essentially the same improvement. Independent convergence by decorrelated evaluators is one of the strongest positive signals available.
+7. Integrate blind spot ideas, but mark them as not cross-scored unless reactions contain clear support.
+8. Account for known model tendencies without overfitting:
    - Claude may under-rate bold ideas out of caution.
    - Codex may over-rate implementation-heavy ideas.
    - Gemini may over-emphasize breadth.
-7. Prefer ideas that are useful, pragmatic, and accretive over ideas that are only clever.
-8. Do not create task tracker items. If the project appears to use a task tracker, you may suggest optional task titles, but the recommendations must stand without that tooling.
+9. Prefer ideas that are useful, pragmatic, and accretive over ideas that are only clever.
+10. **Verify code claims before recommending action.** For every consensus winner that names specific files, functions, or behaviors in this repository, flag it for verification. Models sometimes confidently agree on an idea whose factual grounding has not been checked. Add `requires_verification` for those entries.
+11. **Devil's Advocate pass on every consensus winner.** Even ideas every reviewer scored highly can share hidden flaws. For each consensus winner, articulate the single strongest objection — the real killer argument — and the most likely failure mode after implementation. If no serious objection survives, say so and explain why you are confident rather than rubber-stamping.
+12. Do not create task tracker items. If the project appears to use a task tracker, you may suggest optional task titles, but the recommendations must stand without that tooling.
+
+### Orchestrator Discipline
+
+You are the synthesizer, not another scorer. Report the agents' scores and arguments faithfully. Do not editorialize inside the score matrix or the consensus/contested/killed sections — those should reflect what the agents actually argued. Reserve your own assessment for the Meta-Analysis and Devil's Advocate sections, where it belongs.
 
 Use ultrathink.
 
@@ -72,7 +80,10 @@ Then write `## Structured Synthesis` as a fenced JSON block:
       "score_gap": 90,
       "why": "Why this survived",
       "first_steps": ["Concrete first step", "Concrete second step"],
-      "risk": "Main implementation risk"
+      "risk": "Main implementation risk",
+      "requires_verification": "Code claims that should be confirmed before action, or null",
+      "shared_blind_spot_risk": "yes|no",
+      "devils_advocate": "Strongest possible objection and most likely failure mode after implementation"
     }
   ],
   "contested_ideas": [
@@ -115,5 +126,7 @@ After the JSON, include:
 6. **Blind Spot Ideas:** genuinely new ideas that emerged from the adversarial process.
 7. **Meta-Analysis:** where the agents disagreed, what model biases showed up, and what that says about the project.
 8. **Recommended Next Steps:** top 3-5 actions with implementation notes.
+9. **Devil's Advocate:** strongest objection to each consensus winner and the most likely failure mode after implementation.
+10. **Verification Checklist:** consensus winners whose factual grounding (file paths, function names, performance claims) should be confirmed against the current repository state before acting.
 
 Do not create task tracker items. Optional task titles are fine only when the project already appears to use a task tracker.

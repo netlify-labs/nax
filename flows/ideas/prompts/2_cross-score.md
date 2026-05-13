@@ -50,17 +50,36 @@ Use weighted judgment: useful and pragmatic matter most; accretive matters next.
 
 ## Scoring Discipline
 
-Be candid. Polite score inflation makes the synthesis worse.
+Be candid to the point of catty. Polite scoring destroys the entire methodology — a 600 from a polite scorer carries no information. Strip the tone, keep the substance: if an idea would waste engineering time, say so specifically and unhedged. The disagreements between agents are the point — they are what surface hidden assumptions and blind spots. Honest harshness is the highest-signal contribution you can make to this duel.
 
-- If every idea scores above 600, you are probably being too polite. Spread the scores.
-- If every idea scores below 300, you may be being tribal. Make sure your objections are concrete.
+- If every idea scores above 600, you are being polite. Spread the scores.
+- If every idea scores below 300, you are being tribal. Make sure your objections are concrete and technical, not vague dismissals.
 - A great idea should usually be 800+.
 - A weak idea should usually be 200-.
 - Exact 500s for everything are not useful.
-- Large disagreements are valuable signal; call out ideas where you expect another model to disagree with you.
+- Healthy distributions are bimodal (clusters near 250 and 800) or normal-with-outliers. Uniform clusters in the 500-700 range mean you did not engage deeply — go back and re-score.
+- Large disagreements are valuable signal; call out ideas where you expect another model to score very differently and classify the type of disagreement (see below).
 - If two agents independently proposed overlapping ideas, note that as independent convergence rather than double-counting.
 
-Use ultrathink.
+### Exclusion-Test Discipline For Low Scores
+
+Any score below 400 should articulate a specific, falsifiable failure condition — e.g. "this approach requires O(n^2) joins across the user table, which will degrade beyond 10K users and conflicts with the existing pagination strategy." Vague difficulty objections ("seems hard to build") are noise. If your low score cannot be backed by a specific failure mode, raise the score.
+
+### Disagreement-Type Tagging
+
+Where you expect to disagree with another model, classify the disagreement as one of:
+
+- `insight_gap` — you see a specific mechanism or codebase fact they probably missed
+- `values_divergence` — same tradeoffs, different weighting (e.g. user value vs. complexity cost)
+- `framing_mismatch` — the idea is ambiguous and you suspect another model interpreted it differently
+- `systematic_bias` — pattern likely reflects a model-family tendency, not this specific idea
+- `information_asymmetry` — your codebase grounding is deeper or shallower than another model's likely depth
+
+### Your Reasoning Is Ammunition
+
+The reactions phase that follows requires defenders and attackers to engage with your specific arguments. A score of 350 backed by 2000 tokens of technical reasoning has dramatically more impact than a score of 350 backed by "this seems impractical." Front-load the specifics — name the mechanism, cite the file or function, describe the failure condition.
+
+Use ultrathink: decompose each opposing idea into its claims, evaluate each claim against this codebase's actual files and architecture, consider second-order effects, identify specific implementation risks, only then commit to a score.
 
 ## Output
 
@@ -99,7 +118,8 @@ Then write `## Structured Scores` as a fenced JSON block:
 After the JSON, include:
 
 1. **Top Opponent Ideas:** 2-4 strongest ideas and why.
-2. **Ideas To Kill:** ideas that should probably not survive.
+2. **Ideas To Kill:** ideas that should probably not survive, each with a specific failure condition (not a vague difficulty objection).
 3. **Underrated Ideas:** ideas that may look boring but deserve attention.
-4. **Most Interesting Disagreement:** any idea you expect another model to score very differently.
+4. **Predicted Disagreements:** ideas where you expect another model to score >250 points differently than you did. Tag each with `insight_gap`, `values_divergence`, `framing_mismatch`, `systematic_bias`, or `information_asymmetry` and explain the basis for the prediction.
 5. **Hidden Costs:** implementation, UX, migration, or operational risks the originator underplayed.
+6. **Score Distribution Self-Check:** report your min, max, median, and rough spread; confirm the distribution is not a uniform 500-700 cluster.

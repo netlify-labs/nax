@@ -42,16 +42,23 @@ Do not read randomly. Build a mental model from documentation, entry points, and
 
 Use code as the ground truth and docs as the measuring stick:
 
-1. Determine what the project claims to do from README, plans, docs, and task tracker context if that context is visible in this runner.
-2. Determine what is actually implemented and working from code, tests, config, and recent commits.
-3. Identify gaps between the vision and reality:
-   - working end-to-end capabilities
-   - partial or stubbed capabilities
-   - missing workflows
-   - broken or risky assumptions
-   - docs that overstate current behavior
-4. If a task tracker is visible in this runner, determine whether open/in-progress tasks would close the gap. Explicitly call out goals not covered by any existing task. If no tracker is visible, continue without it.
-5. Be brutally honest. Do not turn aspirational docs into evidence that the code works.
+1. **Extract the vision.** From README, plans, docs, and (if visible) task tracker, extract every concrete, testable promise the project makes. Convert vague claims ("high performance") into testable ones ("parses 10K lines/sec"). The result is a numbered Vision Checklist.
+2. **Map each goal to code.** For each numbered goal, find the implementing code. Read it — is it real or a stub/placeholder/mock? Check for tests proving it works. Where possible, try to actually run the relevant code path end-to-end, not just rely on tests passing.
+3. **Categorize each goal** using this status taxonomy:
+   - `WORKING` — code exists, tests pass, end-to-end verified
+   - `PARTIAL` — some features work, others missing
+   - `STUB` — placeholder, mock, or `todo!()` only
+   - `UNPROVEN` — code exists but no tests or tests don't cover the real path
+   - `NOT_STARTED` — no code at all for this goal
+   - `REGRESSED` — was working, now broken
+   - `NO_TASK` — vision goal not covered by any open task tracker item (critical when a tracker exists)
+   - `WRONG_APPROACH` — implemented but architecturally cannot reach the goal
+4. If a task tracker is visible, determine whether open/in-progress items would close every gap. Explicitly call out goals with zero task coverage.
+5. **Be brutally honest.** Common failure modes to resist:
+   - **Optimism bias:** reporting `PARTIAL` when reality is `STUB`. Ask: does it produce correct output for any real input?
+   - **Test theater:** trusting passing tests as proof of working software. Ask: are tests trivial? Do they use real data?
+   - **Task-completion illusion:** "72% of tasks done" can coexist with "0% of vision delivered" if the remaining 28% covers the core. Cross-check vision goals against task coverage, not just task percentage.
+   - **Aspirational docs as evidence.** Docs describe intent, not behavior. Treat README claims as hypotheses until code confirms them.
 
 ### 3. Optional Work Graph And Priority Protocol
 
@@ -94,17 +101,33 @@ Use this report to ground ideas. Do not propose generic improvements that ignore
 
 ## Ideation Process
 
-Generate 20-30 possible ideas privately, then winnow to your top 5. Favor ideas that are:
+Generate 20-30 possible ideas privately. For each candidate, really think through how it would work, how users are likely to perceive it, how you would implement it, what could go wrong, and how it interacts with existing systems. Only after that work should you winnow to your top 5.
 
-- Useful in real project workflows.
-- Pragmatic to implement correctly.
-- Accretive to the existing architecture rather than bolted on.
-- Valuable to humans and AI coding agents using this repo.
-- Specific enough that a developer could begin.
+Evaluate every candidate against all ten criteria:
+
+- **robust:** handles edge cases and failure modes
+- **reliable:** works consistently, not intermittently
+- **performant:** fast enough for the use case
+- **intuitive:** users predict behavior correctly
+- **user-friendly:** pleasant experience, helpful errors
+- **ergonomic:** reduces friction for humans and AI agents
+- **useful:** solves a real, frequent problem
+- **compelling:** users would actually want it
+- **accretive:** builds on existing strengths rather than bolted on
+- **pragmatic:** realistic to build and maintain correctly
+
+Weight `useful`, `pragmatic`, and `accretive` highest. An idea that scores high on `compelling` but low on `pragmatic` is a trap.
+
+Red flag phrases that should trigger instant skepticism in your own reasoning:
+
+- "Users will figure it out"
+- "We'll document it later"
+- "It's technically correct"
+- "Nobody does it differently"
 
 Avoid generic cleanup unless it unlocks a concrete capability or removes a real source of pain.
 
-Use ultrathink.
+Use ultrathink: decompose each idea into constituent claims, evaluate each claim against specific files and functions in this codebase, consider second-order effects and interactions with existing systems, identify the specific implementation risks, only then commit to a final ranking.
 
 ## Output
 
@@ -128,10 +151,10 @@ Then write `## Architecture Report` with:
 
 Then write `## Reality Check` with:
 
-- what is working now
-- what is partial, stubbed, missing, or risky
-- whether existing task tracker work appears to cover the gaps, if task tracker context was available
-- most important mismatch between project vision and current code
+- a numbered Vision Checklist table: `# | Goal | Source | Status | Evidence | Task Coverage`
+- the most important mismatch between project vision and current code
+- explicit `NO_TASK` items if a task tracker is visible
+- any places where passing tests do not actually prove the goal is delivered
 
 Then write `## Idea Selection Rationale` explaining what signals drove your winnowing.
 

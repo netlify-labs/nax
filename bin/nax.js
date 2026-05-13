@@ -5,6 +5,8 @@ const os = require('os')
 const path = require('path')
 const { spawnSync } = require('child_process')
 const { Command, Option } = require('commander')
+const { makeBox, makeHorizontalBoxes } = require('@davidwells/box-logger')
+const flavorMessages = require('../lib/flavor-messages.json')
 const {
   DEFAULT_MODELS,
   buildIssueBody,
@@ -27,7 +29,7 @@ const { multiline } = require('../lib/multiline')
 const { WAIT_FOR_AGENT_RESULTS, listFlows, loadFlow, loadStepPrompt } = require('../lib/flows')
 const { createRunState, dismissRunState, findLatestUnfinishedLocalRun, saveRunState } = require('../lib/run-state')
 const { detectTransports, formatTransportSetupHelp, resolveTransport } = require('../lib/transports')
-const { enableGitHubActionsSetup, initSite } = require('../lib/init')
+const { enableGitHubActionsSetup, initSite, readNetlifyProject } = require('../lib/init')
 const {
   buildNetlifyEnv,
   currentGitBranch,
@@ -920,6 +922,70 @@ async function handleList() {
   }
 }
 
+async function handlePreviewSpinner(options) {
+  const total = Number.parseInt(options.count || '3', 10)
+  const tickMs = Number.parseInt(options.tickMs || '10000', 10)
+  const stepTitle = options.label || 'Review'
+  const parsed = parseCsv(options.agents)
+  const agents = parsed.length > 0 ? parsed : ['claude', 'gemini', 'codex']
+  const flavorMinMs = Number.parseInt(options.flavorMinMs || '10000', 10)
+  const flavorMaxMs = Number.parseInt(options.flavorMaxMs || '15000', 10)
+  console.log(`TTY: ${process.stdout.isTTY ? 'yes (spinner + flavor)' : 'no (plain logs)'}`)
+  const reporter = makeStepProgressReporter({
+    stepTitle,
+    total,
+    agents,
+    orchestrator: options.orchestrator || DEFAULT_ORCHESTRATOR,
+    flavorMinMs,
+    flavorMaxMs,
+  })
+  let settled = false
+  try {
+    for (let i = 1; i <= total; i++) {
+      await new Promise((resolve) => setTimeout(resolve, tickMs))
+      reporter.setCount(i)
+    }
+    reporter.done(`${stepTitle}: ${total}/${total} complete`)
+    settled = true
+  } finally {
+    if (!settled) reporter.fail(`${stepTitle} failed`)
+  }
+}
+
+async function handlePreviewBoxes(flowId, options) {
+  const id = flowId || (await pickFlowInteractively())
+  const flow = await loadFlow(id)
+  const steps = flow.steps.filter((step) => (step.agents || []).length > 0)
+  const transport = options.transport === 'local' ? 'local' : 'github'
+  const projectRoot = options.projectRoot || process.cwd()
+  printFlowPlan({
+    flow,
+    steps,
+    transport,
+    branch: options.branch || 'master',
+    context: options.context || '',
+  })
+  const lastStep = steps[steps.length - 1]
+  const fakeRunState = {
+    steps: steps.map((step, i) => ({
+      ...step,
+      status: 'completed',
+      runs: step.agents.map((agent) => ({
+        agent,
+        status: 'completed',
+        runnerId: `preview-runner-${i}-${agent}`,
+        issueUrl: `https://github.com/example/repo/issues/${100 + i}`,
+        commentUrl: i === steps.length - 1
+          ? `https://github.com/example/repo/issues/${100 + i}#issuecomment-9999999`
+          : '',
+        deployUrl: '',
+        prUrl: '',
+      })),
+    })),
+  }
+  printSuccessBox({ flow, runState: fakeRunState, transport, projectRoot })
+}
+
 async function pickFlowInteractively() {
   const clack = require('@clack/prompts')
   const flows = await listFlows()
@@ -1013,16 +1079,153 @@ function runnableSteps(flow, options) {
   return findStepRange(flow, options).filter((step) => normalizeArray(step.agents).length > 0)
 }
 
-function printFlowPlan({ flow, steps, transport, branch, context }) {
-  console.log('')
-  console.log(`Flow: ${flow.title}`)
-  console.log(`Orchestrated from: ${transport === 'local' ? 'This machine' : 'GitHub Actions'}`)
-  console.log(`Branch: ${branch}`)
-  console.log('Steps:')
-  for (const step of steps) {
-    console.log(`- ${step.title}: ${step.agents.map(titleCase).join(', ')}`)
+function resolveStepDescription(flow, step) {
+  if (step.description) return step.description
+  try {
+    return loadStepPrompt(flow, step).description || ''
+  } catch (_err) {
+    return ''
   }
-  console.log(`Additional context: ${context && context.trim() ? 'yes' : 'no'}`)
+}
+
+function wordWrap(text, width) {
+  if (!text) return ''
+  const lines = []
+  for (const paragraph of text.split('\n')) {
+    let line = ''
+    for (const word of paragraph.split(/\s+/).filter(Boolean)) {
+      if (line && line.length + 1 + word.length > width) {
+        lines.push(line)
+        line = word
+      } else {
+        line = line ? `${line} ${word}` : word
+      }
+    }
+    lines.push(line)
+  }
+  return lines.join('\n')
+}
+
+const STEP_MAX_WIDTH = 200
+const OUTER_TERMINAL_RATIO = 0.8
+
+function printFlowPlan({ flow, steps, transport, branch, context }) {
+  const teal = '#0d9488'
+  const terminalWidth = process.stdout.columns || 100
+  const outerMaxWidth = Math.max(60, Math.floor(terminalWidth * OUTER_TERMINAL_RATIO))
+  const hasContext = context && context.trim()
+  const flowDescriptionLines = flow.description
+    ? wordWrap(flow.description, outerMaxWidth - 6).split('\n')
+    : []
+  const metaLines = [
+    ...flowDescriptionLines,
+    ...(flowDescriptionLines.length > 0 ? [''] : []),
+    `Orchestrated from: ${transport === 'local' ? 'This machine' : 'GitHub Actions'}`,
+    `Branch: ${branch}`,
+    ...(hasContext ? ['Additional context: yes'] : []),
+  ]
+  const headings = steps.map((step, i) => `${i + 1}. ${step.title}`)
+  const descriptions = steps.map((step) => resolveStepDescription(flow, step))
+  const chipsWidth = (agents) =>
+    agents.reduce((sum, a) => sum + titleCase(a).length + 4, 0) + Math.max(0, agents.length - 1)
+  const naturalStepInner = Math.max(
+    ...headings.map((h) => h.length),
+    ...descriptions.map((d) => d.length),
+    ...steps.map((step) => chipsWidth(step.agents)),
+  )
+  const targetStepInner = Math.min(naturalStepInner, STEP_MAX_WIDTH - 6, outerMaxWidth - 12)
+  const wrappedDescriptions = descriptions.map((d) => (d ? wordWrap(d, targetStepInner) : ''))
+  const stepWidth = targetStepInner + 6
+  const outerInnerNeeded = Math.max(...metaLines.map((l) => l.length), stepWidth)
+  const outerWidth = Math.min(outerInnerNeeded + 6, outerMaxWidth)
+  const arrowPad = ' '.repeat(Math.floor(stepWidth / 2) - 1)
+
+  const stepBlocks = steps.map((step, i) => {
+    const chips = makeHorizontalBoxes(
+      step.agents.map((agent) => ({
+        content: titleCase(agent),
+        borderStyle: 'rounded',
+        paddingLeft: 1,
+        paddingRight: 1,
+      })),
+      { gap: 1 },
+    )
+    const content = wrappedDescriptions[i]
+      ? `${wrappedDescriptions[i]}\n${chips}`
+      : chips
+    const box = makeBox({
+      title: headings[i],
+      content,
+      borderStyle: 'rounded',
+      borderColor: teal,
+      width: stepWidth,
+    })
+    if (i === steps.length - 1) return box
+    return `${box}\n${arrowPad}│\n${arrowPad}▼`
+  }).join('\n')
+
+  console.log('')
+  console.log(makeBox({
+    title: `Multi step agent workflow: "${flow.title}"`,
+    content: `${metaLines.join('\n')}\n\n${stepBlocks}`,
+    borderStyle: 'rounded',
+    borderColor: teal,
+    width: outerWidth,
+  }))
+  console.log('')
+}
+
+function finalRunForRunState(runState) {
+  const completed = (runState.steps || []).filter((s) => s.status === 'completed' || s.status === 'dry-run')
+  if (completed.length === 0) return null
+  const lastStep = completed[completed.length - 1]
+  const runs = (lastStep.runs || []).filter((r) => r.status === 'completed' || r.status === 'dry-run')
+  if (runs.length === 0) return null
+  return { step: lastStep, run: runs[runs.length - 1] }
+}
+
+function localAgentRunUrl({ projectRoot, runnerId }) {
+  if (!runnerId) return ''
+  try {
+    const project = readNetlifyProject(projectRoot)
+    if (project?.adminUrl) return `${project.adminUrl}/agents/${runnerId}`
+  } catch (_err) {
+    /* ignore */
+  }
+  return ''
+}
+
+function printSuccessBox({ flow, runState, transport, projectRoot }) {
+  const green = '#22c55e'
+  const final = finalRunForRunState(runState)
+  if (!final) return
+  const lines = [`Workflow "${flow.title}" complete.`, `Final step: ${final.step.title}`]
+  if (transport === 'local') {
+    const url = localAgentRunUrl({ projectRoot, runnerId: final.run.runnerId })
+    if (url) {
+      lines.push(`Final agent run: ${url}`)
+    } else if (final.run.runnerId) {
+      lines.push(`Final agent runner ID: ${final.run.runnerId}`)
+    }
+    if (final.run.deployUrl) lines.push(`Deploy: ${final.run.deployUrl}`)
+    if (final.run.prUrl) lines.push(`PR: ${final.run.prUrl}`)
+  } else {
+    const url = final.run.commentUrl || final.run.issueUrl
+    if (url) lines.push(`Final result: ${url}`)
+  }
+  const terminalWidth = process.stdout.columns || 100
+  const outerMax = Math.max(60, Math.floor(terminalWidth * OUTER_TERMINAL_RATIO))
+  const wrapped = lines.map((l) => wordWrap(l, outerMax - 6)).join('\n')
+  const longest = Math.max(...wrapped.split('\n').map((l) => l.length))
+  console.log('')
+  console.log(makeBox({
+    title: 'Success',
+    content: wrapped,
+    borderStyle: 'rounded',
+    borderColor: green,
+    width: Math.min(longest + 6, outerMax),
+  }))
+  console.log('')
 }
 
 async function prepareInteractiveFlowRun({ flow, options, transport, projectRoot }) {
@@ -1091,7 +1294,7 @@ async function prepareInteractiveFlowRun({ flow, options, transport, projectRoot
   })
 
   const confirmed = await clack.confirm({
-    message: 'Start this workflow?',
+    message: 'Start this agent workflow?',
     initialValue: true,
   })
   if (clack.isCancel(confirmed)) process.exit(0)
@@ -1242,24 +1445,127 @@ function parseIssueNumberFromUrl(url) {
   return match ? Number(match[1]) : null
 }
 
+function makeProgressReporter(initialMessage) {
+  if (!process.stdout.isTTY) {
+    return {
+      update: (message) => console.log(message),
+      done: (message) => { if (message) console.log(message) },
+      fail: (message) => { if (message) console.log(message) },
+    }
+  }
+  const clack = require('@clack/prompts')
+  const spinner = clack.spinner()
+  spinner.start(initialMessage)
+  return {
+    update: (message) => spinner.message(message),
+    done: (message) => spinner.stop(message || initialMessage),
+    fail: (message) => spinner.stop(message || initialMessage, 1),
+  }
+}
+
+function pickFlavor() {
+  return flavorMessages[Math.floor(Math.random() * flavorMessages.length)]
+}
+
+function pickAgentLabel(agents) {
+  if (!agents || agents.length === 0) return 'Agent'
+  return titleCase(agents[Math.floor(Math.random() * agents.length)])
+}
+
+const DEFAULT_ORCHESTRATOR = "Netlify Agent runner"
+
+function makeStepProgressReporter({
+  stepTitle,
+  total,
+  agents = [],
+  orchestrator = DEFAULT_ORCHESTRATOR,
+  flavorMinMs = 10000,
+  flavorMaxMs = 15000,
+}) {
+  if (!process.stdout.isTTY) {
+    let lastCount = -1
+    return {
+      setCount: (n) => {
+        if (n === lastCount) return
+        lastCount = n
+        console.log(`Waiting for ${stepTitle}: ${n}/${total} complete`)
+      },
+      message: (msg) => console.log(msg),
+      done: (msg) => { if (msg) console.log(msg) },
+      fail: (msg) => { if (msg) console.log(msg) },
+    }
+  }
+  const clack = require('@clack/prompts')
+  const spinner = clack.spinner()
+  let count = 0
+  const possessive = orchestrator ? `${orchestrator}'s ` : ''
+  const render = () => {
+    const [phrase, emoji] = pickFlavor()
+    const agent = pickAgentLabel(agents)
+    return `Waiting for ${stepTitle}: ${count}/${total} complete · ${emoji} ${possessive}${agent} ${phrase}`
+  }
+  spinner.start(render())
+  let timer = null
+  const scheduleNext = () => {
+    const range = Math.max(0, flavorMaxMs - flavorMinMs)
+    const delay = flavorMinMs + Math.floor(Math.random() * (range + 1))
+    timer = setTimeout(() => {
+      spinner.message(render())
+      scheduleNext()
+    }, delay)
+  }
+  scheduleNext()
+  return {
+    setCount: (n) => {
+      count = n
+      spinner.message(render())
+    },
+    message: (msg) => spinner.message(msg),
+    done: (msg) => {
+      if (timer) clearTimeout(timer)
+      spinner.stop(msg || `${stepTitle}: ${total}/${total} complete`)
+    },
+    fail: (msg) => {
+      if (timer) clearTimeout(timer)
+      spinner.stop(msg || `Failed waiting for ${stepTitle}`, 1)
+    },
+  }
+}
+
 async function waitForGithubStep({ repo, issueNumbers, step, timeoutMinutes }) {
   if (!issueNumbers.length) return []
   const deadline = Date.now() + timeoutMinutes * 60 * 1000
   const pollMs = 15000
+  const reporter = makeStepProgressReporter({
+    stepTitle: step.title,
+    total: issueNumbers.length,
+    agents: step.agents || [],
+  })
+  let settled = false
 
-  while (Date.now() < deadline) {
-    const results = fetchRoundResults({
-      repo,
-      issueNumbers,
-      embedAll: true,
-      requireResultMarker: true,
-    })
-    const complete = results.every((result) => (result.replies || []).length > 0)
-    if (complete) return results
-    console.log(`Waiting for ${step.title}: ${results.filter((r) => (r.replies || []).length > 0).length}/${results.length} complete`)
-    await new Promise((resolve) => setTimeout(resolve, pollMs))
+  try {
+    while (Date.now() < deadline) {
+      const results = fetchRoundResults({
+        repo,
+        issueNumbers,
+        embedAll: true,
+        requireResultMarker: true,
+      })
+      const completeCount = results.filter((r) => (r.replies || []).length > 0).length
+      reporter.setCount(completeCount)
+      if (completeCount === results.length) {
+        reporter.done(`${step.title}: ${completeCount}/${results.length} complete`)
+        settled = true
+        return results
+      }
+      await new Promise((resolve) => setTimeout(resolve, pollMs))
+    }
+    reporter.fail(`Timed out waiting for ${step.title}`)
+    settled = true
+    throw new Error(`Timed out waiting for step "${step.id}" after ${timeoutMinutes} minutes`)
+  } finally {
+    if (!settled) reporter.fail(`Failed waiting for ${step.title}`)
   }
-  throw new Error(`Timed out waiting for step "${step.id}" after ${timeoutMinutes} minutes`)
 }
 
 async function executeGithubFlow({ flow, steps, options, runState }) {
@@ -1405,16 +1711,35 @@ async function executeGithubFlow({ flow, steps, options, runState }) {
 async function completeLocalStep({ stepState, step, options, projectRoot, netlify, initialDelayMs }) {
   const timeoutMinutes = Number.parseInt(options.timeoutMinutes || '25', 10)
   if (step.waitFor === WAIT_FOR_AGENT_RESULTS && stepState.runs.some(shouldPollLocalRun)) {
-    const completedRuns = await waitForLocalAgentRuns({
-      projectRoot,
-      runs: stepState.runs,
-      siteId: netlify.siteId,
-      env: netlify.env,
-      timeoutMinutes,
-      initialDelayMs,
-      onProgress: (event) => console.log(event.message),
+    const reporter = makeStepProgressReporter({
+      stepTitle: step.title,
+      total: stepState.runs.length,
+      agents: step.agents || [],
     })
-    stepState.runs = completedRuns
+    let settled = false
+    try {
+      const terminalRunners = new Set()
+      const completedRuns = await waitForLocalAgentRuns({
+        projectRoot,
+        runs: stepState.runs,
+        siteId: netlify.siteId,
+        env: netlify.env,
+        timeoutMinutes,
+        initialDelayMs,
+        onProgress: (event) => {
+          if (event.run?.runnerId && /^(completed|done|failed|error|cancelled|canceled|timeout)$/i.test(event.state || '')) {
+            terminalRunners.add(event.run.runnerId)
+            reporter.setCount(terminalRunners.size)
+          }
+        },
+      })
+      stepState.runs = completedRuns
+      const doneCount = completedRuns.filter((r) => r.status === 'completed').length
+      reporter.done(`${step.title}: ${doneCount}/${completedRuns.length} complete`)
+      settled = true
+    } finally {
+      if (!settled) reporter.fail(`Failed waiting for ${step.title}`)
+    }
   }
   stepState.status = localStepStatus(stepState)
   return stepState
@@ -1667,6 +1992,8 @@ async function handleRun(flowId, options) {
     await executeGithubFlow({ flow: configuredFlow, steps, options: configuredOptions, runState })
   }
 
+  printSuccessBox({ flow: configuredFlow, runState, transport, projectRoot })
+
   if (configuredOptions.notify) {
     if (process.platform === 'darwin') {
       spawnSync('osascript', ['-e', `display notification "Flow ${configuredFlow.title} finished" with title "nax"`])
@@ -1863,7 +2190,27 @@ function buildProgram() {
     .description('List available workflows')
     .action(handleList)
 
-  for (const hiddenCommandName of ['issue', 'comment']) {
+  program
+    .command('preview-boxes [flow]')
+    .description('Preview the flow plan and success boxes without running the workflow')
+    .option('--transport <transport>', 'Transport to render (github|local)', 'github')
+    .option('--branch <branch>', 'Branch label to display', 'master')
+    .option('--context <context>', 'Additional context indicator', '')
+    .action((flow, options, command) => handlePreviewBoxes(flow, actionOptions(options, command)))
+
+  program
+    .command('preview-spinner')
+    .description('Preview the wait-for-step progress reporter without running a workflow')
+    .option('--count <n>', 'How many agent results to simulate', '3')
+    .option('--tick-ms <ms>', 'Delay between simulated completions', '10000')
+    .option('--flavor-min-ms <ms>', 'Minimum delay between flavor rotations', '10000')
+    .option('--flavor-max-ms <ms>', 'Maximum delay between flavor rotations', '15000')
+    .option('--label <label>', 'Step title to display', 'Review')
+    .option('--agents <list>', 'Comma-separated agent names', 'claude,gemini,codex')
+    .option('--orchestrator <name>', 'Orchestrator label prefixed to agent', DEFAULT_ORCHESTRATOR)
+    .action((options, command) => handlePreviewSpinner(actionOptions(options, command)))
+
+  for (const hiddenCommandName of ['issue', 'comment', 'preview-boxes', 'preview-spinner']) {
     const command = program.commands.find((candidate) => candidate.name() === hiddenCommandName)
     if (command) command._hidden = true
   }

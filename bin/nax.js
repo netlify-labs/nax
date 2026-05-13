@@ -1483,31 +1483,48 @@ async function executeLocalFlow({ flow, steps, options, runState, projectRoot, c
       continue
     }
 
-    const submissions = await Promise.allSettled(runs.map((run) => (
-      submitLocalAgentRun({
-        run,
-        projectRoot,
-        branch,
-        siteId: netlify.siteId,
-        env: netlify.env,
-      })
-    )))
+    stepState.runs = runs
+    saveRunState(runState)
+
+    console.log(`\nSubmitting ${runs.length} Netlify agent ${runs.length === 1 ? 'run' : 'runs'} in parallel...`)
+    const startedAt = Date.now()
+    const submissions = await Promise.allSettled(runs.map(async (run, index) => {
+      const label = `${titleCase(run.agent)} ${prompt.title}`
+      console.log(`\n- ${label}: submitting${run.existingRunnerId ? ' follow-up' : ''}...`)
+      try {
+        const submitted = await submitLocalAgentRun({
+          run,
+          projectRoot,
+          branch,
+          siteId: netlify.siteId,
+          env: netlify.env,
+        })
+        const elapsedSeconds = Math.round((Date.now() - startedAt) / 1000)
+        stepState.runs[index] = submitted
+        saveRunState(runState)
+        console.log(`  ${label}: ${submitted.runnerId}${submitted.existingRunnerId ? ' (follow-up)' : ''} after ${elapsedSeconds}s`)
+        return submitted
+      } catch (error) {
+        const failedRun = {
+          ...run,
+          status: 'failed',
+          resultText: error?.message || String(error || 'Submission failed'),
+          raw: {
+            ...run.raw,
+            submissionError: error?.message || String(error || 'Submission failed'),
+          },
+        }
+        stepState.runs[index] = failedRun
+        saveRunState(runState)
+        console.log(`  ${label}: submission failed`)
+        throw error
+      }
+    }))
     const failedSubmission = submissions.find((result) => result.status === 'rejected')
     const submittedRuns = submissions.map((result, index) => {
       if (result.status === 'fulfilled') return result.value
-      return {
-        ...runs[index],
-        status: 'failed',
-        resultText: result.reason?.message || String(result.reason || 'Submission failed'),
-        raw: {
-          ...runs[index].raw,
-          submissionError: result.reason?.message || String(result.reason || 'Submission failed'),
-        },
-      }
+      return stepState.runs[index]
     })
-    for (const run of submittedRuns.filter((candidate) => candidate.runnerId)) {
-      console.log(`${titleCase(run.agent)} ${prompt.title}: ${run.runnerId}${run.existingRunnerId ? ' (follow-up)' : ''}`)
-    }
     stepState.runs = submittedRuns
     saveRunState(runState)
     if (failedSubmission) {

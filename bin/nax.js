@@ -1074,18 +1074,18 @@ async function prepareInteractiveFlowRun({ flow, options, transport, projectRoot
     throw new Error('No workflow steps have selected agents.')
   }
 
+  await confirmRemoteRunnerCanMissLocalChanges({
+    projectRoot,
+    branch: configuredOptions.branch,
+    options: configuredOptions,
+  })
+
   printFlowPlan({
     flow: configuredFlow,
     steps,
     transport,
     branch: configuredOptions.branch,
     context: manualContext,
-  })
-
-  await confirmRemoteRunnerCanMissLocalChanges({
-    projectRoot,
-    branch: configuredOptions.branch,
-    options: configuredOptions,
   })
 
   const confirmed = await clack.confirm({

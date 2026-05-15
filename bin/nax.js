@@ -434,12 +434,6 @@ function extractLinkedPullRequest(commentBody, fallbackRepo) {
     }
   }
 
-  const directUrlMatches = body.match(/https:\/\/github\.com\/[^/\s]+\/[^/\s]+\/pull\/\d+/gi) || []
-  for (const match of directUrlMatches) {
-    const parsed = parseGitHubPullRequestUrl(match)
-    if (parsed) return parsed
-  }
-
   const prNumberMatch =
     body.match(/A Pull Request was opened for this here #(\d+)/i) ||
     body.match(/Leave follow-up .* on PR #(\d+)/i) ||

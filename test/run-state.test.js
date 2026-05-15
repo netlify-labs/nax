@@ -6,8 +6,10 @@ const path = require('path')
 
 const {
   dismissRunState,
+  findLatestUnfinishedRun,
   findLatestUnfinishedLocalRun,
   hasRepairableRuns,
+  isUnfinishedRun,
   isUnfinishedLocalRun,
   listRunStates,
   saveRunState,
@@ -20,7 +22,7 @@ function runState(tmp, overrides = {}) {
     runId,
     flowId: 'review',
     flowTitle: 'Review',
-    transport: 'local',
+    transport: overrides.transport || 'local',
     projectRoot: tmp,
     createdAt: overrides.createdAt || '2026-05-12T00:00:00.000Z',
     updatedAt: overrides.updatedAt || '2026-05-12T00:00:00.000Z',
@@ -81,6 +83,35 @@ test('findLatestUnfinishedLocalRun returns newest unfinished local run', () => {
 
   assert.deepEqual(listRunStates(tmp).map((state) => state.runId), ['new', 'old'])
   assert.equal(findLatestUnfinishedLocalRun(tmp, { flowId: 'review' }).runId, 'new')
+})
+
+test('isUnfinishedRun detects submitted GitHub issue runs', () => {
+  const state = runState('/tmp/x', {
+    transport: 'github',
+    steps: [{ id: 'review', status: 'running', runs: [{ issueNumber: 123, status: 'submitted' }] }],
+  })
+
+  assert.equal(isUnfinishedRun(state), true)
+  assert.equal(isUnfinishedLocalRun(state), false)
+})
+
+test('findLatestUnfinishedRun can filter by transport', () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'nax-run-state-generic-test-'))
+  saveRunState(runState(tmp, {
+    runId: 'github-run',
+    transport: 'github',
+    updatedAt: '2026-05-12T02:00:00.000Z',
+    steps: [{ id: 'review', status: 'running', runs: [{ issueNumber: 99, status: 'submitted' }] }],
+  }))
+  saveRunState(runState(tmp, {
+    runId: 'local-run',
+    transport: 'local',
+    updatedAt: '2026-05-12T01:00:00.000Z',
+    steps: [{ id: 'review', status: 'running', runs: [{ runnerId: 'runner-1', status: 'submitted' }] }],
+  }))
+
+  assert.equal(findLatestUnfinishedRun(tmp, { flowId: 'review' }).runId, 'github-run')
+  assert.equal(findLatestUnfinishedRun(tmp, { flowId: 'review', transport: 'local' }).runId, 'local-run')
 })
 
 test('dismissRunState marks unfinished runs ignored by resume detection', () => {

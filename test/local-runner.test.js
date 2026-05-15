@@ -174,6 +174,25 @@ test('normalizeCompletedRun prefers latest session result and links', () => {
   assert.equal(normalized.prUrl, 'https://github.com/o/r/pull/1')
 })
 
+test('normalizeCompletedRun fails when latest session errored even if runner completed', () => {
+  const normalized = normalizeCompletedRun({
+    run: { agent: 'claude', runnerId: 'runner-1', status: 'submitted' },
+    shown: { raw: { id: 'runner-1', state: 'done' } },
+    sessions: {
+      raw: { sessions: [] },
+      latest: {
+        id: 'session-1',
+        state: 'error',
+        result: 'Encountered a temporary issue — the agent will attempt to continue.',
+      },
+    },
+  })
+
+  assert.equal(normalized.status, 'failed')
+  assert.equal(normalized.resultText, 'Encountered a temporary issue — the agent will attempt to continue.')
+  assert.equal(normalized.rawResult.latestSession.state, 'error')
+})
+
 test('showAgentRun treats CLI failures as retryable poll errors', () => {
   const shown = showAgentRun({
     projectRoot: '/tmp/project',
@@ -292,4 +311,39 @@ test('waitForLocalAgentRuns returns completed runs after polling terminal state'
   assert.deepEqual(calls, ['agents:show', 'api'])
   assert.equal(result[0].status, 'completed')
   assert.equal(result[0].resultText, 'done')
+})
+
+test('waitForLocalAgentRuns fails completed parent runners with errored latest sessions', async () => {
+  const result = await waitForLocalAgentRuns({
+    projectRoot: '/tmp/project',
+    siteId: 'site-123',
+    env: {},
+    timeoutMinutes: 1,
+    initialDelayMs: 0,
+    pollIntervalMs: 1,
+    runs: [{ agent: 'claude', runnerId: 'runner-1', status: 'submitted', resultText: '' }],
+    runCommand(command, args) {
+      if (args[0] === 'agents:show') {
+        return {
+          status: 0,
+          stdout: JSON.stringify({ id: 'runner-1', state: 'done' }),
+          stderr: '',
+        }
+      }
+      return {
+        status: 0,
+        stdout: JSON.stringify({
+          sessions: [{
+            id: 'session-1',
+            state: 'error',
+            result: 'Encountered a temporary issue — the agent will attempt to continue.',
+          }],
+        }),
+        stderr: '',
+      }
+    },
+  })
+
+  assert.equal(result[0].status, 'failed')
+  assert.equal(result[0].resultText, 'Encountered a temporary issue — the agent will attempt to continue.')
 })

@@ -68,6 +68,134 @@ test('firstRunnableStepIndex finds incomplete saved local step', () => {
   assert.equal(_private.firstRunnableStepIndex(flow, runState), 1)
 })
 
+test('findGithubRunnerFailures extracts failed Netlify status comments', () => {
+  const failures = _private.findGithubRunnerFailures([
+    {
+      issueNumber: 91,
+      issueTitle: '2026-05-14 Claude Generate Ideas',
+      issueUrl: 'https://github.com/example/repo/issues/91',
+      comments: [
+        {
+          url: 'https://github.com/example/repo/issues/91#issuecomment-1',
+          body: [
+            '### [Netlify Agent Run Status](https://app.netlify.com/projects/example/agent-runs/abc) ❌',
+            '',
+            'Netlify Agent Run failed.',
+            '',
+            '**Failure summary:** Agent timed out before completion',
+            '',
+            '<!-- netlify-agent-run-status -->',
+          ].join('\n'),
+        },
+      ],
+    },
+    {
+      issueNumber: 92,
+      issueTitle: '2026-05-14 Gemini Generate Ideas',
+      issueUrl: 'https://github.com/example/repo/issues/92',
+      comments: [
+        {
+          url: 'https://github.com/example/repo/issues/92#issuecomment-1',
+          body: [
+            '### [Netlify Agent Run Status](https://app.netlify.com/projects/example/agent-runs/def) ✅',
+            '',
+            'Netlify Agent Run completed.',
+            '',
+            '<!-- netlify-agent-run-status -->',
+          ].join('\n'),
+        },
+      ],
+    },
+  ])
+
+  assert.deepEqual(failures, [
+    {
+      issueNumber: 91,
+      issueTitle: '2026-05-14 Claude Generate Ideas',
+      url: 'https://github.com/example/repo/issues/91#issuecomment-1',
+      summary: 'Agent timed out before completion',
+    },
+  ])
+})
+
+test('resultsScopedToGithubRuns only counts result comments after the submitted prompt comment', () => {
+  const scoped = _private.resultsScopedToGithubRuns([
+    {
+      issueNumber: 91,
+      replies: [],
+      comments: [
+        { url: 'https://x/issues/91#old', body: 'old result\n<!-- netlify-agent-run-result:old:session -->' },
+        { url: 'https://x/issues/91#prompt', body: '@netlify claude cross score\n<!-- netlify-workflow-prompt:cross-score:claude:2026-05-14 -->' },
+        { url: 'https://x/issues/91#status', body: '### status\n<!-- netlify-agent-run-status -->' },
+        { url: 'https://x/issues/91#new', body: 'new result\n<!-- netlify-agent-run-result:new:session -->' },
+      ],
+    },
+  ], [
+    { issueNumber: 91, commentUrl: 'https://x/issues/91#prompt' },
+  ])
+
+  assert.deepEqual(scoped[0].replies.map((comment) => comment.url), ['https://x/issues/91#new'])
+})
+
+test('GitHub result comments marked failed are failures, not completed replies', () => {
+  const result = {
+    issueNumber: 91,
+    issueTitle: '2026-05-14 Claude Generate Ideas',
+    comments: [
+      { url: 'https://x/issues/91#prompt', body: '@netlify claude cross score' },
+      {
+        url: 'https://x/issues/91#failed-result',
+        body: [
+          '### [Run #2 | claude | Agent Run failed](https://app.netlify.com/projects/site/agent-runs/runner) ❌',
+          '',
+          '**Error excerpt:**',
+          '',
+          '```text',
+          'Encountered a temporary issue — the agent will attempt to continue.',
+          '```',
+          '',
+          '<!-- netlify-agent-run-result:runner:session -->',
+        ].join('\n'),
+      },
+    ],
+  }
+  const runs = [{ issueNumber: 91, commentUrl: 'https://x/issues/91#prompt' }]
+
+  assert.deepEqual(_private.resultsScopedToGithubRuns([result], runs)[0].replies, [])
+  assert.deepEqual(_private.findGithubRunnerFailures([result], runs), [
+    {
+      issueNumber: 91,
+      issueTitle: '2026-05-14 Claude Generate Ideas',
+      url: 'https://x/issues/91#failed-result',
+      summary: 'Agent run failed',
+    },
+  ])
+})
+
+test('findGithubRunnerFailures ignores old failures before the submitted prompt comment', () => {
+  const failures = _private.findGithubRunnerFailures([
+    {
+      issueNumber: 91,
+      issueTitle: '2026-05-14 Claude Generate Ideas',
+      comments: [
+        {
+          url: 'https://x/issues/91#old-failure',
+          body: [
+            'Netlify Agent Run failed.',
+            '**Failure summary:** old timeout',
+            '<!-- netlify-agent-run-status -->',
+          ].join('\n'),
+        },
+        { url: 'https://x/issues/91#prompt', body: '@netlify claude cross score' },
+      ],
+    },
+  ], [
+    { issueNumber: 91, commentUrl: 'https://x/issues/91#prompt' },
+  ])
+
+  assert.deepEqual(failures, [])
+})
+
 test('withSelectedAgents filters each workflow step and runnableSteps drops empty steps', () => {
   const flow = {
     defaults: { agents: ['claude', 'gemini', 'codex'] },

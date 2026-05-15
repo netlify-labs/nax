@@ -56,10 +56,10 @@ jobs:
         with:
           netlify-auth-token: ${{ secrets.NETLIFY_AUTH_TOKEN }}
           netlify-site-id: ${{ secrets.NETLIFY_SITE_ID }}
+          timeout-minutes: '25'
           # Optional settings:
           # default-agent: 'codex'
           # manage-labels: 'false'
           # preflight-only: 'false'
-          # timeout-minutes: '10'
           # timezone: 'America/Los_Angeles'
           # debug: 'false'

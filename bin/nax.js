@@ -25,9 +25,10 @@ const {
   rawIssuesFromResults,
 } = require('../lib/round-results')
 const { formatGroupHint, listRecentIssueGroups } = require('../lib/issue-groups')
+const { bodyHasRunnerResultMarker, bodyHasRunnerStatusMarker } = require('../lib/comment-markers')
 const { multiline } = require('../lib/multiline')
 const { WAIT_FOR_AGENT_RESULTS, listFlows, loadFlow, loadStepPrompt } = require('../lib/flows')
-const { createRunState, dismissRunState, findLatestUnfinishedLocalRun, saveRunState } = require('../lib/run-state')
+const { createRunState, dismissRunState, findLatestUnfinishedRun, listRunStates, saveRunState } = require('../lib/run-state')
 const { detectTransports, formatTransportSetupHelp, resolveTransport } = require('../lib/transports')
 const { enableGitHubActionsSetup, initSite, readNetlifyProject } = require('../lib/init')
 const {
@@ -247,7 +248,7 @@ async function confirmRemoteRunnerCanMissLocalChanges({ projectRoot, branch, opt
 }
 
 function shouldEmbedAllReplies(promptName) {
-  return promptName === 'summarize-consensus'
+  return ['summarize-consensus', 'react', 'synthesize-ideas'].includes(promptName)
 }
 
 function shouldFetchResults(promptName) {
@@ -922,6 +923,65 @@ async function handleList() {
   }
 }
 
+function formatRunTimestamp(value) {
+  if (!value) return ''
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return String(value)
+  const pad = (n) => String(n).padStart(2, '0')
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}`
+}
+
+function runHasFinalArtifact(state) {
+  const final = finalRunForRunState(state)
+  if (!final) return false
+  const { run } = final
+  return Boolean(run.commentUrl || run.issueUrl || run.runnerId || run.deployUrl || run.prUrl)
+}
+
+async function handleRecent(options) {
+  const projectRoot = options.projectRoot || process.cwd()
+  const all = listRunStates(projectRoot)
+  const usable = all.filter(runHasFinalArtifact)
+  if (usable.length === 0) {
+    if (all.length === 0) {
+      console.log('No runs found in .nax/runs/.')
+    } else {
+      console.log('No completed runs with a final artifact found.')
+    }
+    return
+  }
+  const limit = Number.parseInt(options.limit || '25', 10)
+  const choices = usable.slice(0, limit)
+
+  let selected
+  if (options.runId) {
+    selected = choices.find((state) => state.runId === options.runId) || null
+    if (!selected) {
+      throw new Error(`No run found with id "${options.runId}"`)
+    }
+  } else {
+    const clack = require('@clack/prompts')
+    const picked = await clack.select({
+      message: 'Pick a recent run',
+      options: choices.map((state) => ({
+        value: state.runId,
+        label: `${formatRunTimestamp(state.updatedAt || state.createdAt)}  ${state.flowTitle || state.flowId} (${state.transport})`,
+        hint: state.runId,
+      })),
+    })
+    if (clack.isCancel(picked)) return
+    selected = choices.find((state) => state.runId === picked)
+    if (!selected) return
+  }
+
+  printSuccessBox({
+    flow: { title: selected.flowTitle || selected.flowId },
+    runState: selected,
+    transport: selected.transport,
+    projectRoot: selected.projectRoot || projectRoot,
+  })
+}
+
 async function handlePreviewSpinner(options) {
   const total = Number.parseInt(options.count || '3', 10)
   const tickMs = Number.parseInt(options.tickMs || '10000', 10)
@@ -1007,7 +1067,7 @@ async function pickFlowInteractively() {
 async function chooseTransportInteractively({ requested, projectRoot }) {
   const clack = require('@clack/prompts')
   const detections = detectTransports({ projectRoot })
-  if (requested && requested !== 'auto') return requested
+  if (requested && requested !== 'auto') return resolveTransport(requested, detections)
 
   const available = detections.filter((transport) => transport.available)
   if (available.length === 1) return available[0].id
@@ -1088,6 +1148,21 @@ function resolveStepDescription(flow, step) {
   }
 }
 
+function stepActionLabel(step, transport) {
+  const action = String(step.action || 'issue')
+  const submit = String(step.submit || 'new-run')
+  if (transport === 'local') {
+    if (submit === 'new-run') return 'new agent run'
+    if (submit === 'follow-up') return 'follow-up session'
+    return submit
+  }
+  if (action === 'issue' && submit === 'new-run') return 'new issue'
+  if (action === 'comment' && submit === 'follow-up') return 'follow-up comment'
+  if (action === 'comment') return 'comment'
+  if (action === 'issue') return 'issue'
+  return [action, submit].filter(Boolean).join(' / ')
+}
+
 function wordWrap(text, width) {
   if (!text) return ''
   const lines = []
@@ -1125,11 +1200,12 @@ function printFlowPlan({ flow, steps, transport, branch, context }) {
     ...(hasContext ? ['Additional context: yes'] : []),
   ]
   const headings = steps.map((step, i) => `${i + 1}. ${step.title}`)
+  const actionLabels = steps.map((step) => stepActionLabel(step, transport))
   const descriptions = steps.map((step) => resolveStepDescription(flow, step))
   const chipsWidth = (agents) =>
     agents.reduce((sum, a) => sum + titleCase(a).length + 4, 0) + Math.max(0, agents.length - 1)
   const naturalStepInner = Math.max(
-    ...headings.map((h) => h.length),
+    ...headings.map((h, i) => h.length + actionLabels[i].length + 2),
     ...descriptions.map((d) => d.length),
     ...steps.map((step) => chipsWidth(step.agents)),
   )
@@ -1154,7 +1230,10 @@ function printFlowPlan({ flow, steps, transport, branch, context }) {
       ? `${wrappedDescriptions[i]}\n${chips}`
       : chips
     const box = makeBox({
-      title: headings[i],
+      title: {
+        left: headings[i],
+        right: actionLabels[i],
+      },
       content,
       borderStyle: 'rounded',
       borderColor: teal,
@@ -1440,6 +1519,14 @@ function shouldPollLocalRun(run) {
   return true
 }
 
+function shouldPollGithubRun(run) {
+  if (!run.issueNumber) return false
+  if (run.status === 'dry-run') return false
+  if (run.status === 'failed' || run.status === 'timeout') return false
+  if (run.status === 'completed' && run.resultText) return false
+  return true
+}
+
 function parseIssueNumberFromUrl(url) {
   const match = String(url || '').match(/\/issues\/(\d+)(?:#.*)?$/)
   return match ? Number(match[1]) : null
@@ -1532,13 +1619,72 @@ function makeStepProgressReporter({
   }
 }
 
-async function waitForGithubStep({ repo, issueNumbers, step, timeoutMinutes }) {
-  if (!issueNumbers.length) return []
+function commentsAfterGithubPrompt(result, run = {}) {
+  const comments = Array.isArray(result?.comments) ? result.comments : []
+  if (!run.commentUrl) return comments
+  const promptIndex = comments.findIndex((comment) => comment.url === run.commentUrl)
+  return promptIndex === -1 ? comments : comments.slice(promptIndex + 1)
+}
+
+function isGithubFailureResultBody(body) {
+  return bodyHasRunnerResultMarker(body) && /\bAgent Run failed\b/i.test(body)
+}
+
+function githubResultRepliesForRun(result, run = {}) {
+  return commentsAfterGithubPrompt(result, run).filter((comment) => {
+    const body = comment?.body || ''
+    return bodyHasRunnerResultMarker(body) && !isGithubFailureResultBody(body)
+  })
+}
+
+function githubFailureCommentsForRun(result, run = {}) {
+  return commentsAfterGithubPrompt(result, run).filter((comment) => {
+    const body = String(comment?.body || '')
+    return isGithubFailureResultBody(body) || (bodyHasRunnerStatusMarker(body) && /\bNetlify Agent Run failed\b/i.test(body))
+  })
+}
+
+function resultsScopedToGithubRuns(results, runs = []) {
+  if (!Array.isArray(runs) || runs.length === 0) return results
+  return results.map((result) => {
+    const run = runs.find((candidate) => candidate.issueNumber === result.issueNumber)
+    if (!run) return result
+    return {
+      ...result,
+      replies: githubResultRepliesForRun(result, run),
+    }
+  })
+}
+
+function findGithubRunnerFailures(results, runs = []) {
+  const failures = []
+  for (const result of results || []) {
+    const run = runs.find((candidate) => candidate.issueNumber === result.issueNumber) || {}
+    if (githubResultRepliesForRun(result, run).length > 0) continue
+    for (const comment of githubFailureCommentsForRun(result, run)) {
+      const body = String(comment?.body || '')
+      const summary = body.match(/\*\*Failure summary:\*\*\s*([^\n]+)/i)?.[1]?.trim() || 'Agent run failed'
+      failures.push({
+        issueNumber: result.issueNumber,
+        issueTitle: result.issueTitle,
+        url: comment.url || result.issueUrl || '',
+        summary,
+      })
+    }
+  }
+  return failures
+}
+
+async function waitForGithubStep({ repo, issueNumbers = [], runs = [], step, timeoutMinutes }) {
+  const numbers = issueNumbers.length > 0
+    ? issueNumbers
+    : runs.map((run) => run.issueNumber).filter((number) => Number.isFinite(number))
+  if (!numbers.length) return []
   const deadline = Date.now() + timeoutMinutes * 60 * 1000
   const pollMs = 15000
   const reporter = makeStepProgressReporter({
     stepTitle: step.title,
-    total: issueNumbers.length,
+    total: numbers.length,
     agents: step.agents || [],
   })
   let settled = false
@@ -1547,16 +1693,26 @@ async function waitForGithubStep({ repo, issueNumbers, step, timeoutMinutes }) {
     while (Date.now() < deadline) {
       const results = fetchRoundResults({
         repo,
-        issueNumbers,
+        issueNumbers: numbers,
         embedAll: true,
         requireResultMarker: true,
       })
-      const completeCount = results.filter((r) => (r.replies || []).length > 0).length
+      const scopedResults = resultsScopedToGithubRuns(results, runs)
+      const completeCount = scopedResults.filter((r) => (r.replies || []).length > 0).length
       reporter.setCount(completeCount)
-      if (completeCount === results.length) {
-        reporter.done(`${step.title}: ${completeCount}/${results.length} complete`)
+      const failures = findGithubRunnerFailures(results, runs)
+      if (failures.length > 0) {
+        const detail = failures
+          .map((failure) => `#${failure.issueNumber} ${failure.issueTitle}: ${failure.summary}${failure.url ? ` (${failure.url})` : ''}`)
+          .join('\n')
+        reporter.fail(`${step.title}: ${completeCount}/${scopedResults.length} complete, ${failures.length} failed`)
         settled = true
-        return results
+        throw new Error(`Step "${step.id}" has failed agent runs:\n${detail}`)
+      }
+      if (completeCount === scopedResults.length) {
+        reporter.done(`${step.title}: ${completeCount}/${scopedResults.length} complete`)
+        settled = true
+        return scopedResults
       }
       await new Promise((resolve) => setTimeout(resolve, pollMs))
     }
@@ -1568,11 +1724,46 @@ async function waitForGithubStep({ repo, issueNumbers, step, timeoutMinutes }) {
   }
 }
 
-async function executeGithubFlow({ flow, steps, options, runState }) {
+function githubStepStatus(stepState) {
+  return stepState.runs.every((run) => run.status === 'completed' || run.status === 'dry-run')
+    ? 'completed'
+    : 'submitted'
+}
+
+async function completeGithubStep({ repo, stepState, step, options }) {
+  const timeoutMinutes = Number.parseInt(options.timeoutMinutes || '25', 10)
+  if (step.waitFor !== WAIT_FOR_AGENT_RESULTS) {
+    stepState.status = 'completed'
+    return stepState
+  }
+
+  if (stepState.runs.some(shouldPollGithubRun)) {
+    const issueNumbers = stepState.runs.map((run) => run.issueNumber).filter((number) => Number.isFinite(number))
+    const results = await waitForGithubStep({
+      repo,
+      issueNumbers,
+      runs: stepState.runs,
+      step,
+      timeoutMinutes,
+    })
+    for (const run of stepState.runs) {
+      const result = results.find((item) => item.issueNumber === run.issueNumber)
+      const replies = result?.replies || []
+      const latest = replies[replies.length - 1]
+      run.status = latest ? 'completed' : 'timeout'
+      run.resultText = latest?.body || ''
+      run.commentUrl = latest?.url || run.commentUrl
+      run.rawResult = result || null
+    }
+  }
+
+  stepState.status = githubStepStatus(stepState)
+  return stepState
+}
+
+async function executeGithubFlow({ flow, steps, options, runState, completedStepStates = new Map() }) {
   const repo = resolveRepo(options.repo)
   const date = options.date || getLocalDate()
-  const timeoutMinutes = Number.parseInt(options.timeoutMinutes || '25', 10)
-  const completedStepStates = new Map()
   const baseContext = contextForRunState(runState, options)
 
   for (const step of steps) {
@@ -1588,7 +1779,9 @@ async function executeGithubFlow({ flow, steps, options, runState }) {
     runState.steps.push(stepState)
     saveRunState(runState)
 
-    const fromIssues = sourceIssueNumbersForStep(step, completedStepStates).join(',')
+    const sourceIssues = sourceIssueNumbersForStep(step, completedStepStates).join(',')
+    const recoveryIssues = step.action === 'comment' ? (options.fromIssues || options.fromIssue || options.issues || options.issue || '') : ''
+    const fromIssues = sourceIssues || recoveryIssues
     const targetIssues = step.action === 'comment' ? fromIssues : ''
     const stepOptions = {
       ...options,
@@ -1659,6 +1852,7 @@ async function executeGithubFlow({ flow, steps, options, runState }) {
           prUrl: issue.targetKind === 'pr' ? issue.targetUrl : '',
           raw: issue,
         })
+        saveRunState(runState)
         console.log(`#${issue.issueNumber} ${issue.issueTitle}: ${url}`)
       }
     } else {
@@ -1682,27 +1876,12 @@ async function executeGithubFlow({ flow, steps, options, runState }) {
           prUrl: '',
           raw: issue,
         })
+        saveRunState(runState)
         console.log(`${issue.title}: ${url}`)
       }
     }
 
-    if (step.waitFor === WAIT_FOR_AGENT_RESULTS) {
-      const issueNumbers = stepState.runs.map((run) => run.issueNumber).filter((number) => Number.isFinite(number))
-      const results = await waitForGithubStep({ repo, issueNumbers, step, timeoutMinutes })
-      for (const run of stepState.runs) {
-        const result = results.find((item) => item.issueNumber === run.issueNumber)
-        const replies = result?.replies || []
-        const latest = replies[replies.length - 1]
-        run.status = latest ? 'completed' : 'timeout'
-        run.resultText = latest?.body || ''
-        run.commentUrl = latest?.url || run.commentUrl
-        run.rawResult = result || null
-      }
-    }
-
-    stepState.status = stepState.runs.every((run) => run.status === 'completed' || run.status === 'dry-run')
-      ? 'completed'
-      : 'submitted'
+    await completeGithubStep({ repo, stepState, step, options })
     completedStepStates.set(step.id, stepState)
     saveRunState(runState)
   }
@@ -1735,7 +1914,12 @@ async function completeLocalStep({ stepState, step, options, projectRoot, netlif
       })
       stepState.runs = completedRuns
       const doneCount = completedRuns.filter((r) => r.status === 'completed').length
-      reporter.done(`${step.title}: ${doneCount}/${completedRuns.length} complete`)
+      const failedCount = completedRuns.filter((r) => r.status === 'failed' || r.status === 'timeout').length
+      if (failedCount > 0) {
+        reporter.fail(`${step.title}: ${doneCount}/${completedRuns.length} complete, ${failedCount} failed`)
+      } else {
+        reporter.done(`${step.title}: ${doneCount}/${completedRuns.length} complete`)
+      }
       settled = true
     } finally {
       if (!settled) reporter.fail(`Failed waiting for ${step.title}`)
@@ -1913,21 +2097,67 @@ async function resumeLocalFlow({ flow, runState, projectRoot }) {
   })
 }
 
+async function resumeGithubFlow({ flow, runState }) {
+  const options = runState.options || {}
+  const repo = resolveRepo(options.repo)
+  const completedStepStates = completedStepMapFromRunState(runState)
+  const startIndex = firstRunnableStepIndex(flow, runState)
+  if (startIndex >= flow.steps.length) {
+    console.log(`Run ${runState.runId} is already complete.`)
+    return
+  }
+
+  const step = flow.steps[startIndex]
+  const stepState = (runState.steps || []).find((candidate) => candidate.id === step.id)
+  if (stepState && stepState.runs?.some(shouldPollGithubRun)) {
+    console.log(`Resuming ${runState.runId}`)
+    console.log(`Flow: ${flow.title}`)
+    console.log(`State: ${path.join(runState.dir, 'run.json')}`)
+    console.log(`Repair and continue: ${step.title}`)
+    await completeGithubStep({ repo, stepState, step, options })
+    completedStepStates.set(step.id, stepState)
+    saveRunState(runState)
+    if (stepState.status !== 'completed' && stepState.status !== 'dry-run') {
+      throw new Error(`GitHub step "${step.id}" did not complete successfully.`)
+    }
+    await executeGithubFlow({
+      flow,
+      steps: flow.steps.slice(startIndex + 1),
+      options,
+      runState,
+      completedStepStates,
+    })
+    return
+  }
+
+  await executeGithubFlow({
+    flow,
+    steps: flow.steps.slice(startIndex),
+    options,
+    runState,
+    completedStepStates,
+  })
+}
+
 async function handleRun(flowId, options) {
   const projectRoot = path.resolve(options.projectRoot || process.cwd())
   const resolvedFlowId = flowId || (process.stdin.isTTY ? await pickFlowInteractively() : 'review')
   const flow = await loadFlow(resolvedFlowId)
 
-  const resumable = findLatestUnfinishedLocalRun(projectRoot, { flowId: flow.id })
+  const resumable = findLatestUnfinishedRun(projectRoot, { flowId: flow.id })
   if (resumable && process.stdin.isTTY && !options.yes && !options.dryRun) {
     const clack = require('@clack/prompts')
     const selected = await clack.confirm({
-      message: `Found unfinished local run ${resumable.runId}. Resume and complete it?`,
+      message: `Found unfinished ${resumable.transport || 'workflow'} run ${resumable.runId}. Resume and complete it?`,
       initialValue: true,
     })
     if (clack.isCancel(selected)) process.exit(0)
     if (selected) {
-      await resumeLocalFlow({ flow, runState: resumable, projectRoot })
+      if (resumable.transport === 'github') {
+        await resumeGithubFlow({ flow, runState: resumable })
+      } else {
+        await resumeLocalFlow({ flow, runState: resumable, projectRoot })
+      }
       return
     }
     dismissRunState(resumable)
@@ -2123,6 +2353,10 @@ function buildProgram() {
     .option('--date <yyyy-mm-dd>', 'Issue title date prefix; defaults to local date')
     .option('--step <id>', 'Run only one flow step')
     .option('--from-step <id>', 'Run from a flow step through the end')
+    .option('--issue <list>', 'Recovery: comma-separated issue numbers for comment steps')
+    .option('--issues <list>', 'Alias for --issue')
+    .option('--from-issues <list>', 'Recovery: comma-separated source issue numbers to embed for comment steps')
+    .option('--from-issue <list>', 'Alias for --from-issues')
     .option('--timeout-minutes <count>', 'Minutes to wait for each step to complete', '25')
     .option('--dry', 'Preview the workflow without creating issues/comments')
     .addOption(new Option('--dry-run', 'Hidden compatibility alias for --dry').hideHelp())
@@ -2191,6 +2425,13 @@ function buildProgram() {
     .action(handleList)
 
   program
+    .command('recent')
+    .description('Pick a recent run and reprint its final success box')
+    .option('--run-id <id>', 'Skip the picker and re-render a specific run id')
+    .option('--limit <n>', 'Maximum runs to show in the picker', '25')
+    .action((options, command) => handleRecent(actionOptions(options, command)))
+
+  program
     .command('preview-boxes [flow]')
     .description('Preview the flow plan and success boxes without running the workflow')
     .option('--transport <transport>', 'Transport to render (github|local)', 'github')
@@ -2244,6 +2485,8 @@ module.exports = {
     completedStepMapFromRunState,
     firstRunnableStepIndex,
     flowAgents,
+    findGithubRunnerFailures,
+    resultsScopedToGithubRuns,
     runnableSteps,
     sourceIssueNumbersForStep,
     sourceRunsForStep,

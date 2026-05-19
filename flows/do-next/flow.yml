@@ -13,6 +13,7 @@ defaults:
 steps:
   - id: propose
     title: Propose Next Task
+    description: Identify and recommend the most logical next development task based on current project state.
     prompt: prompts/1_propose-next-task.md
     action: issue
     submit: new-run
@@ -24,6 +25,7 @@ steps:
 
   - id: synthesize
     title: Synthesize Next Task
+    description: Synthesize multi-agent next-task recommendations into one concrete next development task.
     prompt: prompts/2_synthesize-next-task.md
     action: issue
     submit: new-run

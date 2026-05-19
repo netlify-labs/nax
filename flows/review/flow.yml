@@ -13,6 +13,7 @@ defaults:
 steps:
   - id: review
     title: Review
+    description: Explore, review, and improve the current setup with three independent agents.
     prompt: prompts/1_review.md
     action: issue
     submit: new-run
@@ -24,6 +25,7 @@ steps:
 
   - id: cross-review
     title: Cross Review
+    description: Cross-check the first-round Claude/Gemini/Codex review findings against each other.
     prompt: prompts/2_cross-review.md
     action: comment
     submit: follow-up
@@ -38,6 +40,7 @@ steps:
 
   - id: synthesize
     title: Summarize Consensus
+    description: Summarize the first-round reviews and second-round cross-review outputs into one ranked consensus plan.
     prompt: prompts/3_summarize-consensus.md
     action: issue
     submit: new-run

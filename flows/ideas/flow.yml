@@ -13,6 +13,7 @@ defaults:
 steps:
   - id: ideate
     title: Generate Ideas
+    description: Study the project and propose the strongest pragmatic improvement ideas.
     prompt: prompts/1_ideate.md
     action: issue
     submit: new-run
@@ -24,6 +25,7 @@ steps:
 
   - id: cross-score
     title: Cross Score Ideas
+    description: Score the other agents' ideas using an adversarial 0-1000 rubric.
     prompt: prompts/2_cross-score.md
     action: comment
     submit: follow-up
@@ -38,6 +40,7 @@ steps:
 
   - id: react
     title: React To Scores
+    description: React to adversarial scores, concede valid criticism, defend strong ideas, and identify blind spots.
     prompt: prompts/3_react.md
     action: comment
     submit: follow-up
@@ -54,6 +57,7 @@ steps:
 
   - id: synthesize
     title: Synthesize Ideas
+    description: Synthesize multi-agent idea proposals, scores, and reactions into a ranked plan.
     prompt: prompts/4_synthesize-ideas.md
     action: issue
     submit: new-run

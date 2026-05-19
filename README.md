@@ -15,6 +15,29 @@ You want three AI models to review the same diff, then critique each other's rev
 
 `nax` does all of that for you. A workflow is a YAML file. You run `nax`, pick a flow, pick where to run it, and watch the steps execute in order.
 
+## How It Works
+
+```mermaid
+flowchart LR
+  branch[Branch or PR] --> r1
+  subgraph r1[Step 1: review]
+    direction TB
+    c1[Claude]
+    g1[Gemini]
+    x1[Codex]
+  end
+  r1 --> r2
+  subgraph r2[Step 2: cross-review]
+    direction TB
+    c2[Claude]
+    g2[Gemini]
+    x2[Codex]
+  end
+  r2 --> syn[Step 3: synthesize<br/>Codex posts consensus]
+```
+
+Each step waits for every agent to finish before the next step starts. Round 2 reuses each runner via follow-up sessions so the cross-review sees its own prior context. Round 3 reads both rounds and posts one consensus issue.
+
 ## Quick Example
 
 The built-in `review` flow runs three steps against the current branch:

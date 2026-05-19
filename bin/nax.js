@@ -29,6 +29,7 @@ const { bodyHasRunnerResultMarker, bodyHasRunnerStatusMarker } = require('../lib
 const { multiline } = require('../lib/multiline')
 const { WAIT_FOR_AGENT_RESULTS, listFlows, loadFlow, loadStepPrompt } = require('../lib/flows')
 const { createRunState, dismissRunState, findLatestUnfinishedRun, listRunStates, saveRunState } = require('../lib/run-state')
+const { clearTrackedRunState, trackRunState } = require('../lib/graceful-run-state')
 const { detectTransports, formatTransportSetupHelp, resolveTransport } = require('../lib/transports')
 const { enableGitHubActionsSetup, initSite, readNetlifyProject } = require('../lib/init')
 const {
@@ -2048,12 +2049,14 @@ async function executeLocalFlow({ flow, steps, options, runState, projectRoot, c
 }
 
 async function resumeLocalFlow({ flow, runState, projectRoot }) {
+  trackRunState(runState)
   const options = runState.options || {}
   const netlify = buildNetlifyEnv({ projectRoot })
   const completedStepStates = completedStepMapFromRunState(runState)
   const startIndex = firstRunnableStepIndex(flow, runState)
   if (startIndex >= flow.steps.length) {
     console.log(`Run ${runState.runId} is already complete.`)
+    clearTrackedRunState(runState, { completed: true })
     return
   }
 
@@ -2078,6 +2081,7 @@ async function resumeLocalFlow({ flow, runState, projectRoot }) {
       projectRoot,
       completedStepStates,
     })
+    clearTrackedRunState(runState, { completed: true })
     return
   }
 
@@ -2089,15 +2093,18 @@ async function resumeLocalFlow({ flow, runState, projectRoot }) {
     projectRoot,
     completedStepStates,
   })
+  clearTrackedRunState(runState, { completed: true })
 }
 
 async function resumeGithubFlow({ flow, runState }) {
+  trackRunState(runState)
   const options = runState.options || {}
   const repo = resolveRepo(options.repo)
   const completedStepStates = completedStepMapFromRunState(runState)
   const startIndex = firstRunnableStepIndex(flow, runState)
   if (startIndex >= flow.steps.length) {
     console.log(`Run ${runState.runId} is already complete.`)
+    clearTrackedRunState(runState, { completed: true })
     return
   }
 
@@ -2121,6 +2128,7 @@ async function resumeGithubFlow({ flow, runState }) {
       runState,
       completedStepStates,
     })
+    clearTrackedRunState(runState, { completed: true })
     return
   }
 
@@ -2131,6 +2139,7 @@ async function resumeGithubFlow({ flow, runState }) {
     runState,
     completedStepStates,
   })
+  clearTrackedRunState(runState, { completed: true })
 }
 
 async function handleRun(flowId, options) {
@@ -2200,6 +2209,7 @@ async function handleRun(flowId, options) {
       projectRoot,
     },
   })
+  trackRunState(runState)
   runState.context = runContext
   runState.branch = configuredOptions.branch
   runState.branchSource = configuredOptions.branchSource
@@ -2216,6 +2226,7 @@ async function handleRun(flowId, options) {
     await executeGithubFlow({ flow: configuredFlow, steps, options: configuredOptions, runState })
   }
 
+  clearTrackedRunState(runState, { completed: true })
   printSuccessBox({ flow: configuredFlow, runState, transport, projectRoot })
 
   if (configuredOptions.notify) {

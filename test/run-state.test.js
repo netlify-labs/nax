@@ -32,6 +32,12 @@ function runState(tmp, overrides = {}) {
   }
 }
 
+function writeRunState(state) {
+  fs.mkdirSync(state.dir, { recursive: true })
+  fs.writeFileSync(path.join(state.dir, 'run.json'), JSON.stringify(state, null, 2) + '\n')
+  return state
+}
+
 test('isUnfinishedLocalRun detects submitted local runner ids', () => {
   assert.equal(isUnfinishedLocalRun(runState('/tmp/x', {
     steps: [{ id: 'review', status: 'running', runs: [{ runnerId: 'runner-1', status: 'submitted' }] }],
@@ -70,12 +76,12 @@ test('hasRepairableRuns still flags in-flight submitted and running runs', () =>
 
 test('findLatestUnfinishedLocalRun returns newest unfinished local run', () => {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'nax-run-state-test-'))
-  saveRunState(runState(tmp, {
+  writeRunState(runState(tmp, {
     runId: 'old',
     updatedAt: '2026-05-12T00:00:00.000Z',
     steps: [{ id: 'review', status: 'running', runs: [{ runnerId: 'old-runner', status: 'submitted' }] }],
   }))
-  saveRunState(runState(tmp, {
+  writeRunState(runState(tmp, {
     runId: 'new',
     updatedAt: '2026-05-12T01:00:00.000Z',
     steps: [{ id: 'review', status: 'running', runs: [{ runnerId: 'new-runner', status: 'submitted' }] }],
@@ -97,13 +103,13 @@ test('isUnfinishedRun detects submitted GitHub issue runs', () => {
 
 test('findLatestUnfinishedRun can filter by transport', () => {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'nax-run-state-generic-test-'))
-  saveRunState(runState(tmp, {
+  writeRunState(runState(tmp, {
     runId: 'github-run',
     transport: 'github',
     updatedAt: '2026-05-12T02:00:00.000Z',
     steps: [{ id: 'review', status: 'running', runs: [{ issueNumber: 99, status: 'submitted' }] }],
   }))
-  saveRunState(runState(tmp, {
+  writeRunState(runState(tmp, {
     runId: 'local-run',
     transport: 'local',
     updatedAt: '2026-05-12T01:00:00.000Z',

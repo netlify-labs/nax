@@ -281,6 +281,338 @@ test('waitForLocalAgentRuns keeps polling an error state until it resolves', asy
   assert.equal(result[0].resultText, 'done')
 })
 
+test('waitForLocalAgentRuns fails terminal runner error states immediately', async () => {
+  const progress = []
+  const calls = []
+  const result = await waitForLocalAgentRuns({
+    projectRoot: '/tmp/project',
+    siteId: 'site-123',
+    env: {},
+    timeoutMinutes: 1,
+    initialDelayMs: 0,
+    pollIntervalMs: 1,
+    runs: [{ agent: 'claude', runnerId: 'runner-1', status: 'submitted', resultText: '' }],
+    onProgress(event) {
+      progress.push(event)
+    },
+    runCommand(command, args) {
+      calls.push(args[0])
+      if (args[0] === 'agents:show') {
+        return {
+          status: 0,
+          stdout: JSON.stringify({
+            id: 'runner-1',
+            state: 'error',
+            done_at: '2026-05-15T01:25:58.379Z',
+            latest_session_state: 'error',
+          }),
+          stderr: '',
+        }
+      }
+      return {
+        status: 0,
+        stdout: JSON.stringify([{
+          id: 'session-1',
+          state: 'error',
+          result: 'The agent failed permanently.',
+        }]),
+        stderr: '',
+      }
+    },
+  })
+
+  assert.deepEqual(calls, ['agents:show', 'api'])
+  assert.equal(progress[0].terminal, true)
+  assert.equal(progress[0].terminalSuccess, false)
+  assert.equal(progress[0].terminalFailure, true)
+  assert.equal(result[0].status, 'failed')
+  assert.equal(result[0].resultText, 'The agent failed permanently.')
+  assert.equal(result[0].rawResult.latestSession.state, 'error')
+})
+
+test('waitForLocalAgentRuns retries Claude capacity failures once on the same runner', async () => {
+  const progress = []
+  const calls = []
+  let showCount = 0
+  let listCount = 0
+  const result = await waitForLocalAgentRuns({
+    projectRoot: '/tmp/project',
+    siteId: 'site-123',
+    env: {},
+    timeoutMinutes: 1,
+    initialDelayMs: 0,
+    pollIntervalMs: 1,
+    runs: [{
+      agent: 'claude',
+      runnerId: 'runner-1',
+      status: 'submitted',
+      promptText: 'retry this prompt',
+      resultText: '',
+    }],
+    onProgress(event) {
+      progress.push(event)
+    },
+    runCommand(command, args) {
+      calls.push(args.slice(0, 2))
+      if (args[0] === 'agents:show') {
+        showCount += 1
+        return {
+          status: 0,
+          stdout: JSON.stringify(showCount === 1
+            ? {
+                id: 'runner-1',
+                state: 'error',
+                done_at: '2026-05-15T01:25:58.379Z',
+                latest_session_state: 'error',
+              }
+            : { id: 'runner-1', state: 'done' }),
+          stderr: '',
+        }
+      }
+      if (args[1] === 'listAgentRunnerSessions') {
+        listCount += 1
+        return {
+          status: 0,
+          stdout: JSON.stringify(listCount === 1
+            ? [{
+                id: 'session-1',
+                state: 'error',
+                result: 'The Claude Code model is currently at capacity. Retrying automatically...',
+              }]
+            : [{ id: 'session-2', state: 'done', result: 'retried result' }]),
+          stderr: '',
+        }
+      }
+      assert.equal(args[1], 'createAgentRunnerSession')
+      assert.deepEqual(JSON.parse(args[3]), {
+        agent_runner_id: 'runner-1',
+        body: {
+          prompt: 'retry this prompt',
+          agent: 'claude',
+        },
+      })
+      return {
+        status: 0,
+        stdout: JSON.stringify({ id: 'session-2', state: 'running' }),
+        stderr: '',
+      }
+    },
+  })
+
+  assert.deepEqual(calls, [
+    ['agents:show', 'runner-1'],
+    ['api', 'listAgentRunnerSessions'],
+    ['api', 'createAgentRunnerSession'],
+    ['agents:show', 'runner-1'],
+    ['api', 'listAgentRunnerSessions'],
+  ])
+  assert.equal(progress.some((event) => event.retry === true), true)
+  assert.equal(result[0].status, 'completed')
+  assert.equal(result[0].resultText, 'retried result')
+  assert.equal(result[0].autoRetryCount, 1)
+  assert.equal(result[0].raw.autoRetries[0].id, 'session-2')
+})
+
+test('waitForLocalAgentRuns retries Gemini and Codex capacity failures', async () => {
+  for (const agent of ['gemini', 'codex']) {
+    let showCount = 0
+    let listCount = 0
+    let retryCount = 0
+    const result = await waitForLocalAgentRuns({
+      projectRoot: '/tmp/project',
+      siteId: 'site-123',
+      env: {},
+      timeoutMinutes: 1,
+      initialDelayMs: 0,
+      pollIntervalMs: 1,
+      runs: [{
+        agent,
+        runnerId: `runner-${agent}`,
+        status: 'submitted',
+        promptText: 'retry this prompt',
+        resultText: '',
+      }],
+      runCommand(command, args) {
+        if (args[0] === 'agents:show') {
+          showCount += 1
+          return {
+            status: 0,
+            stdout: JSON.stringify(showCount === 1
+              ? {
+                  id: `runner-${agent}`,
+                  state: 'error',
+                  done_at: '2026-05-15T01:25:58.379Z',
+                  latest_session_state: 'error',
+                }
+              : { id: `runner-${agent}`, state: 'done' }),
+            stderr: '',
+          }
+        }
+        if (args[1] === 'listAgentRunnerSessions') {
+          listCount += 1
+          return {
+            status: 0,
+            stdout: JSON.stringify(listCount === 1
+              ? [{
+                  id: 'session-1',
+                  state: 'error',
+                  result: `The ${agent === 'gemini' ? 'Gemini' : 'Codex'} model is currently at capacity. Retrying automatically...`,
+                }]
+              : [{ id: 'session-2', state: 'done', result: `${agent} retried result` }]),
+            stderr: '',
+          }
+        }
+        retryCount += 1
+        return {
+          status: 0,
+          stdout: JSON.stringify({ id: 'session-2', state: 'running' }),
+          stderr: '',
+        }
+      },
+    })
+
+    assert.equal(retryCount, 1)
+    assert.equal(result[0].status, 'completed')
+    assert.equal(result[0].resultText, `${agent} retried result`)
+  }
+})
+
+test('waitForLocalAgentRuns retries argument limit failures once with compact prompt', async () => {
+  const calls = []
+  let showCount = 0
+  let listCount = 0
+  const result = await waitForLocalAgentRuns({
+    projectRoot: '/tmp/project',
+    siteId: 'site-123',
+    env: {},
+    timeoutMinutes: 1,
+    initialDelayMs: 0,
+    pollIntervalMs: 1,
+    runs: [{
+      agent: 'claude',
+      runnerId: 'runner-1',
+      status: 'submitted',
+      promptText: 'original prompt with too many prior results and a long embedded result payload',
+      compactPromptText: 'compact prompt',
+      resultText: '',
+    }],
+    runCommand(command, args) {
+      calls.push(args.slice(0, 2))
+      if (args[0] === 'agents:show') {
+        showCount += 1
+        return {
+          status: 0,
+          stdout: JSON.stringify(showCount === 1
+            ? {
+                id: 'runner-1',
+                state: 'error',
+                done_at: '2026-05-15T01:25:58.379Z',
+                latest_session_state: 'error',
+              }
+            : { id: 'runner-1', state: 'done' }),
+          stderr: '',
+        }
+      }
+      if (args[1] === 'listAgentRunnerSessions') {
+        listCount += 1
+        return {
+          status: 0,
+          stdout: JSON.stringify(listCount === 1
+            ? [{
+                id: 'session-1',
+                state: 'error',
+                result: 'fork/exec /opt/build-bin/agent-runner: argument list too long',
+              }]
+            : [{ id: 'session-2', state: 'done', result: 'retried compact result' }]),
+          stderr: '',
+        }
+      }
+
+      assert.equal(args[1], 'createAgentRunnerSession')
+      assert.deepEqual(JSON.parse(args[3]), {
+        agent_runner_id: 'runner-1',
+        body: {
+          prompt: 'compact prompt',
+          agent: 'claude',
+        },
+      })
+      return {
+        status: 0,
+        stdout: JSON.stringify({ id: 'session-2', state: 'running' }),
+        stderr: '',
+      }
+    },
+  })
+
+  assert.deepEqual(calls, [
+    ['agents:show', 'runner-1'],
+    ['api', 'listAgentRunnerSessions'],
+    ['api', 'createAgentRunnerSession'],
+    ['agents:show', 'runner-1'],
+    ['api', 'listAgentRunnerSessions'],
+  ])
+  assert.equal(result[0].status, 'completed')
+  assert.equal(result[0].resultText, 'retried compact result')
+  assert.equal(result[0].promptText, 'compact prompt')
+  assert.equal(result[0].promptShrinkRetryCount, 1)
+  assert.equal(result[0].raw.autoRetries[0].retryReason, 'argument-list-too-long')
+})
+
+test('waitForLocalAgentRuns does not retry Claude capacity failures more than once', async () => {
+  const calls = []
+  const result = await waitForLocalAgentRuns({
+    projectRoot: '/tmp/project',
+    siteId: 'site-123',
+    env: {},
+    timeoutMinutes: 1,
+    initialDelayMs: 0,
+    pollIntervalMs: 1,
+    runs: [{
+      agent: 'claude',
+      runnerId: 'runner-1',
+      status: 'submitted',
+      promptText: 'retry this prompt',
+      resultText: '',
+    }],
+    runCommand(command, args) {
+      calls.push(args.slice(0, 2))
+      if (args[0] === 'agents:show') {
+        return {
+          status: 0,
+          stdout: JSON.stringify({
+            id: 'runner-1',
+            state: 'error',
+            done_at: '2026-05-15T01:25:58.379Z',
+            latest_session_state: 'error',
+          }),
+          stderr: '',
+        }
+      }
+      if (args[1] === 'createAgentRunnerSession') {
+        return {
+          status: 0,
+          stdout: JSON.stringify({ id: 'session-2', state: 'running' }),
+          stderr: '',
+        }
+      }
+      return {
+        status: 0,
+        stdout: JSON.stringify([{
+          id: 'session-1',
+          state: 'error',
+          result: 'The Claude Code model is currently at capacity. Retrying automatically...',
+        }]),
+        stderr: '',
+      }
+    },
+  })
+
+  assert.equal(calls.filter((args) => args[1] === 'createAgentRunnerSession').length, 1)
+  assert.equal(result[0].status, 'failed')
+  assert.equal(result[0].autoRetryCount, 1)
+  assert.equal(result[0].resultText, 'The Claude Code model is currently at capacity. Retrying automatically...')
+})
+
 test('waitForLocalAgentRuns returns completed runs after polling terminal state', async () => {
   const calls = []
   const result = await waitForLocalAgentRuns({

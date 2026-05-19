@@ -3,6 +3,7 @@
 const fs = require('fs')
 const os = require('os')
 const path = require('path')
+const readline = require('readline')
 const { spawnSync } = require('child_process')
 const { Command, Option } = require('commander')
 const { makeBox, makeHorizontalBoxes } = require('@davidwells/box-logger')
@@ -50,6 +51,9 @@ const ROUND_LABEL_BY_PROMPT = {
 const GITHUB_ISSUE_BODY_LIMIT = 65536
 const BODY_SAFETY_MARGIN = 536
 const BODY_FALLBACK_THRESHOLD = GITHUB_ISSUE_BODY_LIMIT - BODY_SAFETY_MARGIN
+const COMPACT_LOCAL_RESULT_CHAR_LIMIT = 6000
+const COMPACT_LOCAL_RESULTS_TOTAL_LIMIT = 36000
+const COMPACT_LOCAL_CONTEXT_CHAR_LIMIT = 12000
 
 function parseCsv(value) {
   if (!value) return []
@@ -1457,6 +1461,55 @@ function formatLocalRunResults(runs) {
   return parts.join('\n')
 }
 
+function compactTextForRetry(text, limit, label = 'content') {
+  const value = String(text || '').trim()
+  if (!value || value.length <= limit) return value
+  if (limit < 200) return value.slice(0, limit).trim()
+
+  const note = `\n\n[${label} compacted from ${value.length} chars for retry after Netlify runner argument limit. Middle omitted.]\n\n`
+  const available = Math.max(0, limit - note.length)
+  const headLength = Math.ceil(available * 0.65)
+  const tailLength = Math.max(0, available - headLength)
+  return `${value.slice(0, headLength).trimEnd()}${note}${value.slice(value.length - tailLength).trimStart()}`
+}
+
+function formatCompactLocalRunResults(runs, {
+  perRunLimit = COMPACT_LOCAL_RESULT_CHAR_LIMIT,
+  totalLimit = COMPACT_LOCAL_RESULTS_TOTAL_LIMIT,
+} = {}) {
+  const completed = runs.filter((run) => run.resultText && run.resultText.trim())
+  if (completed.length === 0) return ''
+
+  const parts = ['## Prior Agent Results']
+  let used = parts[0].length
+  for (let index = 0; index < completed.length; index += 1) {
+    const run = completed[index]
+    const source = run.sourceStep ? ` from ${run.sourceStep}` : ''
+    const title = `${titleCase(run.agent || 'agent')}${source}`
+    const blockPrefix = ['', `<details>`, `<summary>${title}</summary>`, ''].join('\n')
+    const blockSuffix = ['', `</details>`].join('\n')
+    const remaining = totalLimit - used
+    const contentLimit = Math.min(perRunLimit, remaining - blockPrefix.length - blockSuffix.length)
+    if (contentLimit < 200) {
+      parts.push('', `[${completed.length - index} prior results omitted to fit retry prompt size.]`)
+      break
+    }
+    const content = compactTextForRetry(run.resultText, contentLimit, `${title} result`)
+    const block = [
+      '',
+      `<details>`,
+      `<summary>${title}</summary>`,
+      '',
+      content,
+      '',
+      `</details>`,
+    ].join('\n')
+    parts.push(block)
+    used += block.length
+  }
+  return parts.join('\n')
+}
+
 function buildLocalAgentPrompt({ model, prompt, context, roundResults }) {
   const summaryLabel = `${titleCase(prompt.name)} instructions`
   const parts = [
@@ -1479,6 +1532,31 @@ function buildLocalAgentPrompt({ model, prompt, context, roundResults }) {
   }
 
   return parts.join('\n')
+}
+
+function buildCompactLocalPromptForRedrive({ flow, step, runState, run }) {
+  const savedCompact = String(run.compactPromptText || '').trim()
+  const savedPrompt = String(run.promptText || '')
+  if (savedCompact && savedCompact.length < savedPrompt.length) return savedCompact
+
+  const options = runState.options || {}
+  const prompt = loadStepPrompt(flow, step)
+  const completedStepStates = completedStepMapFromRunState(runState)
+  const sourceRuns = sourceRunsForStep(step, completedStepStates)
+  const compactRoundResults = formatCompactLocalRunResults(sourceRuns)
+  const compactContext = compactTextForRetry(
+    contextForRunState(runState, options),
+    COMPACT_LOCAL_CONTEXT_CHAR_LIMIT,
+    'Additional Context',
+  )
+  const rebuilt = buildLocalAgentPrompt({
+    model: run.agent,
+    prompt,
+    context: compactContext,
+    roundResults: compactRoundResults,
+  })
+  if (rebuilt.trim() && (!savedPrompt || rebuilt.length < savedPrompt.length)) return rebuilt
+  return compactTextForRetry(savedPrompt, COMPACT_LOCAL_RESULTS_TOTAL_LIMIT + COMPACT_LOCAL_CONTEXT_CHAR_LIMIT, 'Local agent prompt')
 }
 
 function completedStepMapFromRunState(runState) {
@@ -1506,12 +1584,42 @@ function localStepStatus(stepState) {
     : 'failed'
 }
 
+function localRunStatusSummary(runs = []) {
+  return runs.map((run) => {
+    const status = run.status === 'completed'
+      ? 'complete'
+      : run.status === 'timeout'
+        ? 'timeout'
+        : run.status === 'failed'
+          ? 'failed'
+          : run.status || 'unknown'
+    return `${titleCase(run.agent || 'agent')}: ${status}`
+  }).join(', ')
+}
+
 function shouldPollLocalRun(run) {
   if (!run.runnerId) return false
   if (run.status === 'dry-run') return false
   if (run.status === 'failed' || run.status === 'timeout') return false
   if (run.status === 'completed' && run.resultText) return false
   return true
+}
+
+function localRedriveCandidates(runState, { stepId, agent } = {}) {
+  const requestedAgent = String(agent || '').trim().toLowerCase()
+  return (runState.steps || []).flatMap((step, stepIndex) => {
+    if (stepId && step.id !== stepId) return []
+    return (step.runs || []).map((run, runIndex) => ({
+      step,
+      stepIndex,
+      run,
+      runIndex,
+    })).filter(({ run }) => {
+      if (requestedAgent && String(run.agent || '').toLowerCase() !== requestedAgent) return false
+      if (!run.runnerId) return false
+      return run.status === 'failed' || run.status === 'timeout'
+    })
+  })
 }
 
 function shouldPollGithubRun(run) {
@@ -1555,6 +1663,12 @@ function pickAgentLabel(agents) {
 }
 
 const DEFAULT_ORCHESTRATOR = "Netlify Agent runner"
+const STEP_SPINNER_FRAMES = ['◐', '◓', '◑', '◒']
+
+function nextFlavorAt({ min, max }) {
+  const range = Math.max(0, max - min)
+  return Date.now() + min + Math.floor(Math.random() * (range + 1))
+}
 
 function makeStepProgressReporter({
   stepTitle,
@@ -1566,50 +1680,155 @@ function makeStepProgressReporter({
 }) {
   if (!process.stdout.isTTY) {
     let lastCount = -1
+    const lastRunMessages = new Map()
     return {
       setCount: (n) => {
         if (n === lastCount) return
         lastCount = n
         console.log(`Waiting for ${stepTitle}: ${n}/${total} complete`)
       },
+      updateRun: (event) => {
+        const id = event.run?.runnerId || event.run?.issueNumber || event.run?.agent
+        if (!id) return
+        const message = event.message || `${event.run?.agent || 'agent'}: ${event.state || 'unknown'}`
+        if (lastRunMessages.get(id) === message) return
+        lastRunMessages.set(id, message)
+        console.log(message)
+      },
       message: (msg) => console.log(msg),
       done: (msg) => { if (msg) console.log(msg) },
       fail: (msg) => { if (msg) console.log(msg) },
     }
   }
-  const clack = require('@clack/prompts')
-  const spinner = clack.spinner()
-  let count = 0
-  const possessive = orchestrator ? `${orchestrator}'s ` : ''
-  const render = () => {
+
+  const rows = new Map()
+  for (const agent of agents) {
     const [phrase, emoji] = pickFlavor()
-    const agent = pickAgentLabel(agents)
-    return `Waiting for ${stepTitle}: ${count}/${total} complete · ${emoji} ${possessive}${agent} ${phrase}`
+    rows.set(agent, {
+      agent,
+      emoji,
+      phrase,
+      nextFlavor: nextFlavorAt({ min: flavorMinMs, max: flavorMaxMs }),
+      state: 'pending',
+      status: 'pending',
+      message: '',
+    })
   }
-  spinner.start(render())
-  let timer = null
-  const scheduleNext = () => {
-    const range = Math.max(0, flavorMaxMs - flavorMinMs)
-    const delay = flavorMinMs + Math.floor(Math.random() * (range + 1))
-    timer = setTimeout(() => {
-      spinner.message(render())
-      scheduleNext()
-    }, delay)
+  let frame = 0
+  let renderedLines = 0
+  let finished = false
+
+  const rowForAgent = (agent) => {
+    const key = agent || `agent-${rows.size + 1}`
+    if (!rows.has(key)) {
+      const [phrase, emoji] = pickFlavor()
+      rows.set(key, {
+        agent: key,
+        emoji,
+        phrase,
+        nextFlavor: nextFlavorAt({ min: flavorMinMs, max: flavorMaxMs }),
+        state: 'pending',
+        status: 'pending',
+        message: '',
+      })
+    }
+    return rows.get(key)
   }
-  scheduleNext()
+
+  const completeCount = () => [...rows.values()].filter((row) => row.status === 'completed').length
+  const displayRows = () => [...rows.values()]
+  const rotateFlavor = (row) => {
+    if (row.status !== 'pending' && row.status !== 'running') return
+    if (Date.now() < row.nextFlavor) return
+    const [phrase, emoji] = pickFlavor()
+    row.phrase = phrase
+    row.emoji = emoji
+    row.nextFlavor = nextFlavorAt({ min: flavorMinMs, max: flavorMaxMs })
+  }
+  const renderRow = (row, nameWidth) => {
+    const name = titleCase(row.agent).padEnd(nameWidth, ' ')
+    if (row.status === 'completed') return `✓ ${name} · complete`
+    if (row.status === 'failed') return `✖ ${name} · failed${row.message ? ` · ${row.message}` : ''}`
+    const icon = STEP_SPINNER_FRAMES[frame % STEP_SPINNER_FRAMES.length]
+    const label = row.message || `${row.emoji} ${orchestrator}'s ${titleCase(row.agent)} ${row.phrase}`
+    return `${icon} ${name} · ${label}`
+  }
+  const renderLines = () => {
+    for (const row of rows.values()) rotateFlavor(row)
+    const visibleRows = displayRows()
+    const nameWidth = visibleRows.reduce((max, row) => Math.max(max, titleCase(row.agent).length), 0)
+    return [
+      `Waiting for ${stepTitle}: ${completeCount()}/${total} complete`,
+      ...visibleRows.map((row) => renderRow(row, nameWidth)),
+    ]
+  }
+  const writeLines = (lines) => {
+    if (finished) return
+    if (renderedLines > 0) {
+      readline.moveCursor(process.stdout, 0, -renderedLines)
+      readline.cursorTo(process.stdout, 0)
+      readline.clearScreenDown(process.stdout)
+    }
+    process.stdout.write(`${lines.join('\n')}\n`)
+    renderedLines = lines.length
+  }
+  const redraw = () => {
+    frame += 1
+    writeLines(renderLines())
+  }
+  writeLines(renderLines())
+  const timer = setInterval(redraw, 180)
+  timer.unref?.()
+  const stop = (msg) => {
+    finished = true
+    clearInterval(timer)
+    if (renderedLines > 0) {
+      readline.moveCursor(process.stdout, 0, -renderedLines)
+      readline.cursorTo(process.stdout, 0)
+      readline.clearScreenDown(process.stdout)
+    }
+    const lines = renderLines()
+    process.stdout.write(`${lines.join('\n')}\n`)
+    renderedLines = 0
+    if (msg) console.log(msg)
+  }
   return {
     setCount: (n) => {
-      count = n
-      spinner.message(render())
+      let remaining = n
+      for (const row of rows.values()) {
+        row.status = remaining > 0 ? 'completed' : 'running'
+        row.message = ''
+        remaining -= 1
+      }
+      redraw()
     },
-    message: (msg) => spinner.message(msg),
+    updateRun: (event) => {
+      const row = rowForAgent(event.run?.agent)
+      row.state = event.state || row.state
+      if (event.terminalSuccess || event.run?.status === 'completed') {
+        row.status = 'completed'
+        row.message = ''
+      } else if (event.terminalFailure || event.run?.status === 'failed' || event.run?.status === 'timeout') {
+        row.status = 'failed'
+        row.message = event.error || event.run?.resultText || event.state || ''
+      } else {
+        row.status = 'running'
+        row.message = event.retry ? 'retrying once after transient capacity error' : ''
+      }
+      redraw()
+    },
+    message: (msg) => {
+      if (!msg) return
+      const row = rowForAgent('status')
+      row.status = 'running'
+      row.message = msg
+      redraw()
+    },
     done: (msg) => {
-      if (timer) clearTimeout(timer)
-      spinner.stop(msg || `${stepTitle}: ${total}/${total} complete`)
+      stop(msg || `${stepTitle}: ${total}/${total} complete`)
     },
     fail: (msg) => {
-      if (timer) clearTimeout(timer)
-      spinner.stop(msg || `Failed waiting for ${stepTitle}`, 1)
+      stop(msg || `Failed waiting for ${stepTitle}`)
     },
   }
 }
@@ -1670,28 +1889,58 @@ function findGithubRunnerFailures(results, runs = []) {
   return failures
 }
 
-async function waitForGithubStep({ repo, issueNumbers = [], runs = [], step, timeoutMinutes }) {
+const GITHUB_POLL_MAX_CONSECUTIVE_FAILURES = 5
+
+async function waitForGithubStep({
+  repo,
+  issueNumbers = [],
+  runs = [],
+  step,
+  timeoutMinutes,
+  pollMs = 15000,
+  loader,
+  maxConsecutiveFailures = GITHUB_POLL_MAX_CONSECUTIVE_FAILURES,
+}) {
   const numbers = issueNumbers.length > 0
     ? issueNumbers
     : runs.map((run) => run.issueNumber).filter((number) => Number.isFinite(number))
   if (!numbers.length) return []
   const deadline = Date.now() + timeoutMinutes * 60 * 1000
-  const pollMs = 15000
   const reporter = makeStepProgressReporter({
     stepTitle: step.title,
     total: numbers.length,
     agents: step.agents || [],
   })
   let settled = false
+  let consecutiveFailures = 0
 
   try {
     while (Date.now() < deadline) {
-      const results = fetchRoundResults({
-        repo,
-        issueNumbers: numbers,
-        embedAll: true,
-        requireResultMarker: true,
-      })
+      let results
+      try {
+        results = fetchRoundResults({
+          repo,
+          issueNumbers: numbers,
+          embedAll: true,
+          requireResultMarker: true,
+          loader,
+        })
+        consecutiveFailures = 0
+      } catch (err) {
+        consecutiveFailures += 1
+        if (consecutiveFailures >= maxConsecutiveFailures) {
+          reporter.fail(`${step.title}: poll failed ${consecutiveFailures} times in a row`)
+          settled = true
+          throw new Error(
+            `Step "${step.id}" aborted after ${consecutiveFailures} consecutive poll failures: ${err.message}`,
+          )
+        }
+        reporter.message(
+          `transient poll error (${consecutiveFailures}/${maxConsecutiveFailures}); retrying — ${err.message}`,
+        )
+        await new Promise((resolve) => setTimeout(resolve, pollMs))
+        continue
+      }
       const scopedResults = resultsScopedToGithubRuns(results, runs)
       const completeCount = scopedResults.filter((r) => (r.replies || []).length > 0).length
       reporter.setCount(completeCount)
@@ -1892,7 +2141,6 @@ async function completeLocalStep({ stepState, step, options, projectRoot, netlif
     })
     let settled = false
     try {
-      const terminalRunners = new Set()
       const completedRuns = await waitForLocalAgentRuns({
         projectRoot,
         runs: stepState.runs,
@@ -1901,19 +2149,27 @@ async function completeLocalStep({ stepState, step, options, projectRoot, netlif
         timeoutMinutes,
         initialDelayMs,
         onProgress: (event) => {
-          if (event.run?.runnerId && /^(completed|done|failed|error|cancelled|canceled|timeout)$/i.test(event.state || '')) {
-            terminalRunners.add(event.run.runnerId)
-            reporter.setCount(terminalRunners.size)
-          }
+          if (!event.run?.runnerId) return
+          reporter.updateRun(event)
         },
       })
       stepState.runs = completedRuns
+      for (const run of completedRuns) {
+        reporter.updateRun({
+          run,
+          state: run.status,
+          terminal: run.status === 'completed' || run.status === 'failed' || run.status === 'timeout',
+          terminalSuccess: run.status === 'completed',
+          terminalFailure: run.status === 'failed' || run.status === 'timeout',
+        })
+      }
       const doneCount = completedRuns.filter((r) => r.status === 'completed').length
       const failedCount = completedRuns.filter((r) => r.status === 'failed' || r.status === 'timeout').length
+      const statusSummary = localRunStatusSummary(completedRuns)
       if (failedCount > 0) {
-        reporter.fail(`${step.title}: ${doneCount}/${completedRuns.length} complete, ${failedCount} failed`)
+        reporter.fail(`${step.title}: ${doneCount}/${completedRuns.length} complete, ${failedCount} failed · ${statusSummary}`)
       } else {
-        reporter.done(`${step.title}: ${doneCount}/${completedRuns.length} complete`)
+        reporter.done(`${step.title}: ${doneCount}/${completedRuns.length} complete · ${statusSummary}`)
       }
       settled = true
     } finally {
@@ -1945,6 +2201,8 @@ async function executeLocalFlow({ flow, steps, options, runState, projectRoot, c
 
     const sourceRuns = sourceRunsForStep(step, completedStepStates)
     const roundResults = formatLocalRunResults(sourceRuns)
+    const compactRoundResults = formatCompactLocalRunResults(sourceRuns)
+    const compactContext = compactTextForRetry(baseContext, COMPACT_LOCAL_CONTEXT_CHAR_LIMIT, 'Additional Context')
     const runs = step.agents.map((agent) => {
       const followUpRun = step.submit === 'follow-up'
         ? sourceRuns.find((sourceRun) => sourceRun.agent === agent && sourceRun.runnerId)
@@ -1956,11 +2214,19 @@ async function executeLocalFlow({ flow, steps, options, runState, projectRoot, c
         roundResults,
         date,
       })
+      const compactPromptText = buildLocalAgentPrompt({
+        model: agent,
+        prompt,
+        context: compactContext,
+        roundResults: compactRoundResults,
+        date,
+      })
       return {
         transport: 'local',
         agent,
         status: options.dryRun ? 'dry-run' : 'pending',
         promptText,
+        compactPromptText: compactPromptText.length < promptText.length ? compactPromptText : '',
         resultText: '',
         runnerId: '',
         issueUrl: '',
@@ -2140,6 +2406,141 @@ async function resumeGithubFlow({ flow, runState }) {
     completedStepStates,
   })
   clearTrackedRunState(runState, { completed: true })
+}
+
+function findRunStateForRedrive(projectRoot, { runId, flowId, stepId, agent } = {}) {
+  const states = listRunStates(projectRoot)
+  if (runId) {
+    const matched = states.find((state) => state.runId === runId)
+    if (!matched) throw new Error(`Could not find run state ${runId} under ${path.join(projectRoot, '.nax', 'runs')}.`)
+    return matched
+  }
+  const matched = states.find((state) => {
+    if (state.transport !== 'local') return false
+    if (flowId && state.flowId !== flowId) return false
+    return localRedriveCandidates(state, { stepId, agent }).length > 0
+  })
+  if (!matched) throw new Error('Could not find a failed local run to redrive. Pass a run id explicitly.')
+  return matched
+}
+
+async function handleRedrive(runId, options) {
+  const projectRoot = path.resolve(options.projectRoot || process.cwd())
+  const runState = findRunStateForRedrive(projectRoot, {
+    runId,
+    flowId: options.flow,
+    stepId: options.step,
+    agent: options.agent,
+  })
+  if (runState.transport !== 'local') {
+    throw new Error(`Run ${runState.runId} uses ${runState.transport || 'unknown'} transport; redrive currently supports local runs only.`)
+  }
+
+  const flow = await loadFlow(runState.flowId)
+  const candidates = localRedriveCandidates(runState, {
+    stepId: options.step,
+    agent: options.agent,
+  })
+  if (candidates.length === 0) {
+    throw new Error(`Run ${runState.runId} has no failed local runner matching the requested filters.`)
+  }
+  if (candidates.length > 1) {
+    const choices = candidates.map(({ step, run }) => `${step.id}:${run.agent}`).join(', ')
+    throw new Error(`More than one failed local runner can be redriven (${choices}). Pass --step and --agent.`)
+  }
+
+  trackRunState(runState)
+  const [{ step, stepIndex, run, runIndex }] = candidates
+  const flowStep = flow.steps.find((candidate) => candidate.id === step.id)
+  if (!flowStep) throw new Error(`Flow ${flow.id} no longer contains step ${step.id}.`)
+
+  const netlify = buildNetlifyEnv({ projectRoot })
+  const branch = runState.branch || runState.options?.branch || currentGitBranch(projectRoot)
+  const compactPromptText = buildCompactLocalPromptForRedrive({ flow, step: flowStep, runState, run })
+  if (!compactPromptText || compactPromptText.length >= String(run.promptText || '').length) {
+    throw new Error(`Could not build a shorter prompt for ${run.agent} ${step.id}.`)
+  }
+
+  console.log(`Redriving ${titleCase(run.agent)} ${step.title}`)
+  console.log(`Run: ${runState.runId}`)
+  console.log(`Runner: ${run.runnerId}`)
+  console.log(`Prompt: ${String(run.promptText || '').length} -> ${compactPromptText.length} chars`)
+
+  const redriveRun = {
+    ...run,
+    status: 'pending',
+    promptText: compactPromptText,
+    compactPromptText,
+    resultText: '',
+    existingRunnerId: run.runnerId,
+    promptShrinkRetryCount: Number(run.promptShrinkRetryCount || 0) + 1,
+    raw: {
+      ...run.raw,
+      redrive: {
+        reason: 'manual-compact-prompt',
+        previousStatus: run.status,
+        previousResultText: run.resultText || '',
+      },
+    },
+  }
+  const submitted = await submitLocalAgentRun({
+    run: redriveRun,
+    projectRoot,
+    branch,
+    siteId: netlify.siteId,
+    env: netlify.env,
+  })
+  step.runs[runIndex] = submitted
+  step.status = 'running'
+  saveRunState(runState)
+
+  const reporter = makeStepProgressReporter({
+    stepTitle: step.title,
+    total: 1,
+    agents: [run.agent],
+  })
+  const completed = await waitForLocalAgentRuns({
+    projectRoot,
+    runs: [submitted],
+    siteId: netlify.siteId,
+    env: netlify.env,
+    timeoutMinutes: Number.parseInt(options.timeoutMinutes || runState.options?.timeoutMinutes || '25', 10),
+    initialDelayMs: 0,
+    onProgress: (event) => reporter.updateRun(event),
+  })
+  const completedRun = completed[0]
+  step.runs[runIndex] = completedRun
+  step.status = localStepStatus(step)
+  reporter.updateRun({
+    run: completedRun,
+    state: completedRun.status,
+    terminal: true,
+    terminalSuccess: completedRun.status === 'completed',
+    terminalFailure: completedRun.status !== 'completed',
+  })
+  if (completedRun.status === 'completed') {
+    reporter.done(`${step.title}: ${titleCase(run.agent)} complete`)
+  } else {
+    reporter.fail(`${step.title}: ${titleCase(run.agent)} ${completedRun.status}`)
+  }
+  saveRunState(runState)
+
+  if (step.status !== 'completed') {
+    throw new Error(`Redriven ${run.agent} run did not complete successfully.`)
+  }
+
+  const completedStepStates = completedStepMapFromRunState(runState)
+  completedStepStates.set(step.id, step)
+  await executeLocalFlow({
+    flow,
+    steps: flow.steps.slice(stepIndex + 1),
+    options: runState.options || {},
+    runState,
+    projectRoot,
+    completedStepStates,
+  })
+  clearTrackedRunState(runState, { completed: true })
+  printSuccessBox({ flow, runState, transport: 'local', projectRoot })
 }
 
 async function handleRun(flowId, options) {
@@ -2373,6 +2774,16 @@ function buildProgram() {
     .action((flow, options, command) => handleRun(flow, actionOptions(options, command)))
 
   program
+    .command('redrive [run-id]')
+    .description('Retry one failed local agent run with a compact prompt and continue the workflow')
+    .option('--project-root <path>', 'Project root containing .nax/runs')
+    .option('--flow <id>', 'Flow id filter when run id is omitted')
+    .option('--step <id>', 'Failed step id to redrive')
+    .option('--agent <name>', 'Failed agent to redrive, e.g. claude')
+    .option('--timeout-minutes <count>', 'Minutes to wait for the redriven run', '25')
+    .action((runId, options, command) => handleRedrive(runId || '', actionOptions(options, command)))
+
+  program
     .command('issue [prompt]')
     .description('Create issues for a prompt')
     .option('--models <list>', `Comma-separated models (default: ${DEFAULT_MODELS.join(',')})`)
@@ -2490,9 +2901,14 @@ module.exports = {
     completedStepMapFromRunState,
     firstRunnableStepIndex,
     flowAgents,
+    buildCompactLocalPromptForRedrive,
+    compactTextForRetry,
     findGithubRunnerFailures,
+    localRedriveCandidates,
+    formatCompactLocalRunResults,
     resultsScopedToGithubRuns,
     runnableSteps,
+    waitForGithubStep,
     sourceIssueNumbersForStep,
     sourceRunsForStep,
     withSelectedAgents,

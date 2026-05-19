@@ -50,6 +50,51 @@ test('sourceRunsForStep dedupes within a single input step', () => {
   ])
 })
 
+test('formatCompactLocalRunResults truncates prior local outputs for retry prompts', () => {
+  const longResult = `${'A'.repeat(800)}\nimportant tail`
+  const formatted = _private.formatCompactLocalRunResults([
+    {
+      agent: 'claude',
+      sourceStep: 'ideate',
+      resultText: longResult,
+    },
+  ], {
+    perRunLimit: 300,
+    totalLimit: 1000,
+  })
+
+  assert.match(formatted, /## Prior Agent Results/)
+  assert.match(formatted, /Claude from ideate/)
+  assert.match(formatted, /compacted from/)
+  assert.match(formatted, /important tail/)
+  assert.ok(formatted.length < longResult.length)
+})
+
+test('localRedriveCandidates finds failed local runs by step and agent', () => {
+  const runState = {
+    steps: [
+      {
+        id: 'ideate',
+        runs: [{ agent: 'claude', runnerId: 'runner-1', status: 'completed', resultText: 'done' }],
+      },
+      {
+        id: 'react',
+        runs: [
+          { agent: 'claude', runnerId: 'runner-2', status: 'failed', resultText: 'argument list too long' },
+          { agent: 'gemini', runnerId: 'runner-3', status: 'completed', resultText: 'done' },
+        ],
+      },
+    ],
+  }
+
+  const candidates = _private.localRedriveCandidates(runState, { stepId: 'react', agent: 'claude' })
+
+  assert.equal(candidates.length, 1)
+  assert.equal(candidates[0].step.id, 'react')
+  assert.equal(candidates[0].run.runnerId, 'runner-2')
+  assert.equal(candidates[0].runIndex, 0)
+})
+
 test('firstRunnableStepIndex finds incomplete saved local step', () => {
   const flow = {
     steps: [
@@ -194,6 +239,63 @@ test('findGithubRunnerFailures ignores old failures before the submitted prompt 
   ])
 
   assert.deepEqual(failures, [])
+})
+
+test('waitForGithubStep retries transient loader errors and still completes', async () => {
+  const promptUrl = 'https://x/issues/97#prompt'
+  const resultUrl = 'https://x/issues/97#result'
+  const issue = {
+    number: 97,
+    title: '2026-05-17 Codex Review',
+    url: 'https://x/issues/97',
+    comments: [
+      { url: promptUrl, body: '@netlify codex review\n<!-- netlify-workflow-prompt:review:codex:2026-05-17 -->' },
+      { url: resultUrl, body: 'codex result body\n<!-- netlify-agent-run-result:runner-97:session-97 -->' },
+    ],
+  }
+  let calls = 0
+  const loader = () => {
+    calls += 1
+    if (calls === 1) {
+      throw new Error('HTTP 401: Bad credentials (https://api.github.com/graphql)')
+    }
+    return issue
+  }
+
+  const results = await _private.waitForGithubStep({
+    repo: 'example/repo',
+    issueNumbers: [97],
+    runs: [{ issueNumber: 97, commentUrl: promptUrl, agent: 'codex' }],
+    step: { id: 'review', title: 'Review', agents: ['codex'] },
+    timeoutMinutes: 1,
+    pollMs: 5,
+    loader,
+  })
+
+  assert.equal(calls, 2)
+  assert.equal(results.length, 1)
+  assert.equal(results[0].issueNumber, 97)
+  assert.equal(results[0].replies.length, 1)
+  assert.equal(results[0].replies[0].url, resultUrl)
+})
+
+test('waitForGithubStep aborts after maxConsecutiveFailures poll errors', async () => {
+  const loader = () => {
+    throw new Error('HTTP 500: gateway')
+  }
+  await assert.rejects(
+    _private.waitForGithubStep({
+      repo: 'example/repo',
+      issueNumbers: [42],
+      runs: [{ issueNumber: 42, commentUrl: 'https://x/issues/42#prompt', agent: 'claude' }],
+      step: { id: 'review', title: 'Review', agents: ['claude'] },
+      timeoutMinutes: 1,
+      pollMs: 1,
+      loader,
+      maxConsecutiveFailures: 3,
+    }),
+    /aborted after 3 consecutive poll failures/,
+  )
 })
 
 test('withSelectedAgents filters each workflow step and runnableSteps drops empty steps', () => {

@@ -1,4 +1,4 @@
-# netlify-agent-executor
+# Netlify-Agent-eXecutor
 
 `nax` runs multi-step Netlify Agent Runner workflows across multiple AI models (Claude, Gemini, Codex) and waits for results between steps so each step sees the previous round's output.
 

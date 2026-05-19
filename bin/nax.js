@@ -31,6 +31,13 @@ const { multiline } = require('../lib/multiline')
 const { WAIT_FOR_AGENT_RESULTS, listFlows, loadFlow, loadStepPrompt } = require('../lib/flows')
 const { createRunState, dismissRunState, findLatestUnfinishedRun, listRunStates, saveRunState } = require('../lib/run-state')
 const { clearTrackedRunState, trackRunState } = require('../lib/graceful-run-state')
+const {
+  PROVIDER_DIRS,
+  checkSkills,
+  installSkills,
+  listBundledSkills,
+  updateSkills,
+} = require('../lib/skills')
 const { detectTransports, formatTransportSetupHelp, resolveTransport } = require('../lib/transports')
 const { enableGitHubActionsSetup, initSite, readNetlifyProject } = require('../lib/init')
 const {
@@ -61,6 +68,10 @@ function parseCsv(value) {
     .split(',')
     .map((item) => item.trim())
     .filter(Boolean)
+}
+
+function collectOption(value, previous) {
+  return [...(Array.isArray(previous) ? previous : []), value]
 }
 
 function readManualContext(options) {
@@ -2665,6 +2676,79 @@ function printInitResult(result, { dryRun = false } = {}) {
   }
 }
 
+function printSkillInstallResults(results, { dryRun = false } = {}) {
+  for (const result of results) {
+    const relative = path.join(result.provider, 'skills', result.skill)
+    const verb = dryRun ? result.status : result.status
+    console.log(`${verb} -> ${relative} (v${result.version})`)
+  }
+}
+
+function printSkillCheckResults(results) {
+  if (results.length === 0) {
+    console.log('No bundled skills found.')
+    return
+  }
+  for (const result of results) {
+    const relative = path.join(result.provider, 'skills', result.skill)
+    if (!result.installed) {
+      console.log(`${relative}: not installed`)
+      continue
+    }
+    const suffix = result.current ? 'current' : 'stale; run `nax skills update`'
+    console.log(`${relative}: v${result.installedVersion || '?'} package v${result.packageVersion} (${suffix})`)
+  }
+}
+
+function printSkillsHelp() {
+  console.log([
+    'nax skills - manage project-local agent skills',
+    '',
+    'Usage:',
+    '  nax skills install [--provider=.claude] [--all-providers] [--skill=nax-workflows]',
+    '  nax skills update  [--provider=.claude] [--all-providers] [--skill=nax-workflows]',
+    '  nax skills check   [--provider=.claude] [--all-providers] [--skill=nax-workflows]',
+    '  nax skills list',
+    '',
+    `Supported providers: ${PROVIDER_DIRS.join(', ')}`,
+    '',
+    'By default, install/update targets detected provider directories in the current project.',
+    'If no provider directory exists, nax installs into .claude/skills by default.',
+  ].join('\n'))
+}
+
+async function handleSkills(subcommand = 'help', options = {}) {
+  const projectRoot = path.resolve(options.projectRoot || process.cwd())
+  const common = {
+    projectRoot,
+    providers: options.provider,
+    allProviders: options.allProviders === true,
+    skill: options.skill,
+    allSkills: options.allSkills === true,
+  }
+  switch (subcommand) {
+    case 'install':
+      printSkillInstallResults(installSkills({ ...common, dryRun: options.dryRun === true }), { dryRun: options.dryRun === true })
+      return
+    case 'update':
+      printSkillInstallResults(updateSkills({ ...common, dryRun: options.dryRun === true }), { dryRun: options.dryRun === true })
+      return
+    case 'check':
+      printSkillCheckResults(checkSkills(common))
+      return
+    case 'list':
+      for (const skill of listBundledSkills()) console.log(skill)
+      return
+    case 'help':
+    case undefined:
+    case null:
+      printSkillsHelp()
+      return
+    default:
+      throw new Error(`Unknown skills subcommand "${subcommand}".`)
+  }
+}
+
 async function shouldEnableGithubActions(options) {
   if (options.githubActions === true) return true
   if (options.githubActions === false) return false
@@ -2782,6 +2866,18 @@ function buildProgram() {
     .option('--agent <name>', 'Failed agent to redrive, e.g. claude')
     .option('--timeout-minutes <count>', 'Minutes to wait for the redriven run', '25')
     .action((runId, options, command) => handleRedrive(runId || '', actionOptions(options, command)))
+
+  program
+    .command('skills [subcommand]')
+    .description('Install, update, and check project-local agent skills')
+    .option('--project-root <path>', 'Project root for skill installation')
+    .option('--provider <name>', 'Provider directory to install into, e.g. .claude or codex; repeatable', collectOption, [])
+    .option('--all-providers', 'Install/check every supported provider directory')
+    .option('--skill <name>', 'Bundled skill to install/check; repeatable', collectOption, [])
+    .option('--all-skills', 'Install/check every bundled skill')
+    .option('--dry', 'Preview installs without writing files')
+    .addOption(new Option('--dry-run', 'Hidden compatibility alias for --dry').hideHelp())
+    .action((subcommand, options, command) => handleSkills(subcommand || 'help', actionOptions(options, command)))
 
   program
     .command('issue [prompt]')

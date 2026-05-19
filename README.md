@@ -109,6 +109,8 @@ What it does:
 nax [flow]                Pick a flow and run it (interactive if no flow given)
 nax run [flow]            Alias for the above
 nax init                  Wire this repo to Netlify + GitHub Actions
+nax skills install        Install bundled agent skills into detected harness dirs
+nax skills check          Show installed skill versions
 nax list                  List available flows
 ```
 
@@ -122,6 +124,14 @@ Notable `run` flags:
 - `--timeout-minutes <count>` — how long to wait per step (default `25`).
 - `--runner <mention>` — agent mention prefix (default `@netlify`).
 - `--no-auto-context` / `--no-fetch-results` — opt out of the automatic review contract / prior-round fetching.
+
+Skill commands:
+
+- `nax skills install` — installs bundled skills into detected provider directories like `.claude`, `.codex`, `.cursor`, `.gemini`, or `.agents`. If none exist, it installs into `.claude/skills`.
+- `nax skills update` — reinstalls the latest bundled copy.
+- `nax skills check` — compares installed skill versions with the current `nax` package version.
+- `--provider <name>` — choose a provider explicitly; repeatable, accepts `codex` or `.codex`.
+- `--all-providers` / `--all-skills` — install or check the full supported matrix.
 
 ## Flow Anatomy
 

@@ -148,7 +148,6 @@ test('non-TTY progress reporter repeats unchanged run status after heartbeat int
     const event = {
       run: { agent: 'codex', runnerId: 'runner-1' },
       state: 'running',
-      message: 'codex runner-1: running',
     }
     reporter.updateRun(event)
     now += 500
@@ -192,6 +191,51 @@ test('formatSubmittedLocalRunBoxes renders submitted local run details', () => {
   assert.match(output, /Submitted after: 6s/)
 })
 
+test('non-TTY progress reporter aligns agent and state columns', () => {
+  const originalLog = console.log
+  const originalIsTTY = Object.getOwnPropertyDescriptor(process.stdout, 'isTTY')
+  const lines = []
+  console.log = (line) => lines.push(line)
+  Object.defineProperty(process.stdout, 'isTTY', { configurable: true, value: false })
+  try {
+    const reporter = _private.makeStepProgressReporter({
+      stepTitle: 'Review',
+      total: 3,
+      agents: ['claude', 'gemini', 'codex'],
+    })
+    reporter.updateRun({
+      run: { agent: 'claude', runnerId: '6a0e1befb595e97af9a2c165' },
+      state: 'running',
+    })
+    reporter.updateRun({
+      run: { agent: 'gemini', runnerId: '6a0e1bee848af0ba500f3c89' },
+      state: 'running',
+    })
+    reporter.updateRun({
+      run: { agent: 'codex', runnerId: '6a0e1bf1c1a717707743f5c5' },
+      state: 'running',
+    })
+    reporter.updateRun({
+      run: { agent: 'codex', runnerId: '6a0e1bf1c1a717707743f5c5' },
+      state: 'done',
+    })
+  } finally {
+    console.log = originalLog
+    if (originalIsTTY) {
+      Object.defineProperty(process.stdout, 'isTTY', originalIsTTY)
+    } else {
+      delete process.stdout.isTTY
+    }
+  }
+
+  assert.deepEqual(lines, [
+    'claude 6a0e1befb595e97af9a2c165: running (check #1)',
+    'gemini 6a0e1bee848af0ba500f3c89: running (check #1)',
+    'codex  6a0e1bf1c1a717707743f5c5: running (check #1)',
+    'codex  6a0e1bf1c1a717707743f5c5: done    (check #2)',
+  ])
+})
+
 test('non-TTY progress reporter prints usage when a local run completes', () => {
   const originalLog = console.log
   const originalIsTTY = Object.getOwnPropertyDescriptor(process.stdout, 'isTTY')
@@ -231,6 +275,58 @@ test('non-TTY progress reporter prints usage when a local run completes', () => 
   assert.deepEqual(lines, [
     'codex runner-1: completed (check #1)\n**Usage:** 85,131 tokens · 10 steps · 18.07 credits',
   ])
+})
+
+test('success box keeps non-TTY links on one line', () => {
+  const originalLog = console.log
+  const originalIsTTY = Object.getOwnPropertyDescriptor(process.stdout, 'isTTY')
+  const originalColumns = Object.getOwnPropertyDescriptor(process.stdout, 'columns')
+  const lines = []
+  const longUrl = 'https://app.netlify.com/projects/netlify-agent-executor/agent-runs/6a0e1ce1f8fc93c4132a27de?session=6a0e1ce1f8fc93c4132a27e0'
+  console.log = (line = '') => lines.push(String(line))
+  Object.defineProperty(process.stdout, 'isTTY', { configurable: true, value: false })
+  Object.defineProperty(process.stdout, 'columns', { configurable: true, value: 80 })
+  try {
+    _private.printSuccessBox({
+      flow: { title: 'Do Next' },
+      transport: 'local',
+      projectRoot: process.cwd(),
+      runState: {
+        steps: [
+          {
+            id: 'synthesize',
+            title: 'Synthesize Next Task',
+            status: 'completed',
+            runs: [
+              {
+                agent: 'codex',
+                status: 'completed',
+                runnerId: '6a0e1ce1f8fc93c4132a27de',
+                sessionId: '6a0e1ce1f8fc93c4132a27e0',
+                links: { sessionUrl: longUrl },
+              },
+            ],
+          },
+        ],
+      },
+    })
+  } finally {
+    console.log = originalLog
+    if (originalIsTTY) {
+      Object.defineProperty(process.stdout, 'isTTY', originalIsTTY)
+    } else {
+      delete process.stdout.isTTY
+    }
+    if (originalColumns) {
+      Object.defineProperty(process.stdout, 'columns', originalColumns)
+    } else {
+      delete process.stdout.columns
+    }
+  }
+
+  const output = lines.join('\n')
+  assert.match(output, /Final agent run:/)
+  assert.ok(output.includes(longUrl))
 })
 
 test('localRedriveCandidates finds failed local runs by step and agent', () => {

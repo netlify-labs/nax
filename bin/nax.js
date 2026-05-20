@@ -1198,6 +1198,14 @@ function wordWrap(text, width) {
   return lines.join('\n')
 }
 
+function isUrlLine(line) {
+  return /^https?:\/\//.test(String(line || '').trim())
+}
+
+function wrapBoxLines(lines, width) {
+  return lines.map((line) => (isUrlLine(line) ? line : wordWrap(line, width))).join('\n')
+}
+
 const STEP_MAX_WIDTH = 200
 const OUTER_TERMINAL_RATIO = 0.8
 
@@ -1336,15 +1344,15 @@ function printSuccessBox({ flow, runState, transport, projectRoot }) {
       final.run.links?.agentRunUrl ||
       localAgentRunUrl({ projectRoot, runnerId: final.run.runnerId, sessionId: final.run.sessionId })
     if (url) {
-      lines.push(`Final agent run: ${url}`)
+      lines.push('Final agent run:', url)
     } else if (final.run.runnerId) {
       lines.push(`Final agent runner ID: ${final.run.runnerId}`)
     }
-    if (final.run.deployUrl) lines.push(`Deploy: ${final.run.deployUrl}`)
-    if (final.run.prUrl) lines.push(`PR: ${final.run.prUrl}`)
+    if (final.run.deployUrl) lines.push('Deploy:', final.run.deployUrl)
+    if (final.run.prUrl) lines.push('PR:', final.run.prUrl)
   } else {
     const url = final.run.commentUrl || final.run.issueUrl
-    if (url) lines.push(`Final result: ${url}`)
+    if (url) lines.push('Final result:', url)
   }
   if (usage.totalSummary) {
     lines.push(`Total usage: ${usage.totalSummary}`)
@@ -1354,15 +1362,16 @@ function printSuccessBox({ flow, runState, transport, projectRoot }) {
   }
   const terminalWidth = process.stdout.columns || 100
   const outerMax = Math.max(60, Math.floor(terminalWidth * OUTER_TERMINAL_RATIO))
-  const wrapped = lines.map((l) => wordWrap(l, outerMax - 6)).join('\n')
+  const wrapped = wrapBoxLines(lines, outerMax - 6)
   const longest = Math.max(...wrapped.split('\n').map((l) => l.length))
+  const width = process.stdout.isTTY ? Math.min(longest + 6, outerMax) : longest + 6
   console.log('')
   console.log(makeBox({
     title: 'Success',
     content: wrapped,
     borderStyle: 'rounded',
     borderColor: green,
-    width: Math.min(longest + 6, outerMax),
+    width,
   }))
   console.log('')
 }
@@ -1731,12 +1740,12 @@ function nextFlavorAt({ min, max }) {
   return Date.now() + min + Math.floor(Math.random() * (range + 1))
 }
 
-function formatNonTtyRunStatusMessage(event = {}) {
-  if (event.message) return event.message
+function formatNonTtyRunStatusMessage(event = {}, { agentWidth = 0, stateWidth = 0 } = {}) {
   const run = event.run || {}
+  const agent = String(run.agent || 'agent')
   const id = run.runnerId || run.issueNumber || ''
-  const label = [run.agent || 'agent', id].filter(Boolean).join(' ')
-  return `${label}: ${event.state || run.status || 'unknown'}`
+  const state = String(event.state || run.status || 'unknown')
+  return `${agent.padEnd(agentWidth)} ${id}: ${state.padEnd(stateWidth)}`
 }
 
 function formatUsageLogLine(usage) {
@@ -1756,6 +1765,8 @@ function makeStepProgressReporter({
   if (!process.stdout.isTTY) {
     let lastCount = -1
     const lastRunLogs = new Map()
+    const agentWidth = Math.max(0, ...agents.map((agent) => String(agent).length))
+    let stateWidth = 0
     return {
       setCount: (n) => {
         if (n === lastCount) return
@@ -1765,7 +1776,8 @@ function makeStepProgressReporter({
       updateRun: (event) => {
         const id = event.run?.runnerId || event.run?.issueNumber || event.run?.agent
         if (!id) return
-        const message = formatNonTtyRunStatusMessage(event)
+        stateWidth = Math.max(stateWidth, String(event.state || event.run?.status || 'unknown').length)
+        const message = event.message || formatNonTtyRunStatusMessage(event, { agentWidth, stateWidth })
         const previous = lastRunLogs.get(id) || {}
         const checkCount = Number(previous.checkCount || 0) + 1
         const now = Date.now()
@@ -3104,6 +3116,7 @@ module.exports = {
     formatCompactLocalRunResults,
     makeStepProgressReporter,
     normalizeGithubRunResult,
+    printSuccessBox,
     usageSummariesForRunState,
     resultsScopedToGithubRuns,
     runnableSteps,

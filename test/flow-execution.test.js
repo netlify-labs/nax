@@ -129,6 +129,48 @@ test('usageSummariesForRunState aggregates usage by step and total', () => {
   assert.match(summary.totalSummary, /3.85 credits/)
 })
 
+test('non-TTY progress reporter repeats unchanged run status after heartbeat interval', () => {
+  const originalLog = console.log
+  const originalNow = Date.now
+  const originalIsTTY = Object.getOwnPropertyDescriptor(process.stdout, 'isTTY')
+  const lines = []
+  let now = 1000
+  console.log = (line) => lines.push(line)
+  Date.now = () => now
+  Object.defineProperty(process.stdout, 'isTTY', { configurable: true, value: false })
+  try {
+    const reporter = _private.makeStepProgressReporter({
+      stepTitle: 'Review',
+      total: 1,
+      agents: ['codex'],
+      nonTtyHeartbeatMs: 1000,
+    })
+    const event = {
+      run: { agent: 'codex', runnerId: 'runner-1' },
+      state: 'running',
+      message: 'codex runner-1: running',
+    }
+    reporter.updateRun(event)
+    now += 500
+    reporter.updateRun(event)
+    now += 500
+    reporter.updateRun(event)
+  } finally {
+    console.log = originalLog
+    Date.now = originalNow
+    if (originalIsTTY) {
+      Object.defineProperty(process.stdout, 'isTTY', originalIsTTY)
+    } else {
+      delete process.stdout.isTTY
+    }
+  }
+
+  assert.deepEqual(lines, [
+    'codex runner-1: running',
+    'codex runner-1: running',
+  ])
+})
+
 test('localRedriveCandidates finds failed local runs by step and agent', () => {
   const runState = {
     steps: [

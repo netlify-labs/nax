@@ -1706,10 +1706,11 @@ function makeStepProgressReporter({
   orchestrator = DEFAULT_ORCHESTRATOR,
   flavorMinMs = 10000,
   flavorMaxMs = 15000,
+  nonTtyHeartbeatMs = 60000,
 }) {
   if (!process.stdout.isTTY) {
     let lastCount = -1
-    const lastRunMessages = new Map()
+    const lastRunLogs = new Map()
     return {
       setCount: (n) => {
         if (n === lastCount) return
@@ -1720,8 +1721,10 @@ function makeStepProgressReporter({
         const id = event.run?.runnerId || event.run?.issueNumber || event.run?.agent
         if (!id) return
         const message = event.message || `${event.run?.agent || 'agent'}: ${event.state || 'unknown'}`
-        if (lastRunMessages.get(id) === message) return
-        lastRunMessages.set(id, message)
+        const previous = lastRunLogs.get(id)
+        const now = Date.now()
+        if (previous?.message === message && now - previous.loggedAt < nonTtyHeartbeatMs) return
+        lastRunLogs.set(id, { message, loggedAt: now })
         console.log(message)
       },
       message: (msg) => console.log(msg),
@@ -3032,6 +3035,7 @@ module.exports = {
     findGithubRunnerFailures,
     localRedriveCandidates,
     formatCompactLocalRunResults,
+    makeStepProgressReporter,
     normalizeGithubRunResult,
     usageSummariesForRunState,
     resultsScopedToGithubRuns,

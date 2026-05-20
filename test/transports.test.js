@@ -48,11 +48,11 @@ test('resolveTransport honors explicit transports and auto-picks available trans
   assert.throws(() => resolveTransport('bad', []), /Unknown run location/)
 })
 
-test('resolveTransport returns github fallback when auto has no available transports', () => {
-  assert.equal(resolveTransport('auto', [
+test('resolveTransport rejects auto when no transports are available', () => {
+  assert.throws(() => resolveTransport('auto', [
     { id: 'github', available: false },
     { id: 'local', available: false },
-  ]), 'github')
+  ]), /No runnable transport detected/)
 })
 
 test('detectTransports returns github and local entries', () => {

@@ -8,6 +8,7 @@ const {
   createAgentSessionAsync,
   formatCommandForError,
   latestSessionFromList,
+  listAgentSessions,
   normalizeCompletedRun,
   waitForLocalAgentRuns,
   showAgentRun,
@@ -209,6 +210,22 @@ test('showAgentRun treats CLI failures as retryable poll errors', () => {
   assert.equal(shown.error, 'temporary API failure')
 })
 
+test('listAgentSessions treats malformed JSON as a retryable command error', () => {
+  const sessions = listAgentSessions({
+    projectRoot: '/tmp/project',
+    runnerId: 'runner-1',
+    env: {},
+    runCommand() {
+      return { status: 0, stdout: '{not json', stderr: '' }
+    },
+  })
+
+  assert.equal(sessions.commandError, true)
+  assert.equal(sessions.raw, null)
+  assert.deepEqual(sessions.latest, {})
+  assert.match(sessions.error, /Could not parse listAgentRunnerSessions JSON/)
+})
+
 test('waitForLocalAgentRuns retries transient poll errors', async () => {
   let showCount = 0
   const progress = []
@@ -244,6 +261,45 @@ test('waitForLocalAgentRuns retries transient poll errors', async () => {
   assert.equal(result[0].status, 'completed')
   assert.equal(result[0].resultText, 'done')
   assert.match(progress[0], /poll failed, retrying/)
+})
+
+test('waitForLocalAgentRuns retries malformed session-list JSON', async () => {
+  let listCount = 0
+  const progress = []
+  const result = await waitForLocalAgentRuns({
+    projectRoot: '/tmp/project',
+    siteId: 'site-123',
+    env: {},
+    timeoutMinutes: 1,
+    initialDelayMs: 0,
+    pollIntervalMs: 1,
+    runs: [{ agent: 'codex', runnerId: 'runner-1', status: 'submitted', resultText: '' }],
+    onProgress(event) {
+      progress.push(event)
+    },
+    runCommand(command, args) {
+      if (args[0] === 'agents:show') {
+        return {
+          status: 0,
+          stdout: JSON.stringify({ id: 'runner-1', state: 'completed' }),
+          stderr: '',
+        }
+      }
+      listCount += 1
+      return {
+        status: 0,
+        stdout: listCount === 1
+          ? '{not json'
+          : JSON.stringify({ sessions: [{ id: 'session-1', result: 'done' }] }),
+        stderr: '',
+      }
+    },
+  })
+
+  assert.equal(listCount, 2)
+  assert.equal(result[0].status, 'completed')
+  assert.equal(result[0].resultText, 'done')
+  assert.equal(progress.some((event) => /session list failed, retrying/.test(event.message)), true)
 })
 
 test('waitForLocalAgentRuns keeps polling an error state until it resolves', async () => {

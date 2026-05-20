@@ -2676,11 +2676,10 @@ function printInitResult(result, { dryRun = false } = {}) {
   }
 }
 
-function printSkillInstallResults(results, { dryRun = false } = {}) {
+function printSkillInstallResults(results) {
   for (const result of results) {
     const relative = path.join(result.provider, 'skills', result.skill)
-    const verb = dryRun ? result.status : result.status
-    console.log(`${verb} -> ${relative} (v${result.version})`)
+    console.log(`${result.status} -> ${relative} (v${result.version})`)
   }
 }
 

@@ -46,3 +46,39 @@ jobs:
       - run: npm ci
       - run: npm install -g netlify-cli
       - run: node bin/nax.js run "$NAX_FLOW" --where local-machine --repo "$GITHUB_REPOSITORY" --branch "$BRANCH" --force --timeout-minutes 60
+      - name: Inspect nax run artifacts
+        if: always()
+        run: |
+          if [ ! -d .nax/runs ]; then
+            echo "No .nax/runs directory found."
+            exit 0
+          fi
+
+          echo "NAX run directories:"
+          find .nax/runs -mindepth 1 -maxdepth 1 -type d -print | sort
+
+          echo ""
+          echo "NAX artifact files:"
+          find .nax/runs -path '*/artifacts/*' -type f -print | sort || true
+
+          latest_summary="$(find .nax/runs -path '*/artifacts/summary.md' -type f -print | sort | tail -n 1)"
+          if [ -n "$latest_summary" ]; then
+            echo ""
+            echo "Latest artifact summary: $latest_summary"
+            echo "----"
+            sed -n '1,220p' "$latest_summary"
+          else
+            echo ""
+            echo "No artifact summary.md files found."
+          fi
+      - name: Upload nax run artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: nax-${{ github.event.inputs.flow || 'review' }}-${{ github.run_id }}
+          path: |
+            .nax/runs/**/run.json
+            .nax/runs/**/artifacts/**
+          if-no-files-found: ignore
+          include-hidden-files: true
+          retention-days: 30

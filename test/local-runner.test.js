@@ -785,6 +785,7 @@ test('waitForLocalAgentRuns does not retry Claude capacity failures more than on
 
 test('waitForLocalAgentRuns returns completed runs after polling terminal state', async () => {
   const calls = []
+  const terminalRuns = []
   const result = await waitForLocalAgentRuns({
     projectRoot: '/tmp/project',
     siteId: 'site-123',
@@ -793,6 +794,9 @@ test('waitForLocalAgentRuns returns completed runs after polling terminal state'
     initialDelayMs: 0,
     pollIntervalMs: 1,
     runs: [{ agent: 'codex', runnerId: 'runner-1', status: 'submitted', resultText: '' }],
+    onTerminalRun(run) {
+      terminalRuns.push(run)
+    },
     runCommand(command, args) {
       calls.push(args[0])
       if (args[0] === 'agents:show') {
@@ -813,6 +817,10 @@ test('waitForLocalAgentRuns returns completed runs after polling terminal state'
   assert.deepEqual(calls, ['agents:show', 'api'])
   assert.equal(result[0].status, 'completed')
   assert.equal(result[0].resultText, 'done')
+  assert.equal(terminalRuns.length, 1)
+  assert.equal(terminalRuns[0].status, 'completed')
+  assert.equal(terminalRuns[0].resultText, 'done')
+  assert.equal(terminalRuns[0].sessionId, 'session-1')
 })
 
 test('waitForLocalAgentRuns fails completed parent runners with errored latest sessions', async () => {

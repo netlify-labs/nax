@@ -7,6 +7,7 @@ const path = require('path')
 const {
   WORKFLOW_PATH,
   defaultSiteName,
+  ensureNaxGitignore,
   ensureNetlifyProject,
   ensureWorkflow,
   initProject,
@@ -80,6 +81,25 @@ test('ensureWorkflow rejects existing unrelated workflow unless force is set', (
   assert.throws(() => ensureWorkflow({ projectRoot: tmp }), /already exists/)
   assert.equal(ensureWorkflow({ projectRoot: tmp, force: true, dryRun: true }).status, 'replaced')
   assert.equal(fs.readFileSync(workflowPath, 'utf8'), 'name: Existing\n')
+})
+
+test('ensureNaxGitignore creates gitignore with .nax entry', () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'nax-init-test-'))
+  const result = ensureNaxGitignore({ projectRoot: tmp })
+
+  assert.equal(result.status, 'created')
+  assert.equal(fs.readFileSync(path.join(tmp, '.gitignore'), 'utf8'), '.nax/\n')
+})
+
+test('ensureNaxGitignore appends .nax entry without duplicating it', () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'nax-init-test-'))
+  const gitignorePath = path.join(tmp, '.gitignore')
+  fs.writeFileSync(gitignorePath, 'node_modules/\n')
+
+  assert.equal(ensureNaxGitignore({ projectRoot: tmp }).status, 'updated')
+  assert.match(fs.readFileSync(gitignorePath, 'utf8'), /# Added by nax init\n\.nax\/\n$/)
+  assert.equal(ensureNaxGitignore({ projectRoot: tmp }).status, 'exists')
+  assert.equal((fs.readFileSync(gitignorePath, 'utf8').match(/\.nax\/?/g) || []).length, 1)
 })
 
 test('siteIdFromStatus and defaultSiteName normalize expected values', () => {

@@ -137,3 +137,25 @@ test('dismissRunState marks unfinished runs ignored by resume detection', () => 
   assert.equal(isUnfinishedLocalRun(dismissed), false)
   assert.equal(findLatestUnfinishedLocalRun(tmp, { flowId: 'review' }), null)
 })
+
+test('saveRunState refreshes workflow artifact summaries', () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'nax-run-state-artifacts-test-'))
+  const state = saveRunState(runState(tmp, {
+    runId: 'artifact-run',
+    status: 'completed',
+    steps: [{
+      id: 'review',
+      title: 'Review',
+      status: 'completed',
+      runs: [{
+        agent: 'codex',
+        status: 'completed',
+        resultText: 'done',
+        usage: { totalTokens: 10, stepsCount: 1, totalCreditsCost: 0.5 },
+      }],
+    }],
+  }))
+
+  assert.equal(fs.existsSync(path.join(state.dir, 'artifacts', 'summary.md')), true)
+  assert.equal(fs.existsSync(path.join(state.dir, 'artifacts', 'usage.json')), true)
+})

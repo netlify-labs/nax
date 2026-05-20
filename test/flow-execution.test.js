@@ -512,6 +512,7 @@ test('waitForGithubStep retries transient loader errors and still completes', as
     ],
   }
   let calls = 0
+  const terminalResults = []
   const loader = () => {
     calls += 1
     if (calls === 1) {
@@ -528,9 +529,15 @@ test('waitForGithubStep retries transient loader errors and still completes', as
     timeoutMinutes: 1,
     pollMs: 5,
     loader,
+    onRunResult(event) {
+      terminalResults.push(event)
+    },
   })
 
   assert.equal(calls, 2)
+  assert.equal(terminalResults.length, 1)
+  assert.equal(terminalResults[0].status, 'completed')
+  assert.equal(terminalResults[0].reply.url, resultUrl)
   assert.equal(results.length, 1)
   assert.equal(results[0].issueNumber, 97)
   assert.equal(results[0].replies.length, 1)

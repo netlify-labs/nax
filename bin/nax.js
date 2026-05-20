@@ -26,7 +26,13 @@ const {
   rawIssuesFromResults,
 } = require('../lib/round-results')
 const { formatGroupHint, listRecentIssueGroups } = require('../lib/issue-groups')
-const { bodyHasRunnerResultMarker, bodyHasRunnerStatusMarker } = require('../lib/comment-markers')
+const { bodyHasRunnerResultMarker, bodyHasRunnerStatusMarker, parseRunnerResultMarker } = require('../lib/comment-markers')
+const {
+  formatAgentRunUrl,
+  formatAgentRunUrlFromAdminUrl,
+  normalizeGithubRunResult,
+  usageSummariesForRunState,
+} = require('../lib/agent-run-results')
 const { multiline } = require('../lib/multiline')
 const { WAIT_FOR_AGENT_RESULTS, listFlows, loadFlow, loadStepPrompt } = require('../lib/flows')
 const { createRunState, dismissRunState, findLatestUnfinishedRun, listRunStates, saveRunState } = require('../lib/run-state')
@@ -1273,11 +1279,14 @@ function finalRunForRunState(runState) {
   return { step: lastStep, run: runs[runs.length - 1] }
 }
 
-function localAgentRunUrl({ projectRoot, runnerId }) {
+function localAgentRunUrl({ projectRoot, runnerId, sessionId }) {
   if (!runnerId) return ''
   try {
     const project = readNetlifyProject(projectRoot)
-    if (project?.adminUrl) return `${project.adminUrl}/agents/${runnerId}`
+    if (project?.adminUrl) {
+      return formatAgentRunUrlFromAdminUrl(project.adminUrl, runnerId, sessionId)
+    }
+    if (project?.siteName) return formatAgentRunUrl(project.siteName, runnerId, sessionId)
   } catch (_err) {
     /* ignore */
   }
@@ -1289,8 +1298,11 @@ function printSuccessBox({ flow, runState, transport, projectRoot }) {
   const final = finalRunForRunState(runState)
   if (!final) return
   const lines = [`Workflow "${flow.title}" complete.`, `Final step: ${final.step.title}`]
+  const usage = usageSummariesForRunState(runState)
   if (transport === 'local') {
-    const url = localAgentRunUrl({ projectRoot, runnerId: final.run.runnerId })
+    const url = final.run.links?.sessionUrl ||
+      final.run.links?.agentRunUrl ||
+      localAgentRunUrl({ projectRoot, runnerId: final.run.runnerId, sessionId: final.run.sessionId })
     if (url) {
       lines.push(`Final agent run: ${url}`)
     } else if (final.run.runnerId) {
@@ -1301,6 +1313,12 @@ function printSuccessBox({ flow, runState, transport, projectRoot }) {
   } else {
     const url = final.run.commentUrl || final.run.issueUrl
     if (url) lines.push(`Final result: ${url}`)
+  }
+  if (usage.totalSummary) {
+    lines.push(`Total usage: ${usage.totalSummary}`)
+    for (const step of usage.steps) {
+      lines.push(`Usage ${step.title}: ${step.summary}`)
+    }
   }
   const terminalWidth = process.stdout.columns || 100
   const outerMax = Math.max(60, Math.floor(terminalWidth * OUTER_TERMINAL_RATIO))
@@ -2005,10 +2023,14 @@ async function completeGithubStep({ repo, stepState, step, options }) {
       const result = results.find((item) => item.issueNumber === run.issueNumber)
       const replies = result?.replies || []
       const latest = replies[replies.length - 1]
-      run.status = latest ? 'completed' : 'timeout'
-      run.resultText = latest?.body || ''
-      run.commentUrl = latest?.url || run.commentUrl
-      run.rawResult = result || null
+      const normalized = normalizeGithubRunResult({
+        run,
+        result,
+        reply: latest,
+        status: latest ? 'completed' : 'timeout',
+        marker: parseRunnerResultMarker(latest?.body || ''),
+      })
+      Object.assign(run, normalized)
     }
   }
 
@@ -2164,6 +2186,15 @@ async function completeLocalStep({ stepState, step, options, projectRoot, netlif
           reporter.updateRun(event)
         },
       })
+      for (const run of completedRuns) {
+        const runUrl = localAgentRunUrl({ projectRoot, runnerId: run.runnerId, sessionId: run.sessionId })
+        const baseRunUrl = localAgentRunUrl({ projectRoot, runnerId: run.runnerId })
+        run.links = {
+          ...(run.links || {}),
+          ...(baseRunUrl ? { agentRunUrl: baseRunUrl } : {}),
+          ...(runUrl ? { sessionUrl: runUrl } : {}),
+        }
+      }
       stepState.runs = completedRuns
       for (const run of completedRuns) {
         reporter.updateRun({
@@ -3001,6 +3032,8 @@ module.exports = {
     findGithubRunnerFailures,
     localRedriveCandidates,
     formatCompactLocalRunResults,
+    normalizeGithubRunResult,
+    usageSummariesForRunState,
     resultsScopedToGithubRuns,
     runnableSteps,
     waitForGithubStep,

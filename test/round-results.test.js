@@ -92,6 +92,18 @@ test('pickAgentReplyComments prefers runner result-marker matches when present',
   assert.deepEqual(replies.map((r) => r.url), ['https://x/result-1', 'https://x/result-2'])
 })
 
+test('pickAgentReplyComments recognizes attribute result markers from the action', () => {
+  const comments = [
+    { body: '@netlify codex please review\n<!-- netlify-workflow-prompt:review:codex:2026-05-20 -->', url: 'https://x/prompt' },
+    {
+      body: '### [Run #1 | codex | Agent Run completed](https://app.netlify.com/projects/site/agent-runs/runner-1?session=session-1) ✅\n\n<!-- netlify-agent-run-result runnerId="runner-1" sessionId="session-1" totalTokens=85131 totalCreditsCost=18.06858 stepsCount=10 creditLimitExceeded=false -->',
+      url: 'https://x/result',
+    },
+  ]
+  const replies = pickAgentReplyComments(comments, { all: true, requireResultMarker: true })
+  assert.deepEqual(replies.map((r) => r.url), ['https://x/result'])
+})
+
 test('pickAgentReplyComments excludes status and history comments when no result marker exists', () => {
   const comments = [
     { body: '@netlify claude please review\n<!-- netlify-workflow-prompt:review:claude:2026-05-07 -->', url: 'https://x/prompt' },

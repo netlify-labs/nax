@@ -2,6 +2,7 @@ const test = require('node:test')
 const assert = require('node:assert/strict')
 
 const { _private } = require('../bin/nax')
+const { parseRunnerResultMarker } = require('../lib/comment-markers')
 
 test('sourceIssueNumbersForStep dedupes issue numbers across prior steps', () => {
   const completed = new Map([
@@ -68,6 +69,64 @@ test('formatCompactLocalRunResults truncates prior local outputs for retry promp
   assert.match(formatted, /compacted from/)
   assert.match(formatted, /important tail/)
   assert.ok(formatted.length < longResult.length)
+})
+
+test('usageSummariesForRunState aggregates usage by step and total', () => {
+  const summary = _private.usageSummariesForRunState({
+    steps: [
+      {
+        id: 'review',
+        title: 'Review',
+        runs: [
+          {
+            agent: 'claude',
+            usage: {
+              totalTokens: 420,
+              totalCreditsCost: 1.25,
+              stepsCount: 10,
+            },
+          },
+          {
+            agent: 'codex',
+            rawResult: {
+              latestSession: {
+                usage: {
+                  total_tokens: 650,
+                  total_credits_cost: 2.5,
+                },
+                steps_count: 46,
+              },
+            },
+          },
+        ],
+      },
+      {
+        id: 'synthesize',
+        title: 'Summarize Consensus',
+        runs: [
+          {
+            agent: 'codex',
+            usage: {
+              totalTokens: 15,
+              totalCreditsCost: 0.1,
+              stepsCount: 1,
+            },
+          },
+        ],
+      },
+    ],
+  })
+
+  assert.equal(summary.steps.length, 2)
+  assert.equal(summary.steps[0].title, 'Review')
+  assert.equal(summary.steps[0].usage.totalTokens, 1070)
+  assert.equal(summary.steps[0].usage.stepsCount, 56)
+  assert.equal(summary.total.totalTokens, 1085)
+  assert.equal(summary.total.totalCreditsCost, 3.85)
+  assert.equal(summary.total.stepsCount, 57)
+  assert.match(summary.totalSummary, /1,085 tokens/)
+  assert.match(summary.totalSummary, /57 steps/)
+  assert.match(summary.totalSummary, /3.85 credits/)
 })
 
 test('localRedriveCandidates finds failed local runs by step and agent', () => {
@@ -239,6 +298,49 @@ test('findGithubRunnerFailures ignores old failures before the submitted prompt 
   ])
 
   assert.deepEqual(failures, [])
+})
+
+test('normalizeGithubRunResult standardizes action marker usage and links', () => {
+  const body = [
+    '### [Run #1 | codex | Agent Run completed](https://app.netlify.com/projects/site/agent-runs/runner-97?session=session-97) ✅',
+    '',
+    '<!-- netlify-agent-run-result runnerId="runner-97" sessionId="session-97" totalTokens=85131 totalCreditsCost=18.06858 stepsCount=10 creditLimitExceeded=false -->',
+  ].join('\n')
+  const normalized = _private.normalizeGithubRunResult({
+    run: {
+      transport: 'github',
+      agent: 'codex',
+      issueNumber: 97,
+      issueUrl: 'https://github.com/o/r/issues/97',
+      commentUrl: 'https://github.com/o/r/issues/97#issuecomment-prompt',
+    },
+    result: {
+      issueNumber: 97,
+      issueUrl: 'https://github.com/o/r/issues/97',
+      model: 'codex',
+    },
+    reply: {
+      url: 'https://github.com/o/r/issues/97#issuecomment-result',
+      body,
+    },
+    status: 'completed',
+    marker: parseRunnerResultMarker(body),
+  })
+
+  assert.equal(normalized.status, 'completed')
+  assert.equal(normalized.runnerId, 'runner-97')
+  assert.equal(normalized.sessionId, 'session-97')
+  assert.equal(normalized.commentUrl, 'https://github.com/o/r/issues/97#issuecomment-result')
+  assert.deepEqual(normalized.usage, {
+    totalTokens: 85131,
+    totalCreditsCost: 18.06858,
+    stepsCount: 10,
+    creditLimitExceeded: false,
+  })
+  assert.equal(
+    normalized.links.sessionUrl,
+    'https://app.netlify.com/projects/site/agent-runs/runner-97?session=session-97',
+  )
 })
 
 test('waitForGithubStep retries transient loader errors and still completes', async () => {

@@ -165,14 +165,33 @@ test('normalizeCompletedRun prefers latest session result and links', () => {
         result: 'session result',
         deploy_url: 'https://deploy.example',
         pull_request_url: 'https://github.com/o/r/pull/1',
+        usage: {
+          total_input_tokens: 100,
+          total_output_tokens: 20,
+          total_tokens: 120,
+          total_credits_cost: 1.5,
+        },
+        steps_count: 8,
+        credit_limit_exceeded: false,
       },
     },
   })
 
   assert.equal(normalized.status, 'completed')
+  assert.equal(normalized.sessionId, 'session-1')
   assert.equal(normalized.resultText, 'session result')
   assert.equal(normalized.deployUrl, 'https://deploy.example')
   assert.equal(normalized.prUrl, 'https://github.com/o/r/pull/1')
+  assert.deepEqual(normalized.usage, {
+    totalTokens: 120,
+    totalCreditsCost: 1.5,
+    stepsCount: 8,
+    creditLimitExceeded: false,
+  })
+  assert.deepEqual(normalized.links, {
+    deployUrl: 'https://deploy.example',
+    prUrl: 'https://github.com/o/r/pull/1',
+  })
 })
 
 test('normalizeCompletedRun fails when latest session errored even if runner completed', () => {

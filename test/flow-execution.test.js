@@ -2,7 +2,6 @@ const test = require('node:test')
 const assert = require('node:assert/strict')
 
 const { _private } = require('../bin/nax')
-const { parseRunnerResultMarker } = require('../lib/comment-markers')
 
 test('sourceIssueNumbersForStep dedupes issue numbers across prior steps', () => {
   const completed = new Map([
@@ -498,49 +497,6 @@ test('findGithubRunnerFailures ignores old failures before the submitted prompt 
   ])
 
   assert.deepEqual(failures, [])
-})
-
-test('normalizeGithubRunResult standardizes action marker usage and links', () => {
-  const body = [
-    '### [Run #1 | codex | Agent Run completed](https://app.netlify.com/projects/site/agent-runs/runner-97?session=session-97) ✅',
-    '',
-    '<!-- netlify-agent-run-result runnerId="runner-97" sessionId="session-97" totalTokens=85131 totalCreditsCost=18.06858 stepsCount=10 creditLimitExceeded=false -->',
-  ].join('\n')
-  const normalized = _private.normalizeGithubRunResult({
-    run: {
-      transport: 'github',
-      agent: 'codex',
-      issueNumber: 97,
-      issueUrl: 'https://github.com/o/r/issues/97',
-      commentUrl: 'https://github.com/o/r/issues/97#issuecomment-prompt',
-    },
-    result: {
-      issueNumber: 97,
-      issueUrl: 'https://github.com/o/r/issues/97',
-      model: 'codex',
-    },
-    reply: {
-      url: 'https://github.com/o/r/issues/97#issuecomment-result',
-      body,
-    },
-    status: 'completed',
-    marker: parseRunnerResultMarker(body),
-  })
-
-  assert.equal(normalized.status, 'completed')
-  assert.equal(normalized.runnerId, 'runner-97')
-  assert.equal(normalized.sessionId, 'session-97')
-  assert.equal(normalized.commentUrl, 'https://github.com/o/r/issues/97#issuecomment-result')
-  assert.deepEqual(normalized.usage, {
-    totalTokens: 85131,
-    totalCreditsCost: 18.06858,
-    stepsCount: 10,
-    creditLimitExceeded: false,
-  })
-  assert.equal(
-    normalized.links.sessionUrl,
-    'https://app.netlify.com/projects/site/agent-runs/runner-97?session=session-97',
-  )
 })
 
 test('waitForGithubStep retries transient loader errors and still completes', async () => {

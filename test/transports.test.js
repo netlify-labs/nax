@@ -39,38 +39,39 @@ test('hasLocalNetlifySite accepts env site id or Netlify state but not build con
 test('resolveTransport honors explicit transports and auto-picks available transport', () => {
   assert.equal(resolveTransport('github', []), 'github')
   assert.equal(resolveTransport('github-actions', []), 'github')
-  assert.equal(resolveTransport('local', []), 'local')
-  assert.equal(resolveTransport('local-machine', []), 'local')
+  assert.equal(resolveTransport('netlify-api', []), 'netlify-api')
+  assert.equal(resolveTransport('local', []), 'netlify-api')
+  assert.equal(resolveTransport('local-machine', []), 'netlify-api')
   assert.equal(resolveTransport('auto', [
     { id: 'github', available: false },
-    { id: 'local', available: true },
-  ]), 'local')
+    { id: 'netlify-api', available: true },
+  ]), 'netlify-api')
   assert.throws(() => resolveTransport('bad', []), /Unknown run location/)
 })
 
 test('resolveTransport rejects auto when no transports are available', () => {
   assert.throws(() => resolveTransport('auto', [
     { id: 'github', available: false },
-    { id: 'local', available: false },
+    { id: 'netlify-api', available: false },
   ]), /No runnable transport detected/)
 })
 
-test('detectTransports returns github and local entries', () => {
+test('detectTransports returns github and netlify-api entries', () => {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'nax-transport-test-'))
   const transports = detectTransports({ projectRoot: tmp, env: {} })
-  assert.deepEqual(transports.map((transport) => transport.id), ['github', 'local'])
+  assert.deepEqual(transports.map((transport) => transport.id), ['github', 'netlify-api'])
 })
 
 test('formatTransportSetupHelp includes setup steps for both transports', () => {
   const help = formatTransportSetupHelp([
     { id: 'github', title: 'In GitHub Actions', reason: 'No workflow detected.' },
-    { id: 'local', title: 'Locally on this machine', reason: 'No site context.' },
+    { id: 'netlify-api', title: 'Via Netlify API', reason: 'No site context.' },
   ])
   assert.match(help, /To run in GitHub Actions:/)
   assert.match(help, /netlify-labs\/agent-runner-action/)
   assert.match(help, /NETLIFY_SITE_ID/)
   assert.match(help, /NETLIFY_AUTH_TOKEN/)
-  assert.match(help, /To run locally on this machine:/)
+  assert.match(help, /To run via the Netlify API from this machine:/)
   assert.match(help, /netlify login/)
   assert.match(help, /netlify link/)
 })

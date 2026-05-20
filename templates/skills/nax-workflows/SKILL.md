@@ -25,7 +25,7 @@ Useful flags:
 
 ```bash
 --where github-actions      # run through GitHub Actions
---where local-machine       # orchestrate from this machine using Netlify CLI APIs
+--where netlify-api         # orchestrate through Netlify CLI/API from this machine
 --branch <branch-or-pr>     # branch name or PR selector like '#123'
 --step <id>                 # run only one step
 --from-step <id>            # continue from a step through the end
@@ -65,24 +65,24 @@ Use to pick the next best task. Steps:
 
 ## Operating Rules
 
-- Prefer `--where local-machine` when the user wants live local progress, resume state, or direct Netlify API control.
+- Prefer `--where netlify-api` when the user wants live local progress, resume state, or direct Netlify API control.
 - Prefer `--where github-actions` when the user wants remote reproducibility and GitHub Actions logs.
 - Warn that local uncommitted/unpushed changes are invisible to remote Netlify agent runners.
 - Use `--branch '#123'` for PR-specific runs when the user references a PR number.
-- Use `--step` only for deliberate partial reruns; otherwise resume/redrive saved local state.
-- Treat `.nax/runs/<run-id>/run.json` as the source of truth for local workflow recovery.
+- Use `--step` only for deliberate partial reruns; otherwise resume/redrive saved Netlify API state.
+- Treat `.nax/runs/<run-id>/run.json` as the source of truth for Netlify API workflow recovery.
 
 ## Recovery
 
-Local runs persist state under:
+Netlify API runs persist state under:
 
 ```text
 .nax/runs/<run-id>/run.json
 ```
 
-If a local process was interrupted, starting `nax <flow>` can offer to resume unfinished in-flight runs.
+If a Netlify API process was interrupted, starting `nax <flow>` can offer to resume unfinished in-flight runs.
 
-For a terminal failed local run that needs a compact follow-up prompt, use:
+For a terminal failed Netlify API run that needs a compact follow-up prompt, use:
 
 ```bash
 nax redrive <run-id> --step <step-id> --agent <agent>
@@ -142,4 +142,3 @@ When adding a flow, keep prompts self-contained and make step outputs easy for l
 
 - [Flow Reference](references/FLOWS.md)
 - [Troubleshooting](references/TROUBLESHOOTING.md)
-

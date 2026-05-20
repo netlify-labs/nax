@@ -16,7 +16,7 @@ Run examples:
 
 ```bash
 nax review
-nax review --branch '#123' --where local-machine --force
+nax review --branch '#123' --where netlify-api --force
 nax review --step cross-review
 ```
 
@@ -37,7 +37,7 @@ Run examples:
 
 ```bash
 nax ideas
-nax ideas --where local-machine --timeout-minutes 45
+nax ideas --where netlify-api --timeout-minutes 45
 nax ideas --from-step react
 ```
 
@@ -56,7 +56,7 @@ Run examples:
 
 ```bash
 nax do-next
-nax do-next --branch '#123' --where local-machine --force
+nax do-next --branch '#123' --where netlify-api --force
 ```
 
 ## Flow Authoring Notes
@@ -66,4 +66,3 @@ nax do-next --branch '#123' --where local-machine --force
 - Use `submit: follow-up` only when there is a prior runner for the same agent.
 - Use `input` to embed prior step results into the current prompt.
 - Keep follow-up prompt size under control; prior outputs can get large quickly.
-

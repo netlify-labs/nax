@@ -93,7 +93,7 @@ Both are the integration points for artifact persistence.
 
 ### CI workflow
 
-`.github/workflows/run-nax.yml` executes `nax run <flow> --where local-machine` on an ephemeral runner. Artifacts must be uploaded before the job ends and surfaced in the GitHub Actions UI to be useful.
+`.github/workflows/run-nax.yml` executes `nax run <flow> --where netlify-api` on an ephemeral runner. Artifacts must be uploaded before the job ends and surfaced in the GitHub Actions UI to be useful.
 
 ## Source-Of-Truth Decision
 
@@ -161,7 +161,7 @@ Top-level human-facing file. Contains a header, table of contents anchored to ea
 
 - Run ID: `2026-05-20T20-39-05-695Z-review`
 - Flow: `review`
-- Transport: `local`
+- Transport: `netlify-api`
 - Status: completed
 - Usage: 2,949,800 tokens · 161 steps · 369.14 credits
 

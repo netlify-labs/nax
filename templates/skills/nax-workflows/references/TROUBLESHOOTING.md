@@ -31,11 +31,11 @@ Use this file to inspect:
 
 Start the same flow again and accept the resume prompt when a run is still in flight.
 
-Resume is for unfinished local work. Terminal failed runs need a rerun or redrive.
+Resume is for unfinished Netlify API work. Terminal failed runs need a rerun or redrive.
 
 ## Redrive
 
-Use redrive when exactly one local agent failed and the rest of the step is usable:
+Use redrive when exactly one Netlify API agent failed and the rest of the step is usable:
 
 ```bash
 nax redrive <run-id> --step <step-id> --agent <agent>
@@ -62,4 +62,3 @@ The Claude Code model is currently at capacity. Retrying automatically...
 ```
 
 Also applies to Gemini and Codex variants. `nax` retries this once per runner.
-

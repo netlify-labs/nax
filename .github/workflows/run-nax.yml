@@ -45,7 +45,7 @@ jobs:
 
       - run: npm ci
       - run: npm install -g netlify-cli
-      - run: node bin/nax.js run "$NAX_FLOW" --where local-machine --repo "$GITHUB_REPOSITORY" --branch "$BRANCH" --force --timeout-minutes 60
+      - run: node bin/nax.js run "$NAX_FLOW" --where netlify-api --repo "$GITHUB_REPOSITORY" --branch "$BRANCH" --force --timeout-minutes 60
       - name: Inspect nax run artifacts
         if: always()
         run: |

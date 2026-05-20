@@ -22,7 +22,7 @@ function runState(tmp, overrides = {}) {
     runId,
     flowId: 'review',
     flowTitle: 'Review',
-    transport: overrides.transport || 'local',
+    transport: overrides.transport || 'netlify-api',
     projectRoot: tmp,
     createdAt: overrides.createdAt || '2026-05-12T00:00:00.000Z',
     updatedAt: overrides.updatedAt || '2026-05-12T00:00:00.000Z',
@@ -111,12 +111,13 @@ test('findLatestUnfinishedRun can filter by transport', () => {
   }))
   writeRunState(runState(tmp, {
     runId: 'local-run',
-    transport: 'local',
+    transport: 'netlify-api',
     updatedAt: '2026-05-12T01:00:00.000Z',
     steps: [{ id: 'review', status: 'running', runs: [{ runnerId: 'runner-1', status: 'submitted' }] }],
   }))
 
   assert.equal(findLatestUnfinishedRun(tmp, { flowId: 'review' }).runId, 'github-run')
+  assert.equal(findLatestUnfinishedRun(tmp, { flowId: 'review', transport: 'netlify-api' }).runId, 'local-run')
   assert.equal(findLatestUnfinishedRun(tmp, { flowId: 'review', transport: 'local' }).runId, 'local-run')
 })
 

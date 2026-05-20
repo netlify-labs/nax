@@ -51,7 +51,7 @@ nax review
 
 # Run a specific branch or PR, non-interactively
 nax review --branch fix/auth --where github-actions --force
-nax review --branch '#123' --where local-machine --force
+nax review --branch '#123' --where netlify-api --force
 
 # Re-run just one step
 nax review --step cross-review
@@ -68,7 +68,7 @@ The built-in `do-next` flow asks each model to recommend the next development ta
 
 ```bash
 nax do-next
-nax do-next --branch '#123' --where local-machine --force
+nax do-next --branch '#123' --where netlify-api --force
 ```
 
 ## Install
@@ -116,15 +116,15 @@ What it does:
 
 ## Transports
 
-| | `github-actions` | `local-machine` |
+| | `github-actions` | `netlify-api` |
 |---|---|---|
-| Where agents run | Netlify's hosted runner via a workflow in your repo | Your laptop, via `netlify api createAgentRunner` |
+| Where agents run | Netlify's hosted runner via a workflow in your repo | Netlify Agent Runner API, orchestrated by this machine |
 | Requires | `.github/workflows/netlify-agents.yml` + repo secrets | Logged-in Netlify CLI with a linked site |
 | Visibility | GitHub Actions logs + issues | Local console + issues |
 | Desktop notifications | n/a | macOS only (`--notify`) |
-| Resume after interruption | Re-run the issue | `nax` offers to resume the unfinished local run |
+| Resume after interruption | Re-run the issue | `nax` offers to resume the unfinished Netlify API run |
 
-`--where auto` (default) prefers `github-actions` if both are configured. Pass `--where local-machine` to force local.
+`--where auto` (default) prefers `github-actions` if both are configured. Pass `--where netlify-api` to force Netlify API orchestration. `local-machine` remains as a backwards-compatible alias.
 
 ## Commands
 
@@ -194,7 +194,7 @@ Prompt files are plain Markdown. The runner appends auto-injected review context
 
 ## Resume
 
-If a local run is interrupted (process killed, machine slept, network died) the run state is written to `.nax/runs/<run-id>/run.json`. Next time you start `nax`, it detects the unfinished run and offers to resume — it polls the in-flight runner sessions and continues from the first not-yet-completed step.
+If a Netlify API run is interrupted (process killed, machine slept, network died) the run state is written to `.nax/runs/<run-id>/run.json`. Next time you start `nax`, it detects the unfinished run and offers to resume — it polls the in-flight runner sessions and continues from the first not-yet-completed step.
 
 Failed and timed-out runs are terminal; resume polls in-flight runs only. To retry a failed step, re-run the flow with `--step <id>`.
 
@@ -218,7 +218,7 @@ Failed and timed-out runs are terminal; resume polls in-flight runs only. To ret
 - Desktop notifications (`--notify`) only work on macOS (`osascript`).
 - Not published to npm; install via clone + `npm link`.
 - GitHub-only — no GitLab/Bitbucket transport.
-- Local transport assumes you can reach Netlify's API from your machine.
+- `netlify-api` transport assumes you can reach Netlify's API from your machine.
 
 ## Repo Layout
 

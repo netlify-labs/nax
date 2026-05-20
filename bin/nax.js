@@ -52,7 +52,7 @@ const {
   listBundledSkills,
   updateSkills,
 } = require('../lib/skills')
-const { detectTransports, formatTransportSetupHelp, resolveTransport } = require('../lib/transports')
+const { NETLIFY_API_TRANSPORT, detectTransports, formatTransportSetupHelp, isNetlifyApiTransport, resolveTransport } = require('../lib/transports')
 const { enableGitHubActionsSetup, initSite, readNetlifyProject } = require('../lib/init')
 const {
   buildNetlifyEnv,
@@ -187,7 +187,7 @@ function resolveWorkflowBranch({ options, projectRoot }) {
 
 function remotePinnedOptions({ options, projectRoot, transport }) {
   if (options.autoContext === false || options.sha || options.pinnedSha) return options
-  if (transport !== 'local' && transport !== 'github') return options
+  if (!isNetlifyApiTransport(transport) && transport !== 'github') return options
   const branch = options.branch || currentGitBranch(projectRoot)
   const pinned = resolveRemoteBranchSha({ repoRoot: projectRoot, branch })
   return {
@@ -1040,7 +1040,7 @@ async function handlePreviewBoxes(flowId, options) {
   const id = flowId || (await pickFlowInteractively())
   const flow = await loadFlow(id)
   const steps = flow.steps.filter((step) => (step.agents || []).length > 0)
-  const transport = options.transport === 'local' ? 'local' : 'github'
+  const transport = isNetlifyApiTransport(options.transport) ? NETLIFY_API_TRANSPORT : 'github'
   const projectRoot = options.projectRoot || process.cwd()
   printFlowPlan({
     flow,
@@ -1175,7 +1175,7 @@ function resolveStepDescription(flow, step) {
 function stepActionLabel(step, transport) {
   const action = String(step.action || 'issue')
   const submit = String(step.submit || 'new-run')
-  if (transport === 'local') {
+  if (isNetlifyApiTransport(transport)) {
     if (submit === 'new-run') return 'new agent run'
     if (submit === 'follow-up') return 'follow-up session'
     return submit
@@ -1227,7 +1227,7 @@ function printFlowPlan({ flow, steps, transport, branch, context }) {
   const metaLines = [
     ...flowDescriptionLines,
     ...(flowDescriptionLines.length > 0 ? [''] : []),
-    `Orchestrated from: ${transport === 'local' ? 'This machine' : 'GitHub Actions'}`,
+    `Orchestrated via: ${isNetlifyApiTransport(transport) ? 'Netlify API' : 'GitHub Actions'}`,
     `Branch: ${branch}`,
     ...(hasContext ? ['Additional context: yes'] : []),
   ]
@@ -1346,7 +1346,7 @@ function printSuccessBox({ flow, runState, transport, projectRoot }) {
   if (!final) return
   const lines = [`Workflow "${flow.title}" complete.`, `Final step: ${final.step.title}`]
   const usage = usageSummariesForRunState(runState)
-  if (transport === 'local') {
+  if (isNetlifyApiTransport(transport)) {
     const url = final.run.links?.sessionUrl ||
       final.run.links?.agentRunUrl ||
       localAgentRunUrl({ projectRoot, runnerId: final.run.runnerId, sessionId: final.run.sessionId })
@@ -2415,7 +2415,7 @@ async function executeLocalFlow({ flow, steps, options, runState, projectRoot, c
         date,
       })
       return {
-        transport: 'local',
+        transport: NETLIFY_API_TRANSPORT,
         agent,
         status: options.dryRun ? 'dry-run' : 'pending',
         promptText,
@@ -2434,7 +2434,7 @@ async function executeLocalFlow({ flow, steps, options, runState, projectRoot, c
       }
     })
 
-    console.log(`\nRun local agents: ${step.title}`)
+    console.log(`\nRun Netlify API agents: ${step.title}`)
     for (const run of runs) {
       console.log(`\n- ${titleCase(run.agent)} ${prompt.title}`)
       console.log(`  prompt: ${prompt.name}`)
@@ -2618,11 +2618,11 @@ function findRunStateForRedrive(projectRoot, { runId, flowId, stepId, agent } = 
     return matched
   }
   const matched = states.find((state) => {
-    if (state.transport !== 'local') return false
+    if (!isNetlifyApiTransport(state.transport)) return false
     if (flowId && state.flowId !== flowId) return false
     return localRedriveCandidates(state, { stepId, agent }).length > 0
   })
-  if (!matched) throw new Error('Could not find a failed local run to redrive. Pass a run id explicitly.')
+  if (!matched) throw new Error('Could not find a failed Netlify API run to redrive. Pass a run id explicitly.')
   return matched
 }
 
@@ -2634,8 +2634,8 @@ async function handleRedrive(runId, options) {
     stepId: options.step,
     agent: options.agent,
   })
-  if (runState.transport !== 'local') {
-    throw new Error(`Run ${runState.runId} uses ${runState.transport || 'unknown'} transport; redrive currently supports local runs only.`)
+  if (!isNetlifyApiTransport(runState.transport)) {
+    throw new Error(`Run ${runState.runId} uses ${runState.transport || 'unknown'} transport; redrive currently supports Netlify API runs only.`)
   }
 
   const flow = await loadFlow(runState.flowId)
@@ -2644,11 +2644,11 @@ async function handleRedrive(runId, options) {
     agent: options.agent,
   })
   if (candidates.length === 0) {
-    throw new Error(`Run ${runState.runId} has no failed local runner matching the requested filters.`)
+    throw new Error(`Run ${runState.runId} has no failed Netlify API runner matching the requested filters.`)
   }
   if (candidates.length > 1) {
     const choices = candidates.map(({ step, run }) => `${step.id}:${run.agent}`).join(', ')
-    throw new Error(`More than one failed local runner can be redriven (${choices}). Pass --step and --agent.`)
+    throw new Error(`More than one failed Netlify API runner can be redriven (${choices}). Pass --step and --agent.`)
   }
 
   trackRunState(runState)
@@ -2753,7 +2753,7 @@ async function handleRedrive(runId, options) {
     completedStepStates,
   })
   clearTrackedRunState(runState, { completed: true })
-  printSuccessBox({ flow, runState, transport: 'local', projectRoot })
+  printSuccessBox({ flow, runState, transport: NETLIFY_API_TRANSPORT, projectRoot })
 }
 
 async function handleRun(flowId, options) {
@@ -2835,7 +2835,7 @@ async function handleRun(flowId, options) {
   console.log(`State: ${path.join(runState.dir, 'run.json')}`)
 
   try {
-    if (transport === 'local') {
+    if (isNetlifyApiTransport(transport)) {
       await executeLocalFlow({ flow: configuredFlow, steps, options: configuredOptions, runState, projectRoot })
     } else {
       await executeGithubFlow({ flow: configuredFlow, steps, options: configuredOptions, runState })
@@ -3010,7 +3010,7 @@ function buildProgram() {
     .argument('[workflow]', 'Workflow to run, e.g. review')
     .option('--repo <owner/name>', 'GitHub repo; defaults to gh repo view')
     .option('--branch <branch-or-pr>', 'Git branch or PR number to run in Netlify agent runners')
-    .option('--where <place>', 'Where to run: auto, github-actions, local-machine', 'auto')
+    .option('--where <place>', 'Where to run: auto, github-actions, netlify-api, local-machine', 'auto')
     .option('--dry', 'Preview the workflow without creating issues/comments')
     .addOption(new Option('--dry-run', 'Hidden compatibility alias for --dry').hideHelp())
     .option('--force', 'Skip confirmation prompts')
@@ -3041,7 +3041,7 @@ function buildProgram() {
   program
     .command('run [flow]')
     .description('Run a multi-step workflow')
-    .option('--where <place>', 'Where to run: auto, github-actions, local-machine', 'auto')
+    .option('--where <place>', 'Where to run: auto, github-actions, netlify-api, local-machine', 'auto')
     .option('--project-root <path>', 'Project root for flow execution')
     .option('--repo <owner/name>', 'GitHub repo; defaults to gh repo view')
     .option('--branch <branch-or-pr>', 'Git branch or PR number to run in Netlify agent runners')
@@ -3071,7 +3071,7 @@ function buildProgram() {
 
   program
     .command('redrive [run-id]')
-    .description('Retry one failed local agent run with a compact prompt and continue the workflow')
+    .description('Retry one failed Netlify API agent run with a compact prompt and continue the workflow')
     .option('--project-root <path>', 'Project root containing .nax/runs')
     .option('--flow <id>', 'Flow id filter when run id is omitted')
     .option('--step <id>', 'Failed step id to redrive')
@@ -3158,7 +3158,7 @@ function buildProgram() {
   program
     .command('preview-boxes [flow]')
     .description('Preview the flow plan and success boxes without running the workflow')
-    .option('--transport <transport>', 'Transport to render (github|local)', 'github')
+    .option('--transport <transport>', 'Transport to render (github|netlify-api|local)', 'github')
     .option('--branch <branch>', 'Branch label to display', 'master')
     .option('--context <context>', 'Additional context indicator', '')
     .action((flow, options, command) => handlePreviewBoxes(flow, actionOptions(options, command)))

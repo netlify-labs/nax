@@ -17,7 +17,7 @@ function runState(tmp, overrides = {}) {
     runId,
     flowId: 'ideas',
     flowTitle: 'Ideas',
-    transport: 'local',
+    transport: 'netlify-api',
     projectRoot: tmp,
     createdAt: '2026-05-12T00:00:00.000Z',
     updatedAt: '2026-05-12T00:00:00.000Z',

@@ -292,7 +292,7 @@ test('success box keeps non-TTY links on one line', () => {
   try {
     _private.printSuccessBox({
       flow: { title: 'Do Next' },
-      transport: 'local',
+      transport: 'netlify-api',
       projectRoot: process.cwd(),
       runState: {
         steps: [

@@ -30,7 +30,7 @@ function sampleRunState(projectRoot = tmpRoot(), overrides = {}) {
     status: 'completed',
     runs: [
       {
-        transport: 'local',
+        transport: 'netlify-api',
         agent: 'claude',
         status: 'completed',
         runnerId: 'runner-claude',
@@ -60,7 +60,7 @@ function sampleRunState(projectRoot = tmpRoot(), overrides = {}) {
     runId,
     flowId: 'review',
     flowTitle: 'Review',
-    transport: 'local',
+    transport: 'netlify-api',
     projectRoot,
     createdAt: '2026-05-20T20:39:05.695Z',
     updatedAt: '2026-05-20T20:55:11.000Z',

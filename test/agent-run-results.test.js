@@ -228,13 +228,13 @@ test('usageSummariesForRunState returns per-step and total usage summaries', () 
       id: 'review',
       title: 'Review',
       usage: { totalTokens: 3000, totalCreditsCost: 6, stepsCount: 7 },
-      summary: '3,000 tokens, 7 steps, 6 credits',
+      summary: '6 credits, 7 steps, 3,000 tokens',
     },
     {
       id: 'synthesize',
       title: 'Synthesize',
       usage: { totalTokens: 500, totalCreditsCost: 1, stepsCount: 1 },
-      summary: '500 tokens, 1 steps, 1 credits',
+      summary: '1 credits, 1 steps, 500 tokens',
     },
   ])
   assert.deepEqual(summaries.total, {
@@ -242,7 +242,7 @@ test('usageSummariesForRunState returns per-step and total usage summaries', () 
     totalCreditsCost: 7,
     stepsCount: 8,
   })
-  assert.equal(summaries.totalSummary, '3,500 tokens, 8 steps, 7 credits')
+  assert.equal(summaries.totalSummary, '7 credits, 8 steps, 3,500 tokens')
 })
 
 test('usage helpers can format partial usage summaries', () => {

@@ -1025,6 +1025,205 @@ async function handlePreviewSpinner(options) {
   }
 }
 
+async function promptForOptionalHandoffInstructions() {
+  const value = await multiline({
+    message: 'Additional instructions for the next agent run',
+    placeholder: 'Hit enter to just pass the workflow summary.',
+  })
+  return String(value || '').trim()
+}
+
+async function runFreshHandoffAgent({ projectRoot, agent, promptText, summaryDisplayPath, options = {} }) {
+  const branch = options.branch || currentGitBranch(projectRoot)
+  const netlify = buildNetlifyEnv({ projectRoot })
+  const run = {
+    transport: NETLIFY_API_TRANSPORT,
+    agent,
+    status: 'pending',
+    promptText,
+    compactPromptText: '',
+    resultText: '',
+    runnerId: '',
+    issueUrl: '',
+    commentUrl: '',
+    prUrl: '',
+    deployUrl: '',
+    raw: {
+      stepId: 'handoff',
+      promptName: 'handoff',
+      summaryPath: summaryDisplayPath,
+    },
+  }
+
+  console.log(`Including prior workflow summary:\n${summaryDisplayPath}`)
+  console.log(`\nStarting ${titleCase(agent)} handoff run...`)
+  const startedAt = Date.now()
+  const submitted = await submitLocalAgentRun({
+    run,
+    projectRoot,
+    branch,
+    siteId: netlify.siteId,
+    env: netlify.env,
+    onRetry: ({ error, nextAttempt, attempts, delayMs }) => {
+      const delaySeconds = Math.round(delayMs / 1000)
+      console.log(`Submission failed, retrying ${nextAttempt}/${attempts} in ${delaySeconds}s — ${error.message}`)
+    },
+  })
+  submitted.submittedAfterSeconds = Math.round((Date.now() - startedAt) / 1000)
+  addLocalRunLinks(submitted, projectRoot)
+  const boxes = formatSubmittedLocalRunBoxes({
+    runs: [submitted],
+    prompt: { title: 'Handoff' },
+    projectRoot,
+  })
+  if (boxes) {
+    console.log('\nSubmitted Netlify agent run:')
+    console.log(boxes)
+  }
+
+  const reporter = makeStepProgressReporter({
+    stepTitle: 'Handoff',
+    total: 1,
+    agents: [agent],
+  })
+  let settled = false
+  try {
+    const [completed] = await waitForLocalAgentRuns({
+      projectRoot,
+      runs: [submitted],
+      siteId: netlify.siteId,
+      env: netlify.env,
+      timeoutMinutes: Number.parseInt(options.timeoutMinutes || '25', 10),
+      initialDelayMs: 0,
+      onProgress: (event) => {
+        if (!event.run?.runnerId) return
+        reporter.updateRun(event)
+      },
+      onTerminalRun: (terminalRun) => {
+        addLocalRunLinks(terminalRun, projectRoot)
+      },
+    })
+    addLocalRunLinks(completed, projectRoot)
+    reporter.updateRun({
+      run: completed,
+      state: completed.status,
+      terminal: true,
+      terminalSuccess: completed.status === 'completed',
+      terminalFailure: completed.status !== 'completed',
+    })
+    if (completed.status === 'completed') {
+      reporter.done(`Handoff: ${titleCase(agent)} complete`)
+    } else {
+      reporter.fail(`Handoff: ${titleCase(agent)} ${completed.status}`)
+      throw new Error(`Handoff run did not complete successfully.`)
+    }
+    settled = true
+    const url = completed.links?.sessionUrl || completed.links?.agentRunUrl || ''
+    if (url) console.log(`Result: ${url}`)
+  } finally {
+    if (!settled) reporter.fail('Handoff failed')
+  }
+}
+
+async function handleHandoff(runId, options) {
+  const projectRoot = path.resolve(options.projectRoot || process.cwd())
+  const handoff = readHandoffSummary({ projectRoot, runId: runId || options.runId || '' })
+
+  if (options.copy) {
+    const command = copyToClipboard(handoff.summaryText)
+    console.log(`\nCopied ${handoff.displayPath} to clipboard with ${command}.`)
+    return
+  }
+
+  if (options.agent || options.flow) {
+    const promptText = buildHandoffPrompt({
+      instructions: options.context || '',
+      summaryPath: handoff.displayPath,
+      summaryText: handoff.summaryText,
+    })
+    if (options.agent) {
+      await runFreshHandoffAgent({
+        projectRoot,
+        agent: options.agent,
+        promptText,
+        summaryDisplayPath: handoff.displayPath,
+        options,
+      })
+      return
+    }
+    console.log(`Including prior workflow summary:\n${handoff.displayPath}`)
+    await handleRun(options.flow, {
+      ...options,
+      projectRoot,
+      context: promptText,
+    })
+    return
+  }
+
+  if (!process.stdin.isTTY) {
+    console.log(`Summary: ${handoff.displayPath}`)
+    console.log('Run `nax handoff` in a TTY to copy it or start another agent run.')
+    return
+  }
+
+  const clack = require('@clack/prompts')
+  const action = await clack.select({
+    message: 'Hand off workflow results',
+    options: [
+      { value: 'copy', label: 'Copy previous AI workflow results to clipboard', hint: handoff.displayPath },
+      { value: 'start', label: 'Start a new AI workflow run with previous results' },
+      { value: 'cancel', label: 'Cancel' },
+    ],
+  })
+  if (clack.isCancel(action) || action === 'cancel') return
+  if (action === 'copy') {
+    const command = copyToClipboard(handoff.summaryText)
+    console.log(`\nCopied ${handoff.displayPath} to clipboard with ${command}.`)
+    return
+  }
+
+  const mode = await clack.select({
+    message: 'What should happen next?',
+    options: [
+      { value: 'fresh', label: 'Start a fresh agent run' },
+      { value: 'workflow', label: 'Run another workflow with this summary as input' },
+    ],
+  })
+  if (clack.isCancel(mode)) return
+
+  const instructions = await promptForOptionalHandoffInstructions()
+  const promptText = buildHandoffPrompt({
+    instructions,
+    summaryPath: handoff.displayPath,
+    summaryText: handoff.summaryText,
+  })
+
+  if (mode === 'fresh') {
+    const agent = options.agent || await clack.select({
+      message: 'Choose agent',
+      options: DEFAULT_MODELS.map((model) => ({ value: model, label: titleCase(model) })),
+    })
+    if (clack.isCancel(agent)) return
+    await runFreshHandoffAgent({
+      projectRoot,
+      agent,
+      promptText,
+      summaryDisplayPath: handoff.displayPath,
+      options,
+    })
+    return
+  }
+
+  const flowId = options.flow || await pickFlowInteractively()
+  if (clack.isCancel(flowId)) return
+  console.log(`Including prior workflow summary:\n${handoff.displayPath}`)
+  await handleRun(flowId, {
+    ...options,
+    projectRoot,
+    context: joinContext(options.context, promptText),
+  })
+}
+
 async function handlePreviewBoxes(flowId, options) {
   const id = flowId || (await pickFlowInteractively())
   const flow = await loadFlow(id)
@@ -1374,6 +1573,85 @@ function printSuccessBox({ flow, runState, transport, projectRoot }) {
   console.log('')
 }
 
+function handoffSummaryPath(runState = {}) {
+  const root = artifactsRootForRunState(runState)
+  return root ? path.join(root, 'summary.md') : ''
+}
+
+function relativeHandoffPath(projectRoot, summaryPath) {
+  const relative = path.relative(projectRoot || process.cwd(), summaryPath)
+  return relative && !relative.startsWith('..') ? relative : summaryPath
+}
+
+function findRunStateForHandoff(projectRoot, { runId } = {}) {
+  const states = listRunStates(projectRoot)
+  if (runId) {
+    const matched = states.find((state) => state.runId === runId)
+    if (!matched) throw new Error(`Could not find run state ${runId} under ${path.join(projectRoot, '.nax', 'runs')}.`)
+    return matched
+  }
+  return states[0] || null
+}
+
+function readHandoffSummary({ projectRoot, runId } = {}) {
+  const runState = findRunStateForHandoff(projectRoot, { runId })
+  if (!runState) throw new Error(`No nax runs found under ${path.join(projectRoot, '.nax', 'runs')}.`)
+  persistWorkflowArtifacts(runState, { summaryOnly: true })
+  const summaryPath = handoffSummaryPath(runState)
+  if (!summaryPath || !fs.existsSync(summaryPath)) {
+    throw new Error(`Run ${runState.runId} does not have a handoff summary yet.`)
+  }
+  const summaryText = fs.readFileSync(summaryPath, 'utf8').trim()
+  if (!summaryText) throw new Error(`Run ${runState.runId} has an empty handoff summary.`)
+  return {
+    runState,
+    summaryPath,
+    displayPath: relativeHandoffPath(projectRoot, summaryPath),
+    summaryText,
+  }
+}
+
+function buildHandoffPrompt({ instructions = '', summaryPath = '', summaryText = '' } = {}) {
+  return [
+    String(instructions || '').trim()
+      ? ['# Additional Instructions', '', String(instructions).trim()].join('\n')
+      : '',
+    [
+      '# Prior Workflow Summary',
+      '',
+      summaryPath ? `Source: ${summaryPath}` : '',
+      '',
+      String(summaryText || '').trim(),
+    ].filter((line) => line !== '').join('\n'),
+  ].filter(Boolean).join('\n\n---\n\n')
+}
+
+function printPostSuccessHandoffHint(runState, projectRoot) {
+  if (!process.stdout.isTTY) return
+  const summaryPath = handoffSummaryPath(runState)
+  if (!summaryPath || !fs.existsSync(summaryPath)) return
+  const displayPath = relativeHandoffPath(projectRoot, summaryPath)
+  console.log(`The results from your workflow are in ${displayPath}`)
+  console.log('')
+  console.log('Hand them off to another agent with:')
+  console.log('')
+  console.log('nax handoff')
+  console.log('')
+}
+
+function copyToClipboard(text, { platform = process.platform, runCommand = spawnSync } = {}) {
+  const candidates = platform === 'darwin'
+    ? [['pbcopy', []]]
+    : [['wl-copy', []], ['xclip', ['-selection', 'clipboard']]]
+  for (const [command, args] of candidates) {
+    const result = runCommand(command, args, { input: text, encoding: 'utf8' })
+    if (result.status === 0) return command
+  }
+  throw new Error(platform === 'darwin'
+    ? 'Could not copy to clipboard with pbcopy.'
+    : 'Could not copy to clipboard. Install wl-copy or xclip, or open the summary file directly.')
+}
+
 function artifactDirectoryHasFiles(dir) {
   if (!dir || !fs.existsSync(dir)) return false
   const entries = fs.readdirSync(dir, { withFileTypes: true })
@@ -1684,6 +1962,11 @@ function localRunStatusSummary(runs = []) {
   }).join(', ')
 }
 
+function nextLocalStepMessage(steps, index) {
+  const nextStep = steps[index + 1]
+  return nextStep ? `Preparing next step: ${nextStep.title}...` : 'Finalizing workflow outputs...'
+}
+
 function shouldPollLocalRun(run) {
   if (!run.runnerId) return false
   if (run.status === 'dry-run') return false
@@ -1768,6 +2051,15 @@ function formatNonTtyRunStatusMessage(event = {}, { agentWidth = 0, stateWidth =
 function formatUsageLogLine(usage) {
   const summary = formatUsageSummary(usage)
   return summary ? `**Usage:** ${summary.replace(/, /g, ' · ')}` : ''
+}
+
+function formatTtyProgressRow(row, { nameWidth, frame, orchestrator = DEFAULT_ORCHESTRATOR } = {}) {
+  const name = titleCase(row.agent).padEnd(nameWidth, ' ')
+  if (row.status === 'completed') return `✓ ${name} · 🟢 complete`
+  if (row.status === 'failed') return `✖ ${name} · failed${row.message ? ` · ${row.message}` : ''}`
+  const icon = STEP_SPINNER_FRAMES[frame % STEP_SPINNER_FRAMES.length]
+  const label = row.message || `${row.emoji} ${orchestrator}'s ${titleCase(row.agent)} ${row.phrase}`
+  return `${icon} ${name} · ${label}`
 }
 
 function makeStepProgressReporter({
@@ -1862,12 +2154,7 @@ function makeStepProgressReporter({
     row.nextFlavor = nextFlavorAt({ min: flavorMinMs, max: flavorMaxMs })
   }
   const renderRow = (row, nameWidth) => {
-    const name = titleCase(row.agent).padEnd(nameWidth, ' ')
-    if (row.status === 'completed') return `✓ ${name} · complete`
-    if (row.status === 'failed') return `✖ ${name} · failed${row.message ? ` · ${row.message}` : ''}`
-    const icon = STEP_SPINNER_FRAMES[frame % STEP_SPINNER_FRAMES.length]
-    const label = row.message || `${row.emoji} ${orchestrator}'s ${titleCase(row.agent)} ${row.phrase}`
-    return `${icon} ${name} · ${label}`
+    return formatTtyProgressRow(row, { nameWidth, frame, orchestrator })
   }
   const renderLines = () => {
     for (const row of rows.values()) rotateFlavor(row)
@@ -1906,7 +2193,7 @@ function makeStepProgressReporter({
     const lines = renderLines()
     process.stdout.write(`${lines.join('\n')}\n`)
     renderedLines = 0
-    if (msg) console.log(msg)
+    if (msg) console.log(`\n${msg}`)
   }
   return {
     setCount: (n) => {
@@ -2169,7 +2456,8 @@ async function executeGithubFlow({ flow, steps, options, runState, completedStep
   const date = options.date || getLocalDate()
   const baseContext = contextForRunState(runState, options)
 
-  for (const step of steps) {
+  for (let stepIndex = 0; stepIndex < steps.length; stepIndex += 1) {
+    const step = steps[stepIndex]
     const prompt = loadStepPrompt(flow, step)
     const stepState = {
       id: step.id,
@@ -2368,7 +2656,7 @@ async function executeLocalFlow({ flow, steps, options, runState, projectRoot, c
   const branch = options.branch || currentGitBranch(projectRoot)
   const netlify = buildNetlifyEnv({ projectRoot })
 
-  for (const step of steps) {
+  for (const [stepIndex, step] of steps.entries()) {
     const prompt = loadStepPrompt(flow, step)
     const stepState = {
       id: step.id,
@@ -2445,7 +2733,7 @@ async function executeLocalFlow({ flow, steps, options, runState, projectRoot, c
     const startedAt = Date.now()
     const submissions = await Promise.allSettled(runs.map(async (run, index) => {
       const label = `${titleCase(run.agent)} ${prompt.title}`
-      console.log(`\n- ${label}: submitting${run.existingRunnerId ? ' follow-up' : ''}...`)
+      console.log(`- ${label}: submitting${run.existingRunnerId ? ' follow-up' : ''}...`)
       try {
         const submitted = await submitLocalAgentRun({
           run,
@@ -2502,6 +2790,7 @@ async function executeLocalFlow({ flow, steps, options, runState, projectRoot, c
     if (stepState.status !== 'completed' && stepState.status !== 'dry-run') {
       throw new Error(`Local step "${step.id}" did not complete successfully.`)
     }
+    console.log(`\n${nextLocalStepMessage(steps, stepIndex)}`)
   }
 }
 
@@ -2834,6 +3123,7 @@ async function handleRun(flowId, options) {
     persistWorkflowArtifacts(runState, { summaryOnly: true })
     writeGithubStepSummary(runState)
     printSuccessBox({ flow: configuredFlow, runState, transport, projectRoot })
+    printPostSuccessHandoffHint(runState, projectRoot)
   } catch (error) {
     runState.status = 'failed'
     saveRunState(runState)
@@ -3070,6 +3360,23 @@ function buildProgram() {
     .action((runId, options, command) => handleRedrive(runId || '', actionOptions(options, command)))
 
   program
+    .command('handoff [run-id]')
+    .description('Copy or continue from the latest workflow artifact summary')
+    .option('--project-root <path>', 'Project root containing .nax/runs')
+    .option('--run-id <id>', 'Run id to hand off; defaults to the latest .nax run')
+    .option('--copy', 'Copy the summary to the clipboard and exit')
+    .option('--agent <name>', 'Agent for a fresh handoff run, e.g. codex')
+    .option('--flow <id>', 'Workflow id to run with the summary as context')
+    .option('--where <place>', 'Where to run chained workflows: auto, github-actions, netlify-api, local-machine', 'auto')
+    .option('--branch <branch-or-pr>', 'Git branch or PR number to run in Netlify agent runners')
+    .option('--context <text>', 'Additional context prepended before the handoff summary')
+    .option('--timeout-minutes <count>', 'Minutes to wait for each Netlify API step or fresh handoff run', '25')
+    .option('--force', 'Skip confirmation prompts for chained workflow runs')
+    .addOption(new Option('--yes', 'Hidden compatibility alias for --force').hideHelp())
+    .option('--no-auto-context', 'Do not inject automatic context for chained workflow runs')
+    .action((runId, options, command) => handleHandoff(runId || '', actionOptions(options, command)))
+
+  program
     .command('skills [subcommand]')
     .description('Install, update, and check project-local agent skills')
     .option('--project-root <path>', 'Project root for skill installation')
@@ -3200,14 +3507,23 @@ module.exports = {
     firstRunnableStepIndex,
     flowAgents,
     buildCompactLocalPromptForRedrive,
+    buildHandoffPrompt,
     compactTextForRetry,
+    copyToClipboard,
     findGithubRunnerFailures,
+    findRunStateForHandoff,
+    formatTtyProgressRow,
     formatSubmittedLocalRunBoxes,
+    handoffSummaryPath,
+    nextLocalStepMessage,
     localRedriveCandidates,
     formatCompactLocalRunResults,
     makeStepProgressReporter,
     normalizeGithubRunResult,
+    printPostSuccessHandoffHint,
     printSuccessBox,
+    readHandoffSummary,
+    relativeHandoffPath,
     usageSummariesForRunState,
     resultsScopedToGithubRuns,
     runnableSteps,

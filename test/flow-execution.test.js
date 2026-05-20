@@ -1,7 +1,47 @@
 const test = require('node:test')
 const assert = require('node:assert/strict')
+const fs = require('fs')
+const os = require('os')
+const path = require('path')
 
 const { _private } = require('../bin/nax')
+
+function tmpRoot() {
+  return fs.mkdtempSync(path.join(os.tmpdir(), 'nax-flow-execution-'))
+}
+
+function writeRunState(projectRoot, runId, overrides = {}) {
+  const dir = path.join(projectRoot, '.nax', 'runs', runId)
+  fs.mkdirSync(dir, { recursive: true })
+  const state = {
+    schemaVersion: 1,
+    runId,
+    flowId: 'do-next',
+    flowTitle: 'Do Next',
+    transport: 'netlify-api',
+    projectRoot,
+    createdAt: '2026-05-20T20:00:00.000Z',
+    updatedAt: '2026-05-20T20:00:00.000Z',
+    status: 'completed',
+    steps: [{
+      id: 'synthesize',
+      title: 'Synthesize Next Task',
+      status: 'completed',
+      runs: [{
+        agent: 'codex',
+        status: 'completed',
+        runnerId: 'runner-1',
+        sessionId: 'session-1',
+        resultText: 'Final result',
+        usage: { totalCreditsCost: 1.5, stepsCount: 2, totalTokens: 3000 },
+      }],
+    }],
+    dir,
+    ...overrides,
+  }
+  fs.writeFileSync(path.join(dir, 'run.json'), `${JSON.stringify(state, null, 2)}\n`)
+  return state
+}
 
 test('sourceIssueNumbersForStep dedupes issue numbers across prior steps', () => {
   const completed = new Map([
@@ -126,6 +166,94 @@ test('usageSummariesForRunState aggregates usage by step and total', () => {
   assert.match(summary.totalSummary, /1,085 tokens/)
   assert.match(summary.totalSummary, /57 steps/)
   assert.match(summary.totalSummary, /3.85 credits/)
+})
+
+test('TTY progress rows show a green complete status', () => {
+  const line = _private.formatTtyProgressRow({
+    agent: 'codex',
+    status: 'completed',
+  }, {
+    nameWidth: 6,
+    frame: 0,
+  })
+
+  assert.equal(line, '✓ Codex  · 🟢 complete')
+})
+
+test('nextLocalStepMessage describes the immediate transition after a local step', () => {
+  const steps = [
+    { title: 'Propose Next Task' },
+    { title: 'Synthesize Next Task' },
+  ]
+
+  assert.equal(_private.nextLocalStepMessage(steps, 0), 'Preparing next step: Synthesize Next Task...')
+  assert.equal(_private.nextLocalStepMessage(steps, 1), 'Finalizing workflow outputs...')
+})
+
+test('handoff helpers default to the latest run summary', () => {
+  const projectRoot = tmpRoot()
+  writeRunState(projectRoot, 'older', { updatedAt: '2026-05-20T20:00:00.000Z' })
+  writeRunState(projectRoot, 'newer', { updatedAt: '2026-05-20T21:00:00.000Z' })
+
+  const latest = _private.findRunStateForHandoff(projectRoot)
+  assert.equal(latest.runId, 'newer')
+
+  const handoff = _private.readHandoffSummary({ projectRoot })
+  assert.equal(handoff.runState.runId, 'newer')
+  assert.equal(handoff.displayPath, '.nax/runs/newer/artifacts/summary.md')
+  assert.match(handoff.summaryText, /# Do Next/)
+  assert.match(handoff.summaryText, /Final result/)
+})
+
+test('buildHandoffPrompt inlines instructions and summary contents', () => {
+  const prompt = _private.buildHandoffPrompt({
+    instructions: 'Focus on the next smallest task.',
+    summaryPath: '.nax/runs/latest/artifacts/summary.md',
+    summaryText: '# Summary\n\nDone.',
+  })
+
+  assert.match(prompt, /# Additional Instructions/)
+  assert.match(prompt, /Focus on the next smallest task\./)
+  assert.match(prompt, /Source: \.nax\/runs\/latest\/artifacts\/summary\.md/)
+  assert.match(prompt, /# Summary\n\nDone\./)
+})
+
+test('success handoff hint is TTY-only and points at the summary file', () => {
+  const projectRoot = tmpRoot()
+  const state = writeRunState(projectRoot, 'newer')
+  _private.readHandoffSummary({ projectRoot, runId: 'newer' })
+  const originalLog = console.log
+  const originalIsTTY = Object.getOwnPropertyDescriptor(process.stdout, 'isTTY')
+  const lines = []
+  console.log = (line = '') => lines.push(line)
+  Object.defineProperty(process.stdout, 'isTTY', { configurable: true, value: true })
+  try {
+    _private.printPostSuccessHandoffHint(state, projectRoot)
+  } finally {
+    console.log = originalLog
+    if (originalIsTTY) {
+      Object.defineProperty(process.stdout, 'isTTY', originalIsTTY)
+    } else {
+      delete process.stdout.isTTY
+    }
+  }
+
+  assert.match(lines.join('\n'), /\.nax\/runs\/newer\/artifacts\/summary\.md/)
+  assert.match(lines.join('\n'), /nax handoff/)
+})
+
+test('copyToClipboard uses the platform clipboard command', () => {
+  const calls = []
+  const command = _private.copyToClipboard('summary', {
+    platform: 'darwin',
+    runCommand: (cmd, args, options) => {
+      calls.push({ cmd, args, input: options.input })
+      return { status: 0 }
+    },
+  })
+
+  assert.equal(command, 'pbcopy')
+  assert.deepEqual(calls, [{ cmd: 'pbcopy', args: [], input: 'summary' }])
 })
 
 test('non-TTY progress reporter repeats unchanged run status after heartbeat interval', () => {
@@ -276,7 +404,7 @@ test('non-TTY progress reporter prints usage when a local run completes', () => 
   }
 
   assert.deepEqual(lines, [
-    'codex runner-1: completed (check #1)\n**Usage:** 85,131 tokens · 10 steps · 18.07 credits',
+    'codex runner-1: completed (check #1)\n**Usage:** 18.07 credits · 10 steps · 85,131 tokens',
   ])
 })
 

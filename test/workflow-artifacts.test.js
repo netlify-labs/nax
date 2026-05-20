@@ -108,6 +108,19 @@ test('persistWorkflowArtifacts writes summaries, usage, step files, and agent fi
     totalCreditsCost: 6,
   })
 
+  const topSummary = fs.readFileSync(path.join(root, 'summary.md'), 'utf8')
+  assert.ok(topSummary.includes('[summary](steps/01-review/summary.md)'))
+  assert.ok(topSummary.includes('[metadata](steps/01-review/step.json)'))
+  assert.ok(topSummary.includes('[usage](steps/01-review/usage.json)'))
+  assert.ok(topSummary.includes('[result](steps/01-review/runs/claude.md)'))
+  assert.ok(topSummary.includes('[attempt 1](steps/01-review/runs/claude.attempt-1.md)'))
+
+  const stepSummary = fs.readFileSync(path.join(root, 'steps', '01-review', 'summary.md'), 'utf8')
+  assert.ok(stepSummary.includes('[step metadata](step.json)'))
+  assert.ok(stepSummary.includes('[usage](usage.json)'))
+  assert.ok(stepSummary.includes('[result](runs/claude.md)'))
+  assert.ok(stepSummary.includes('[attempt 1](runs/claude.attempt-1.md)'))
+
   const agent = readJson(path.join(root, 'steps', '01-review', 'runs', 'claude.json'))
   assert.equal(agent.resultText, 'Claude result')
   assert.equal(agent.runnerId, 'runner-claude')

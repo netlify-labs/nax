@@ -34,4 +34,4 @@ jobs:
 
       - run: npm ci
       - run: npm install -g netlify-cli
-      - run: node bin/nax.js review --where local-machine --repo "$GITHUB_REPOSITORY" --branch "$BRANCH" --force --timeout-minutes 60
+      - run: node bin/nax.js run review --where local-machine --repo "$GITHUB_REPOSITORY" --branch "$BRANCH" --force --timeout-minutes 60

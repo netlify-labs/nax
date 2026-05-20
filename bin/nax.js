@@ -30,6 +30,7 @@ const { bodyHasRunnerResultMarker, bodyHasRunnerStatusMarker, parseRunnerResultM
 const {
   formatAgentRunUrl,
   formatAgentRunUrlFromAdminUrl,
+  formatUsageSummary,
   normalizeGithubRunResult,
   usageSummariesForRunState,
 } = require('../lib/agent-run-results')
@@ -1293,6 +1294,37 @@ function localAgentRunUrl({ projectRoot, runnerId, sessionId }) {
   return ''
 }
 
+function formatSubmittedLocalRunBoxes({ runs = [], prompt = {}, projectRoot }) {
+  if (runs.length === 0) return ''
+  const teal = '#0d9488'
+  const terminalWidth = process.stdout.columns || 120
+  const width = Math.min(120, Math.max(76, Math.floor(terminalWidth * 0.95)))
+  return runs.map((run) => {
+    const label = `${titleCase(run.agent)} ${prompt.title || 'Agent Run'}`
+    const runUrl = run.links?.sessionUrl ||
+      run.links?.agentRunUrl ||
+      (projectRoot ? localAgentRunUrl({ projectRoot, runnerId: run.runnerId, sessionId: run.sessionId }) : '')
+    const content = [
+      `Status: ${run.status || 'submitted'}`,
+      run.existingRunnerId ? 'Type: follow-up session' : 'Type: new agent run',
+      `Runner ID: ${run.runnerId || 'unknown'}`,
+      run.sessionId ? `Session ID: ${run.sessionId}` : '',
+      Number.isFinite(run.submittedAfterSeconds) ? `Submitted after: ${run.submittedAfterSeconds}s` : '',
+      runUrl ? `View run:\n${runUrl}` : '',
+    ].filter(Boolean).join('\n')
+    return makeBox({
+      title: {
+        left: label,
+        right: run.sessionId || run.runnerId || '',
+      },
+      content,
+      borderStyle: 'rounded',
+      borderColor: teal,
+      width,
+    })
+  }).join('\n')
+}
+
 function printSuccessBox({ flow, runState, transport, projectRoot }) {
   const green = '#22c55e'
   const final = finalRunForRunState(runState)
@@ -1699,6 +1731,19 @@ function nextFlavorAt({ min, max }) {
   return Date.now() + min + Math.floor(Math.random() * (range + 1))
 }
 
+function formatNonTtyRunStatusMessage(event = {}) {
+  if (event.message) return event.message
+  const run = event.run || {}
+  const id = run.runnerId || run.issueNumber || ''
+  const label = [run.agent || 'agent', id].filter(Boolean).join(' ')
+  return `${label}: ${event.state || run.status || 'unknown'}`
+}
+
+function formatUsageLogLine(usage) {
+  const summary = formatUsageSummary(usage)
+  return summary ? `**Usage:** ${summary.replace(/, /g, ' · ')}` : ''
+}
+
 function makeStepProgressReporter({
   stepTitle,
   total,
@@ -1720,12 +1765,20 @@ function makeStepProgressReporter({
       updateRun: (event) => {
         const id = event.run?.runnerId || event.run?.issueNumber || event.run?.agent
         if (!id) return
-        const message = event.message || `${event.run?.agent || 'agent'}: ${event.state || 'unknown'}`
-        const previous = lastRunLogs.get(id)
+        const message = formatNonTtyRunStatusMessage(event)
+        const previous = lastRunLogs.get(id) || {}
+        const checkCount = Number(previous.checkCount || 0) + 1
         const now = Date.now()
-        if (previous?.message === message && now - previous.loggedAt < nonTtyHeartbeatMs) return
-        lastRunLogs.set(id, { message, loggedAt: now })
-        console.log(message)
+        if (previous?.message === message && now - previous.loggedAt < nonTtyHeartbeatMs) {
+          lastRunLogs.set(id, { ...previous, checkCount })
+          return
+        }
+        lastRunLogs.set(id, { message, loggedAt: now, checkCount })
+        const usageLine = event.terminalSuccess ? formatUsageLogLine(event.run?.usage) : ''
+        console.log([
+          `${message} (check #${checkCount})`,
+          usageLine,
+        ].filter(Boolean).join('\n'))
       },
       message: (msg) => console.log(msg),
       done: (msg) => { if (msg) console.log(msg) },
@@ -2316,11 +2369,15 @@ async function executeLocalFlow({ flow, steps, options, runState, projectRoot, c
           branch,
           siteId: netlify.siteId,
           env: netlify.env,
+          onRetry: ({ error, nextAttempt, attempts, delayMs }) => {
+            const delaySeconds = Math.round(delayMs / 1000)
+            console.log(`  ${label}: submission failed, retrying ${nextAttempt}/${attempts} in ${delaySeconds}s — ${error.message}`)
+          },
         })
         const elapsedSeconds = Math.round((Date.now() - startedAt) / 1000)
+        submitted.submittedAfterSeconds = elapsedSeconds
         stepState.runs[index] = submitted
         saveRunState(runState)
-        console.log(`  ${label}: ${submitted.runnerId}${submitted.existingRunnerId ? ' (follow-up)' : ''} after ${elapsedSeconds}s`)
         return submitted
       } catch (error) {
         const failedRun = {
@@ -2347,6 +2404,11 @@ async function executeLocalFlow({ flow, steps, options, runState, projectRoot, c
     saveRunState(runState)
     if (failedSubmission) {
       throw failedSubmission.reason
+    }
+    const submissionBoxes = formatSubmittedLocalRunBoxes({ runs: submittedRuns, prompt, projectRoot })
+    if (submissionBoxes) {
+      console.log('\nSubmitted Netlify agent runs:')
+      console.log(submissionBoxes)
     }
 
     await completeLocalStep({ stepState, step, options, projectRoot, netlify })
@@ -2534,6 +2596,10 @@ async function handleRedrive(runId, options) {
     branch,
     siteId: netlify.siteId,
     env: netlify.env,
+    onRetry: ({ error, nextAttempt, attempts, delayMs }) => {
+      const delaySeconds = Math.round(delayMs / 1000)
+      console.log(`Submission failed, retrying ${nextAttempt}/${attempts} in ${delaySeconds}s — ${error.message}`)
+    },
   })
   step.runs[runIndex] = submitted
   step.status = 'running'
@@ -3033,6 +3099,7 @@ module.exports = {
     buildCompactLocalPromptForRedrive,
     compactTextForRetry,
     findGithubRunnerFailures,
+    formatSubmittedLocalRunBoxes,
     localRedriveCandidates,
     formatCompactLocalRunResults,
     makeStepProgressReporter,

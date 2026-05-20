@@ -13,6 +13,7 @@ const {
   waitForLocalAgentRuns,
   showAgentRun,
   submitLocalAgentRun,
+  runAsync,
 } = require('../lib/local-runner')
 
 test('latestSessionFromList accepts array and sessions wrapper responses', () => {
@@ -29,6 +30,18 @@ test('formatCommandForError redacts prompt and API payload values', () => {
   assert.equal(
     formatCommandForError('netlify', ['api', 'createAgentRunnerSession', '--data', '{"prompt":"secret"}']),
     'netlify api createAgentRunnerSession --data <redacted>',
+  )
+})
+
+test('runAsync redacts sensitive payloads from exec errors', async () => {
+  const payload = '{"prompt":"secret prompt"}'
+  await assert.rejects(
+    runAsync(process.execPath, ['-e', 'process.exit(1)', '--data', payload]),
+    (error) => {
+      assert.match(error.message, /--data <redacted>/)
+      assert.doesNotMatch(error.message, /secret prompt/)
+      return true
+    },
   )
 })
 
@@ -131,6 +144,63 @@ test('createAgentSessionAsync invokes Netlify follow-up session API with async r
   assert.equal(calls[0].options.timeout, 120000)
 })
 
+test('createAgentSessionAsync retries transient submission failures', async () => {
+  const retryEvents = []
+  let calls = 0
+  const created = await createAgentSessionAsync({
+    projectRoot: '/tmp/project',
+    runnerId: 'runner-1',
+    promptText: 'Cross review async',
+    agent: 'gemini',
+    env: {},
+    retryDelayMs: 0,
+    onRetry: (event) => retryEvents.push(event),
+    async runCommand() {
+      calls += 1
+      if (calls === 1) {
+        throw new Error('netlify api createAgentRunnerSession --data <redacted> failed: 502 Bad Gateway')
+      }
+      return { status: 0, stdout: JSON.stringify({ id: 'session-retry', state: 'running' }), stderr: '' }
+    },
+  })
+
+  assert.equal(calls, 2)
+  assert.equal(retryEvents.length, 1)
+  assert.equal(retryEvents[0].nextAttempt, 2)
+  assert.equal(retryEvents[0].attempts, 5)
+  assert.equal(retryEvents[0].delayMs, 0)
+  assert.equal(created.runnerId, 'runner-1')
+  assert.equal(created.raw.id, 'session-retry')
+})
+
+test('createAgentSessionAsync uses exponential backoff between retry attempts', async () => {
+  const retryEvents = []
+  const sleeps = []
+  let calls = 0
+  const created = await createAgentSessionAsync({
+    projectRoot: '/tmp/project',
+    runnerId: 'runner-1',
+    promptText: 'Cross review async',
+    agent: 'gemini',
+    env: {},
+    onRetry: (event) => retryEvents.push(event),
+    sleepFn: async (ms) => sleeps.push(ms),
+    async runCommand() {
+      calls += 1
+      if (calls < 4) {
+        throw new Error('netlify api createAgentRunnerSession --data <redacted> failed: 503 Service Unavailable')
+      }
+      return { status: 0, stdout: JSON.stringify({ id: 'session-retry', state: 'running' }), stderr: '' }
+    },
+  })
+
+  assert.equal(calls, 4)
+  assert.deepEqual(retryEvents.map((event) => event.nextAttempt), [2, 3, 4])
+  assert.deepEqual(retryEvents.map((event) => event.delayMs), [5000, 10000, 20000])
+  assert.deepEqual(sleeps, [5000, 10000, 20000])
+  assert.equal(created.raw.id, 'session-retry')
+})
+
 test('submitLocalAgentRun returns a submitted run with create metadata', async () => {
   const submitted = await submitLocalAgentRun({
     projectRoot: '/tmp/project',
@@ -152,6 +222,31 @@ test('submitLocalAgentRun returns a submitted run with create metadata', async (
   assert.equal(submitted.status, 'submitted')
   assert.equal(submitted.runnerId, 'runner-1')
   assert.equal(submitted.raw.create.id, 'runner-1')
+})
+
+test('submitLocalAgentRun preserves follow-up session id', async () => {
+  const submitted = await submitLocalAgentRun({
+    projectRoot: '/tmp/project',
+    branch: 'master',
+    siteId: 'site-123',
+    env: {},
+    run: {
+      agent: 'codex',
+      promptText: 'Cross review',
+      status: 'pending',
+      runnerId: 'runner-1',
+      existingRunnerId: 'runner-1',
+      raw: { stepId: 'cross-review' },
+    },
+    async runCommand() {
+      return { status: 0, stdout: JSON.stringify({ id: 'session-1', state: 'running' }), stderr: '' }
+    },
+  })
+
+  assert.equal(submitted.status, 'submitted')
+  assert.equal(submitted.runnerId, 'runner-1')
+  assert.equal(submitted.sessionId, 'session-1')
+  assert.equal(submitted.raw.session.id, 'session-1')
 })
 
 test('normalizeCompletedRun prefers latest session result and links', () => {

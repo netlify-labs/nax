@@ -1,16 +1,26 @@
-name: NAX Review
+name: Run NAX
 
 on:
   workflow_dispatch:
+    inputs:
+      flow:
+        description: NAX flow to run
+        type: choice
+        required: true
+        default: review
+        options:
+          - review
+          - ideas
+          - do-next
   pull_request:
     types: [opened, synchronize, reopened]
 
 concurrency:
-  group: nax-review-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: true
+  group: run-nax-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: false
 
 jobs:
-  review:
+  run:
     if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
     timeout-minutes: 180
@@ -22,6 +32,7 @@ jobs:
       NETLIFY_SITE_ID: ${{ secrets.NETLIFY_SITE_ID }}
       GH_TOKEN: ${{ github.token }}
       BRANCH: ${{ github.head_ref || github.ref_name }}
+      NAX_FLOW: ${{ github.event.inputs.flow || 'review' }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -34,4 +45,4 @@ jobs:
 
       - run: npm ci
       - run: npm install -g netlify-cli
-      - run: node bin/nax.js run review --where local-machine --repo "$GITHUB_REPOSITORY" --branch "$BRANCH" --force --timeout-minutes 60
+      - run: node bin/nax.js run "$NAX_FLOW" --where local-machine --repo "$GITHUB_REPOSITORY" --branch "$BRANCH" --force --timeout-minutes 60

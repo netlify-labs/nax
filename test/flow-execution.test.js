@@ -166,8 +166,70 @@ test('non-TTY progress reporter repeats unchanged run status after heartbeat int
   }
 
   assert.deepEqual(lines, [
-    'codex runner-1: running',
-    'codex runner-1: running',
+    'codex runner-1: running (check #1)',
+    'codex runner-1: running (check #3)',
+  ])
+})
+
+test('formatSubmittedLocalRunBoxes renders submitted local run details', () => {
+  const output = _private.formatSubmittedLocalRunBoxes({
+    prompt: { title: 'Review' },
+    runs: [
+      {
+        agent: 'claude',
+        runnerId: 'runner-1',
+        sessionId: 'session-1',
+        status: 'submitted',
+        submittedAfterSeconds: 6,
+      },
+    ],
+  })
+
+  assert.match(output, /Claude Review/)
+  assert.match(output, /Status: submitted/)
+  assert.match(output, /Runner ID: runner-1/)
+  assert.match(output, /Session ID: session-1/)
+  assert.match(output, /Submitted after: 6s/)
+})
+
+test('non-TTY progress reporter prints usage when a local run completes', () => {
+  const originalLog = console.log
+  const originalIsTTY = Object.getOwnPropertyDescriptor(process.stdout, 'isTTY')
+  const lines = []
+  console.log = (line) => lines.push(line)
+  Object.defineProperty(process.stdout, 'isTTY', { configurable: true, value: false })
+  try {
+    const reporter = _private.makeStepProgressReporter({
+      stepTitle: 'Review',
+      total: 1,
+      agents: ['codex'],
+    })
+    reporter.updateRun({
+      run: {
+        agent: 'codex',
+        runnerId: 'runner-1',
+        status: 'completed',
+        usage: {
+          totalTokens: 85131,
+          stepsCount: 10,
+          totalCreditsCost: 18.06858,
+        },
+      },
+      state: 'completed',
+      terminal: true,
+      terminalSuccess: true,
+    })
+  } finally {
+    console.log = originalLog
+    if (originalIsTTY) {
+      Object.defineProperty(process.stdout, 'isTTY', originalIsTTY)
+    } else {
+      delete process.stdout.isTTY
+    }
+  }
+
+  assert.deepEqual(lines, [
+    'codex runner-1: completed (check #1)\n**Usage:** 85,131 tokens · 10 steps · 18.07 credits',
   ])
 })
 

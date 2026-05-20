@@ -1805,7 +1805,9 @@ function makeStepProgressReporter({
         const id = event.run?.runnerId || event.run?.issueNumber || event.run?.agent
         if (!id) return
         stateWidth = Math.max(stateWidth, String(event.state || event.run?.status || 'unknown').length)
-        const message = event.message || formatNonTtyRunStatusMessage(event, { agentWidth, stateWidth })
+        const statusMessage = formatNonTtyRunStatusMessage(event, { agentWidth, stateWidth })
+        const useStatusMessage = event.run && (event.state || event.run?.status) && !event.retry && !event.error
+        const message = useStatusMessage ? statusMessage : (event.message || statusMessage)
         const previous = lastRunLogs.get(id) || {}
         const checkCount = Number(previous.checkCount || 0) + 1
         const now = Date.now()

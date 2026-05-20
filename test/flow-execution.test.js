@@ -205,18 +205,22 @@ test('non-TTY progress reporter aligns agent and state columns', () => {
     reporter.updateRun({
       run: { agent: 'claude', runnerId: '6a0e1befb595e97af9a2c165' },
       state: 'running',
+      message: 'claude 6a0e1befb595e97af9a2c165: running',
     })
     reporter.updateRun({
       run: { agent: 'gemini', runnerId: '6a0e1bee848af0ba500f3c89' },
       state: 'running',
+      message: 'gemini 6a0e1bee848af0ba500f3c89: running',
     })
     reporter.updateRun({
       run: { agent: 'codex', runnerId: '6a0e1bf1c1a717707743f5c5' },
       state: 'running',
+      message: 'codex 6a0e1bf1c1a717707743f5c5: running',
     })
     reporter.updateRun({
       run: { agent: 'codex', runnerId: '6a0e1bf1c1a717707743f5c5' },
       state: 'done',
+      message: 'codex 6a0e1bf1c1a717707743f5c5: done',
     })
   } finally {
     console.log = originalLog

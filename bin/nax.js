@@ -34,6 +34,7 @@ const {
   normalizeGithubRunResult,
   usageSummariesForRunState,
 } = require('../lib/agent-run-results')
+const { runGh } = require('../lib/gh-cli')
 const { multiline } = require('../lib/multiline')
 const { WAIT_FOR_AGENT_RESULTS, listFlows, loadFlow, loadStepPrompt } = require('../lib/flows')
 const { createRunState, dismissRunState, findLatestUnfinishedRun, listRunStates, saveRunState } = require('../lib/run-state')
@@ -342,11 +343,7 @@ function createIssue({ repo, title, body, labels }) {
     const args = ['issue', 'create', '--repo', repo, '--title', title, '--body-file', bodyFile]
     for (const label of labels) args.push('--label', label)
 
-    const result = spawnSync('gh', args, { encoding: 'utf8' })
-    if (result.status !== 0) {
-      const detail = result.stderr.trim() || result.stdout.trim()
-      throw new Error(`gh issue create failed for "${title}": ${detail}`)
-    }
+    const result = runGh(args, { errorPrefix: `gh issue create failed for "${title}"` })
     return result.stdout.trim()
   } finally {
     fs.rmSync(tmpDir, { recursive: true, force: true })
@@ -361,11 +358,7 @@ function createComment({ repo, issueNumber, body }) {
     fs.writeFileSync(bodyFile, body)
     const args = ['issue', 'comment', issueNumber, '--repo', repo, '--body-file', bodyFile]
 
-    const result = spawnSync('gh', args, { encoding: 'utf8' })
-    if (result.status !== 0) {
-      const detail = result.stderr.trim() || result.stdout.trim()
-      throw new Error(`gh issue comment failed for issue #${issueNumber}: ${detail}`)
-    }
+    const result = runGh(args, { errorPrefix: `gh issue comment failed for issue #${issueNumber}` })
     return result.stdout.trim()
   } finally {
     fs.rmSync(tmpDir, { recursive: true, force: true })
@@ -380,11 +373,7 @@ function createPullRequestComment({ repo, prNumber, body }) {
     fs.writeFileSync(bodyFile, body)
     const args = ['pr', 'comment', prNumber, '--repo', repo, '--body-file', bodyFile]
 
-    const result = spawnSync('gh', args, { encoding: 'utf8' })
-    if (result.status !== 0) {
-      const detail = result.stderr.trim() || result.stdout.trim()
-      throw new Error(`gh pr comment failed for PR #${prNumber}: ${detail}`)
-    }
+    const result = runGh(args, { errorPrefix: `gh pr comment failed for PR #${prNumber}` })
     return result.stdout.trim()
   } finally {
     fs.rmSync(tmpDir, { recursive: true, force: true })
@@ -2885,7 +2874,8 @@ function printInitResult(result, { dryRun = false } = {}) {
     console.log(`Workflow: ${path.relative(result.projectRoot, result.workflow.path)} (${result.workflow.status})`)
   }
   for (const secret of result.secrets) {
-    console.log(`Secret: ${secret.name} (${secret.status})`)
+    const reason = secret.reason ? `: ${secret.reason}` : ''
+    console.log(`Secret: ${secret.name} (${secret.status}${reason})`)
   }
 }
 
@@ -2967,7 +2957,7 @@ async function shouldEnableGithubActions(options) {
   if (!process.stdin.isTTY || options.yes) return true
   const clack = require('@clack/prompts')
   const selected = await clack.confirm({
-    message: 'Enable GitHub Actions for this workflow?',
+    message: 'Install the Netlify Agent Runner GitHub Actions workflow for this repo?',
     initialValue: true,
   })
   if (clack.isCancel(selected)) process.exit(0)

@@ -1,5 +1,8 @@
 const test = require('node:test')
 const assert = require('node:assert/strict')
+const fs = require('fs')
+const os = require('os')
+const path = require('path')
 
 const {
   createAgentRun,
@@ -7,9 +10,12 @@ const {
   createAgentSession,
   createAgentSessionAsync,
   formatCommandForError,
+  inferNetlifyFilterFromCommand,
   latestSessionFromList,
   listAgentSessions,
   normalizeCompletedRun,
+  readRootNetlifyBuildCommand,
+  resolveNetlifyFilter,
   waitForLocalAgentRuns,
   showAgentRun,
   submitLocalAgentRun,
@@ -45,6 +51,36 @@ test('runAsync redacts sensitive payloads from exec errors', async () => {
   )
 })
 
+test('inferNetlifyFilterFromCommand reads a single package-manager filter', () => {
+  assert.equal(
+    inferNetlifyFilterFromCommand('BUGSNAG=1 pnpm --filter revenue-engine-frontend build:netlify'),
+    'revenue-engine-frontend',
+  )
+  assert.equal(inferNetlifyFilterFromCommand('pnpm --filter=revenue-engine-frontend build'), 'revenue-engine-frontend')
+  assert.equal(inferNetlifyFilterFromCommand('pnpm -F "revenue-engine-frontend" build'), 'revenue-engine-frontend')
+  assert.equal(inferNetlifyFilterFromCommand('pnpm --filter one --filter two build'), '')
+})
+
+test('resolveNetlifyFilter infers a root filter from netlify.toml build command', () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'nax-local-runner-filter-'))
+  fs.writeFileSync(path.join(tmp, 'netlify.toml'), [
+    '[build]',
+    '  command = "pnpm --filter revenue-engine-frontend build:netlify"',
+    '  publish = "clients/frontend/dist"',
+    '',
+  ].join('\n'))
+
+  assert.equal(readRootNetlifyBuildCommand(tmp), 'pnpm --filter revenue-engine-frontend build:netlify')
+  assert.deepEqual(resolveNetlifyFilter({ projectRoot: tmp }), {
+    filter: 'revenue-engine-frontend',
+    source: 'netlify.toml',
+  })
+  assert.deepEqual(resolveNetlifyFilter({ projectRoot: tmp, filter: 'explicit-app' }), {
+    filter: 'explicit-app',
+    source: 'option',
+  })
+})
+
 test('createAgentRun invokes netlify agents:create with prompt, agent, project, and branch', () => {
   const calls = []
   const created = createAgentRun({
@@ -77,6 +113,38 @@ test('createAgentRun invokes netlify agents:create with prompt, agent, project, 
   assert.equal(calls[0].options.timeout, 120000)
 })
 
+test('createAgentRun passes Netlify monorepo filter when provided', () => {
+  const calls = []
+  createAgentRun({
+    projectRoot: '/tmp/project',
+    promptText: 'Review this repo',
+    agent: 'codex',
+    branch: 'master',
+    siteId: 'site-123',
+    netlifyFilter: 'revenue-engine-frontend',
+    env: { NETLIFY_SITE_ID: 'site-123' },
+    runCommand(command, args, options) {
+      calls.push({ command, args, options })
+      return { status: 0, stdout: JSON.stringify({ id: 'runner-1', state: 'running' }), stderr: '' }
+    },
+  })
+
+  assert.deepEqual(calls[0].args, [
+    'agents:create',
+    '--json',
+    '--agent',
+    'codex',
+    '--project',
+    'site-123',
+    '--branch',
+    'master',
+    '--filter',
+    'revenue-engine-frontend',
+    '--prompt',
+    'Review this repo',
+  ])
+})
+
 test('createAgentRunAsync invokes netlify agents:create with async runner', async () => {
   const calls = []
   const created = await createAgentRunAsync({
@@ -95,6 +163,38 @@ test('createAgentRunAsync invokes netlify agents:create with async runner', asyn
   assert.equal(created.runnerId, 'runner-async')
   assert.equal(calls[0].command, 'netlify')
   assert.equal(calls[0].options.timeout, 120000)
+})
+
+test('createAgentRunAsync passes Netlify monorepo filter when provided', async () => {
+  const calls = []
+  await createAgentRunAsync({
+    projectRoot: '/tmp/project',
+    promptText: 'Review async',
+    agent: 'gemini',
+    branch: 'master',
+    siteId: 'site-123',
+    netlifyFilter: 'revenue-engine-frontend',
+    env: {},
+    async runCommand(command, args, options) {
+      calls.push({ command, args, options })
+      return { status: 0, stdout: JSON.stringify({ id: 'runner-async', state: 'running' }), stderr: '' }
+    },
+  })
+
+  assert.deepEqual(calls[0].args, [
+    'agents:create',
+    '--json',
+    '--agent',
+    'gemini',
+    '--project',
+    'site-123',
+    '--branch',
+    'master',
+    '--filter',
+    'revenue-engine-frontend',
+    '--prompt',
+    'Review async',
+  ])
 })
 
 test('createAgentSession invokes Netlify follow-up session API', () => {

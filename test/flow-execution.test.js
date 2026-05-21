@@ -214,7 +214,7 @@ test('Did you know progress tip formats a rotating Agent Runner use case', () =>
   ], { width: 72, color: '#00ad9f' })
   const text = lines.join('\n')
 
-  assert.equal(lines[0], '')
+  assert.match(lines[0], /While agent runners are doing their magic/)
   assert.match(text, /While agent runners are doing their magic/)
   assert.match(text, /for Netlify Agent runners/)
   assert.match(text, /👀 Use Agent Runs for Code reviews/)

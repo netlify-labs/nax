@@ -62,6 +62,7 @@ const { enableGitHubActionsSetup, initSite, readNetlifyProject } = require('../l
 const {
   buildNetlifyEnv,
   currentGitBranch,
+  resolveNetlifyFilter,
   submitLocalAgentRun,
   waitForLocalAgentRuns,
 } = require('../lib/local-runner')
@@ -94,6 +95,13 @@ function parseCsv(value) {
     .split(',')
     .map((item) => item.trim())
     .filter(Boolean)
+}
+
+function maybeReportNetlifyFilter(resolved) {
+  if (!resolved?.filter) return
+  if (resolved.source === 'netlify.toml') {
+    console.log(`Netlify app filter: ${resolved.filter} (from netlify.toml)`)
+  }
 }
 
 function collectOption(value, previous) {
@@ -1281,6 +1289,7 @@ async function runSingleNetlifyAgent({
 } = {}) {
   const branch = options.branch || currentGitBranch(projectRoot)
   const netlify = buildNetlifyEnv({ projectRoot })
+  const netlifyFilter = resolveNetlifyFilter({ projectRoot, filter: options.filter })
   const runTitle = title || 'Agent Run'
   const run = {
     transport: NETLIFY_API_TRANSPORT,
@@ -1302,6 +1311,7 @@ async function runSingleNetlifyAgent({
   }
 
   if (typeof beforeSubmit === 'function') beforeSubmit()
+  maybeReportNetlifyFilter(netlifyFilter)
   console.log(`\nStarting ${titleCase(agent)} ${startLabel || runTitle.toLowerCase()}...`)
   const startedAt = Date.now()
   const submitted = await submitLocalAgentRun({
@@ -1309,6 +1319,7 @@ async function runSingleNetlifyAgent({
     projectRoot,
     branch,
     siteId: netlify.siteId,
+    netlifyFilter: netlifyFilter.filter,
     env: netlify.env,
     onRetry: ({ error, nextAttempt, attempts, delayMs }) => {
       const delaySeconds = Math.round(delayMs / 1000)
@@ -2789,7 +2800,6 @@ function formatDidYouKnowLines(useCase, {
     ] : []),
   ].join('\n')
   return [
-    '',
     'While agent runners are doing their magic, here are some other use cases for Netlify Agent runners',
     ...makeBox({
       title: agentRunUseCaseTitle(title),
@@ -3460,6 +3470,8 @@ async function executeLocalFlow({ flow, steps, options, runState, projectRoot, c
   const baseContext = contextForRunState(runState, options)
   const branch = options.branch || currentGitBranch(projectRoot)
   const netlify = buildNetlifyEnv({ projectRoot })
+  const netlifyFilter = resolveNetlifyFilter({ projectRoot, filter: options.filter })
+  maybeReportNetlifyFilter(netlifyFilter)
 
   for (const [stepIndex, step] of steps.entries()) {
     const prompt = loadStepPrompt(flow, step)
@@ -3545,6 +3557,7 @@ async function executeLocalFlow({ flow, steps, options, runState, projectRoot, c
           projectRoot,
           branch,
           siteId: netlify.siteId,
+          netlifyFilter: netlifyFilter.filter,
           env: netlify.env,
           onRetry: ({ error, nextAttempt, attempts, delayMs }) => {
             const delaySeconds = Math.round(delayMs / 1000)
@@ -3741,6 +3754,7 @@ async function handleRetry(runId, options) {
 
   const netlify = buildNetlifyEnv({ projectRoot })
   const branch = runState.branch || runState.options?.branch || currentGitBranch(projectRoot)
+  const netlifyFilter = resolveNetlifyFilter({ projectRoot, filter: options.filter || runState.options?.filter })
   const compactPromptText = buildCompactLocalPromptForRetry({ flow, step: flowStep, runState, run })
   if (!compactPromptText || compactPromptText.length >= String(run.promptText || '').length) {
     throw new Error(`Could not build a shorter prompt for ${run.agent} ${step.id}.`)
@@ -3750,6 +3764,7 @@ async function handleRetry(runId, options) {
   console.log(`Run: ${runState.runId}`)
   console.log(`Runner: ${run.runnerId}`)
   console.log(`Prompt: ${String(run.promptText || '').length} -> ${compactPromptText.length} chars`)
+  maybeReportNetlifyFilter(netlifyFilter)
 
   const retryRun = {
     ...run,
@@ -3773,6 +3788,7 @@ async function handleRetry(runId, options) {
     projectRoot,
     branch,
     siteId: netlify.siteId,
+    netlifyFilter: netlifyFilter.filter,
     env: netlify.env,
     onRetry: ({ error, nextAttempt, attempts, delayMs }) => {
       const delaySeconds = Math.round(delayMs / 1000)
@@ -4159,6 +4175,7 @@ function buildProgram() {
     .option('--branch <branch-or-pr>', 'Git branch or PR number to run in Netlify agent runners')
     .option('--agent <name>', 'Agent for a Netlify agent run, e.g. codex')
     .option('--prompt <text>', 'Prompt text for a Netlify agent run')
+    .option('--filter <app>', 'Netlify CLI monorepo app filter for local Netlify agent runs')
     .option('--transport <transport>', 'Where to run: auto, github, netlify-api', 'auto')
     .addOption(new Option('--where <place>', 'Hidden compatibility alias for --transport').hideHelp())
     .option('--dry', 'Preview the workflow without creating issues/comments')
@@ -4197,6 +4214,7 @@ function buildProgram() {
     .option('--context <text>', 'Additional context appended to each prompt')
     .option('--agent <name>', 'Agent for a Netlify agent run, e.g. codex')
     .option('--prompt <text>', 'Prompt text for a Netlify agent run')
+    .option('--filter <app>', 'Netlify CLI monorepo app filter for local Netlify agent runs')
     .option('--transport <transport>', 'Where to run: auto, github, netlify-api', 'auto')
     .addOption(new Option('--where <place>', 'Hidden compatibility alias for --transport').hideHelp())
     .option('--context-file <path>', 'Read additional context from a file')
@@ -4260,6 +4278,7 @@ function buildProgram() {
     .option('--transport <transport>', 'Transport for chained workflows: auto, github-actions, netlify-api, local-machine', 'auto')
     .addOption(new Option('--where <place>', 'Hidden compatibility alias for --transport').hideHelp())
     .option('--branch <branch-or-pr>', 'Git branch or PR number to run in Netlify agent runners')
+    .option('--filter <app>', 'Netlify CLI monorepo app filter for local Netlify agent runs')
     .option('--context <text>', 'Additional context prepended before the handoff summary')
     .option('--timeout-minutes <count>', 'Minutes to wait for each Netlify API step or fresh handoff run', '25')
     .option('--force', 'Skip confirmation prompts for chained workflow runs')

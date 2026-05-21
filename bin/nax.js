@@ -82,6 +82,12 @@ const COMPACT_LOCAL_RESULTS_TOTAL_LIMIT = 36000
 const COMPACT_LOCAL_CONTEXT_CHAR_LIMIT = 12000
 const AD_HOC_RUN_TARGET = '__ad_hoc_agent_run__'
 
+let clackModulePromise
+async function loadClack() {
+  clackModulePromise = clackModulePromise || import('@clack/prompts')
+  return clackModulePromise
+}
+
 function parseCsv(value) {
   if (!value) return []
   return String(value)
@@ -265,7 +271,7 @@ async function confirmRemoteRunnerCanMissLocalChanges({ projectRoot, branch, opt
   const state = readRemoteInvisibleGitState(projectRoot)
   if (!state.dirty) return
 
-  const clack = require('@clack/prompts')
+  const clack = await loadClack()
   console.log('')
   console.log('Local git state not visible to remote Netlify agent runners:')
   for (const line of state.lines) {
@@ -598,7 +604,7 @@ function buildCommentPlan({ promptName, prompt: promptOverride, options, context
 }
 
 async function pickPromptInteractively() {
-  const clack = require('@clack/prompts')
+  const clack = await loadClack()
   const prompts = listPrompts()
   const selected = await clack.select({
     message: 'Choose workflow prompt',
@@ -647,7 +653,7 @@ async function selectIssueGroup({ clack, options, message, allowSkip = false }) 
 }
 
 async function chooseInteractively(initialPromptName, options) {
-  const clack = require('@clack/prompts')
+  const clack = await loadClack()
 
   const promptName = initialPromptName || (await pickPromptInteractively())
 
@@ -711,7 +717,7 @@ async function chooseInteractively(initialPromptName, options) {
 }
 
 async function chooseCommentInteractively(initialPromptName, options) {
-  const clack = require('@clack/prompts')
+  const clack = await loadClack()
 
   const promptName = initialPromptName || (await pickPromptInteractively())
 
@@ -839,7 +845,7 @@ async function handleIssue(promptName, options) {
   }
 
   if (!options.yes && process.stdin.isTTY) {
-    const clack = require('@clack/prompts')
+    const clack = await loadClack()
     const titleList = plan.issues.map((issue) => `  • ${issue.title}`).join('\n')
     const noun = plan.issues.length === 1 ? 'issue' : 'issues'
     const confirmed = await clack.confirm({
@@ -903,7 +909,7 @@ async function handleComment(promptName, options) {
   }
 
   if (!options.yes && process.stdin.isTTY) {
-    const clack = require('@clack/prompts')
+    const clack = await loadClack()
     const targetList = plan.issues
       .map((issue) => {
         const target = issue.targetKind === 'pr'
@@ -1195,7 +1201,7 @@ async function handleRecent(options) {
       throw new Error(`No artifact source found with id "${options.runId}"`)
     }
   } else {
-    const clack = require('@clack/prompts')
+    const clack = await loadClack()
     const picked = await clack.select({
       message: 'Pick a recent artifact',
       options: choices.map((source) => ({
@@ -1544,7 +1550,7 @@ async function runSingleGithubAgent({ projectRoot, agent, promptText, source, op
 }
 
 async function chooseHandoffSourceInteractively({ projectRoot, latestSource }) {
-  const clack = require('@clack/prompts')
+  const clack = await loadClack()
   const sources = listHandoffSources(projectRoot).map((source) => ({
     ...source,
     displayPath: relativeDisplayPath(projectRoot, source.summaryPath),
@@ -1576,7 +1582,7 @@ async function chooseHandoffSourceInteractively({ projectRoot, latestSource }) {
 }
 
 async function chooseHandoffActionInteractively(source) {
-  const clack = require('@clack/prompts')
+  const clack = await loadClack()
   const selected = await clack.select({
     message: 'What should happen next?',
     options: [
@@ -1644,7 +1650,7 @@ async function handleHandoff(runId, options) {
     return
   }
 
-  const clack = require('@clack/prompts')
+  const clack = await loadClack()
   const instructions = await promptForOptionalHandoffInstructions()
   const promptText = buildHandoffPrompt({
     instructions,
@@ -1716,27 +1722,49 @@ async function handlePreviewBoxes(flowId, options) {
   printSuccessBox({ flow, runState: fakeRunState, transport, projectRoot })
 }
 
+async function selectSearchableOption({
+  clack,
+  message,
+  options,
+  placeholder = 'Type to filter...',
+  maxItems = 10,
+}) {
+  if (typeof clack.autocomplete === 'function') {
+    return clack.autocomplete({
+      message,
+      placeholder,
+      options,
+      maxItems,
+    })
+  }
+
+  return clack.select({ message, options, maxItems })
+}
+
 async function pickFlowInteractively({ includeAdHoc = true } = {}) {
-  const clack = require('@clack/prompts')
+  const clack = await loadClack()
   const flows = await listFlows()
   if (includeAdHoc) {
     console.log('Run a single Netlify agent or orchestrate a multi-step agentic workflow.')
   }
-  const selected = await clack.select({
+  const options = [
+    ...(includeAdHoc ? [{
+      value: AD_HOC_RUN_TARGET,
+      label: 'Start a single Netlify agent',
+      hint: 'Run one Netlify agent with a custom prompt.',
+    }] : []),
+    ...flows.map((flow) => ({
+      value: flow.id,
+      label: includeAdHoc ? `Workflow - ${flow.title}` : flow.title,
+      hint: flow.description,
+    })),
+    ...(includeAdHoc ? [{ value: 'cancel', label: 'Cancel' }] : []),
+  ]
+  const selected = await selectSearchableOption({
+    clack,
     message: includeAdHoc ? 'What do you want to run?' : 'Choose workflow',
-    options: [
-      ...(includeAdHoc ? [{
-        value: AD_HOC_RUN_TARGET,
-        label: 'Start a single Netlify agent',
-        hint: 'Run one Netlify agent with a custom prompt.',
-      }] : []),
-      ...flows.map((flow) => ({
-        value: flow.id,
-        label: includeAdHoc ? `Workflow - ${flow.title}` : flow.title,
-        hint: flow.description,
-      })),
-      ...(includeAdHoc ? [{ value: 'cancel', label: 'Cancel' }] : []),
-    ],
+    options,
+    placeholder: 'Type to filter workflows...',
   })
   if (clack.isCancel(selected) || selected === 'cancel') process.exit(0)
   return selected
@@ -1744,7 +1772,7 @@ async function pickFlowInteractively({ includeAdHoc = true } = {}) {
 
 async function chooseAdHocAgentInteractively(initialAgent) {
   if (initialAgent) return initialAgent
-  const clack = require('@clack/prompts')
+  const clack = await loadClack()
   const selected = await clack.select({
     message: 'Choose agent',
     options: DEFAULT_MODELS.map((model) => ({ value: model, label: titleCase(model) })),
@@ -1769,7 +1797,7 @@ async function promptForAdHocAgentPrompt(initialPrompt) {
 }
 
 async function chooseTransportInteractively({ requested, projectRoot }) {
-  const clack = require('@clack/prompts')
+  const clack = await loadClack()
   const detections = detectTransports({ projectRoot })
   if (requested && requested !== 'auto') return resolveTransport(requested, detections)
 
@@ -1810,7 +1838,7 @@ async function chooseSingleRunTransportInteractively({ requested, projectRoot })
   }
   if (!process.stdin.isTTY || available.length === 1) return available[0].id
 
-  const clack = require('@clack/prompts')
+  const clack = await loadClack()
   const selected = await clack.select({
     message: 'Where should we run this Netlify agent?',
     options: orderSingleRunTransports(available).map((transport) => ({
@@ -1825,7 +1853,7 @@ async function chooseSingleRunTransportInteractively({ requested, projectRoot })
 
 async function collectFlowOptions(flow, options) {
   if (!process.stdin.isTTY || options.yes) return options
-  const clack = require('@clack/prompts')
+  const clack = await loadClack()
   const resolved = { ...options }
   for (const [key, spec] of Object.entries(flow.options || {})) {
     if (resolved[key]) continue
@@ -2221,7 +2249,7 @@ async function prepareInteractiveFlowRun({ flow, options, transport, projectRoot
     }
   }
 
-  const clack = require('@clack/prompts')
+  const clack = await loadClack()
   const agents = flowAgents(flow)
   let selectedAgents = parseCsv(options.models)
   if (selectedAgents.length === 0) {
@@ -2652,7 +2680,7 @@ function parseIssueNumberFromUrl(url) {
   return match ? Number(match[1]) : null
 }
 
-function makeProgressReporter(initialMessage) {
+async function makeProgressReporter(initialMessage) {
   if (!process.stdout.isTTY) {
     return {
       update: (message) => console.log(message),
@@ -2660,7 +2688,7 @@ function makeProgressReporter(initialMessage) {
       fail: (message) => { if (message) console.log(message) },
     }
   }
-  const clack = require('@clack/prompts')
+  const clack = await loadClack()
   const spinner = clack.spinner()
   spinner.start(initialMessage)
   return {
@@ -2687,10 +2715,90 @@ function pickAgentLabel(agents) {
 
 const DEFAULT_ORCHESTRATOR = "Netlify Agent runner"
 const STEP_SPINNER_FRAMES = ['◐', '◓', '◑', '◒']
+const DID_YOU_KNOW_ROTATE_MS = 25000
+const DID_YOU_KNOW_BORDER_COLORS = ['#00ad9f', '#22c55e', '#38bdf8', '#f59e0b', '#a78bfa']
+const AGENT_RUNNER_USE_CASES = [
+  ['🔨 Prototyping / internal tools', 'Turn rough operational needs into working internal apps.', 'Build an internal dashboard for our HR team.'],
+  ['👀 Code reviews', 'Bring in a fresh reviewer that can inspect architecture, tests, and edge cases.', 'Audit the code with fresh eyes and identify areas for improvement.'],
+  ['🔐 Security audits', 'Run deeper checks for auth gaps, data exposure, injection risk, and unsafe defaults.', 'Do a deep security audit of our code base to identify any potential issues.'],
+  ['💡 Feature suggestions', 'Use the current code, docs, and product shape to find the next best bet.', 'Based on our current code base and docs, what should we build next?'],
+  ['⚡ Performance improvements', 'Find slow paths, heavy bundles, expensive queries, and easy wins.', 'Scan our code base for performance bottlenecks and suggest improvements.'],
+  ['📊 Telemetry and analytics', 'Spot missing events, weak funnels, and visibility gaps.', 'What analytics things are we not tracking but probably should?'],
+  ['🔎 SEO audit', 'Check pages for crawlability, metadata, broken links, alt text, and page speed.', 'Audit our site for SEO issues like missing meta tags, broken links, slow pages, and missing alt text.'],
+  ['✍️ Copy improvements', 'Tighten messaging, calls to action, and conversion copy.', 'Rewrite our landing page copy to be more compelling and conversion-focused.'],
+  ['♿ Accessibility', 'Review keyboard flows, labels, contrast, landmarks, and WCAG gaps.', 'Run an accessibility audit and fix all WCAG 2.1 AA violations.'],
+  ['📱 Mobile responsiveness', 'Inspect small viewports and fix layouts that collapse poorly.', 'Improve the mobile responsiveness and audit every page on small viewports.'],
+  ['🎭 End-to-end tests', 'Cover critical user journeys with browser-level tests.', 'Add end-to-end tests for our critical user flows using Playwright.'],
+  ['🧪 Unit tests', 'Backfill focused tests around utility functions and tricky logic.', 'Generate unit tests for our untested utility functions.'],
+  ['📚 Documentation', 'Create docs from the actual project structure and workflows.', 'Generate a README and contributing guide based on our codebase.'],
+  ['🚦 Error handling', 'Improve user-facing failures, logging, empty states, and recovery paths.', 'Add proper error boundaries, logging, and user-friendly error states throughout the app.'],
+  ['✨ UX polish', 'Smooth rough edges with loading states, skeletons, and transitions.', 'Add loading states, skeleton screens, and transitions to improve perceived performance.'],
+]
 
 function nextFlavorAt({ min, max }) {
   const range = Math.max(0, max - min)
   return Date.now() + min + Math.floor(Math.random() * (range + 1))
+}
+
+function wrapLine(text, { width = 100, indent = '' } = {}) {
+  const maxWidth = Math.max(20, width)
+  const words = String(text || '').split(/\s+/).filter(Boolean)
+  const lines = []
+  let current = ''
+  for (const word of words) {
+    const prefix = lines.length === 0 ? '' : indent
+    const next = current ? `${current} ${word}` : `${prefix}${word}`
+    if (next.length > maxWidth && current) {
+      lines.push(current)
+      current = `${indent}${word}`
+    } else {
+      current = next
+    }
+  }
+  if (current) lines.push(current)
+  return lines.length > 0 ? lines : ['']
+}
+
+function agentRunUseCaseTitle(title) {
+  const value = String(title || '').trim()
+  const match = value.match(/^(\S+)\s+(.+)$/)
+  if (!match) return `Use Agent Runs for ${value || 'more workflows'}`
+  return `${match[1]} Use Agent Runs for ${match[2]}`
+}
+
+function formatDidYouKnowLines(useCase, {
+  width = process.stdout.columns || 100,
+  color = DID_YOU_KNOW_BORDER_COLORS[0],
+} = {}) {
+  if (!Array.isArray(useCase) || useCase.length < 2) return []
+  const [title, description, prompt = ''] = useCase
+  const boxWidth = Math.max(64, Math.min(width || 100, 118))
+  const contentWidth = boxWidth - 6
+  const content = [
+    ...wrapLine(description, {
+      width: contentWidth,
+      indent: '',
+    }),
+    ...(prompt ? [
+      '',
+      'Prompt Examples:',
+      ...wrapLine(`- "${prompt}"`, {
+        width: contentWidth,
+        indent: '  ',
+      }),
+    ] : []),
+  ].join('\n')
+  return [
+    '',
+    'While agent runners are doing their magic, here are some other use cases for Netlify Agent runners',
+    ...makeBox({
+      title: agentRunUseCaseTitle(title),
+      content,
+      borderStyle: 'rounded',
+      borderColor: color,
+      width: boxWidth,
+    }).split('\n'),
+  ]
 }
 
 function formatNonTtyRunStatusMessage(event = {}, { agentWidth = 0, stateWidth = 0 } = {}) {
@@ -2706,13 +2814,23 @@ function formatUsageLogLine(usage) {
   return summary ? `**Usage:** ${summary.replace(/, /g, ' · ')}` : ''
 }
 
+function compactCurrentTask(value, { max = 96 } = {}) {
+  const text = String(value || '')
+    .replace(/\s+/g, ' ')
+    .trim()
+  if (!text) return ''
+  if (text.length <= max) return text
+  return `${text.slice(0, Math.max(0, max - 1)).trimEnd()}…`
+}
+
 function formatTtyProgressRow(row, { nameWidth, frame, orchestrator = DEFAULT_ORCHESTRATOR } = {}) {
   const name = titleCase(row.agent).padEnd(nameWidth, ' ')
   if (row.status === 'completed') return `✓ ${name} · 🟢 complete${row.url ? ` - ${row.url}` : ''}`
   if (row.status === 'failed') return `✖ ${name} · failed${row.message ? ` · ${row.message}` : ''}`
   const icon = STEP_SPINNER_FRAMES[frame % STEP_SPINNER_FRAMES.length]
-  const label = row.message || `${row.emoji} ${orchestrator}'s ${titleCase(row.agent)} ${row.phrase}`
-  return `${icon} ${name} · ${label}`
+  const label = row.message || `${row.emoji} ${orchestrator} ${row.phrase}`
+  const currentTask = compactCurrentTask(row.currentTask)
+  return `${icon} ${name} · ${label}${currentTask ? ` - "${currentTask}"` : ''}`
 }
 
 function makeStepProgressReporter({
@@ -2782,6 +2900,7 @@ function makeStepProgressReporter({
       state: 'pending',
       status: 'pending',
       message: '',
+      currentTask: '',
     }
     assignFlavor(row)
     return row
@@ -2792,6 +2911,8 @@ function makeStepProgressReporter({
   let frame = 0
   let renderedLines = 0
   let finished = false
+  let didYouKnowIndex = 0
+  let nextDidYouKnowAt = Date.now() + DID_YOU_KNOW_ROTATE_MS
 
   const rowForAgent = (agent) => {
     const key = agent || `agent-${rows.size + 1}`
@@ -2810,10 +2931,19 @@ function makeStepProgressReporter({
     return formatTtyProgressRow(row, { nameWidth, frame, orchestrator })
   }
   const renderLines = () => {
+    const now = Date.now()
+    if (AGENT_RUNNER_USE_CASES.length > 0 && now >= nextDidYouKnowAt) {
+      didYouKnowIndex = (didYouKnowIndex + 1) % AGENT_RUNNER_USE_CASES.length
+      nextDidYouKnowAt = now + DID_YOU_KNOW_ROTATE_MS
+    }
     for (const row of rows.values()) rotateFlavor(row)
     const visibleRows = displayRows()
     const nameWidth = visibleRows.reduce((max, row) => Math.max(max, titleCase(row.agent).length), 0)
+    const useCase = AGENT_RUNNER_USE_CASES[didYouKnowIndex]
+    const useCaseColor = DID_YOU_KNOW_BORDER_COLORS[didYouKnowIndex % DID_YOU_KNOW_BORDER_COLORS.length]
     return [
+      ...formatDidYouKnowLines(useCase, { color: useCaseColor }),
+      '',
       `Waiting for ${stepTitle}: ${completeCount()}/${total} complete`,
       ...visibleRows.map((row) => renderRow(row, nameWidth)),
     ]
@@ -2865,14 +2995,17 @@ function makeStepProgressReporter({
       if (event.terminalSuccess || event.run?.status === 'completed') {
         row.status = 'completed'
         row.message = ''
+        row.currentTask = ''
         row.url = event.run?.links?.sessionUrl || event.run?.links?.agentRunUrl || ''
       } else if (event.terminalFailure || event.run?.status === 'failed' || event.run?.status === 'timeout') {
         row.status = 'failed'
         row.message = event.error || event.run?.resultText || event.state || ''
+        row.currentTask = ''
         row.url = ''
       } else {
         row.status = 'running'
         row.message = event.retry ? 'retrying once after transient capacity error' : ''
+        row.currentTask = event.currentTask || event.run?.currentTask || row.currentTask || ''
         row.url = ''
       }
       redraw()
@@ -3775,7 +3908,7 @@ async function handleRun(flowId, options) {
 
   const resumable = findLatestUnfinishedRun(projectRoot, { flowId: flow.id })
   if (resumable && process.stdin.isTTY && !options.yes && !options.dryRun) {
-    const clack = require('@clack/prompts')
+    const clack = await loadClack()
     const selected = await clack.confirm({
       message: `Found unfinished ${resumable.transport || 'workflow'} run ${resumable.runId}. Resume and complete it?`,
       initialValue: true,
@@ -3979,7 +4112,7 @@ async function shouldEnableGithubActions(options) {
   if (options.githubActions === true) return true
   if (options.githubActions === false) return false
   if (!process.stdin.isTTY || options.yes) return true
-  const clack = require('@clack/prompts')
+  const clack = await loadClack()
   const selected = await clack.confirm({
     message: 'Install the Netlify Agent Runner GitHub Actions workflow for this repo?',
     initialValue: true,
@@ -4264,12 +4397,14 @@ module.exports = {
     copyToClipboard,
     findGithubRunnerFailures,
     findRunStateForHandoff,
+    formatDidYouKnowLines,
     formatHandoffSourceHint,
     formatHandoffSourceKind,
     formatHandoffSourceLabel,
     formatHandoffSourceDetailBox,
     handoffSourceDetailTitle,
     handoffSourceDetailLines,
+    compactCurrentTask,
     formatTtyProgressRow,
     formatSubmittedLocalRunBoxes,
     handoffSummaryPath,

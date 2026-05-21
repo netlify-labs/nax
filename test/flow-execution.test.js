@@ -181,11 +181,48 @@ test('TTY progress rows show a green complete status', () => {
   assert.equal(line, '✓ Codex  · 🟢 complete - https://app.netlify.com/projects/netlify-agent-executor/agent-runs/runner-1?session=session-1')
 })
 
+test('TTY progress rows show compact current task details while running', () => {
+  const line = _private.formatTtyProgressRow({
+    agent: 'gemini',
+    status: 'running',
+    emoji: '🎨',
+    phrase: 'is painting a masterpiece...',
+    currentTask: 'reading file src/components/VeryLongComponentNameThatShouldBeTrimmedBecauseItIsTooVerbose.jsx and comparing it against docs/reference/current-task-display-guidelines.md before writing changes',
+  }, {
+    nameWidth: 6,
+    frame: 0,
+    orchestrator: 'Netlify Agent runner',
+  })
+
+  assert.match(line, /^◐ Gemini · 🎨 Netlify Agent runner is painting a masterpiece\.\.\. - "reading file /)
+  assert.match(line, /…"$/)
+  assert.ok(line.length < 180)
+})
+
 test('pickFlavor avoids active phrases already in use', () => {
   const first = _private.pickFlavor({ random: () => 0 })
   const second = _private.pickFlavor({ used: new Set([first[0]]), random: () => 0 })
 
   assert.notEqual(second[0], first[0])
+})
+
+test('Did you know progress tip formats a rotating Agent Runner use case', () => {
+  const lines = _private.formatDidYouKnowLines([
+    '👀 Code reviews',
+    'Bring in a fresh reviewer that can inspect architecture, tests, and edge cases.',
+    'Audit the code with fresh eyes and identify areas for improvement.',
+  ], { width: 72, color: '#00ad9f' })
+  const text = lines.join('\n')
+
+  assert.equal(lines[0], '')
+  assert.match(text, /While agent runners are doing their magic/)
+  assert.match(text, /for Netlify Agent runners/)
+  assert.match(text, /👀 Use Agent Runs for Code reviews/)
+  assert.match(text, /Bring in a fresh reviewer/)
+  assert.match(text, /Prompt Examples:/)
+  assert.match(text, /- "Audit the code with fresh eyes/)
+  assert.match(text, /use cases/)
+  assert.match(text, /╭|┌/)
 })
 
 test('nextLocalStepMessage describes the immediate transition after a local step', () => {

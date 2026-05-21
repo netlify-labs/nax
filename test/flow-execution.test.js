@@ -511,6 +511,55 @@ test('non-TTY progress reporter prints usage when a local run completes', () => 
   ])
 })
 
+test('agentStepCompletionSummary formats aligned duration and usage rows', () => {
+  const summary = _private.agentStepCompletionSummary({
+    stepTitle: 'Review',
+    runs: [
+      {
+        agent: 'claude',
+        status: 'completed',
+        usage: { totalCreditsCost: 46.66, stepsCount: 14, totalTokens: 1014414 },
+        rawResult: {
+          latestSession: {
+            created_at: '2026-05-20T20:00:00.000Z',
+            updated_at: '2026-05-20T20:07:46.000Z',
+          },
+        },
+      },
+      {
+        agent: 'gemini',
+        status: 'completed',
+        usage: { totalCreditsCost: 117.28, stepsCount: 40, totalTokens: 1363374 },
+        rawResult: {
+          latestSession: {
+            created_at: '2026-05-20T20:00:13.000Z',
+            updated_at: '2026-05-20T20:12:30.000Z',
+          },
+        },
+      },
+      {
+        agent: 'codex',
+        status: 'completed',
+        usage: { totalCreditsCost: 120.52, stepsCount: 40, totalTokens: 501436 },
+        rawResult: {
+          latestSession: {
+            created_at: '2026-05-20T20:00:10.000Z',
+            updated_at: '2026-05-20T20:12:30.000Z',
+          },
+        },
+      },
+    ],
+  })
+
+  assert.equal(summary, [
+    'Review: 3/3 complete - 12min 30s',
+    'Claude:  complete  7min 46s    46.66 credits  14 steps  1,014,414 tokens',
+    'Gemini:  complete  12min 17s  117.28 credits  40 steps  1,363,374 tokens',
+    'Codex:   complete  12min 20s  120.52 credits  40 steps    501,436 tokens',
+    'Total:   284.46 credits  94 steps  2,879,224 tokens',
+  ].join('\n'))
+})
+
 test('success box keeps non-TTY links on one line', () => {
   const originalLog = console.log
   const originalIsTTY = Object.getOwnPropertyDescriptor(process.stdout, 'isTTY')

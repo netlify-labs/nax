@@ -2255,17 +2255,129 @@ function localStepStatus(stepState) {
     : 'failed'
 }
 
-function localRunStatusSummary(runs = []) {
-  return runs.map((run) => {
-    const status = run.status === 'completed'
-      ? 'complete'
-      : run.status === 'timeout'
-        ? 'timeout'
-        : run.status === 'failed'
-          ? 'failed'
-          : run.status || 'unknown'
-    return `${titleCase(run.agent || 'agent')}: ${status}`
-  }).join(', ')
+function dateMs(value) {
+  if (!value) return null
+  const time = new Date(value).getTime()
+  return Number.isFinite(time) ? time : null
+}
+
+function runStartMs(run = {}) {
+  const session = run.rawResult?.latestSession || {}
+  const runner = run.rawResult?.runner || {}
+  return [
+    run.startedAt,
+    run.createdAt,
+    session.created_at,
+    session.createdAt,
+    runner.created_at,
+    runner.createdAt,
+  ].map(dateMs).find((value) => value !== null) ?? null
+}
+
+function runEndMs(run = {}) {
+  const session = run.rawResult?.latestSession || {}
+  const runner = run.rawResult?.runner || {}
+  return [
+    run.finishedAt,
+    run.completedAt,
+    run.updatedAt,
+    session.done_at,
+    session.doneAt,
+    session.updated_at,
+    session.updatedAt,
+    runner.done_at,
+    runner.doneAt,
+    runner.updated_at,
+    runner.updatedAt,
+  ].map(dateMs).find((value) => value !== null) ?? null
+}
+
+function formatDurationMs(durationMs) {
+  if (!Number.isFinite(durationMs) || durationMs < 0) return ''
+  let seconds = Math.max(1, Math.round(durationMs / 1000))
+  const hours = Math.floor(seconds / 3600)
+  seconds -= hours * 3600
+  const minutes = Math.floor(seconds / 60)
+  seconds -= minutes * 60
+  if (hours > 0) return `${hours}h ${minutes}min ${seconds}s`
+  if (minutes > 0) return `${minutes}min ${seconds}s`
+  return `${seconds}s`
+}
+
+function runDurationMs(run = {}) {
+  const start = runStartMs(run)
+  const end = runEndMs(run)
+  return start !== null && end !== null && end >= start ? end - start : null
+}
+
+function stepDurationMs(runs = []) {
+  const starts = runs.map(runStartMs).filter((value) => value !== null)
+  const ends = runs.map(runEndMs).filter((value) => value !== null)
+  if (starts.length > 0 && ends.length > 0) {
+    const start = Math.min(...starts)
+    const end = Math.max(...ends)
+    if (end >= start) return end - start
+  }
+  const durations = runs.map(runDurationMs).filter((value) => value !== null)
+  return durations.length > 0 ? Math.max(...durations) : null
+}
+
+function formatCreditsValue(value) {
+  return Number.isFinite(value) ? `${value.toFixed(2).replace(/\.?0+$/, '')} credits` : ''
+}
+
+function formatCountValue(value, label) {
+  return Number.isFinite(value) ? `${Number(value).toLocaleString('en-US')} ${label}` : ''
+}
+
+function agentStepCompletionSummary({ stepTitle, runs = [], failedCount = 0 } = {}) {
+  const doneCount = runs.filter((run) => run.status === 'completed').length
+  const duration = formatDurationMs(stepDurationMs(runs))
+  const headerStatus = failedCount > 0
+    ? `${doneCount}/${runs.length} complete, ${failedCount} failed`
+    : `${doneCount}/${runs.length} complete`
+  const header = `${stepTitle}: ${headerStatus}${duration ? ` - ${duration}` : ''}`
+  const rows = runs.map((run) => {
+    const usage = run.usage || {}
+    return {
+      agent: `${titleCase(run.agent || 'agent')}:`,
+      status: run.status === 'completed' ? 'complete' : run.status || 'unknown',
+      duration: formatDurationMs(runDurationMs(run)),
+      credits: formatCreditsValue(usage.totalCreditsCost),
+      steps: formatCountValue(usage.stepsCount, 'steps'),
+      tokens: formatCountValue(usage.totalTokens, 'tokens'),
+    }
+  })
+  const totalUsage = usageSummariesForRunState({ steps: [{ runs }] }).total
+  const totalRow = {
+    agent: 'Total:',
+    credits: formatCreditsValue(totalUsage.totalCreditsCost),
+    steps: formatCountValue(totalUsage.stepsCount, 'steps'),
+    tokens: formatCountValue(totalUsage.totalTokens, 'tokens'),
+  }
+  const widths = {
+    agent: Math.max(totalRow.agent.length, ...rows.map((row) => row.agent.length)),
+    status: Math.max(0, ...rows.map((row) => row.status.length)),
+    duration: Math.max(0, ...rows.map((row) => row.duration.length)),
+    credits: Math.max(totalRow.credits.length, ...rows.map((row) => row.credits.length)),
+    steps: Math.max(totalRow.steps.length, ...rows.map((row) => row.steps.length)),
+    tokens: Math.max(totalRow.tokens.length, ...rows.map((row) => row.tokens.length)),
+  }
+  const formattedRows = rows.map((row) => [
+    row.agent.padEnd(widths.agent),
+    row.status.padEnd(widths.status),
+    row.duration.padEnd(widths.duration),
+    row.credits.padStart(widths.credits),
+    row.steps.padStart(widths.steps),
+    row.tokens.padStart(widths.tokens),
+  ].join('  ').trimEnd())
+  const formattedTotal = [
+    totalRow.agent.padEnd(widths.agent),
+    totalRow.credits.padStart(widths.credits),
+    totalRow.steps.padStart(widths.steps),
+    totalRow.tokens.padStart(widths.tokens),
+  ].join('  ').trimEnd()
+  return [header, ...formattedRows, formattedTotal].join('\n')
 }
 
 function nextLocalStepMessage(steps, index) {
@@ -2958,13 +3070,16 @@ async function completeLocalStep({ runState, stepState, step, options, projectRo
           terminalFailure: run.status === 'failed' || run.status === 'timeout',
         })
       }
-      const doneCount = completedRuns.filter((r) => r.status === 'completed').length
       const failedCount = completedRuns.filter((r) => r.status === 'failed' || r.status === 'timeout').length
-      const statusSummary = localRunStatusSummary(completedRuns)
+      const completionSummary = agentStepCompletionSummary({
+        stepTitle: step.title,
+        runs: completedRuns,
+        failedCount,
+      })
       if (failedCount > 0) {
-        reporter.fail(`${step.title}: ${doneCount}/${completedRuns.length} complete, ${failedCount} failed · ${statusSummary}`)
+        reporter.fail(completionSummary)
       } else {
-        reporter.done(`${step.title}: ${doneCount}/${completedRuns.length} complete · ${statusSummary}`)
+        reporter.done(completionSummary)
       }
       settled = true
     } finally {
@@ -3863,6 +3978,7 @@ module.exports = {
     handoffSourceQuery,
     nextLocalStepMessage,
     localRedriveCandidates,
+    agentStepCompletionSummary,
     normalizeHandoffSourceKind,
     pickFlavor,
     formatCompactLocalRunResults,

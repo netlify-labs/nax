@@ -15,7 +15,7 @@ Common setup failures:
 Local runs write state to:
 
 ```text
-.nax/runs/<run-id>/run.json
+.nax/workflows/<workflow-run-id>/workflow.json
 ```
 
 Use this file to inspect:
@@ -26,6 +26,16 @@ Use this file to inspect:
 - saved prompt text
 - result text
 - retry/redrive metadata
+
+Completed output is also projected into artifact summaries:
+
+```text
+.nax/workflows/<workflow-run-id>/artifacts/summary.md
+.nax/agent-runners/<runner-id>/summary.md
+.nax/agent-sessions/<session-id>/summary.md
+```
+
+Use `.nax/workflows/latest/artifacts/summary.md` for the latest workflow rollup when the filesystem supports symlinks. Use `nax handoff -c` to copy the latest useful summary to the clipboard.
 
 ## Resume
 

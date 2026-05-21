@@ -132,6 +132,8 @@ What it does:
 nax [flow]                Pick a flow and run it (interactive if no flow given)
 nax run [flow]            Alias for the above
 nax init                  Wire this repo to Netlify + GitHub Actions
+nax handoff               Copy or continue from prior workflow/session results
+nax recent                Browse recent workflow/session/runner artifacts
 nax skills install        Install bundled agent skills into detected harness dirs
 nax skills check          Show installed skill versions
 nax list                  List available flows
@@ -155,6 +157,36 @@ Skill commands:
 - `nax skills check` — compares installed skill versions with the current `nax` package version.
 - `--provider <name>` — choose a provider explicitly; repeatable, accepts `codex` or `.codex`.
 - `--all-providers` / `--all-skills` — install or check the full supported matrix.
+
+## Artifacts And Handoff
+
+Every completed workflow writes durable artifacts under `.nax/`:
+
+```text
+.nax/workflows/<workflow-run-id>/workflow.json
+.nax/workflows/<workflow-run-id>/artifacts/summary.md
+.nax/agent-runners/<runner-id>/summary.md
+.nax/agent-sessions/<session-id>/summary.md
+```
+
+- `.nax/workflows/` is the full multi-step workflow record and rollup.
+- `.nax/agent-runners/` is a Netlify Agent Runner thread/conversation rollup.
+- `.nax/agent-sessions/` is one concrete agent result with output, usage, links, and metadata.
+
+Each directory has a `latest` symlink when the filesystem supports symlinks. The most common handoff file is:
+
+```text
+.nax/workflows/latest/artifacts/summary.md
+```
+
+Use `nax handoff` to copy or continue from prior results. In a TTY it lets you pick the latest result, a workflow, an agent session, or an agent runner. For fast non-interactive copy:
+
+```bash
+nax handoff -c
+nax handoff --session <session-id> -c
+nax handoff --runner <runner-id> --agent codex
+nax handoff --workflow <workflow-run-id> --flow review
+```
 
 ## Flow Anatomy
 
@@ -194,7 +226,7 @@ Prompt files are plain Markdown. The runner appends auto-injected review context
 
 ## Resume
 
-If a Netlify API run is interrupted (process killed, machine slept, network died) the run state is written to `.nax/runs/<run-id>/run.json`. Next time you start `nax`, it detects the unfinished run and offers to resume — it polls the in-flight runner sessions and continues from the first not-yet-completed step.
+If a Netlify API run is interrupted (process killed, machine slept, network died) the workflow state is written to `.nax/workflows/<workflow-run-id>/workflow.json`. Next time you start `nax`, it detects the unfinished workflow and offers to resume — it polls the in-flight runner sessions and continues from the first not-yet-completed step.
 
 Failed and timed-out runs are terminal; resume polls in-flight runs only. To retry a failed step, re-run the flow with `--step <id>`.
 

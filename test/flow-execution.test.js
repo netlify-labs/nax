@@ -258,6 +258,100 @@ test('copyToClipboard uses the platform clipboard command', () => {
   assert.deepEqual(calls, [{ cmd: 'pbcopy', args: [], input: 'summary' }])
 })
 
+test('handoff source flags map to explicit artifact queries', () => {
+  assert.deepEqual(_private.handoffSourceQuery({ runId: 'workflow-1', options: {} }), {
+    kind: 'workflow',
+    id: 'workflow-1',
+  })
+  assert.deepEqual(_private.handoffSourceQuery({ options: { session: 'session-1' } }), {
+    kind: 'agent-session',
+    id: 'session-1',
+  })
+  assert.deepEqual(_private.handoffSourceQuery({ options: { runner: 'runner-1' } }), {
+    kind: 'agent-runner',
+    id: 'runner-1',
+  })
+  assert.deepEqual(_private.handoffSourceQuery({ options: { sourceType: 'sessions', source: 'session-2' } }), {
+    kind: 'agent-session',
+    id: 'session-2',
+  })
+})
+
+test('handoff source labels render source kind and relative path', () => {
+  const source = {
+    kind: 'agent-session',
+    title: 'Codex session session-1',
+    updatedAt: '2026-05-21T01:01:12.173Z',
+    displayPath: '.nax/agent-sessions/session-1/summary.md',
+  }
+
+  assert.match(_private.formatHandoffSourceLabel(source), /Codex session session-1/)
+  assert.equal(_private.formatHandoffSourceHint(source, process.cwd()), 'agent session · .nax/agent-sessions/session-1/summary.md')
+})
+
+test('handoff source details summarize latest workflow content', () => {
+  const projectRoot = tmpRoot()
+  writeRunState(projectRoot, 'workflow-1', {
+    updatedAt: '2026-05-21T01:01:12.173Z',
+    steps: [{
+      id: 'synthesize',
+      title: 'Synthesize Next Task',
+      status: 'completed',
+      runs: [{
+        agent: 'codex',
+        status: 'completed',
+        runnerId: 'runner-1',
+        sessionId: 'session-1',
+        resultText: '**Recommended Next Task:** Add focused artifact tests before more persistence work. This preview should include enough text to explain why the latest result is useful before the user opens the full summary.',
+        usage: { totalCreditsCost: 1.5, stepsCount: 2, totalTokens: 3000 },
+      }],
+    }],
+  })
+  const source = _private.readHandoffSummary({ projectRoot, runId: 'workflow-1' })
+
+  const lines = _private.handoffSourceDetailLines(source, projectRoot)
+
+  assert.match(lines[0], /^Date:\s+May/)
+  assert.match(lines[1], /Summary:\s+\.nax\/workflows\/workflow-1\/artifacts\/summary\.md/)
+  assert.equal(lines[2], 'Preview:')
+  assert.match(lines[3], /^\*\*Recommended Next Task:\*\* Add focused artifact tests/)
+
+  const box = _private.formatHandoffSourceDetailBox(source, projectRoot)
+  assert.match(box, /Latest result from "Do Next" workflow "Synthesize Next Task" step using Codex/)
+  assert.match(box, /Summary: \.nax\/workflows\/workflow-1\/artifacts\/summary\.md/)
+  assert.match(box, /Preview:/)
+  assert.match(box, /This preview should/)
+})
+
+test('handoff source menu exposes latest actions before previous-source pickers', () => {
+  const latestSource = {
+    kind: 'workflow',
+    id: 'workflow-1',
+    title: 'Do Next',
+    displayPath: '.nax/workflows/workflow-1/artifacts/summary.md',
+  }
+  const options = _private.handoffSourceMenuOptions({
+    latestSource,
+    sources: [
+      { kind: 'workflow' },
+      { kind: 'agent-session' },
+      { kind: 'agent-runner' },
+    ],
+    projectRoot: process.cwd(),
+  })
+
+  assert.deepEqual(options.map((option) => option.label), [
+    'Copy latest results to clipboard',
+    'Run another AI workflow with latest result: Do Next',
+    'Pick previous workflow',
+    'Pick previous agent session',
+    'Pick previous agent runner',
+    'Cancel',
+  ])
+  assert.match(options[0].hint, /Do Next/)
+  assert.match(options[0].hint, /\.nax\/workflows\/workflow-1\/artifacts\/summary\.md/)
+})
+
 test('non-TTY progress reporter repeats unchanged run status after heartbeat interval', () => {
   const originalLog = console.log
   const originalNow = Date.now

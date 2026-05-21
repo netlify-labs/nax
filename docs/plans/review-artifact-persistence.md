@@ -1,5 +1,9 @@
 # Workflow Artifact Persistence Spec
 
+> Status: partially superseded by `docs/plans/artifact-directory-restructure.md` and the current implementation.
+>
+> The active artifact layout is `.nax/workflows/<workflow-run-id>/workflow.json`, `.nax/workflows/<workflow-run-id>/artifacts/`, `.nax/agent-runners/<runner-id>/`, and `.nax/agent-sessions/<session-id>/`. Older examples in this document that mention `.nax/runs/<run-id>/run.json` or `artifacts/steps/<step>/runs/` describe the pre-restructure design, not current behavior.
+
 ## Summary
 
 Add durable, generic artifact persistence for `nax` workflow output so completed multi-agent results survive later step failures, CI job failures, terminal interruption, retried agents, and transport differences. Persistence is built on top of the already-normalized run shape produced by `lib/agent-run-results.js` and the run state managed by `lib/run-state.js`.

@@ -947,6 +947,224 @@ function formatRunTimestamp(value) {
   return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}`
 }
 
+function normalizeHandoffSourceKind(value) {
+  const normalized = String(value || '').trim().toLowerCase()
+  if (!normalized || normalized === 'all') return ''
+  if (normalized === 'workflow' || normalized === 'workflows') return 'workflow'
+  if (normalized === 'runner' || normalized === 'runners' || normalized === 'agent-runner' || normalized === 'agent-runners') return 'agent-runner'
+  if (normalized === 'session' || normalized === 'sessions' || normalized === 'agent-session' || normalized === 'agent-sessions') return 'agent-session'
+  throw new Error(`Unknown handoff source type "${value}". Expected workflow, agent-runner, or agent-session.`)
+}
+
+function handoffSourceQuery({ runId = '', options = {} } = {}) {
+  if (options.workflow) return { kind: 'workflow', id: options.workflow }
+  if (options.runner) return { kind: 'agent-runner', id: options.runner }
+  if (options.session) return { kind: 'agent-session', id: options.session }
+  if (runId || options.runId) return { kind: 'workflow', id: runId || options.runId }
+  return {
+    kind: normalizeHandoffSourceKind(options.sourceType || options.type || ''),
+    id: options.source || '',
+  }
+}
+
+function formatHandoffSourceKind(kind) {
+  if (kind === 'workflow') return 'workflow'
+  if (kind === 'agent-runner') return 'agent runner'
+  if (kind === 'agent-session') return 'agent session'
+  return kind || 'artifact'
+}
+
+function formatHandoffSourceLabel(source = {}) {
+  const stamp = formatRunTimestamp(source.updatedAt)
+  return [stamp, source.title || source.id || 'Untitled'].filter(Boolean).join('  ')
+}
+
+function formatHandoffSourceHint(source = {}, projectRoot = process.cwd()) {
+  const displayPath = source.displayPath || relativeDisplayPath(projectRoot, source.summaryPath || '')
+  return `${formatHandoffSourceKind(source.kind)} · ${displayPath}`
+}
+
+function truncateOneLine(value, max = 160) {
+  const text = String(value || '').replace(/\s+/g, ' ').trim()
+  if (text.length <= max) return text
+  return `${text.slice(0, Math.max(0, max - 1)).trimEnd()}…`
+}
+
+function formatRelativeTime(value, now = Date.now()) {
+  if (!value) return ''
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return ''
+  const diffMs = date.getTime() - now
+  const absMs = Math.abs(diffMs)
+  const units = [
+    ['day', 24 * 60 * 60 * 1000],
+    ['hour', 60 * 60 * 1000],
+    ['minute', 60 * 1000],
+    ['second', 1000],
+  ]
+  const [unit, unitMs] = units.find(([, ms]) => absMs >= ms) || units[units.length - 1]
+  const count = Math.max(1, Math.round(absMs / unitMs))
+  const label = `${count} ${unit}${count === 1 ? '' : 's'}`
+  return diffMs > 0 ? `in ${label}` : `${label} ago`
+}
+
+function formatHumanRunDate(value) {
+  if (!value) return ''
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return String(value)
+  return date.toLocaleString(undefined, {
+    year: 'numeric',
+    month: 'short',
+    day: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+  })
+}
+
+function handoffSourcePayload(source = {}) {
+  return source.source || source.runState || {}
+}
+
+function sourceDisplayTitle(source = {}) {
+  if (source.kind === 'workflow') return source.title || source.id || 'Workflow'
+  const artifact = handoffSourcePayload(source)
+  const agent = artifact.agent ? titleCase(artifact.agent) : ''
+  const sourceTitle = artifact.source?.stepTitle || artifact.source?.stepId || ''
+  if (agent && sourceTitle) return `${agent} · ${sourceTitle}`
+  if (agent) return agent
+  return source.title || source.id || 'Artifact'
+}
+
+function finalWorkflowRun(source = {}) {
+  if (source.kind !== 'workflow') return null
+  const payload = handoffSourcePayload(source)
+  const steps = Array.isArray(payload.steps) ? payload.steps : []
+  for (let i = steps.length - 1; i >= 0; i -= 1) {
+    const step = steps[i]
+    const runs = Array.isArray(step.runs) ? step.runs : []
+    for (let j = runs.length - 1; j >= 0; j -= 1) {
+      const run = runs[j]
+      if (run?.status === 'completed' && String(run.resultText || '').trim()) {
+        return { step, run }
+      }
+    }
+  }
+  return null
+}
+
+function previewTextForHandoffSource(source = {}, max = 260) {
+  const final = finalWorkflowRun(source)
+  if (final?.run?.resultText) return truncateOneLine(final.run.resultText, max)
+  const resultText = handoffSourcePayload(source).resultText || ''
+  if (resultText) return truncateOneLine(resultText, max)
+  const summaryText = String(source.summaryText || '')
+  const lines = summaryText.split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter((line) => {
+      if (!line) return false
+      if (/^[-*]\s+(Run ID|Flow|Transport|Status|Usage|Files|Runner ID|Session ID|Metadata|Result):/i.test(line)) return false
+      if (/^[-*]\s*$/.test(line)) return false
+      return !/^```/.test(line)
+    })
+  return truncateOneLine(lines.find((line) => !/^#\s/.test(line)) || lines[0] || '', max)
+}
+
+function usageSummaryForHandoffSource(source = {}) {
+  const payload = handoffSourcePayload(source)
+  if (source.kind === 'workflow') return usageSummariesForRunState(payload).totalSummary || ''
+  return formatUsageSummary(payload.usage || {})
+}
+
+function handoffSourceUpdatedAt(source = {}) {
+  const payload = handoffSourcePayload(source)
+  return source.updatedAt || payload.updatedAt || source.createdAt || payload.createdAt || ''
+}
+
+function handoffSourceDetailTitle(source = {}) {
+  const final = finalWorkflowRun(source)
+  if (source.kind === 'workflow' && final) {
+    return `Latest result from "${sourceDisplayTitle(source)}" workflow "${final.step.title || final.step.id || 'Final step'}" step using ${titleCase(final.run.agent || 'agent')}`
+  }
+  const payload = handoffSourcePayload(source)
+  if (source.kind === 'agent-session') {
+    return `Latest result from ${titleCase(payload.agent || 'agent')} agent session`
+  }
+  if (source.kind === 'agent-runner') {
+    return `Latest result from ${titleCase(payload.agent || 'agent')} agent runner`
+  }
+  return `Latest result from ${sourceDisplayTitle(source)}`
+}
+
+const HANDOFF_DETAIL_LABEL_WIDTH = 9
+
+function formatHandoffDetailField(label, value, width, { block = false } = {}) {
+  const text = String(value || '').trim()
+  if (!text) return []
+  const labelText = `${label}:`
+  const indent = ' '.repeat(HANDOFF_DETAIL_LABEL_WIDTH)
+  const valueWidth = Math.max(24, width - HANDOFF_DETAIL_LABEL_WIDTH)
+  if (block) {
+    return [labelText, ...wordWrap(text, width).split('\n')]
+  }
+  const wrapped = wordWrap(text, valueWidth).split('\n')
+  return wrapped.map((line, index) => (
+    index === 0 ? `${labelText.padEnd(HANDOFF_DETAIL_LABEL_WIDTH)}${line}` : `${indent}${line}`
+  ))
+}
+
+function handoffSourceDetailLines(source = {}, projectRoot = process.cwd(), { width = 100 } = {}) {
+  const updatedAt = handoffSourceUpdatedAt(source)
+  const date = formatHumanRunDate(updatedAt)
+  const relative = formatRelativeTime(updatedAt)
+  const lines = []
+  if (date) {
+    lines.push(...formatHandoffDetailField('Date', `${date}${relative ? ` (${relative})` : ''}`, width))
+  }
+  lines.push(...formatHandoffDetailField(
+    'Summary',
+    source.displayPath || relativeDisplayPath(projectRoot, source.summaryPath || ''),
+    width,
+  ))
+  const preview = previewTextForHandoffSource(source)
+  if (preview) lines.push(...formatHandoffDetailField('Preview', preview, width, { block: true }))
+  return lines
+}
+
+function formatHandoffSourceDetailBox(source = {}, projectRoot = process.cwd()) {
+  const teal = '#0d9488'
+  const terminalWidth = process.stdout.columns || 120
+  const width = Math.min(120, Math.max(76, Math.floor(terminalWidth * 0.95)))
+  const lines = handoffSourceDetailLines(source, projectRoot, { width: width - 6 })
+  return makeBox({
+    title: handoffSourceDetailTitle(source),
+    content: lines.join('\n'),
+    borderStyle: 'rounded',
+    borderColor: teal,
+    width,
+  })
+}
+
+function handoffSourceMenuOptions({ sources = [], latestSource = {}, projectRoot = process.cwd() } = {}) {
+  const options = [
+    {
+      value: 'copy-latest',
+      label: 'Copy latest results to clipboard',
+      hint: `${latestSource.title || latestSource.id || 'Latest'} · ${formatHandoffSourceHint(latestSource, projectRoot)}`,
+    },
+    {
+      value: 'workflow-latest',
+      label: `Run another AI workflow with latest result: ${latestSource.title || latestSource.id || 'Latest'}`,
+      hint: formatHandoffSourceHint(latestSource, projectRoot),
+    },
+  ]
+  const hasKind = (kind) => sources.some((source) => source.kind === kind)
+  if (hasKind('workflow')) options.push({ value: 'pick:workflow', label: 'Pick previous workflow' })
+  if (hasKind('agent-session')) options.push({ value: 'pick:agent-session', label: 'Pick previous agent session' })
+  if (hasKind('agent-runner')) options.push({ value: 'pick:agent-runner', label: 'Pick previous agent runner' })
+  options.push({ value: 'cancel', label: 'Cancel' })
+  return options
+}
+
 async function handleRecent(options) {
   const projectRoot = options.projectRoot || process.cwd()
   const requestedType = options.type || 'all'
@@ -971,8 +1189,8 @@ async function handleRecent(options) {
       message: 'Pick a recent artifact',
       options: choices.map((source) => ({
         value: `${source.kind}:${source.id}`,
-        label: `${formatRunTimestamp(source.updatedAt)}  ${source.title}`,
-        hint: `${source.kind} · ${source.id}`,
+        label: formatHandoffSourceLabel(source),
+        hint: `${formatHandoffSourceKind(source.kind)} · ${source.id}`,
       })),
     })
     if (clack.isCancel(picked)) return
@@ -1164,9 +1382,56 @@ async function runFreshHandoffAgent({ projectRoot, agent, promptText, summaryDis
   }
 }
 
+async function chooseHandoffSourceInteractively({ projectRoot, latestSource }) {
+  const clack = require('@clack/prompts')
+  const sources = listHandoffSources(projectRoot).map((source) => ({
+    ...source,
+    displayPath: relativeDisplayPath(projectRoot, source.summaryPath),
+  }))
+  const options = handoffSourceMenuOptions({ sources, latestSource, projectRoot })
+  console.log(formatHandoffSourceDetailBox(latestSource, projectRoot))
+  console.log('')
+
+  const selected = await clack.select({
+    message: 'Hand off previous results',
+    options,
+  })
+  if (clack.isCancel(selected) || selected === 'cancel') return { action: 'cancel' }
+  if (selected === 'copy-latest') return { source: latestSource, action: 'copy' }
+  if (selected === 'workflow-latest') return { source: latestSource, action: 'workflow' }
+
+  const [, kind] = String(selected).split(':')
+  const choices = sources.filter((source) => source.kind === kind)
+  const picked = await clack.select({
+    message: `Choose ${formatHandoffSourceKind(kind)}`,
+    options: choices.map((source) => ({
+      value: source.id,
+      label: formatHandoffSourceLabel(source),
+      hint: formatHandoffSourceHint(source, projectRoot),
+    })),
+  })
+  if (clack.isCancel(picked)) return { action: 'cancel' }
+  return { source: choices.find((source) => source.id === picked) || latestSource }
+}
+
+async function chooseHandoffActionInteractively(source) {
+  const clack = require('@clack/prompts')
+  const selected = await clack.select({
+    message: 'What should happen next?',
+    options: [
+      { value: 'copy', label: 'Copy selected result to clipboard', hint: source.displayPath },
+      { value: 'fresh', label: 'Start a new agent session with selected result', hint: formatHandoffSourceKind(source.kind) },
+      { value: 'workflow', label: 'Run another workflow with selected result', hint: formatHandoffSourceKind(source.kind) },
+      { value: 'cancel', label: 'Cancel' },
+    ],
+  })
+  if (clack.isCancel(selected)) return 'cancel'
+  return selected
+}
+
 async function handleHandoff(runId, options) {
   const projectRoot = path.resolve(options.projectRoot || process.cwd())
-  const handoff = readHandoffSummary({ projectRoot, runId: runId || options.runId || '' })
+  let handoff = readSelectedHandoffSource({ projectRoot, runId, options })
 
   if (options.copy) {
     const command = copyToClipboard(handoff.summaryText)
@@ -1207,31 +1472,18 @@ async function handleHandoff(runId, options) {
     return
   }
 
-  const clack = require('@clack/prompts')
-  const action = await clack.select({
-    message: 'Hand off previous results',
-    options: [
-      { value: 'copy', label: 'Copy previous results to clipboard', hint: `${handoff.kind || 'workflow'} · ${handoff.displayPath}` },
-      { value: 'start', label: 'Start a new agent session with previous results', hint: handoff.kind || 'workflow' },
-      { value: 'cancel', label: 'Cancel' },
-    ],
-  })
-  if (clack.isCancel(action) || action === 'cancel') return
+  const selectedSource = await chooseHandoffSourceInteractively({ projectRoot, latestSource: handoff })
+  if (selectedSource.action === 'cancel') return
+  handoff = selectedSource.source || handoff
+  const action = selectedSource.action || await chooseHandoffActionInteractively(handoff)
+  if (action === 'cancel') return
   if (action === 'copy') {
     const command = copyToClipboard(handoff.summaryText)
     console.log(`\nCopied ${handoff.displayPath} to clipboard with ${command}.`)
     return
   }
 
-  const mode = await clack.select({
-    message: 'What should happen next?',
-    options: [
-      { value: 'fresh', label: 'Start a fresh agent run' },
-      { value: 'workflow', label: 'Run another workflow with this summary as input' },
-    ],
-  })
-  if (clack.isCancel(mode)) return
-
+  const clack = require('@clack/prompts')
   const instructions = await promptForOptionalHandoffInstructions()
   const promptText = buildHandoffPrompt({
     instructions,
@@ -1239,7 +1491,7 @@ async function handleHandoff(runId, options) {
     summaryText: handoff.summaryText,
   })
 
-  if (mode === 'fresh') {
+  if (action === 'fresh') {
     const agent = options.agent || await clack.select({
       message: 'Choose agent',
       options: DEFAULT_MODELS.map((model) => ({ value: model, label: titleCase(model) })),
@@ -1657,6 +1909,11 @@ function readHandoffSummary({ projectRoot, runId } = {}) {
     }
   }
   return readHandoffSource(projectRoot)
+}
+
+function readSelectedHandoffSource({ projectRoot, runId = '', options = {} } = {}) {
+  const query = handoffSourceQuery({ runId, options })
+  return readHandoffSource(projectRoot, query)
 }
 
 function buildHandoffPrompt({ instructions = '', summaryPath = '', summaryText = '' } = {}) {
@@ -3418,7 +3675,12 @@ function buildProgram() {
     .description('Copy or continue from the latest workflow, agent runner, or agent session summary')
     .option('--project-root <path>', 'Project root containing .nax workflows and agent artifacts')
     .option('--run-id <id>', 'Workflow run id to hand off')
-    .option('--copy', 'Copy the summary to the clipboard and exit')
+    .option('--source <id>', 'Artifact source id to hand off')
+    .option('--source-type <kind>', 'Artifact source kind: workflow, agent-runner, or agent-session')
+    .option('--workflow <id>', 'Workflow artifact id to hand off')
+    .option('--runner <id>', 'Agent runner id to hand off')
+    .option('--session <id>', 'Agent session id to hand off')
+    .option('-c, --copy', 'Copy the selected summary to the clipboard and exit')
     .option('--agent <name>', 'Agent for a fresh handoff run, e.g. codex')
     .option('--flow <id>', 'Workflow id to run with the summary as context')
     .option('--transport <transport>', 'Transport for chained workflows: auto, github-actions, netlify-api, local-machine', 'auto')
@@ -3568,11 +3830,20 @@ module.exports = {
     copyToClipboard,
     findGithubRunnerFailures,
     findRunStateForHandoff,
+    formatHandoffSourceHint,
+    formatHandoffSourceKind,
+    formatHandoffSourceLabel,
+    formatHandoffSourceDetailBox,
+    handoffSourceDetailTitle,
+    handoffSourceDetailLines,
     formatTtyProgressRow,
     formatSubmittedLocalRunBoxes,
     handoffSummaryPath,
+    handoffSourceMenuOptions,
+    handoffSourceQuery,
     nextLocalStepMessage,
     localRedriveCandidates,
+    normalizeHandoffSourceKind,
     formatCompactLocalRunResults,
     makeStepProgressReporter,
     normalizeGithubRunResult,

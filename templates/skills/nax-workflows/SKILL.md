@@ -18,6 +18,8 @@ nax ideas
 nax do-next
 nax run <flow>
 nax init
+nax handoff
+nax recent
 nax skills install
 ```
 
@@ -32,6 +34,10 @@ Useful flags:
 --timeout-minutes <n>       # per-step wait timeout
 --context <text>            # append manual context
 --context-file <path>       # append context from a file
+--session <id>              # handoff: select one agent session artifact
+--runner <id>               # handoff: select one agent runner artifact
+--workflow <id>             # handoff: select one workflow artifact
+-c, --copy                  # handoff: copy selected/latest summary to clipboard
 --no-auto-context           # skip pinned SHA / review contract context
 --no-fetch-results          # skip prior result fetching
 --dry --force               # preview non-interactively
@@ -70,17 +76,30 @@ Use to pick the next best task. Steps:
 - Warn that local uncommitted/unpushed changes are invisible to remote Netlify agent runners.
 - Use `--branch '#123'` for PR-specific runs when the user references a PR number.
 - Use `--step` only for deliberate partial reruns; otherwise resume/redrive saved Netlify API state.
-- Treat `.nax/runs/<run-id>/run.json` as the source of truth for Netlify API workflow recovery.
+- Treat `.nax/workflows/<workflow-run-id>/workflow.json` as the source of truth for workflow recovery.
+- Use `.nax/workflows/<workflow-run-id>/artifacts/summary.md` for full workflow handoff context.
+- Use `.nax/agent-sessions/<session-id>/summary.md` for one concrete agent result.
+- Use `.nax/agent-runners/<runner-id>/summary.md` for one threaded runner/conversation.
 
 ## Recovery
 
 Netlify API runs persist state under:
 
 ```text
-.nax/runs/<run-id>/run.json
+.nax/workflows/<workflow-run-id>/workflow.json
 ```
 
 If a Netlify API process was interrupted, starting `nax <flow>` can offer to resume unfinished in-flight runs.
+
+Completed results also persist as artifacts:
+
+```text
+.nax/workflows/<workflow-run-id>/artifacts/summary.md
+.nax/agent-runners/<runner-id>/summary.md
+.nax/agent-sessions/<session-id>/summary.md
+```
+
+Use `nax handoff` to continue from prior results interactively, or `nax handoff -c` to copy the latest useful summary.
 
 For a terminal failed Netlify API run that needs a compact follow-up prompt, use:
 

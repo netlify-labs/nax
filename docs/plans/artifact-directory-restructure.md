@@ -315,11 +315,13 @@ Do not infer source from directory names. Directory names are identifiers; prove
 
 ## Handoff Semantics
 
-`nax handoff` should search handoff sources in this order:
+`nax handoff` should default to the newest completed useful source across:
 
-1. Newest completed agent session under `.nax/agent-sessions/`.
-2. Newest completed agent runner thread under `.nax/agent-runners/`.
-3. Newest completed workflow summary under `.nax/workflows/`.
+- completed workflow summaries under `.nax/workflows/`
+- completed agent sessions under `.nax/agent-sessions/`
+- completed agent runner threads under `.nax/agent-runners/`
+
+Recency wins first. When timestamps tie, prefer the workflow summary because it is the richest rollup. Users can override the default with `--workflow <id>`, `--session <id>`, `--runner <id>`, `--source <id> --source-type <kind>`, or the interactive source picker.
 
 The selected source should return a uniform shape:
 
@@ -362,17 +364,19 @@ Workflow chaining:
 - Embeds full summary contents into workflow context.
 - Creates a normal workflow run under `.nax/workflows/<workflow-run-id>/`.
 
-Future handoff UX can expose source granularity:
+The TTY handoff UX exposes source granularity:
 
 ```text
-Use previous:
-> Latest result
-  Entire workflow
-  Agent runner thread
-  Individual session
+Hand off previous results
+> Start with latest result: Do Next
+  Pick a workflow
+  Pick an agent session
+  Pick an agent runner
+  Copy latest result to clipboard
+  Cancel
 ```
 
-The first implementation can keep the existing menu while using latest-source discovery internally.
+For fast no-select copy, `nax handoff -c` copies the default latest useful source.
 
 ## Module Plan
 

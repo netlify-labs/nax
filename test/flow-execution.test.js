@@ -560,6 +560,21 @@ test('agentStepCompletionSummary formats aligned duration and usage rows', () =>
   ].join('\n'))
 })
 
+test('isAdHocRunTarget recognizes one-off agent run aliases', () => {
+  assert.equal(_private.isAdHocRunTarget('ad-hoc'), true)
+  assert.equal(_private.isAdHocRunTarget('adhoc'), true)
+  assert.equal(_private.isAdHocRunTarget('agent-run'), true)
+  assert.equal(_private.isAdHocRunTarget('review'), false)
+})
+
+test('orderSingleRunTransports puts Netlify API first', () => {
+  const ordered = _private.orderSingleRunTransports([
+    { id: 'github', title: 'GitHub Actions' },
+    { id: 'netlify-api', title: 'Netlify API' },
+  ])
+  assert.deepEqual(ordered.map((transport) => transport.id), ['netlify-api', 'github'])
+})
+
 test('success box keeps non-TTY links on one line', () => {
   const originalLog = console.log
   const originalIsTTY = Object.getOwnPropertyDescriptor(process.stdout, 'isTTY')

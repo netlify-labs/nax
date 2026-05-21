@@ -43,6 +43,7 @@ const {
   persistRunArtifact,
   persistStepArtifacts,
   persistWorkflowArtifacts,
+  safeArtifactName,
   writeGithubStepSummary,
 } = require('../lib/workflow-artifacts')
 const { clearTrackedRunState, trackRunState } = require('../lib/graceful-run-state')
@@ -79,6 +80,7 @@ const BODY_FALLBACK_THRESHOLD = GITHUB_ISSUE_BODY_LIMIT - BODY_SAFETY_MARGIN
 const COMPACT_LOCAL_RESULT_CHAR_LIMIT = 6000
 const COMPACT_LOCAL_RESULTS_TOTAL_LIMIT = 36000
 const COMPACT_LOCAL_CONTEXT_CHAR_LIMIT = 12000
+const AD_HOC_RUN_TARGET = '__ad_hoc_agent_run__'
 
 function parseCsv(value) {
   if (!value) return []
@@ -974,6 +976,15 @@ function formatHandoffSourceKind(kind) {
   return kind || 'artifact'
 }
 
+function isAdHocRunTarget(value) {
+  const normalized = String(value || '').trim().toLowerCase()
+  return normalized === AD_HOC_RUN_TARGET ||
+    normalized === 'ad-hoc' ||
+    normalized === 'adhoc' ||
+    normalized === 'agent' ||
+    normalized === 'agent-run'
+}
+
 function formatHandoffSourceLabel(source = {}) {
   const stamp = formatRunTimestamp(source.updatedAt)
   return [stamp, source.title || source.id || 'Untitled'].filter(Boolean).join('  ')
@@ -1251,9 +1262,20 @@ async function promptForOptionalHandoffInstructions() {
   return String(value || '').trim()
 }
 
-async function runFreshHandoffAgent({ projectRoot, agent, promptText, summaryDisplayPath, source, options = {} }) {
+async function runSingleNetlifyAgent({
+  projectRoot,
+  agent,
+  promptText,
+  title,
+  source,
+  raw = {},
+  options = {},
+  beforeSubmit,
+  startLabel,
+} = {}) {
   const branch = options.branch || currentGitBranch(projectRoot)
   const netlify = buildNetlifyEnv({ projectRoot })
+  const runTitle = title || 'Agent Run'
   const run = {
     transport: NETLIFY_API_TRANSPORT,
     agent,
@@ -1267,14 +1289,14 @@ async function runFreshHandoffAgent({ projectRoot, agent, promptText, summaryDis
     prUrl: '',
     deployUrl: '',
     raw: {
-      stepId: 'handoff',
-      promptName: 'handoff',
-      summaryPath: summaryDisplayPath,
+      stepId: safeArtifactName(runTitle).toLowerCase(),
+      promptName: safeArtifactName(runTitle).toLowerCase(),
+      ...raw,
     },
   }
 
-  console.log(`Including prior workflow summary:\n${summaryDisplayPath}`)
-  console.log(`\nStarting ${titleCase(agent)} handoff run...`)
+  if (typeof beforeSubmit === 'function') beforeSubmit()
+  console.log(`\nStarting ${titleCase(agent)} ${startLabel || runTitle.toLowerCase()}...`)
   const startedAt = Date.now()
   const submitted = await submitLocalAgentRun({
     run,
@@ -1291,7 +1313,7 @@ async function runFreshHandoffAgent({ projectRoot, agent, promptText, summaryDis
   addLocalRunLinks(submitted, projectRoot)
   const boxes = formatSubmittedLocalRunBoxes({
     runs: [submitted],
-    prompt: { title: 'Handoff' },
+    prompt: { title: runTitle },
     projectRoot,
   })
   if (boxes) {
@@ -1300,7 +1322,7 @@ async function runFreshHandoffAgent({ projectRoot, agent, promptText, summaryDis
   }
 
   const reporter = makeStepProgressReporter({
-    stepTitle: 'Handoff',
+    stepTitle: runTitle,
     total: 1,
     agents: [agent],
   })
@@ -1323,12 +1345,7 @@ async function runFreshHandoffAgent({ projectRoot, agent, promptText, summaryDis
       },
     })
     addLocalRunLinks(completed, projectRoot)
-    const artifactSource = {
-      type: 'handoff',
-      priorSourceKind: source?.kind || 'workflow',
-      priorSourceId: source?.id || '',
-      priorSummaryPath: summaryDisplayPath,
-    }
+    const artifactSource = source || { type: 'ad-hoc' }
     const sessionArtifact = persistAgentSessionArtifact({
       projectRoot,
       run: completed,
@@ -1355,10 +1372,10 @@ async function runFreshHandoffAgent({ projectRoot, agent, promptText, summaryDis
       terminalFailure: completed.status !== 'completed',
     })
     if (completed.status === 'completed') {
-      reporter.done(`Handoff: ${titleCase(agent)} complete`)
+      reporter.done(`${runTitle}: ${titleCase(agent)} complete`)
     } else {
-      reporter.fail(`Handoff: ${titleCase(agent)} ${completed.status}`)
-      throw new Error(`Handoff run did not complete successfully.`)
+      reporter.fail(`${runTitle}: ${titleCase(agent)} ${completed.status}`)
+      throw new Error(`${runTitle} did not complete successfully.`)
     }
     settled = true
     const url = completed.links?.sessionUrl || completed.links?.agentRunUrl || ''
@@ -1379,7 +1396,150 @@ async function runFreshHandoffAgent({ projectRoot, agent, promptText, summaryDis
       }
     }
   } finally {
-    if (!settled) reporter.fail('Handoff failed')
+    if (!settled) reporter.fail(`${runTitle} failed`)
+  }
+}
+
+async function runFreshHandoffAgent({ projectRoot, agent, promptText, summaryDisplayPath, source, options = {} }) {
+  await runSingleNetlifyAgent({
+    projectRoot,
+    agent,
+    promptText,
+    title: 'Handoff',
+    source: {
+      type: 'handoff',
+      priorSourceKind: source?.kind || 'workflow',
+      priorSourceId: source?.id || '',
+      priorSummaryPath: summaryDisplayPath,
+    },
+    raw: {
+      stepId: 'handoff',
+      promptName: 'handoff',
+      summaryPath: summaryDisplayPath,
+    },
+    options,
+    startLabel: 'handoff run',
+    beforeSubmit: () => {
+      console.log(`Including prior workflow summary:\n${summaryDisplayPath}`)
+    },
+  })
+}
+
+async function runSingleGithubAgent({ projectRoot, agent, promptText, source, options = {} } = {}) {
+  const repo = resolveRepo(options.repo)
+  const date = options.date || getLocalDate()
+  const runner = options.runner || '@netlify'
+  const labels = parseCsv(options.labels || options.label)
+  const prompt = {
+    name: 'netlify-agent-run',
+    title: 'Netlify Agent Run',
+    description: 'Run one Netlify agent with a custom prompt.',
+    instruction: 'please handle this request',
+    body: promptText,
+  }
+  const title = `${date} ${titleCase(agent)} Netlify Agent Run`
+  const body = buildIssueBody({
+    runner,
+    model: agent,
+    prompt,
+    context: '',
+    roundResults: '',
+    date,
+  })
+
+  console.log(`\nCreating GitHub issue for ${titleCase(agent)} Netlify agent run...`)
+  const issueUrl = createIssue({ repo, title, body, labels })
+  const issueNumber = parseIssueNumberFromUrl(issueUrl)
+  if (!Number.isFinite(issueNumber)) throw new Error(`Could not parse issue number from ${issueUrl}`)
+  console.log(`${title}: ${issueUrl}`)
+
+  const run = {
+    transport: 'github',
+    agent,
+    status: 'submitted',
+    promptText: body,
+    resultText: '',
+    issueNumber,
+    issueUrl,
+    commentUrl: '',
+    prUrl: '',
+    deployUrl: '',
+    raw: {
+      title,
+      promptName: prompt.name,
+    },
+  }
+  const step = {
+    id: 'netlify-agent-run',
+    title: 'Netlify Agent Run',
+    agents: [agent],
+    waitFor: WAIT_FOR_AGENT_RESULTS,
+  }
+  const runs = [run]
+  const timeoutMinutes = Number.parseInt(options.timeoutMinutes || '25', 10)
+  const results = await waitForGithubStep({
+    repo,
+    issueNumbers: [issueNumber],
+    runs,
+    step,
+    timeoutMinutes,
+    onRunResult: ({ result, reply, run: submittedRun, status }) => {
+      const normalized = normalizeGithubRunResult({
+        run: submittedRun,
+        result,
+        reply,
+        status,
+        marker: parseRunnerResultMarker(reply?.body || ''),
+      })
+      if (reply?.createdAt && !normalized.createdAt) normalized.createdAt = reply.createdAt
+      if (reply?.createdAt && !normalized.updatedAt) normalized.updatedAt = reply.createdAt
+      Object.assign(submittedRun, normalized)
+    },
+  })
+  const result = results[0]
+  const latest = (result?.replies || [])[(result?.replies || []).length - 1]
+  const completed = normalizeGithubRunResult({
+    run,
+    result,
+    reply: latest,
+    status: latest ? 'completed' : 'timeout',
+    marker: parseRunnerResultMarker(latest?.body || ''),
+  })
+  if (latest?.createdAt && !completed.createdAt) completed.createdAt = latest.createdAt
+  if (latest?.createdAt && !completed.updatedAt) completed.updatedAt = latest.createdAt
+
+  const artifactSource = source || {
+    type: 'single-run',
+    transport: 'github',
+    issueNumber,
+    issueUrl,
+    promptLength: promptText.length,
+  }
+  const sessionArtifact = persistAgentSessionArtifact({
+    projectRoot,
+    run: completed,
+    source: artifactSource,
+    createdAt: completed.createdAt || new Date().toISOString(),
+    updatedAt: completed.updatedAt || new Date().toISOString(),
+  })
+  const runnerArtifact = completed.runnerId ? persistAgentRunnerArtifact({
+    projectRoot,
+    runnerId: completed.runnerId,
+    agent: completed.agent,
+    status: completed.status,
+    session: sessionArtifact?.session || null,
+    source: artifactSource,
+    links: completed.links || {},
+    createdAt: completed.createdAt || new Date().toISOString(),
+    updatedAt: completed.updatedAt || new Date().toISOString(),
+  }) : null
+
+  const url = completed.links?.sessionUrl || completed.links?.agentRunUrl || completed.commentUrl || issueUrl
+  if (url) console.log(`Result: ${url}`)
+  if (sessionArtifact?.dir || runnerArtifact?.dir) {
+    console.log('')
+    if (sessionArtifact?.dir) console.log(`Session artifacts: ${sessionArtifact.dir}`)
+    if (runnerArtifact?.dir) console.log(`Runner artifacts:  ${runnerArtifact.dir}`)
   }
 }
 
@@ -1509,7 +1669,7 @@ async function handleHandoff(runId, options) {
     return
   }
 
-  const flowId = options.flow || await pickFlowInteractively()
+  const flowId = options.flow || await pickFlowInteractively({ includeAdHoc: false })
   if (clack.isCancel(flowId)) return
   console.log(`Including prior results summary:\n${handoff.displayPath}`)
   await handleRun(flowId, {
@@ -1520,7 +1680,10 @@ async function handleHandoff(runId, options) {
 }
 
 async function handlePreviewBoxes(flowId, options) {
-  const id = flowId || (await pickFlowInteractively())
+  const id = flowId || (await pickFlowInteractively({ includeAdHoc: false }))
+  if (isAdHocRunTarget(id)) {
+    throw new Error('Preview boxes are only available for workflows.')
+  }
   const flow = await loadFlow(id)
   const steps = flow.steps.filter((step) => (step.agents || []).length > 0)
   const transport = isNetlifyApiTransport(options.transport) ? NETLIFY_API_TRANSPORT : 'github'
@@ -1553,22 +1716,56 @@ async function handlePreviewBoxes(flowId, options) {
   printSuccessBox({ flow, runState: fakeRunState, transport, projectRoot })
 }
 
-async function pickFlowInteractively() {
+async function pickFlowInteractively({ includeAdHoc = true } = {}) {
   const clack = require('@clack/prompts')
   const flows = await listFlows()
-  if (flows.length === 0) {
-    throw new Error('No flows found in flows/*/flow.yml')
+  if (includeAdHoc) {
+    console.log('Run a single Netlify agent or orchestrate a multi-step agentic workflow.')
   }
   const selected = await clack.select({
-    message: 'Choose workflow',
-    options: flows.map((flow) => ({
-      value: flow.id,
-      label: flow.title,
-      hint: flow.description,
-    })),
+    message: includeAdHoc ? 'What do you want to run?' : 'Choose workflow',
+    options: [
+      ...(includeAdHoc ? [{
+        value: AD_HOC_RUN_TARGET,
+        label: 'Start a single Netlify agent',
+        hint: 'Run one Netlify agent with a custom prompt.',
+      }] : []),
+      ...flows.map((flow) => ({
+        value: flow.id,
+        label: includeAdHoc ? `Workflow - ${flow.title}` : flow.title,
+        hint: flow.description,
+      })),
+      ...(includeAdHoc ? [{ value: 'cancel', label: 'Cancel' }] : []),
+    ],
+  })
+  if (clack.isCancel(selected) || selected === 'cancel') process.exit(0)
+  return selected
+}
+
+async function chooseAdHocAgentInteractively(initialAgent) {
+  if (initialAgent) return initialAgent
+  const clack = require('@clack/prompts')
+  const selected = await clack.select({
+    message: 'Choose agent',
+    options: DEFAULT_MODELS.map((model) => ({ value: model, label: titleCase(model) })),
   })
   if (clack.isCancel(selected)) process.exit(0)
   return selected
+}
+
+async function promptForAdHocAgentPrompt(initialPrompt) {
+  const prompt = String(initialPrompt || '').trim()
+  if (prompt) return prompt
+  if (!process.stdin.isTTY) {
+    throw new Error('Netlify agent run prompt is required in non-TTY mode. Pass --prompt "..." or --context "...".')
+  }
+  const value = await multiline({
+    message: 'Prompt for the Netlify agent run',
+    placeholder: 'Describe what you want this agent to do.',
+  })
+  const text = String(value || '').trim()
+  if (!text) throw new Error('Netlify agent run prompt cannot be empty.')
+  return text
 }
 
 async function chooseTransportInteractively({ requested, projectRoot }) {
@@ -1585,6 +1782,38 @@ async function chooseTransportInteractively({ requested, projectRoot }) {
   const selected = await clack.select({
     message: 'Where should nax orchestrate this workflow?',
     options: available.map((transport) => ({
+      value: transport.id,
+      label: transport.title,
+      hint: `ready — ${transport.reason}`,
+    })),
+  })
+  if (clack.isCancel(selected)) process.exit(0)
+  return selected
+}
+
+function orderSingleRunTransports(transports = []) {
+  return [...transports].sort((a, b) => {
+    if (a.id === NETLIFY_API_TRANSPORT) return -1
+    if (b.id === NETLIFY_API_TRANSPORT) return 1
+    return 0
+  })
+}
+
+async function chooseSingleRunTransportInteractively({ requested, projectRoot }) {
+  const detections = detectTransports({ projectRoot })
+  if (requested && requested !== 'auto') {
+    return resolveTransport(requested, detections)
+  }
+  const available = detections.filter((transport) => transport.available)
+  if (available.length === 0) {
+    throw new Error(formatTransportSetupHelp(detections))
+  }
+  if (!process.stdin.isTTY || available.length === 1) return available[0].id
+
+  const clack = require('@clack/prompts')
+  const selected = await clack.select({
+    message: 'Where should we run this Netlify agent?',
+    options: orderSingleRunTransports(available).map((transport) => ({
       value: transport.id,
       label: transport.title,
       hint: `ready — ${transport.reason}`,
@@ -3478,9 +3707,70 @@ async function handleRedrive(runId, options) {
   printSuccessBox({ flow, runState, transport: NETLIFY_API_TRANSPORT, projectRoot })
 }
 
+async function handleAdHocAgentRun(options = {}) {
+  const projectRoot = path.resolve(options.projectRoot || process.cwd())
+  const transport = await chooseSingleRunTransportInteractively({
+    requested: options.transport || 'auto',
+    projectRoot,
+  })
+  const agent = await chooseAdHocAgentInteractively(options.agent)
+  const promptText = await promptForAdHocAgentPrompt(options.prompt || options.context)
+  if (options.dryRun) {
+    console.log('Netlify agent run preview')
+    console.log(`Transport: ${transport}`)
+    console.log(`Agent: ${titleCase(agent)}`)
+    console.log(`Prompt: ${promptText.length} chars`)
+    console.log('')
+    console.log(promptText)
+    return
+  }
+
+  if (isNetlifyApiTransport(transport)) {
+    await runSingleNetlifyAgent({
+      projectRoot,
+      agent,
+      promptText,
+      title: 'Netlify Agent Run',
+      source: {
+        type: 'single-run',
+        transport: NETLIFY_API_TRANSPORT,
+        promptLength: promptText.length,
+      },
+      raw: {
+        stepId: 'netlify-agent-run',
+        promptName: 'netlify-agent-run',
+      },
+      options,
+      startLabel: 'Netlify agent run',
+    })
+    return
+  }
+
+  await runSingleGithubAgent({
+    projectRoot,
+    agent,
+    promptText,
+    source: {
+      type: 'single-run',
+      transport: 'github',
+      promptLength: promptText.length,
+    },
+    options,
+  })
+}
+
 async function handleRun(flowId, options) {
   const projectRoot = path.resolve(options.projectRoot || process.cwd())
-  const resolvedFlowId = flowId || (process.stdin.isTTY ? await pickFlowInteractively() : 'review')
+  if (flowId === 'ls' || flowId === 'list') {
+    await handleList()
+    return
+  }
+  const wantsAdHoc = !flowId && (options.agent || options.prompt)
+  const resolvedFlowId = flowId || (wantsAdHoc ? AD_HOC_RUN_TARGET : (process.stdin.isTTY ? await pickFlowInteractively() : 'review'))
+  if (isAdHocRunTarget(resolvedFlowId)) {
+    await handleAdHocAgentRun({ ...options, projectRoot })
+    return
+  }
   const flow = await loadFlow(resolvedFlowId)
 
   const resumable = findLatestUnfinishedRun(projectRoot, { flowId: flow.id })
@@ -3734,7 +4024,9 @@ function buildProgram() {
     .argument('[workflow]', 'Workflow to run, e.g. review')
     .option('--repo <owner/name>', 'GitHub repo; defaults to gh repo view')
     .option('--branch <branch-or-pr>', 'Git branch or PR number to run in Netlify agent runners')
-    .option('--transport <transport>', 'Transport to use: auto, github-actions, netlify-api, local-machine', 'auto')
+    .option('--agent <name>', 'Agent for a Netlify agent run, e.g. codex')
+    .option('--prompt <text>', 'Prompt text for a Netlify agent run')
+    .option('--transport <transport>', 'Where to run: auto, github, netlify-api', 'auto')
     .addOption(new Option('--where <place>', 'Hidden compatibility alias for --transport').hideHelp())
     .option('--dry', 'Preview the workflow without creating issues/comments')
     .addOption(new Option('--dry-run', 'Hidden compatibility alias for --dry').hideHelp())
@@ -3748,7 +4040,7 @@ function buildProgram() {
 
   program
     .command('init')
-    .description('Set up this repository for nax workflows')
+    .description('Set up this repository for Netlify Agent Runner workflows')
     .option('--project-root <path>', 'Project root to initialize')
     .option('--repo <owner/name>', 'GitHub repo; defaults to gh repo view')
     .option('--site-id <id>', 'Link this directory to an existing Netlify site ID')
@@ -3765,13 +4057,15 @@ function buildProgram() {
 
   program
     .command('run [flow]')
-    .description('Run a multi-step workflow')
-    .option('--transport <transport>', 'Transport to use: auto, github-actions, netlify-api, local-machine', 'auto')
-    .addOption(new Option('--where <place>', 'Hidden compatibility alias for --transport').hideHelp())
+    .description('Run a Netlify Agent Runner workflow')
     .option('--project-root <path>', 'Project root for flow execution')
     .option('--repo <owner/name>', 'GitHub repo; defaults to gh repo view')
     .option('--branch <branch-or-pr>', 'Git branch or PR number to run in Netlify agent runners')
     .option('--context <text>', 'Additional context appended to each prompt')
+    .option('--agent <name>', 'Agent for a Netlify agent run, e.g. codex')
+    .option('--prompt <text>', 'Prompt text for a Netlify agent run')
+    .option('--transport <transport>', 'Where to run: auto, github, netlify-api', 'auto')
+    .addOption(new Option('--where <place>', 'Hidden compatibility alias for --transport').hideHelp())
     .option('--context-file <path>', 'Read additional context from a file')
     .option('--sha <rev>', 'Override the pinned git revision injected into the review context')
     .option('--pr-limit <count>', 'Maximum number of open PRs to include in the merge-state ledger', '10')
@@ -3894,6 +4188,7 @@ function buildProgram() {
 
   program
     .command('list')
+    .alias('ls')
     .description('List available workflows')
     .action(handleList)
 
@@ -3976,6 +4271,8 @@ module.exports = {
     handoffSummaryPath,
     handoffSourceMenuOptions,
     handoffSourceQuery,
+    isAdHocRunTarget,
+    orderSingleRunTransports,
     nextLocalStepMessage,
     localRedriveCandidates,
     agentStepCompletionSummary,

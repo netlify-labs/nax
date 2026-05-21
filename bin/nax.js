@@ -1319,6 +1319,7 @@ async function runFreshHandoffAgent({ projectRoot, agent, promptText, summaryDis
       },
       onTerminalRun: (terminalRun) => {
         addLocalRunLinks(terminalRun, projectRoot)
+        reportTerminalLocalRun(reporter, terminalRun, projectRoot)
       },
     })
     addLocalRunLinks(completed, projectRoot)
@@ -2328,8 +2329,14 @@ function makeProgressReporter(initialMessage) {
   }
 }
 
-function pickFlavor() {
-  return flavorMessages[Math.floor(Math.random() * flavorMessages.length)]
+function pickFlavor({ used = new Set(), random = Math.random } = {}) {
+  if (flavorMessages.length === 0) return ['', '']
+  const start = Math.floor(random() * flavorMessages.length)
+  for (let offset = 0; offset < flavorMessages.length; offset += 1) {
+    const candidate = flavorMessages[(start + offset) % flavorMessages.length]
+    if (!used.has(candidate[0])) return candidate
+  }
+  return flavorMessages[start]
 }
 
 function pickAgentLabel(agents) {
@@ -2415,17 +2422,31 @@ function makeStepProgressReporter({
   }
 
   const rows = new Map()
-  for (const agent of agents) {
-    const [phrase, emoji] = pickFlavor()
-    rows.set(agent, {
+  const usedFlavorPhrases = (exceptRow) => new Set([...rows.values()]
+    .filter((row) => row !== exceptRow && (row.status === 'pending' || row.status === 'running'))
+    .map((row) => row.phrase)
+    .filter(Boolean))
+  const assignFlavor = (row) => {
+    const [phrase, emoji] = pickFlavor({ used: usedFlavorPhrases(row) })
+    row.phrase = phrase
+    row.emoji = emoji
+    row.nextFlavor = nextFlavorAt({ min: flavorMinMs, max: flavorMaxMs })
+  }
+  const createRow = (agent) => {
+    const row = {
       agent,
-      emoji,
-      phrase,
-      nextFlavor: nextFlavorAt({ min: flavorMinMs, max: flavorMaxMs }),
+      emoji: '',
+      phrase: '',
+      nextFlavor: 0,
       state: 'pending',
       status: 'pending',
       message: '',
-    })
+    }
+    assignFlavor(row)
+    return row
+  }
+  for (const agent of agents) {
+    rows.set(agent, createRow(agent))
   }
   let frame = 0
   let renderedLines = 0
@@ -2433,18 +2454,7 @@ function makeStepProgressReporter({
 
   const rowForAgent = (agent) => {
     const key = agent || `agent-${rows.size + 1}`
-    if (!rows.has(key)) {
-      const [phrase, emoji] = pickFlavor()
-      rows.set(key, {
-        agent: key,
-        emoji,
-        phrase,
-        nextFlavor: nextFlavorAt({ min: flavorMinMs, max: flavorMaxMs }),
-        state: 'pending',
-        status: 'pending',
-        message: '',
-      })
-    }
+    if (!rows.has(key)) rows.set(key, createRow(key))
     return rows.get(key)
   }
 
@@ -2453,10 +2463,7 @@ function makeStepProgressReporter({
   const rotateFlavor = (row) => {
     if (row.status !== 'pending' && row.status !== 'running') return
     if (Date.now() < row.nextFlavor) return
-    const [phrase, emoji] = pickFlavor()
-    row.phrase = phrase
-    row.emoji = emoji
-    row.nextFlavor = nextFlavorAt({ min: flavorMinMs, max: flavorMaxMs })
+    assignFlavor(row)
   }
   const renderRow = (row, nameWidth) => {
     return formatTtyProgressRow(row, { nameWidth, frame, orchestrator })
@@ -2898,6 +2905,17 @@ function addLocalRunLinks(run, projectRoot) {
   return run
 }
 
+function reportTerminalLocalRun(reporter, run, projectRoot) {
+  addLocalRunLinks(run, projectRoot)
+  reporter.updateRun({
+    run,
+    state: run.status,
+    terminal: run.status === 'completed' || run.status === 'failed' || run.status === 'timeout',
+    terminalSuccess: run.status === 'completed',
+    terminalFailure: run.status === 'failed' || run.status === 'timeout',
+  })
+}
+
 async function completeLocalStep({ runState, stepState, step, options, projectRoot, netlify, initialDelayMs }) {
   const timeoutMinutes = Number.parseInt(options.timeoutMinutes || '25', 10)
   if (step.waitFor === WAIT_FOR_AGENT_RESULTS && stepState.runs.some(shouldPollLocalRun)) {
@@ -2924,6 +2942,7 @@ async function completeLocalStep({ runState, stepState, step, options, projectRo
           const index = stepState.runs.findIndex((candidate) => candidate.runnerId === run.runnerId)
           if (index !== -1) stepState.runs[index] = run
           persistRunArtifact(runState, stepState, run)
+          reportTerminalLocalRun(reporter, run, projectRoot)
         },
       })
       for (const run of completedRuns) {
@@ -3304,6 +3323,7 @@ async function handleRedrive(runId, options) {
       addLocalRunLinks(terminalRun, projectRoot)
       step.runs[runIndex] = terminalRun
       persistRunArtifact(runState, step, terminalRun)
+      reportTerminalLocalRun(reporter, terminalRun, projectRoot)
     },
   })
   const completedRun = completed[0]
@@ -3844,6 +3864,7 @@ module.exports = {
     nextLocalStepMessage,
     localRedriveCandidates,
     normalizeHandoffSourceKind,
+    pickFlavor,
     formatCompactLocalRunResults,
     makeStepProgressReporter,
     normalizeGithubRunResult,

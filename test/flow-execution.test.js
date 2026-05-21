@@ -181,6 +181,13 @@ test('TTY progress rows show a green complete status', () => {
   assert.equal(line, '✓ Codex  · 🟢 complete - https://app.netlify.com/projects/netlify-agent-executor/agent-runs/runner-1?session=session-1')
 })
 
+test('pickFlavor avoids active phrases already in use', () => {
+  const first = _private.pickFlavor({ random: () => 0 })
+  const second = _private.pickFlavor({ used: new Set([first[0]]), random: () => 0 })
+
+  assert.notEqual(second[0], first[0])
+})
+
 test('nextLocalStepMessage describes the immediate transition after a local step', () => {
   const steps = [
     { title: 'Propose Next Task' },

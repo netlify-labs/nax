@@ -75,7 +75,7 @@ Use to pick the next best task. Steps:
 - Prefer `--transport github-actions` when the user wants remote reproducibility and GitHub Actions logs.
 - Warn that local uncommitted/unpushed changes are invisible to remote Netlify agent runners.
 - Use `--branch '#123'` for PR-specific runs when the user references a PR number.
-- Use `--step` only for deliberate partial reruns; otherwise resume/redrive saved Netlify API state.
+- Use `--step` only for deliberate partial reruns; otherwise resume/retry saved Netlify API state.
 - Treat `.nax/workflows/<workflow-run-id>/workflow.json` as the source of truth for workflow recovery.
 - Use `.nax/workflows/<workflow-run-id>/artifacts/summary.md` for full workflow handoff context.
 - Use `.nax/agent-sessions/<session-id>/summary.md` for one concrete agent result.
@@ -104,16 +104,16 @@ Use `nax handoff` to continue from prior results interactively, or `nax handoff 
 For a terminal failed Netlify API run that needs a compact follow-up prompt, use:
 
 ```bash
-nax redrive <run-id> --step <step-id> --agent <agent>
+nax retry <run-id> --step <step-id> --agent <agent>
 ```
 
 Example:
 
 ```bash
-nax redrive 2026-05-15T01-24-10-177Z-ideas --step react --agent claude
+nax retry 2026-05-15T01-24-10-177Z-ideas --step react --agent claude
 ```
 
-The redrive command submits a new follow-up session to the existing runner, waits for that one agent, updates run state, and continues downstream steps if the failed step becomes complete.
+The retry command submits a new follow-up session to the existing runner, waits for that one agent, updates run state, and continues downstream steps if the failed step becomes complete.
 
 ## Known Failure Modes
 

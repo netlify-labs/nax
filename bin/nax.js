@@ -2434,7 +2434,7 @@ function buildLocalAgentPrompt({ model, prompt, context, roundResults }) {
   return parts.join('\n')
 }
 
-function buildCompactLocalPromptForRedrive({ flow, step, runState, run }) {
+function buildCompactLocalPromptForRetry({ flow, step, runState, run }) {
   const savedCompact = String(run.compactPromptText || '').trim()
   const savedPrompt = String(run.promptText || '')
   if (savedCompact && savedCompact.length < savedPrompt.length) return savedCompact
@@ -2622,7 +2622,7 @@ function shouldPollLocalRun(run) {
   return true
 }
 
-function localRedriveCandidates(runState, { stepId, agent } = {}) {
+function localRetryCandidates(runState, { stepId, agent } = {}) {
   const requestedAgent = String(agent || '').trim().toLowerCase()
   return (runState.steps || []).flatMap((step, stepIndex) => {
     if (stepId && step.id !== stepId) return []
@@ -3560,7 +3560,7 @@ async function resumeGithubFlow({ flow, runState }) {
   clearTrackedRunState(runState, { completed: true })
 }
 
-function findRunStateForRedrive(projectRoot, { runId, flowId, stepId, agent } = {}) {
+function findRunStateForRetry(projectRoot, { runId, flowId, stepId, agent } = {}) {
   const states = listRunStates(projectRoot)
   if (runId) {
     const matched = states.find((state) => state.runId === runId)
@@ -3570,26 +3570,26 @@ function findRunStateForRedrive(projectRoot, { runId, flowId, stepId, agent } = 
   const matched = states.find((state) => {
     if (!isNetlifyApiTransport(state.transport)) return false
     if (flowId && state.flowId !== flowId) return false
-    return localRedriveCandidates(state, { stepId, agent }).length > 0
+    return localRetryCandidates(state, { stepId, agent }).length > 0
   })
-  if (!matched) throw new Error('Could not find a failed Netlify API run to redrive. Pass a run id explicitly.')
+  if (!matched) throw new Error('Could not find a failed Netlify API run to retry. Pass a run id explicitly.')
   return matched
 }
 
-async function handleRedrive(runId, options) {
+async function handleRetry(runId, options) {
   const projectRoot = path.resolve(options.projectRoot || process.cwd())
-  const runState = findRunStateForRedrive(projectRoot, {
+  const runState = findRunStateForRetry(projectRoot, {
     runId,
     flowId: options.flow,
     stepId: options.step,
     agent: options.agent,
   })
   if (!isNetlifyApiTransport(runState.transport)) {
-    throw new Error(`Run ${runState.runId} uses ${runState.transport || 'unknown'} transport; redrive currently supports Netlify API runs only.`)
+    throw new Error(`Run ${runState.runId} uses ${runState.transport || 'unknown'} transport; retry currently supports Netlify API runs only.`)
   }
 
   const flow = await loadFlow(runState.flowId)
-  const candidates = localRedriveCandidates(runState, {
+  const candidates = localRetryCandidates(runState, {
     stepId: options.step,
     agent: options.agent,
   })
@@ -3598,7 +3598,7 @@ async function handleRedrive(runId, options) {
   }
   if (candidates.length > 1) {
     const choices = candidates.map(({ step, run }) => `${step.id}:${run.agent}`).join(', ')
-    throw new Error(`More than one failed Netlify API runner can be redriven (${choices}). Pass --step and --agent.`)
+    throw new Error(`More than one failed Netlify API runner can be retried (${choices}). Pass --step and --agent.`)
   }
 
   trackRunState(runState)
@@ -3608,17 +3608,17 @@ async function handleRedrive(runId, options) {
 
   const netlify = buildNetlifyEnv({ projectRoot })
   const branch = runState.branch || runState.options?.branch || currentGitBranch(projectRoot)
-  const compactPromptText = buildCompactLocalPromptForRedrive({ flow, step: flowStep, runState, run })
+  const compactPromptText = buildCompactLocalPromptForRetry({ flow, step: flowStep, runState, run })
   if (!compactPromptText || compactPromptText.length >= String(run.promptText || '').length) {
     throw new Error(`Could not build a shorter prompt for ${run.agent} ${step.id}.`)
   }
 
-  console.log(`Redriving ${titleCase(run.agent)} ${step.title}`)
+  console.log(`Retrying ${titleCase(run.agent)} ${step.title}`)
   console.log(`Run: ${runState.runId}`)
   console.log(`Runner: ${run.runnerId}`)
   console.log(`Prompt: ${String(run.promptText || '').length} -> ${compactPromptText.length} chars`)
 
-  const redriveRun = {
+  const retryRun = {
     ...run,
     status: 'pending',
     promptText: compactPromptText,
@@ -3628,7 +3628,7 @@ async function handleRedrive(runId, options) {
     promptShrinkRetryCount: Number(run.promptShrinkRetryCount || 0) + 1,
     raw: {
       ...run.raw,
-      redrive: {
+      retry: {
         reason: 'manual-compact-prompt',
         previousStatus: run.status,
         previousResultText: run.resultText || '',
@@ -3636,7 +3636,7 @@ async function handleRedrive(runId, options) {
     },
   }
   const submitted = await submitLocalAgentRun({
-    run: redriveRun,
+    run: retryRun,
     projectRoot,
     branch,
     siteId: netlify.siteId,
@@ -3690,7 +3690,7 @@ async function handleRedrive(runId, options) {
   saveRunState(runState)
 
   if (step.status !== 'completed') {
-    throw new Error(`Redriven ${run.agent} run did not complete successfully.`)
+    throw new Error(`Retried ${run.agent} run did not complete successfully.`)
   }
 
   const completedStepStates = completedStepMapFromRunState(runState)
@@ -4090,14 +4090,26 @@ function buildProgram() {
     .action((flow, options, command) => handleRun(flow, actionOptions(options, command)))
 
   program
-    .command('redrive [run-id]')
-    .description('Retry one failed Netlify API agent run with a compact prompt and continue the workflow')
+    .command('recent')
+    .description('Pick a recent workflow, agent runner, or agent session artifact')
+    .option('--run-id <id>', 'Skip the picker and show a specific artifact id')
+    .option('--type <kind>', 'Filter by workflow, agent-runner, agent-session, or all', 'all')
+    .option('--limit <n>', 'Maximum artifacts to show in the picker', '25')
+    .action((options, command) => handleRecent(actionOptions(options, command)))
+
+  const addRetryOptions = (command) => command
     .option('--project-root <path>', 'Project root containing .nax workflows and agent artifacts')
     .option('--flow <id>', 'Flow id filter when run id is omitted')
-    .option('--step <id>', 'Failed step id to redrive')
-    .option('--agent <name>', 'Failed agent to redrive, e.g. claude')
-    .option('--timeout-minutes <count>', 'Minutes to wait for the redriven run', '25')
-    .action((runId, options, command) => handleRedrive(runId || '', actionOptions(options, command)))
+    .option('--step <id>', 'Failed step id to retry')
+    .option('--agent <name>', 'Failed agent to retry, e.g. claude')
+    .option('--timeout-minutes <count>', 'Minutes to wait for the retried run', '25')
+    .action((runId, options, command) => handleRetry(runId || '', actionOptions(options, command)))
+
+  addRetryOptions(
+    program
+      .command('retry [run-id]')
+      .description('Retry one failed Netlify API agent run with a compact prompt, then continue the workflow'),
+  )
 
   program
     .command('handoff [run-id]')
@@ -4193,14 +4205,6 @@ function buildProgram() {
     .action(handleList)
 
   program
-    .command('recent')
-    .description('Pick a recent workflow, agent runner, or agent session artifact')
-    .option('--run-id <id>', 'Skip the picker and show a specific artifact id')
-    .option('--type <kind>', 'Filter by workflow, agent-runner, agent-session, or all', 'all')
-    .option('--limit <n>', 'Maximum artifacts to show in the picker', '25')
-    .action((options, command) => handleRecent(actionOptions(options, command)))
-
-  program
     .command('preview-boxes [flow]')
     .description('Preview the flow plan and success boxes without running the workflow')
     .option('--transport <transport>', 'Transport to render (github|netlify-api|local)', 'github')
@@ -4254,7 +4258,7 @@ module.exports = {
     completedStepMapFromRunState,
     firstRunnableStepIndex,
     flowAgents,
-    buildCompactLocalPromptForRedrive,
+    buildCompactLocalPromptForRetry,
     buildHandoffPrompt,
     compactTextForRetry,
     copyToClipboard,
@@ -4274,7 +4278,7 @@ module.exports = {
     isAdHocRunTarget,
     orderSingleRunTransports,
     nextLocalStepMessage,
-    localRedriveCandidates,
+    localRetryCandidates,
     agentStepCompletionSummary,
     normalizeHandoffSourceKind,
     pickFlavor,

@@ -627,7 +627,7 @@ test('success box keeps non-TTY links on one line', () => {
   assert.ok(output.includes(longUrl))
 })
 
-test('localRedriveCandidates finds failed local runs by step and agent', () => {
+test('localRetryCandidates finds failed local runs by step and agent', () => {
   const runState = {
     steps: [
       {
@@ -644,7 +644,7 @@ test('localRedriveCandidates finds failed local runs by step and agent', () => {
     ],
   }
 
-  const candidates = _private.localRedriveCandidates(runState, { stepId: 'react', agent: 'claude' })
+  const candidates = _private.localRetryCandidates(runState, { stepId: 'react', agent: 'claude' })
 
   assert.equal(candidates.length, 1)
   assert.equal(candidates[0].step.id, 'react')

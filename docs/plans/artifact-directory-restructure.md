@@ -487,7 +487,7 @@ Update call sites:
   - list workflows, agent runners, and agent sessions.
   - add `--type workflow|agent-runner|agent-session|all`; default `all`.
   - label entries with kind.
-- `handleRedrive`
+- `handleRetry`
   - workflow runs only in the first pass.
 - `handleHandoff`
   - use `handoff-sources`.

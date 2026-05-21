@@ -25,7 +25,7 @@ Use this file to inspect:
 - runner ids
 - saved prompt text
 - result text
-- retry/redrive metadata
+- retry metadata
 
 Completed output is also projected into artifact summaries:
 
@@ -41,14 +41,14 @@ Use `.nax/workflows/latest/artifacts/summary.md` for the latest workflow rollup 
 
 Start the same flow again and accept the resume prompt when a run is still in flight.
 
-Resume is for unfinished Netlify API work. Terminal failed runs need a rerun or redrive.
+Resume is for unfinished Netlify API work. Terminal failed runs need a rerun or retry.
 
-## Redrive
+## Retry
 
-Use redrive when exactly one Netlify API agent failed and the rest of the step is usable:
+Use retry when exactly one Netlify API agent failed and the rest of the step is usable:
 
 ```bash
-nax redrive <run-id> --step <step-id> --agent <agent>
+nax retry <run-id> --step <step-id> --agent <agent>
 ```
 
 This is useful for oversized follow-up prompts or transient terminal failures after a step has partially completed.
@@ -61,7 +61,7 @@ Symptom:
 fork/exec /opt/build-bin/agent-runner: argument list too long
 ```
 
-This is likely a Netlify Agent Runner launch-path issue where prompt content is too large for argv/env. `nax` detects this and retries once with a compact prompt. If the Netlify UI retry is bricked, use local redrive where possible.
+This is likely a Netlify Agent Runner launch-path issue where prompt content is too large for argv/env. `nax` detects this and retries once with a compact prompt. If the Netlify UI retry is bricked, use local retry where possible.
 
 ## Capacity
 

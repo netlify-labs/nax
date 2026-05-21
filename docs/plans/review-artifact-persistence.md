@@ -18,7 +18,7 @@ Multi-agent workflows are expensive and long-running. A `review` run has three p
 - GitHub transport: GitHub issue/comment bodies, marker-emitted result blobs.
 - CI: ephemeral runner logs, lost when the job ends.
 
-When step 2 or 3 fails, completed work from earlier steps is hard to recover. The CLI should deliberately produce a clean, stable artifact tree per run so output survives later failures, can be uploaded from CI, and can power future redrive/resume features without parsing transport internals.
+When step 2 or 3 fails, completed work from earlier steps is hard to recover. The CLI should deliberately produce a clean, stable artifact tree per run so output survives later failures, can be uploaded from CI, and can power future retry/resume features without parsing transport internals.
 
 ## Goals
 
@@ -36,7 +36,7 @@ When step 2 or 3 fails, completed work from earlier steps is hard to recover. Th
 - No changes to Netlify Agent Runner APIs.
 - No redesign of `run-state.js`.
 - No interactive artifact browser yet.
-- No artifact-driven redrive command yet.
+- No artifact-driven retry command yet.
 - No persistence of secrets, environments, or raw command payloads.
 
 ## Current Relevant Architecture
@@ -766,7 +766,7 @@ One PR shipping Phases 1–4:
 Defer to follow-ups:
 
 - Artifact browsing/listing subcommand.
-- Redrive command sourced from artifacts.
+- Retry command sourced from artifacts.
 - Optional artifact compression.
 - Windows symlink alternative.
 - `--no-artifacts` and `--artifacts-dir` flags (only if a real need surfaces).

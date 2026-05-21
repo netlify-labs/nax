@@ -27,7 +27,7 @@ https://app.netlify.com/projects/agent-runner-github-action/agent-runs/6a0675c3b
 - Multi-step workflows can become stuck even when prior agent results are available.
 - UI retry is not useful because it resubmits the same oversized payload.
 - The failure looks model-specific to users, but the error is from the runner/orchestrator launch path.
-- Local orchestrators have to implement prompt compaction/redrive workarounds instead of relying on the platform to accept or safely stage payloads.
+- Local orchestrators have to implement prompt compaction/retry workarounds instead of relying on the platform to accept or safely stage payloads.
 
 ## Repro Context
 
@@ -118,10 +118,10 @@ The local `nax` orchestrator now detects this exact error and can retry once wit
 
 This is a workaround, not a platform fix. It reduces blast radius for local workflows but does not fix the Netlify UI retry path or the underlying runner launch limit.
 
-Manual local redrive command:
+Manual local retry command:
 
 ```bash
-nax redrive 2026-05-15T01-24-10-177Z-ideas \
+nax retry 2026-05-15T01-24-10-177Z-ideas \
   --project-root /Users/david/projects/github-actions-agent-runner/agent-runner-action \
   --step react \
   --agent claude

@@ -93,7 +93,7 @@ Both are the integration points for artifact persistence.
 
 ### CI workflow
 
-`.github/workflows/run-nax.yml` executes `nax run <flow> --where netlify-api` on an ephemeral runner. Artifacts must be uploaded before the job ends and surfaced in the GitHub Actions UI to be useful.
+`.github/workflows/run-nax.yml` executes `nax run <flow> --transport netlify-api` on an ephemeral runner. Artifacts must be uploaded before the job ends and surfaced in the GitHub Actions UI to be useful.
 
 ## Source-Of-Truth Decision
 

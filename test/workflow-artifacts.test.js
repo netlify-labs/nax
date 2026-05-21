@@ -67,7 +67,7 @@ function sampleRunState(projectRoot = tmpRoot(), overrides = {}) {
     status: 'completed',
     options: {},
     steps: overrides.steps || [step],
-    dir: path.join(projectRoot, '.nax', 'runs', runId),
+    dir: path.join(projectRoot, '.nax', 'workflows', runId),
   }
 }
 
@@ -97,9 +97,11 @@ test('persistWorkflowArtifacts writes summaries, usage, step files, and agent fi
   assert.equal(fs.existsSync(path.join(root, 'steps', '01-review', 'step.json')), true)
   assert.equal(fs.existsSync(path.join(root, 'steps', '01-review', 'summary.md')), true)
   assert.equal(fs.existsSync(path.join(root, 'steps', '01-review', 'usage.json')), true)
-  assert.equal(fs.existsSync(path.join(root, 'steps', '01-review', 'runs', 'claude.md')), true)
-  assert.equal(fs.existsSync(path.join(root, 'steps', '01-review', 'runs', 'claude.json')), true)
-  assert.equal(fs.existsSync(path.join(root, 'steps', '01-review', 'runs', 'claude.attempt-1.json')), true)
+  assert.equal(fs.existsSync(path.join(root, 'steps', '01-review', 'agent-runners', 'claude.md')), true)
+  assert.equal(fs.existsSync(path.join(root, 'steps', '01-review', 'agent-runners', 'claude.json')), true)
+  assert.equal(fs.existsSync(path.join(root, 'steps', '01-review', 'agent-runners', 'claude.attempt-1.json')), true)
+  assert.equal(fs.existsSync(path.join(state.projectRoot, '.nax', 'agent-sessions', 'session-claude', 'summary.md')), true)
+  assert.equal(fs.existsSync(path.join(state.projectRoot, '.nax', 'agent-runners', 'runner-claude', 'summary.md')), true)
 
   const usage = readJson(path.join(root, 'usage.json'))
   assert.deepEqual(usage.total, {
@@ -112,16 +114,16 @@ test('persistWorkflowArtifacts writes summaries, usage, step files, and agent fi
   assert.ok(topSummary.includes('[summary](steps/01-review/summary.md)'))
   assert.ok(topSummary.includes('[metadata](steps/01-review/step.json)'))
   assert.ok(topSummary.includes('[usage](steps/01-review/usage.json)'))
-  assert.ok(topSummary.includes('[result](steps/01-review/runs/claude.md)'))
-  assert.ok(topSummary.includes('[attempt 1](steps/01-review/runs/claude.attempt-1.md)'))
+  assert.ok(topSummary.includes('[result](steps/01-review/agent-runners/claude.md)'))
+  assert.ok(topSummary.includes('[attempt 1](steps/01-review/agent-runners/claude.attempt-1.md)'))
 
   const stepSummary = fs.readFileSync(path.join(root, 'steps', '01-review', 'summary.md'), 'utf8')
   assert.ok(stepSummary.includes('[step metadata](step.json)'))
   assert.ok(stepSummary.includes('[usage](usage.json)'))
-  assert.ok(stepSummary.includes('[result](runs/claude.md)'))
-  assert.ok(stepSummary.includes('[attempt 1](runs/claude.attempt-1.md)'))
+  assert.ok(stepSummary.includes('[result](agent-runners/claude.md)'))
+  assert.ok(stepSummary.includes('[attempt 1](agent-runners/claude.attempt-1.md)'))
 
-  const agent = readJson(path.join(root, 'steps', '01-review', 'runs', 'claude.json'))
+  const agent = readJson(path.join(root, 'steps', '01-review', 'agent-runners', 'claude.json'))
   assert.equal(agent.resultText, 'Claude result')
   assert.equal(agent.runnerId, 'runner-claude')
   assert.equal(agent.attemptNumber, 1)
@@ -144,7 +146,7 @@ test('persistRunArtifact appends immutable attempts and refreshes latest copy', 
   step.runs[0] = second
   persistRunArtifact(state, step, second)
 
-  const runsDir = path.join(artifactsRootForRunState(state), 'steps', '01-review', 'runs')
+  const runsDir = path.join(artifactsRootForRunState(state), 'steps', '01-review', 'agent-runners')
   assert.equal(fs.existsSync(path.join(runsDir, 'claude.attempt-1.json')), true)
   assert.equal(fs.existsSync(path.join(runsDir, 'claude.attempt-2.json')), true)
   assert.equal(readJson(path.join(runsDir, 'claude.attempt-1.json')).runnerId, 'runner-claude')
@@ -173,7 +175,7 @@ test('summaryOnly rebuild skips new immutable attempt files', () => {
   const step = state.steps[0]
   persistWorkflowArtifacts(state, { summaryOnly: true })
 
-  const runsDir = path.join(artifactsRootForRunState(state), 'steps', '01-review', 'runs')
+  const runsDir = path.join(artifactsRootForRunState(state), 'steps', '01-review', 'agent-runners')
   assert.equal(fs.existsSync(path.join(runsDir, 'claude.attempt-1.json')), false)
 
   persistRunArtifact(state, step, step.runs[0])
@@ -195,7 +197,7 @@ test('run with no meaningful terminal data produces no per-agent file', () => {
   })
   persistWorkflowArtifacts(state)
 
-  const runsDir = path.join(artifactsRootForRunState(state), 'steps', '01-empty', 'runs')
+  const runsDir = path.join(artifactsRootForRunState(state), 'steps', '01-empty', 'agent-runners')
   assert.equal(fs.existsSync(path.join(runsDir, 'codex.json')), false)
 })
 

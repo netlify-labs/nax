@@ -16,7 +16,7 @@ Run examples:
 
 ```bash
 nax review
-nax review --branch '#123' --where netlify-api --force
+nax review --branch '#123' --transport netlify-api --force
 nax review --step cross-review
 ```
 
@@ -37,7 +37,7 @@ Run examples:
 
 ```bash
 nax ideas
-nax ideas --where netlify-api --timeout-minutes 45
+nax ideas --transport netlify-api --timeout-minutes 45
 nax ideas --from-step react
 ```
 
@@ -56,7 +56,7 @@ Run examples:
 
 ```bash
 nax do-next
-nax do-next --branch '#123' --where netlify-api --force
+nax do-next --branch '#123' --transport netlify-api --force
 ```
 
 ## Flow Authoring Notes

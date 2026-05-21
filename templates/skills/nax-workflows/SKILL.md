@@ -24,8 +24,8 @@ nax skills install
 Useful flags:
 
 ```bash
---where github-actions      # run through GitHub Actions
---where netlify-api         # orchestrate through Netlify CLI/API from this machine
+--transport github-actions      # run through GitHub Actions
+--transport netlify-api         # orchestrate through Netlify CLI/API from this machine
 --branch <branch-or-pr>     # branch name or PR selector like '#123'
 --step <id>                 # run only one step
 --from-step <id>            # continue from a step through the end
@@ -65,8 +65,8 @@ Use to pick the next best task. Steps:
 
 ## Operating Rules
 
-- Prefer `--where netlify-api` when the user wants live local progress, resume state, or direct Netlify API control.
-- Prefer `--where github-actions` when the user wants remote reproducibility and GitHub Actions logs.
+- Prefer `--transport netlify-api` when the user wants live local progress, resume state, or direct Netlify API control.
+- Prefer `--transport github-actions` when the user wants remote reproducibility and GitHub Actions logs.
 - Warn that local uncommitted/unpushed changes are invisible to remote Netlify agent runners.
 - Use `--branch '#123'` for PR-specific runs when the user references a PR number.
 - Use `--step` only for deliberate partial reruns; otherwise resume/redrive saved Netlify API state.

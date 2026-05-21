@@ -28,13 +28,13 @@ function runState(tmp, overrides = {}) {
     updatedAt: overrides.updatedAt || '2026-05-12T00:00:00.000Z',
     options: {},
     steps: overrides.steps || [],
-    dir: path.join(tmp, '.nax', 'runs', runId),
+    dir: path.join(tmp, '.nax', 'workflows', runId),
   }
 }
 
 function writeRunState(state) {
   fs.mkdirSync(state.dir, { recursive: true })
-  fs.writeFileSync(path.join(state.dir, 'run.json'), JSON.stringify(state, null, 2) + '\n')
+  fs.writeFileSync(path.join(state.dir, 'workflow.json'), JSON.stringify(state, null, 2) + '\n')
   return state
 }
 
@@ -119,6 +119,26 @@ test('findLatestUnfinishedRun can filter by transport', () => {
   assert.equal(findLatestUnfinishedRun(tmp, { flowId: 'review' }).runId, 'github-run')
   assert.equal(findLatestUnfinishedRun(tmp, { flowId: 'review', transport: 'netlify-api' }).runId, 'local-run')
   assert.equal(findLatestUnfinishedRun(tmp, { flowId: 'review', transport: 'local' }).runId, 'local-run')
+})
+
+test('listRunStates migrates legacy .nax/runs state to .nax/workflows once', () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'nax-run-state-legacy-test-'))
+  const legacyDir = path.join(tmp, '.nax', 'runs', 'legacy-run')
+  fs.mkdirSync(legacyDir, { recursive: true })
+  const state = {
+    ...runState(tmp, {
+      runId: 'legacy-run',
+      steps: [{ id: 'review', status: 'running', runs: [{ runnerId: 'runner-1', status: 'submitted' }] }],
+    }),
+    dir: legacyDir,
+  }
+  fs.writeFileSync(path.join(legacyDir, 'run.json'), JSON.stringify(state, null, 2) + '\n')
+
+  const states = listRunStates(tmp)
+
+  assert.equal(states[0].runId, 'legacy-run')
+  assert.equal(fs.existsSync(path.join(tmp, '.nax', 'runs')), false)
+  assert.equal(fs.existsSync(path.join(tmp, '.nax', 'workflows', 'legacy-run', 'workflow.json')), true)
 })
 
 test('dismissRunState marks unfinished runs ignored by resume detection', () => {

@@ -37,7 +37,7 @@ const {
 const { runGh } = require('../lib/gh-cli')
 const { multiline } = require('../lib/multiline')
 const { WAIT_FOR_AGENT_RESULTS, listFlows, loadFlow, loadStepPrompt } = require('../lib/flows')
-const { createRunState, dismissRunState, findLatestUnfinishedRun, listRunStates, saveRunState } = require('../lib/run-state')
+const { createRunState, dismissRunState, findLatestUnfinishedRun, listRunStates, saveRunState, workflowStatePath } = require('../lib/run-state')
 const {
   artifactsRootForRunState,
   persistRunArtifact,
@@ -46,6 +46,9 @@ const {
   writeGithubStepSummary,
 } = require('../lib/workflow-artifacts')
 const { clearTrackedRunState, trackRunState } = require('../lib/graceful-run-state')
+const { persistAgentRunnerArtifact } = require('../lib/agent-runner-artifacts')
+const { persistAgentSessionArtifact } = require('../lib/agent-session-artifacts')
+const { listHandoffSources, readHandoffSource, relativeDisplayPath } = require('../lib/handoff-sources')
 const {
   PROVIDER_DIRS,
   checkSkills,
@@ -303,7 +306,7 @@ function normalizeOptionAliases(resolved) {
   if (resolved.force && resolved.yes !== true) {
     resolved.yes = true
   }
-  if (resolved.where && !resolved.transport) {
+  if (resolved.where && (!resolved.transport || resolved.transport === 'auto')) {
     resolved.transport = resolved.where
   }
   return resolved
@@ -944,55 +947,52 @@ function formatRunTimestamp(value) {
   return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}`
 }
 
-function runHasFinalArtifact(state) {
-  const final = finalRunForRunState(state)
-  if (!final) return false
-  const { run } = final
-  return Boolean(run.commentUrl || run.issueUrl || run.runnerId || run.deployUrl || run.prUrl)
-}
-
 async function handleRecent(options) {
   const projectRoot = options.projectRoot || process.cwd()
-  const all = listRunStates(projectRoot)
-  const usable = all.filter(runHasFinalArtifact)
-  if (usable.length === 0) {
-    if (all.length === 0) {
-      console.log('No runs found in .nax/runs/.')
-    } else {
-      console.log('No completed runs with a final artifact found.')
-    }
+  const requestedType = options.type || 'all'
+  const sources = listHandoffSources(projectRoot)
+    .filter((source) => requestedType === 'all' || source.kind === requestedType)
+  if (sources.length === 0) {
+    console.log(`No completed nax artifacts found under ${path.join(projectRoot, '.nax')}.`)
     return
   }
   const limit = Number.parseInt(options.limit || '25', 10)
-  const choices = usable.slice(0, limit)
+  const choices = sources.slice(0, limit)
 
   let selected
   if (options.runId) {
-    selected = choices.find((state) => state.runId === options.runId) || null
+    selected = choices.find((source) => source.id === options.runId) || null
     if (!selected) {
-      throw new Error(`No run found with id "${options.runId}"`)
+      throw new Error(`No artifact source found with id "${options.runId}"`)
     }
   } else {
     const clack = require('@clack/prompts')
     const picked = await clack.select({
-      message: 'Pick a recent run',
-      options: choices.map((state) => ({
-        value: state.runId,
-        label: `${formatRunTimestamp(state.updatedAt || state.createdAt)}  ${state.flowTitle || state.flowId} (${state.transport})`,
-        hint: state.runId,
+      message: 'Pick a recent artifact',
+      options: choices.map((source) => ({
+        value: `${source.kind}:${source.id}`,
+        label: `${formatRunTimestamp(source.updatedAt)}  ${source.title}`,
+        hint: `${source.kind} · ${source.id}`,
       })),
     })
     if (clack.isCancel(picked)) return
-    selected = choices.find((state) => state.runId === picked)
+    const [kind, ...idParts] = String(picked).split(':')
+    const id = idParts.join(':')
+    selected = choices.find((source) => source.kind === kind && source.id === id)
     if (!selected) return
   }
 
-  printSuccessBox({
-    flow: { title: selected.flowTitle || selected.flowId },
-    runState: selected,
-    transport: selected.transport,
-    projectRoot: selected.projectRoot || projectRoot,
-  })
+  if (selected.kind === 'workflow') {
+    printSuccessBox({
+      flow: { title: selected.source.flowTitle || selected.source.flowId },
+      runState: selected.source,
+      transport: selected.source.transport,
+      projectRoot: selected.source.projectRoot || projectRoot,
+    })
+    return
+  }
+  console.log(`${selected.kind}: ${selected.id}`)
+  console.log(`Summary: ${relativeDisplayPath(projectRoot, selected.summaryPath)}`)
 }
 
 async function handlePreviewSpinner(options) {
@@ -1033,7 +1033,7 @@ async function promptForOptionalHandoffInstructions() {
   return String(value || '').trim()
 }
 
-async function runFreshHandoffAgent({ projectRoot, agent, promptText, summaryDisplayPath, options = {} }) {
+async function runFreshHandoffAgent({ projectRoot, agent, promptText, summaryDisplayPath, source, options = {} }) {
   const branch = options.branch || currentGitBranch(projectRoot)
   const netlify = buildNetlifyEnv({ projectRoot })
   const run = {
@@ -1104,6 +1104,30 @@ async function runFreshHandoffAgent({ projectRoot, agent, promptText, summaryDis
       },
     })
     addLocalRunLinks(completed, projectRoot)
+    const artifactSource = {
+      type: 'handoff',
+      priorSourceKind: source?.kind || 'workflow',
+      priorSourceId: source?.id || '',
+      priorSummaryPath: summaryDisplayPath,
+    }
+    const sessionArtifact = persistAgentSessionArtifact({
+      projectRoot,
+      run: completed,
+      source: artifactSource,
+      createdAt: completed.createdAt || new Date().toISOString(),
+      updatedAt: completed.updatedAt || new Date().toISOString(),
+    })
+    const runnerArtifact = persistAgentRunnerArtifact({
+      projectRoot,
+      runnerId: completed.runnerId,
+      agent: completed.agent,
+      status: completed.status,
+      session: sessionArtifact?.session || null,
+      source: artifactSource,
+      links: completed.links || {},
+      createdAt: completed.createdAt || new Date().toISOString(),
+      updatedAt: completed.updatedAt || new Date().toISOString(),
+    })
     reporter.updateRun({
       run: completed,
       state: completed.status,
@@ -1120,6 +1144,21 @@ async function runFreshHandoffAgent({ projectRoot, agent, promptText, summaryDis
     settled = true
     const url = completed.links?.sessionUrl || completed.links?.agentRunUrl || ''
     if (url) console.log(`Result: ${url}`)
+    if (sessionArtifact?.dir || runnerArtifact?.dir) {
+      console.log('')
+      if (sessionArtifact?.dir) console.log(`Session artifacts: ${sessionArtifact.dir}`)
+      if (runnerArtifact?.dir) console.log(`Runner artifacts:  ${runnerArtifact.dir}`)
+      if (sessionArtifact?.dir && process.stdout.isTTY) {
+        const summaryPath = path.join(sessionArtifact.dir, 'summary.md')
+        console.log('')
+        console.log(`The result from this agent session is in ${relativeDisplayPath(projectRoot, summaryPath)}`)
+        console.log('')
+        console.log('Hand it off again with:')
+        console.log('')
+        console.log('nax handoff')
+        console.log('')
+      }
+    }
   } finally {
     if (!settled) reporter.fail('Handoff failed')
   }
@@ -1147,11 +1186,12 @@ async function handleHandoff(runId, options) {
         agent: options.agent,
         promptText,
         summaryDisplayPath: handoff.displayPath,
+        source: handoff,
         options,
       })
       return
     }
-    console.log(`Including prior workflow summary:\n${handoff.displayPath}`)
+    console.log(`Including prior results summary:\n${handoff.displayPath}`)
     await handleRun(options.flow, {
       ...options,
       projectRoot,
@@ -1161,6 +1201,7 @@ async function handleHandoff(runId, options) {
   }
 
   if (!process.stdin.isTTY) {
+    console.log(`Source: ${handoff.kind || 'workflow'}`)
     console.log(`Summary: ${handoff.displayPath}`)
     console.log('Run `nax handoff` in a TTY to copy it or start another agent run.')
     return
@@ -1168,10 +1209,10 @@ async function handleHandoff(runId, options) {
 
   const clack = require('@clack/prompts')
   const action = await clack.select({
-    message: 'Hand off workflow results',
+    message: 'Hand off previous results',
     options: [
-      { value: 'copy', label: 'Copy previous AI workflow results to clipboard', hint: handoff.displayPath },
-      { value: 'start', label: 'Start a new AI workflow run with previous results' },
+      { value: 'copy', label: 'Copy previous results to clipboard', hint: `${handoff.kind || 'workflow'} · ${handoff.displayPath}` },
+      { value: 'start', label: 'Start a new agent session with previous results', hint: handoff.kind || 'workflow' },
       { value: 'cancel', label: 'Cancel' },
     ],
   })
@@ -1209,6 +1250,7 @@ async function handleHandoff(runId, options) {
       agent,
       promptText,
       summaryDisplayPath: handoff.displayPath,
+      source: handoff,
       options,
     })
     return
@@ -1216,7 +1258,7 @@ async function handleHandoff(runId, options) {
 
   const flowId = options.flow || await pickFlowInteractively()
   if (clack.isCancel(flowId)) return
-  console.log(`Including prior workflow summary:\n${handoff.displayPath}`)
+  console.log(`Including prior results summary:\n${handoff.displayPath}`)
   await handleRun(flowId, {
     ...options,
     projectRoot,
@@ -1587,28 +1629,34 @@ function findRunStateForHandoff(projectRoot, { runId } = {}) {
   const states = listRunStates(projectRoot)
   if (runId) {
     const matched = states.find((state) => state.runId === runId)
-    if (!matched) throw new Error(`Could not find run state ${runId} under ${path.join(projectRoot, '.nax', 'runs')}.`)
+    if (!matched) throw new Error(`Could not find workflow ${runId} under ${path.join(projectRoot, '.nax', 'workflows')}.`)
     return matched
   }
   return states[0] || null
 }
 
 function readHandoffSummary({ projectRoot, runId } = {}) {
-  const runState = findRunStateForHandoff(projectRoot, { runId })
-  if (!runState) throw new Error(`No nax runs found under ${path.join(projectRoot, '.nax', 'runs')}.`)
-  persistWorkflowArtifacts(runState, { summaryOnly: true })
-  const summaryPath = handoffSummaryPath(runState)
-  if (!summaryPath || !fs.existsSync(summaryPath)) {
-    throw new Error(`Run ${runState.runId} does not have a handoff summary yet.`)
+  if (runId) {
+    const runState = findRunStateForHandoff(projectRoot, { runId })
+    if (!runState) throw new Error(`No nax workflows found under ${path.join(projectRoot, '.nax', 'workflows')}.`)
+    persistWorkflowArtifacts(runState, { summaryOnly: true })
+    const summaryPath = handoffSummaryPath(runState)
+    if (!summaryPath || !fs.existsSync(summaryPath)) {
+      throw new Error(`Workflow ${runState.runId} does not have a handoff summary yet.`)
+    }
+    const summaryText = fs.readFileSync(summaryPath, 'utf8').trim()
+    if (!summaryText) throw new Error(`Workflow ${runState.runId} has an empty handoff summary.`)
+    return {
+      kind: 'workflow',
+      id: runState.runId,
+      title: runState.flowTitle || runState.flowId || runState.runId,
+      runState,
+      summaryPath,
+      displayPath: relativeHandoffPath(projectRoot, summaryPath),
+      summaryText,
+    }
   }
-  const summaryText = fs.readFileSync(summaryPath, 'utf8').trim()
-  if (!summaryText) throw new Error(`Run ${runState.runId} has an empty handoff summary.`)
-  return {
-    runState,
-    summaryPath,
-    displayPath: relativeHandoffPath(projectRoot, summaryPath),
-    summaryText,
-  }
+  return readHandoffSource(projectRoot)
 }
 
 function buildHandoffPrompt({ instructions = '', summaryPath = '', summaryText = '' } = {}) {
@@ -1617,7 +1665,7 @@ function buildHandoffPrompt({ instructions = '', summaryPath = '', summaryText =
       ? ['# Additional Instructions', '', String(instructions).trim()].join('\n')
       : '',
     [
-      '# Prior Workflow Summary',
+      '# Prior Results Summary',
       '',
       summaryPath ? `Source: ${summaryPath}` : '',
       '',
@@ -2811,7 +2859,7 @@ async function resumeLocalFlow({ flow, runState, projectRoot }) {
   if (stepState && stepState.runs?.some(shouldPollLocalRun)) {
     console.log(`Resuming ${runState.runId}`)
     console.log(`Flow: ${flow.title}`)
-    console.log(`State: ${path.join(runState.dir, 'run.json')}`)
+    console.log(`State: ${workflowStatePath(runState.dir)}`)
     console.log(`Repair and continue: ${step.title}`)
     await completeLocalStep({ runState, stepState, step, options, projectRoot, netlify, initialDelayMs: 0 })
     completedStepStates.set(step.id, stepState)
@@ -2859,7 +2907,7 @@ async function resumeGithubFlow({ flow, runState }) {
   if (stepState && stepState.runs?.some(shouldPollGithubRun)) {
     console.log(`Resuming ${runState.runId}`)
     console.log(`Flow: ${flow.title}`)
-    console.log(`State: ${path.join(runState.dir, 'run.json')}`)
+    console.log(`State: ${workflowStatePath(runState.dir)}`)
     console.log(`Repair and continue: ${step.title}`)
     await completeGithubStep({ runState, repo, stepState, step, options })
     completedStepStates.set(step.id, stepState)
@@ -2892,7 +2940,7 @@ function findRunStateForRedrive(projectRoot, { runId, flowId, stepId, agent } = 
   const states = listRunStates(projectRoot)
   if (runId) {
     const matched = states.find((state) => state.runId === runId)
-    if (!matched) throw new Error(`Could not find run state ${runId} under ${path.join(projectRoot, '.nax', 'runs')}.`)
+    if (!matched) throw new Error(`Could not find workflow ${runId} under ${path.join(projectRoot, '.nax', 'workflows')}.`)
     return matched
   }
   const matched = states.find((state) => {
@@ -3110,7 +3158,7 @@ async function handleRun(flowId, options) {
   console.log(`Flow: ${configuredFlow.title}`)
   console.log(`Transport: ${transport}`)
   console.log(`Branch: ${configuredOptions.branch}`)
-  console.log(`State: ${path.join(runState.dir, 'run.json')}`)
+  console.log(`State: ${workflowStatePath(runState.dir)}`)
 
   try {
     if (isNetlifyApiTransport(transport)) {
@@ -3290,7 +3338,8 @@ function buildProgram() {
     .argument('[workflow]', 'Workflow to run, e.g. review')
     .option('--repo <owner/name>', 'GitHub repo; defaults to gh repo view')
     .option('--branch <branch-or-pr>', 'Git branch or PR number to run in Netlify agent runners')
-    .option('--where <place>', 'Where to run: auto, github-actions, netlify-api, local-machine', 'auto')
+    .option('--transport <transport>', 'Transport to use: auto, github-actions, netlify-api, local-machine', 'auto')
+    .addOption(new Option('--where <place>', 'Hidden compatibility alias for --transport').hideHelp())
     .option('--dry', 'Preview the workflow without creating issues/comments')
     .addOption(new Option('--dry-run', 'Hidden compatibility alias for --dry').hideHelp())
     .option('--force', 'Skip confirmation prompts')
@@ -3321,7 +3370,8 @@ function buildProgram() {
   program
     .command('run [flow]')
     .description('Run a multi-step workflow')
-    .option('--where <place>', 'Where to run: auto, github-actions, netlify-api, local-machine', 'auto')
+    .option('--transport <transport>', 'Transport to use: auto, github-actions, netlify-api, local-machine', 'auto')
+    .addOption(new Option('--where <place>', 'Hidden compatibility alias for --transport').hideHelp())
     .option('--project-root <path>', 'Project root for flow execution')
     .option('--repo <owner/name>', 'GitHub repo; defaults to gh repo view')
     .option('--branch <branch-or-pr>', 'Git branch or PR number to run in Netlify agent runners')
@@ -3352,7 +3402,7 @@ function buildProgram() {
   program
     .command('redrive [run-id]')
     .description('Retry one failed Netlify API agent run with a compact prompt and continue the workflow')
-    .option('--project-root <path>', 'Project root containing .nax/runs')
+    .option('--project-root <path>', 'Project root containing .nax workflows and agent artifacts')
     .option('--flow <id>', 'Flow id filter when run id is omitted')
     .option('--step <id>', 'Failed step id to redrive')
     .option('--agent <name>', 'Failed agent to redrive, e.g. claude')
@@ -3361,13 +3411,14 @@ function buildProgram() {
 
   program
     .command('handoff [run-id]')
-    .description('Copy or continue from the latest workflow artifact summary')
-    .option('--project-root <path>', 'Project root containing .nax/runs')
-    .option('--run-id <id>', 'Run id to hand off; defaults to the latest .nax run')
+    .description('Copy or continue from the latest workflow, agent runner, or agent session summary')
+    .option('--project-root <path>', 'Project root containing .nax workflows and agent artifacts')
+    .option('--run-id <id>', 'Workflow run id to hand off')
     .option('--copy', 'Copy the summary to the clipboard and exit')
     .option('--agent <name>', 'Agent for a fresh handoff run, e.g. codex')
     .option('--flow <id>', 'Workflow id to run with the summary as context')
-    .option('--where <place>', 'Where to run chained workflows: auto, github-actions, netlify-api, local-machine', 'auto')
+    .option('--transport <transport>', 'Transport for chained workflows: auto, github-actions, netlify-api, local-machine', 'auto')
+    .addOption(new Option('--where <place>', 'Hidden compatibility alias for --transport').hideHelp())
     .option('--branch <branch-or-pr>', 'Git branch or PR number to run in Netlify agent runners')
     .option('--context <text>', 'Additional context prepended before the handoff summary')
     .option('--timeout-minutes <count>', 'Minutes to wait for each Netlify API step or fresh handoff run', '25')
@@ -3447,9 +3498,10 @@ function buildProgram() {
 
   program
     .command('recent')
-    .description('Pick a recent run and reprint its final success box')
-    .option('--run-id <id>', 'Skip the picker and re-render a specific run id')
-    .option('--limit <n>', 'Maximum runs to show in the picker', '25')
+    .description('Pick a recent workflow, agent runner, or agent session artifact')
+    .option('--run-id <id>', 'Skip the picker and show a specific artifact id')
+    .option('--type <kind>', 'Filter by workflow, agent-runner, agent-session, or all', 'all')
+    .option('--limit <n>', 'Maximum artifacts to show in the picker', '25')
     .action((options, command) => handleRecent(actionOptions(options, command)))
 
   program

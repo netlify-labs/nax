@@ -11,7 +11,7 @@ function tmpRoot() {
 }
 
 function writeRunState(projectRoot, runId, overrides = {}) {
-  const dir = path.join(projectRoot, '.nax', 'runs', runId)
+  const dir = path.join(projectRoot, '.nax', 'workflows', runId)
   fs.mkdirSync(dir, { recursive: true })
   const state = {
     schemaVersion: 1,
@@ -39,7 +39,7 @@ function writeRunState(projectRoot, runId, overrides = {}) {
     dir,
     ...overrides,
   }
-  fs.writeFileSync(path.join(dir, 'run.json'), `${JSON.stringify(state, null, 2)}\n`)
+  fs.writeFileSync(path.join(dir, 'workflow.json'), `${JSON.stringify(state, null, 2)}\n`)
   return state
 }
 
@@ -199,8 +199,9 @@ test('handoff helpers default to the latest run summary', () => {
   assert.equal(latest.runId, 'newer')
 
   const handoff = _private.readHandoffSummary({ projectRoot })
-  assert.equal(handoff.runState.runId, 'newer')
-  assert.equal(handoff.displayPath, '.nax/runs/newer/artifacts/summary.md')
+  assert.equal(handoff.id, 'newer')
+  assert.equal(handoff.kind, 'workflow')
+  assert.equal(handoff.displayPath, '.nax/workflows/newer/artifacts/summary.md')
   assert.match(handoff.summaryText, /# Do Next/)
   assert.match(handoff.summaryText, /Final result/)
 })
@@ -208,13 +209,13 @@ test('handoff helpers default to the latest run summary', () => {
 test('buildHandoffPrompt inlines instructions and summary contents', () => {
   const prompt = _private.buildHandoffPrompt({
     instructions: 'Focus on the next smallest task.',
-    summaryPath: '.nax/runs/latest/artifacts/summary.md',
+    summaryPath: '.nax/workflows/latest/artifacts/summary.md',
     summaryText: '# Summary\n\nDone.',
   })
 
   assert.match(prompt, /# Additional Instructions/)
   assert.match(prompt, /Focus on the next smallest task\./)
-  assert.match(prompt, /Source: \.nax\/runs\/latest\/artifacts\/summary\.md/)
+  assert.match(prompt, /Source: \.nax\/workflows\/latest\/artifacts\/summary\.md/)
   assert.match(prompt, /# Summary\n\nDone\./)
 })
 
@@ -238,7 +239,7 @@ test('success handoff hint is TTY-only and points at the summary file', () => {
     }
   }
 
-  assert.match(lines.join('\n'), /\.nax\/runs\/newer\/artifacts\/summary\.md/)
+  assert.match(lines.join('\n'), /\.nax\/workflows\/newer\/artifacts\/summary\.md/)
   assert.match(lines.join('\n'), /nax handoff/)
 })
 

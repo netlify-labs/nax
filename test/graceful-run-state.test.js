@@ -25,12 +25,12 @@ function runState(tmp, overrides = {}) {
     steps: overrides.steps || [
       { id: 'ideate', status: 'running', runs: [{ runnerId: 'runner-1', status: 'submitted' }] },
     ],
-    dir: path.join(tmp, '.nax', 'runs', runId),
+    dir: path.join(tmp, '.nax', 'workflows', runId),
   }
 }
 
 function readSaved(state) {
-  return JSON.parse(fs.readFileSync(path.join(state.dir, 'run.json'), 'utf8'))
+  return JSON.parse(fs.readFileSync(path.join(state.dir, 'workflow.json'), 'utf8'))
 }
 
 test('persistActiveRunState marks an active run interrupted and preserves step status', () => {

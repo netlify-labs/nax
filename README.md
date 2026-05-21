@@ -50,8 +50,8 @@ nax review --dry --force
 nax review
 
 # Run a specific branch or PR, non-interactively
-nax review --branch fix/auth --where github-actions --force
-nax review --branch '#123' --where netlify-api --force
+nax review --branch fix/auth --transport github-actions --force
+nax review --branch '#123' --transport netlify-api --force
 
 # Re-run just one step
 nax review --step cross-review
@@ -68,7 +68,7 @@ The built-in `do-next` flow asks each model to recommend the next development ta
 
 ```bash
 nax do-next
-nax do-next --branch '#123' --where netlify-api --force
+nax do-next --branch '#123' --transport netlify-api --force
 ```
 
 ## Install
@@ -124,7 +124,7 @@ What it does:
 | Desktop notifications | n/a | macOS only (`--notify`) |
 | Resume after interruption | Re-run the issue | `nax` offers to resume the unfinished Netlify API run |
 
-`--where auto` (default) prefers `github-actions` if both are configured. Pass `--where netlify-api` to force Netlify API orchestration. `local-machine` remains as a backwards-compatible alias.
+`--transport auto` (default) prefers `github-actions` if both are configured. Pass `--transport netlify-api` to force Netlify API orchestration. `local-machine` remains as a backwards-compatible alias.
 
 ## Commands
 

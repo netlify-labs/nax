@@ -45,23 +45,31 @@ jobs:
 
       - run: npm ci
       - run: npm install -g netlify-cli
-      - run: node bin/nax.js run "$NAX_FLOW" --where netlify-api --repo "$GITHUB_REPOSITORY" --branch "$BRANCH" --force --timeout-minutes 60
+      - run: node bin/nax.js run "$NAX_FLOW" --transport netlify-api --repo "$GITHUB_REPOSITORY" --branch "$BRANCH" --force --timeout-minutes 60
       - name: Inspect nax run artifacts
         if: always()
         run: |
-          if [ ! -d .nax/runs ]; then
-            echo "No .nax/runs directory found."
+          if [ ! -d .nax ]; then
+            echo "No .nax directory found."
             exit 0
           fi
 
-          echo "NAX run directories:"
-          find .nax/runs -mindepth 1 -maxdepth 1 -type d -print | sort
+          echo "NAX workflow directories:"
+          find .nax/workflows -mindepth 1 -maxdepth 1 -type d -print 2>/dev/null | sort || true
+
+          echo ""
+          echo "NAX agent runner directories:"
+          find .nax/agent-runners -mindepth 1 -maxdepth 1 -type d -print 2>/dev/null | sort || true
+
+          echo ""
+          echo "NAX agent session directories:"
+          find .nax/agent-sessions -mindepth 1 -maxdepth 1 -type d -print 2>/dev/null | sort || true
 
           echo ""
           echo "NAX artifact files:"
-          find .nax/runs -path '*/artifacts/*' -type f -print | sort || true
+          find .nax -type f -print | sort || true
 
-          latest_summary="$(find .nax/runs -path '*/artifacts/summary.md' -type f -print | sort | tail -n 1)"
+          latest_summary="$(find .nax -path '*/summary.md' -type f -print | sort | tail -n 1)"
           if [ -n "$latest_summary" ]; then
             echo ""
             echo "Latest artifact summary: $latest_summary"
@@ -77,8 +85,10 @@ jobs:
         with:
           name: nax-${{ github.event.inputs.flow || 'review' }}-${{ github.run_id }}
           path: |
-            .nax/runs/**/run.json
-            .nax/runs/**/artifacts/**
+            .nax/workflows/**/workflow.json
+            .nax/workflows/**/artifacts/**
+            .nax/agent-runners/**
+            .nax/agent-sessions/**
           if-no-files-found: ignore
           include-hidden-files: true
           retention-days: 30

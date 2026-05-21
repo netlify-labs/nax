@@ -88,6 +88,12 @@ test('stepDirectoryName uses zero-padded execution ordinal', () => {
 
 test('persistWorkflowArtifacts writes summaries, usage, step files, and agent files', () => {
   const state = sampleRunState()
+  state.steps[0].runs[0].rawResult = {
+    latestSession: {
+      created_at: '2026-05-20T20:40:00.000Z',
+      done_at: '2026-05-20T20:45:00.000Z',
+    },
+  }
 
   const root = persistWorkflowArtifacts(state)
 
@@ -128,6 +134,10 @@ test('persistWorkflowArtifacts writes summaries, usage, step files, and agent fi
   assert.equal(agent.runnerId, 'runner-claude')
   assert.equal(agent.attemptNumber, 1)
   assert.equal(agent.links.sessionUrl, 'https://app.netlify.com/projects/site/agent-runs/runner-claude?session=session-claude')
+
+  const canonicalSession = readJson(path.join(state.projectRoot, '.nax', 'agent-sessions', 'session-claude', 'agent-session.json'))
+  assert.equal(canonicalSession.createdAt, '2026-05-20T20:40:00.000Z')
+  assert.equal(canonicalSession.updatedAt, '2026-05-20T20:45:00.000Z')
 })
 
 test('persistRunArtifact appends immutable attempts and refreshes latest copy', () => {

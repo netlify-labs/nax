@@ -1330,7 +1330,7 @@ async function chooseTransportInteractively({ requested, projectRoot }) {
   }
 
   const selected = await clack.select({
-    message: 'Where do you want to run the workflow?',
+    message: 'Where should nax orchestrate this workflow?',
     options: available.map((transport) => ({
       value: transport.id,
       label: transport.title,
@@ -1785,7 +1785,7 @@ async function prepareInteractiveFlowRun({ flow, options, transport, projectRoot
   })
 
   const confirmed = await clack.confirm({
-    message: 'Start this agent workflow?',
+    message: `Start the "${configuredFlow.title}" agent workflow?`,
     initialValue: true,
   })
   if (clack.isCancel(confirmed)) process.exit(0)
@@ -2103,7 +2103,7 @@ function formatUsageLogLine(usage) {
 
 function formatTtyProgressRow(row, { nameWidth, frame, orchestrator = DEFAULT_ORCHESTRATOR } = {}) {
   const name = titleCase(row.agent).padEnd(nameWidth, ' ')
-  if (row.status === 'completed') return `✓ ${name} · 🟢 complete`
+  if (row.status === 'completed') return `✓ ${name} · 🟢 complete${row.url ? ` - ${row.url}` : ''}`
   if (row.status === 'failed') return `✖ ${name} · failed${row.message ? ` · ${row.message}` : ''}`
   const icon = STEP_SPINNER_FRAMES[frame % STEP_SPINNER_FRAMES.length]
   const label = row.message || `${row.emoji} ${orchestrator}'s ${titleCase(row.agent)} ${row.phrase}`
@@ -2227,6 +2227,7 @@ function makeStepProgressReporter({
     frame += 1
     writeLines(renderLines())
   }
+  process.stdout.write('\n')
   writeLines(renderLines())
   const timer = setInterval(redraw, 180)
   timer.unref?.()
@@ -2259,12 +2260,15 @@ function makeStepProgressReporter({
       if (event.terminalSuccess || event.run?.status === 'completed') {
         row.status = 'completed'
         row.message = ''
+        row.url = event.run?.links?.sessionUrl || event.run?.links?.agentRunUrl || ''
       } else if (event.terminalFailure || event.run?.status === 'failed' || event.run?.status === 'timeout') {
         row.status = 'failed'
         row.message = event.error || event.run?.resultText || event.state || ''
+        row.url = ''
       } else {
         row.status = 'running'
         row.message = event.retry ? 'retrying once after transient capacity error' : ''
+        row.url = ''
       }
       redraw()
     },

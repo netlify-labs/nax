@@ -64,8 +64,8 @@ test('detectTransports returns github and netlify-api entries', () => {
 
 test('formatTransportSetupHelp includes setup steps for both transports', () => {
   const help = formatTransportSetupHelp([
-    { id: 'github', title: 'In GitHub Actions', reason: 'No workflow detected.' },
-    { id: 'netlify-api', title: 'Via Netlify API locally on this machine', reason: 'No site context.' },
+    { id: 'github', title: 'GitHub Actions via agent-runner-action', reason: 'No workflow detected.' },
+    { id: 'netlify-api', title: 'This machine via the Netlify API', reason: 'No site context.' },
   ])
   assert.match(help, /To run in GitHub Actions:/)
   assert.match(help, /netlify-labs\/agent-runner-action/)

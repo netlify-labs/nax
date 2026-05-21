@@ -172,12 +172,13 @@ test('TTY progress rows show a green complete status', () => {
   const line = _private.formatTtyProgressRow({
     agent: 'codex',
     status: 'completed',
+    url: 'https://app.netlify.com/projects/netlify-agent-executor/agent-runs/runner-1?session=session-1',
   }, {
     nameWidth: 6,
     frame: 0,
   })
 
-  assert.equal(line, '✓ Codex  · 🟢 complete')
+  assert.equal(line, '✓ Codex  · 🟢 complete - https://app.netlify.com/projects/netlify-agent-executor/agent-runs/runner-1?session=session-1')
 })
 
 test('nextLocalStepMessage describes the immediate transition after a local step', () => {

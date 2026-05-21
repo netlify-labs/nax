@@ -39,7 +39,7 @@ function writeWorkflow(projectRoot, runId, updatedAt) {
   return state
 }
 
-test('readHandoffSource prefers completed agent sessions over runners and workflows', () => {
+test('readHandoffSource defaults to the newest completed source', () => {
   const projectRoot = tmpRoot()
   writeWorkflow(projectRoot, 'workflow-1', '2026-05-20T22:00:00.000Z')
   const session = persistAgentSessionArtifact({
@@ -50,9 +50,24 @@ test('readHandoffSource prefers completed agent sessions over runners and workfl
   persistAgentRunnerArtifact({ projectRoot, runnerId: 'runner-1', session: session.session })
 
   const source = readHandoffSource(projectRoot)
+  assert.equal(source.kind, 'workflow')
+  assert.equal(source.id, 'workflow-1')
+  assert.equal(source.displayPath, '.nax/workflows/workflow-1/artifacts/summary.md')
+})
+
+test('readHandoffSource uses a newer standalone agent session when it is newest', () => {
+  const projectRoot = tmpRoot()
+  writeWorkflow(projectRoot, 'workflow-1', '2026-05-20T20:00:00.000Z')
+  const session = persistAgentSessionArtifact({
+    projectRoot,
+    run: { agent: 'codex', status: 'completed', runnerId: 'runner-1', sessionId: 'session-1', resultText: 'Session result.' },
+    updatedAt: '2026-05-20T22:00:00.000Z',
+  })
+  persistAgentRunnerArtifact({ projectRoot, runnerId: 'runner-1', session: session.session })
+
+  const source = readHandoffSource(projectRoot)
   assert.equal(source.kind, 'agent-session')
   assert.equal(source.id, 'session-1')
-  assert.equal(source.displayPath, '.nax/agent-sessions/session-1/summary.md')
 })
 
 test('readHandoffSource can select an explicit workflow source', () => {
@@ -67,6 +82,20 @@ test('readHandoffSource can select an explicit workflow source', () => {
   const source = readHandoffSource(projectRoot, { kind: 'workflow', id: 'workflow-1' })
   assert.equal(source.kind, 'workflow')
   assert.equal(source.id, 'workflow-1')
+})
+
+test('listHandoffSources refreshes workflow summaries without moving latest symlink', () => {
+  const projectRoot = tmpRoot()
+  writeWorkflow(projectRoot, 'newer-workflow', '2026-05-20T22:00:00.000Z')
+  writeWorkflow(projectRoot, 'older-workflow', '2026-05-20T20:00:00.000Z')
+  const latest = path.join(projectRoot, '.nax', 'workflows', 'latest')
+  fs.rmSync(latest, { recursive: true, force: true })
+  fs.symlinkSync('newer-workflow', latest, 'dir')
+
+  const sources = listHandoffSources(projectRoot)
+
+  assert.equal(sources.some((source) => source.id === 'newer-workflow'), true)
+  assert.equal(fs.readlinkSync(latest), 'newer-workflow')
 })
 
 test('listHandoffSources excludes incomplete sources', () => {

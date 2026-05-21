@@ -1,4 +1,4 @@
-name: Run NAX
+name: Run Agent Workflow
 
 on:
   workflow_dispatch:
@@ -7,11 +7,11 @@ on:
         description: NAX flow to run
         type: choice
         required: true
-        default: review
+        default: review - Review, cross-review, and synthesize findings
         options:
-          - review
-          - ideas
-          - do-next
+          - review - Review, cross-review, and synthesize findings
+          - ideas - Generate and score product ideas
+          - do-next - Recommend the next development task
   pull_request:
     types: [opened, synchronize, reopened]
 
@@ -20,7 +20,7 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  runAIAgentWorkflow:
+  runAgentWorkflow:
     if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
     timeout-minutes: 180
@@ -32,11 +32,34 @@ jobs:
       NETLIFY_SITE_ID: ${{ secrets.NETLIFY_SITE_ID }}
       GH_TOKEN: ${{ github.token }}
       BRANCH: ${{ github.head_ref || github.ref_name }}
-      NAX_FLOW: ${{ github.event.inputs.flow || 'review' }}
+      NAX_FLOW_INPUT: ${{ github.event.inputs.flow || 'review' }}
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+
+      - name: Resolve NAX flow
+        id: resolve-flow
+        run: |
+          case "$NAX_FLOW_INPUT" in
+            review|"review - "*)
+              flow="review"
+              ;;
+            ideas|"ideas - "*)
+              flow="ideas"
+              ;;
+            do-next|"do-next - "*)
+              flow="do-next"
+              ;;
+            *)
+              echo "::error::Unknown NAX flow: $NAX_FLOW_INPUT"
+              exit 1
+              ;;
+          esac
+
+          echo "flow=$flow" >> "$GITHUB_OUTPUT"
+          echo "NAX_FLOW=$flow" >> "$GITHUB_ENV"
+          echo "Resolved NAX flow: $flow"
 
       - uses: actions/setup-node@v4
         with:
@@ -83,7 +106,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: nax-${{ github.event.inputs.flow || 'review' }}-${{ github.run_id }}
+          name: nax-${{ steps.resolve-flow.outputs.flow }}-${{ github.run_id }}
           path: |
             .nax/workflows/**/workflow.json
             .nax/workflows/**/artifacts/**

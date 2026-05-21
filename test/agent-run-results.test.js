@@ -3,9 +3,13 @@ const assert = require('node:assert/strict')
 
 const {
   aggregateRunUsage,
+  buildAgentRunnerJson,
+  buildAgentSessionJson,
   formatAgentRunUrl,
   formatAgentRunUrlFromAdminUrl,
+  formatFileChangesSummary,
   formatUsageSummary,
+  normalizeFileChanges,
   normalizeAgentRunResult,
   normalizeGithubRunResult,
   normalizeUsage,
@@ -100,6 +104,50 @@ test('normalizeAgentRunResult produces the canonical local runner result shape',
   assert.equal(normalized.creditLimitExceeded, false)
 })
 
+test('normalizeAgentRunResult preserves Netlify file-change metadata', () => {
+  const normalized = normalizeAgentRunResult({
+    run: { agent: 'codex' },
+    runner: {
+      id: 'runner-1',
+      has_result_diff: false,
+      has_cumulative_diff: true,
+    },
+    session: {
+      id: 'session-1',
+      has_result_diff: true,
+      commit_sha: 'abcdef1234567890',
+      attached_file_keys: ['diff.patch', '', 'summary.json'],
+      result_zip_file_name: 'result.zip',
+    },
+    status: 'completed',
+  })
+
+  assert.deepEqual(normalized.fileChanges, {
+    hasChanges: true,
+    hasSessionDiff: true,
+    hasRunnerDiff: false,
+    hasCumulativeDiff: true,
+    commitSha: 'abcdef1234567890',
+    attachedFileKeys: ['diff.patch', 'summary.json'],
+    resultZipFileName: 'result.zip',
+  })
+})
+
+test('file-change helpers normalize and summarize no-change payloads', () => {
+  assert.deepEqual(normalizeFileChanges({
+    hasChanges: false,
+    hasSessionDiff: false,
+  }), {
+    hasChanges: false,
+    hasSessionDiff: false,
+  })
+  assert.equal(formatFileChangesSummary({
+    hasChanges: true,
+    commitSha: 'abcdef1234567890',
+    attachedFileKeys: ['diff.patch'],
+  }), 'yes, commit abcdef123456, 1 attached file')
+})
+
 test('normalizeAgentRunResult tolerates missing ids and usage', () => {
   const normalized = normalizeAgentRunResult({
     run: {},
@@ -114,6 +162,53 @@ test('normalizeAgentRunResult tolerates missing ids and usage', () => {
   assert.equal(normalized.status, 'running')
   assert.equal(normalized.resultText, '')
   assert.equal(normalized.usage, null)
+})
+
+test('agent session and runner JSON keep normalized file-change metadata', () => {
+  const session = buildAgentSessionJson({
+    run: {
+      agent: 'codex',
+      runnerId: 'runner-1',
+      sessionId: 'session-1',
+      status: 'completed',
+      fileChanges: {
+        hasChanges: true,
+        hasSessionDiff: true,
+        commitSha: 'abcdef1234567890',
+      },
+    },
+  })
+  const runner = buildAgentRunnerJson({
+    runnerId: 'runner-1',
+    sessions: [
+      session,
+      buildAgentSessionJson({
+        run: {
+          agent: 'codex',
+          runnerId: 'runner-1',
+          sessionId: 'session-2',
+          status: 'completed',
+          fileChanges: {
+            hasChanges: false,
+            hasSessionDiff: false,
+            attachedFileKeys: ['artifact.json'],
+          },
+        },
+      }),
+    ],
+  })
+
+  assert.deepEqual(session.fileChanges, {
+    hasChanges: true,
+    hasSessionDiff: true,
+    commitSha: 'abcdef1234567890',
+  })
+  assert.deepEqual(runner.fileChanges, {
+    hasChanges: true,
+    hasSessionDiff: true,
+    commitSha: 'abcdef1234567890',
+    attachedFileKeys: ['artifact.json'],
+  })
 })
 
 test('normalizeGithubRunResult standardizes action marker usage and links', () => {

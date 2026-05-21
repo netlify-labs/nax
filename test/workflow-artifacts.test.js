@@ -37,6 +37,7 @@ function sampleRunState(projectRoot = tmpRoot(), overrides = {}) {
         sessionId: 'session-claude',
         resultText: 'Claude result',
         usage: { totalTokens: 1000, stepsCount: 3, totalCreditsCost: 2.5 },
+        fileChanges: { hasChanges: true, hasSessionDiff: true, commitSha: 'abcdef1234567890' },
         links: {
           sessionUrl: 'https://app.netlify.com/projects/site/agent-runs/runner-claude?session=session-claude',
         },
@@ -133,11 +134,22 @@ test('persistWorkflowArtifacts writes summaries, usage, step files, and agent fi
   assert.equal(agent.resultText, 'Claude result')
   assert.equal(agent.runnerId, 'runner-claude')
   assert.equal(agent.attemptNumber, 1)
+  assert.deepEqual(agent.fileChanges, {
+    hasChanges: true,
+    hasSessionDiff: true,
+    commitSha: 'abcdef1234567890',
+  })
   assert.equal(agent.links.sessionUrl, 'https://app.netlify.com/projects/site/agent-runs/runner-claude?session=session-claude')
+  assert.match(fs.readFileSync(path.join(root, 'steps', '01-review', 'agent-runners', 'claude.md'), 'utf8'), /File changes: yes, commit abcdef123456/)
 
   const canonicalSession = readJson(path.join(state.projectRoot, '.nax', 'agent-sessions', 'session-claude', 'agent-session.json'))
   assert.equal(canonicalSession.createdAt, '2026-05-20T20:40:00.000Z')
   assert.equal(canonicalSession.updatedAt, '2026-05-20T20:45:00.000Z')
+  assert.deepEqual(canonicalSession.fileChanges, {
+    hasChanges: true,
+    hasSessionDiff: true,
+    commitSha: 'abcdef1234567890',
+  })
 })
 
 test('persistRunArtifact appends immutable attempts and refreshes latest copy', () => {

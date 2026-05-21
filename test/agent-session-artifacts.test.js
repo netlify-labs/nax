@@ -29,6 +29,7 @@ test('persistAgentSessionArtifact writes canonical session files', () => {
       sessionId: 'session-1',
       resultText: 'Done.',
       usage: { totalCreditsCost: 1.25, stepsCount: 2, totalTokens: 300 },
+      fileChanges: { hasChanges: true, hasSessionDiff: true, commitSha: 'abcdef1234567890' },
       links: { sessionUrl: 'https://app.netlify.com/projects/site/agent-runs/runner-1?session=session-1' },
     },
     source: { type: 'manual', reason: 'test' },
@@ -47,7 +48,14 @@ test('persistAgentSessionArtifact writes canonical session files', () => {
   assert.equal(session.sessionId, 'session-1')
   assert.equal(session.runnerId, 'runner-1')
   assert.equal(session.source.type, 'manual')
-  assert.match(fs.readFileSync(path.join(dir, 'summary.md'), 'utf8'), /1.25 credits, 2 steps, 300 tokens/)
+  assert.deepEqual(session.fileChanges, {
+    hasChanges: true,
+    hasSessionDiff: true,
+    commitSha: 'abcdef1234567890',
+  })
+  const summary = fs.readFileSync(path.join(dir, 'summary.md'), 'utf8')
+  assert.match(summary, /1.25 credits, 2 steps, 300 tokens/)
+  assert.match(summary, /File changes: yes, commit abcdef123456/)
 })
 
 test('persistAgentSessionArtifact omits result.md when there is no result text', () => {

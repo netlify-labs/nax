@@ -30,6 +30,7 @@ test('persistAgentRunnerArtifact writes a runner thread rollup', () => {
       sessionId: 'session-1',
       resultText: 'First result.',
       usage: { totalCreditsCost: 1, stepsCount: 2, totalTokens: 100 },
+      fileChanges: { hasChanges: false, hasSessionDiff: false },
     },
     updatedAt: '2026-05-20T20:00:00.000Z',
   })
@@ -42,6 +43,7 @@ test('persistAgentRunnerArtifact writes a runner thread rollup', () => {
       sessionId: 'session-2',
       resultText: 'Second result.',
       usage: { totalCreditsCost: 2, stepsCount: 3, totalTokens: 200 },
+      fileChanges: { hasChanges: true, hasSessionDiff: true, attachedFileKeys: ['diff.patch'] },
     },
     updatedAt: '2026-05-20T21:00:00.000Z',
   })
@@ -61,7 +63,14 @@ test('persistAgentRunnerArtifact writes a runner thread rollup', () => {
   assert.equal(runner.latestSessionId, 'session-2')
   assert.deepEqual(runner.sessionIds, ['session-1', 'session-2'])
   assert.deepEqual(runner.usage, { totalCreditsCost: 3, stepsCount: 5, totalTokens: 300 })
-  assert.match(fs.readFileSync(path.join(dir, 'summary.md'), 'utf8'), /session-2/)
+  assert.deepEqual(runner.fileChanges, {
+    hasChanges: true,
+    hasSessionDiff: true,
+    attachedFileKeys: ['diff.patch'],
+  })
+  const summary = fs.readFileSync(path.join(dir, 'summary.md'), 'utf8')
+  assert.match(summary, /session-2/)
+  assert.match(summary, /File changes: yes, 1 attached file/)
 })
 
 test('listAgentRunnerArtifacts returns newest runner threads first', () => {

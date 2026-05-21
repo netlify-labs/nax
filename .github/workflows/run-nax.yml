@@ -41,21 +41,17 @@ jobs:
       - name: Resolve NAX flow
         id: resolve-flow
         run: |
-          case "$NAX_FLOW_INPUT" in
-            review|"review - "*)
-              flow="review"
-              ;;
-            ideas|"ideas - "*)
-              flow="ideas"
-              ;;
-            do-next|"do-next - "*)
-              flow="do-next"
-              ;;
-            *)
-              echo "::error::Unknown NAX flow: $NAX_FLOW_INPUT"
-              exit 1
-              ;;
-          esac
+          flow="${NAX_FLOW_INPUT%% - *}"
+
+          if [ -z "$flow" ]; then
+            echo "::error::Missing NAX flow."
+            exit 1
+          fi
+
+          if [ ! -f "flows/$flow/flow.yml" ] && [ ! -f "flows/$flow/flow.yaml" ] && [ ! -f "flows/$flow/flow.json" ]; then
+            echo "::error::Unknown NAX flow: $NAX_FLOW_INPUT"
+            exit 1
+          fi
 
           echo "flow=$flow" >> "$GITHUB_OUTPUT"
           echo "NAX_FLOW=$flow" >> "$GITHUB_ENV"

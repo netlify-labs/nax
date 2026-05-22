@@ -71,6 +71,25 @@ nax do-next
 nax do-next --branch '#123' --transport netlify-api --force
 ```
 
+## Built-In Flows
+
+| Flow | Use it for |
+|---|---|
+| `review` | Broad multi-agent code review with cross-review and consensus synthesis. |
+| `ideas` | Multi-agent idea generation, adversarial scoring, reactions, and ranked synthesis. |
+| `do-next` | Choosing the single most logical next development task. |
+| `security-audit` | Auth, billing, webhook, tenant isolation, secrets, and attack-surface audits. |
+| `performance-audit` | Bottleneck discovery and measurement-first optimization planning. |
+| `analytics-audit` | Missing funnel, conversion, feature usage, and product telemetry plans. |
+| `seo-audit` | Metadata, crawlability, structured data, links, image alt text, content, and page-speed SEO checks. |
+| `accessibility-audit` | WCAG 2.1 AA audit, synthesized fix plan, and focused Codex implementation. |
+| `mobile-responsiveness` | Small-viewport audit and focused responsive layout fixes. |
+| `e2e-tests` | Critical-flow discovery, Playwright test planning, and first test implementation. |
+| `unit-tests` | High-value unit test gap discovery and focused test implementation. |
+| `documentation` | README, setup, architecture, and contributing docs grounded in the codebase. |
+| `error-handling` | Error boundaries, logging, retries, validation, and user-friendly failure states. |
+| `ux-copy-polish` | Loading/empty/error states, visual polish, CTA hierarchy, and product copy improvements. |
+
 ## Install
 
 This is an unpublished package. Clone and link:

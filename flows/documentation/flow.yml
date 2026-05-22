@@ -1,0 +1,50 @@
+id: documentation
+title: Documentation
+description: Generate or improve README, contributing, and architecture documentation from the codebase.
+
+defaults:
+  transport: auto
+  notify: false
+  agents:
+    - claude
+    - gemini
+    - codex
+
+steps:
+  - id: audit
+    title: Audit Documentation
+    description: Independently compare docs against code and identify missing onboarding material.
+    prompt: prompts/1_audit-docs.md
+    action: issue
+    submit: new-run
+    agents:
+      - claude
+      - gemini
+      - codex
+    waitFor: agent-results
+
+  - id: synthesize
+    title: Synthesize Documentation Plan
+    description: Produce a scoped documentation plan grounded in the repository.
+    prompt: prompts/2_synthesize-docs.md
+    action: issue
+    submit: new-run
+    agents:
+      - codex
+    input:
+      - step: audit
+        results: all
+    waitFor: agent-results
+
+  - id: implement
+    title: Implement Documentation
+    description: Update the most valuable documentation files.
+    prompt: prompts/3_implement-docs.md
+    action: comment
+    submit: follow-up
+    agents:
+      - codex
+    input:
+      - step: synthesize
+        results: all
+    waitFor: agent-results

@@ -1,0 +1,37 @@
+id: performance-audit
+title: Performance Audit
+description: Find likely bottlenecks, measurement gaps, and safe optimization opportunities.
+
+defaults:
+  transport: auto
+  notify: false
+  agents:
+    - claude
+    - gemini
+    - codex
+
+steps:
+  - id: audit
+    title: Audit Performance
+    description: Independently inspect the codebase for performance risks and optimization targets.
+    prompt: prompts/1_audit-performance.md
+    action: issue
+    submit: new-run
+    agents:
+      - claude
+      - gemini
+      - codex
+    waitFor: agent-results
+
+  - id: synthesize
+    title: Synthesize Performance Plan
+    description: Rank performance opportunities by evidence, impact, confidence, and effort.
+    prompt: prompts/2_synthesize-performance.md
+    action: issue
+    submit: new-run
+    agents:
+      - codex
+    input:
+      - step: audit
+        results: all
+    waitFor: agent-results

@@ -1,0 +1,37 @@
+id: analytics-audit
+title: Analytics Audit
+description: Identify missing product, funnel, conversion, and feature telemetry.
+
+defaults:
+  transport: auto
+  notify: false
+  agents:
+    - claude
+    - gemini
+    - codex
+
+steps:
+  - id: audit
+    title: Audit Analytics
+    description: Independently map existing tracking and identify missing high-value events.
+    prompt: prompts/1_audit-analytics.md
+    action: issue
+    submit: new-run
+    agents:
+      - claude
+      - gemini
+      - codex
+    waitFor: agent-results
+
+  - id: synthesize
+    title: Synthesize Analytics Plan
+    description: Produce one tracking plan with event names, properties, and implementation locations.
+    prompt: prompts/2_synthesize-analytics.md
+    action: issue
+    submit: new-run
+    agents:
+      - codex
+    input:
+      - step: audit
+        results: all
+    waitFor: agent-results

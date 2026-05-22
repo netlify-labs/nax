@@ -20,9 +20,25 @@ test('loadFlow reads flow.yml via configorama and normalizes steps', async () =>
 
 test('listFlows discovers flow directories', async () => {
   const flows = await listFlows()
-  assert.ok(flows.some((flow) => flow.id === 'review'))
-  assert.ok(flows.some((flow) => flow.id === 'ideas'))
-  assert.ok(flows.some((flow) => flow.id === 'do-next'))
+  const ids = flows.map((flow) => flow.id)
+  for (const id of [
+    'review',
+    'ideas',
+    'do-next',
+    'security-audit',
+    'performance-audit',
+    'analytics-audit',
+    'seo-audit',
+    'accessibility-audit',
+    'mobile-responsiveness',
+    'e2e-tests',
+    'unit-tests',
+    'documentation',
+    'error-handling',
+    'ux-copy-polish',
+  ]) {
+    assert.ok(ids.includes(id), `expected ${id} to be discovered`)
+  }
 })
 
 test('listFlows orders primary workflows for the picker', async () => {
@@ -59,6 +75,39 @@ test('loadFlow reads ideas workflow', async () => {
   assert.equal(loadStepPrompt(flow, flow.steps[1]).name, 'cross-score')
   assert.equal(loadStepPrompt(flow, flow.steps[2]).name, 'react')
   assert.equal(loadStepPrompt(flow, flow.steps[3]).name, 'synthesize-ideas')
+})
+
+test('loadFlow reads added domain workflows', async () => {
+  const expected = new Map([
+    ['security-audit', ['audit', 'synthesize']],
+    ['performance-audit', ['audit', 'synthesize']],
+    ['analytics-audit', ['audit', 'synthesize']],
+    ['seo-audit', ['audit', 'synthesize']],
+    ['accessibility-audit', ['audit', 'synthesize', 'implement']],
+    ['mobile-responsiveness', ['audit', 'synthesize', 'implement']],
+    ['e2e-tests', ['discover', 'synthesize', 'implement']],
+    ['unit-tests', ['discover', 'synthesize', 'implement']],
+    ['documentation', ['audit', 'synthesize', 'implement']],
+    ['error-handling', ['audit', 'synthesize', 'implement']],
+    ['ux-copy-polish', ['audit', 'synthesize', 'implement']],
+  ])
+
+  for (const [id, steps] of expected.entries()) {
+    const flow = await loadFlow(id)
+    assert.equal(flow.id, id)
+    assert.deepEqual(flow.steps.map((step) => step.id), steps)
+    assert.deepEqual(flow.steps[0].agents, ['claude', 'gemini', 'codex'])
+    assert.deepEqual(flow.steps[flow.steps.length - 1].agents, ['codex'])
+    const implementStep = flow.steps.find((step) => step.id === 'implement')
+    if (implementStep) {
+      assert.equal(implementStep.action, 'comment')
+      assert.equal(implementStep.submit, 'follow-up')
+      assert.deepEqual(implementStep.input, [{ step: 'synthesize', results: 'all' }])
+    }
+    for (const step of flow.steps) {
+      assert.ok(loadStepPrompt(flow, step).body.length > 0)
+    }
+  }
 })
 
 test('loadFlow accepts json flow files through configorama', async () => {

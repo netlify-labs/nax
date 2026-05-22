@@ -1,0 +1,50 @@
+id: unit-tests
+title: Unit Tests
+description: Find untested utility and domain code, then add focused unit tests.
+
+defaults:
+  transport: auto
+  notify: false
+  agents:
+    - claude
+    - gemini
+    - codex
+
+steps:
+  - id: discover
+    title: Discover Unit Test Gaps
+    description: Independently identify high-value untested functions and edge cases.
+    prompt: prompts/1_discover-unit-tests.md
+    action: issue
+    submit: new-run
+    agents:
+      - claude
+      - gemini
+      - codex
+    waitFor: agent-results
+
+  - id: synthesize
+    title: Synthesize Unit Test Plan
+    description: Rank test gaps by behavioral risk and implementation cost.
+    prompt: prompts/2_synthesize-unit-tests.md
+    action: issue
+    submit: new-run
+    agents:
+      - codex
+    input:
+      - step: discover
+        results: all
+    waitFor: agent-results
+
+  - id: implement
+    title: Implement Unit Tests
+    description: Add focused unit tests for the highest-value uncovered behavior.
+    prompt: prompts/3_implement-unit-tests.md
+    action: comment
+    submit: follow-up
+    agents:
+      - codex
+    input:
+      - step: synthesize
+        results: all
+    waitFor: agent-results

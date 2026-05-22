@@ -1,0 +1,37 @@
+id: security-audit
+title: Security Audit
+description: Run a multi-agent security audit and synthesize a ranked vulnerability report.
+
+defaults:
+  transport: auto
+  notify: false
+  agents:
+    - claude
+    - gemini
+    - codex
+
+steps:
+  - id: audit
+    title: Audit Security
+    description: Independently inspect the codebase for exploitable security issues.
+    prompt: prompts/1_audit-security.md
+    action: issue
+    submit: new-run
+    agents:
+      - claude
+      - gemini
+      - codex
+    waitFor: agent-results
+
+  - id: synthesize
+    title: Synthesize Security Findings
+    description: Merge the independent audits into one prioritized security report.
+    prompt: prompts/2_synthesize-security.md
+    action: issue
+    submit: new-run
+    agents:
+      - codex
+    input:
+      - step: audit
+        results: all
+    waitFor: agent-results

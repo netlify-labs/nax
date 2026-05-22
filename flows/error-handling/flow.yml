@@ -1,0 +1,50 @@
+id: error-handling
+title: Error Handling
+description: Audit and improve error boundaries, logging, retries, and user-friendly failure states.
+
+defaults:
+  transport: auto
+  notify: false
+  agents:
+    - claude
+    - gemini
+    - codex
+
+steps:
+  - id: audit
+    title: Audit Error Handling
+    description: Independently inspect failure paths, logging, retries, and user-visible errors.
+    prompt: prompts/1_audit-error-handling.md
+    action: issue
+    submit: new-run
+    agents:
+      - claude
+      - gemini
+      - codex
+    waitFor: agent-results
+
+  - id: synthesize
+    title: Synthesize Error-Handling Plan
+    description: Deduplicate findings and identify safe improvements.
+    prompt: prompts/2_synthesize-error-handling.md
+    action: issue
+    submit: new-run
+    agents:
+      - codex
+    input:
+      - step: audit
+        results: all
+    waitFor: agent-results
+
+  - id: implement
+    title: Implement Error-Handling Fixes
+    description: Add focused error handling, logging, and user-friendly states.
+    prompt: prompts/3_implement-error-handling.md
+    action: comment
+    submit: follow-up
+    agents:
+      - codex
+    input:
+      - step: synthesize
+        results: all
+    waitFor: agent-results

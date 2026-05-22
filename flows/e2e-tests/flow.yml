@@ -1,0 +1,50 @@
+id: e2e-tests
+title: E2E Tests
+description: Design and add Playwright end-to-end tests for critical user flows.
+
+defaults:
+  transport: auto
+  notify: false
+  agents:
+    - claude
+    - gemini
+    - codex
+
+steps:
+  - id: discover
+    title: Discover Critical Flows
+    description: Independently identify the user journeys that most need E2E coverage.
+    prompt: prompts/1_discover-e2e.md
+    action: issue
+    submit: new-run
+    agents:
+      - claude
+      - gemini
+      - codex
+    waitFor: agent-results
+
+  - id: synthesize
+    title: Synthesize E2E Test Plan
+    description: Merge proposals into one practical Playwright implementation plan.
+    prompt: prompts/2_synthesize-e2e.md
+    action: issue
+    submit: new-run
+    agents:
+      - codex
+    input:
+      - step: discover
+        results: all
+    waitFor: agent-results
+
+  - id: implement
+    title: Implement E2E Tests
+    description: Add the agreed Playwright tests and supporting test setup.
+    prompt: prompts/3_implement-e2e.md
+    action: comment
+    submit: follow-up
+    agents:
+      - codex
+    input:
+      - step: synthesize
+        results: all
+    waitFor: agent-results

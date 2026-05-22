@@ -1,0 +1,37 @@
+id: seo-audit
+title: SEO Audit
+description: Audit site metadata, crawlability, structured data, content quality, and page speed risks.
+
+defaults:
+  transport: auto
+  notify: false
+  agents:
+    - claude
+    - gemini
+    - codex
+
+steps:
+  - id: audit
+    title: Audit SEO
+    description: Independently inspect routes, metadata, links, assets, and content for SEO issues.
+    prompt: prompts/1_audit-seo.md
+    action: issue
+    submit: new-run
+    agents:
+      - claude
+      - gemini
+      - codex
+    waitFor: agent-results
+
+  - id: synthesize
+    title: Synthesize SEO Fix Plan
+    description: Merge SEO findings into a ranked fix plan with file references.
+    prompt: prompts/2_synthesize-seo.md
+    action: issue
+    submit: new-run
+    agents:
+      - codex
+    input:
+      - step: audit
+        results: all
+    waitFor: agent-results

@@ -1,0 +1,50 @@
+id: mobile-responsiveness
+title: Mobile Responsiveness
+description: Audit and improve small-viewport layout, navigation, touch targets, and responsive states.
+
+defaults:
+  transport: auto
+  notify: false
+  agents:
+    - claude
+    - gemini
+    - codex
+
+steps:
+  - id: audit
+    title: Audit Mobile Responsiveness
+    description: Independently inspect responsive UI behavior and small-screen risks.
+    prompt: prompts/1_audit-mobile.md
+    action: issue
+    submit: new-run
+    agents:
+      - claude
+      - gemini
+      - codex
+    waitFor: agent-results
+
+  - id: synthesize
+    title: Synthesize Mobile Fix Plan
+    description: Produce a route-by-route responsive fix plan.
+    prompt: prompts/2_synthesize-mobile.md
+    action: issue
+    submit: new-run
+    agents:
+      - codex
+    input:
+      - step: audit
+        results: all
+    waitFor: agent-results
+
+  - id: implement
+    title: Implement Mobile Fixes
+    description: Apply focused responsive improvements and verify common mobile viewports.
+    prompt: prompts/3_implement-mobile.md
+    action: comment
+    submit: follow-up
+    agents:
+      - codex
+    input:
+      - step: synthesize
+        results: all
+    waitFor: agent-results

@@ -1,0 +1,50 @@
+id: accessibility-audit
+title: Accessibility Audit
+description: Audit and fix WCAG 2.1 AA accessibility issues across the app.
+
+defaults:
+  transport: auto
+  notify: false
+  agents:
+    - claude
+    - gemini
+    - codex
+
+steps:
+  - id: audit
+    title: Audit Accessibility
+    description: Independently identify accessibility defects with WCAG impact and file references.
+    prompt: prompts/1_audit-accessibility.md
+    action: issue
+    submit: new-run
+    agents:
+      - claude
+      - gemini
+      - codex
+    waitFor: agent-results
+
+  - id: synthesize
+    title: Synthesize Accessibility Fix Plan
+    description: Deduplicate findings and rank fixes by user impact and implementation risk.
+    prompt: prompts/2_synthesize-accessibility.md
+    action: issue
+    submit: new-run
+    agents:
+      - codex
+    input:
+      - step: audit
+        results: all
+    waitFor: agent-results
+
+  - id: implement
+    title: Implement Accessibility Fixes
+    description: Apply the highest-confidence WCAG fixes and verify them.
+    prompt: prompts/3_implement-accessibility.md
+    action: comment
+    submit: follow-up
+    agents:
+      - codex
+    input:
+      - step: synthesize
+        results: all
+    waitFor: agent-results

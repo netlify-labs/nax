@@ -1,0 +1,50 @@
+id: ux-copy-polish
+title: UX Copy Polish
+description: Improve UX polish, loading states, empty states, transitions, and conversion copy.
+
+defaults:
+  transport: auto
+  notify: false
+  agents:
+    - claude
+    - gemini
+    - codex
+
+steps:
+  - id: audit
+    title: Audit UX And Copy
+    description: Independently inspect UI polish, copy clarity, and conversion friction.
+    prompt: prompts/1_audit-ux-copy.md
+    action: issue
+    submit: new-run
+    agents:
+      - claude
+      - gemini
+      - codex
+    waitFor: agent-results
+
+  - id: synthesize
+    title: Synthesize UX Copy Plan
+    description: Produce one ranked plan for UI polish and copy improvements.
+    prompt: prompts/2_synthesize-ux-copy.md
+    action: issue
+    submit: new-run
+    agents:
+      - codex
+    input:
+      - step: audit
+        results: all
+    waitFor: agent-results
+
+  - id: implement
+    title: Implement UX Copy Polish
+    description: Apply focused UI polish and copy improvements.
+    prompt: prompts/3_implement-ux-copy.md
+    action: comment
+    submit: follow-up
+    agents:
+      - codex
+    input:
+      - step: synthesize
+        results: all
+    waitFor: agent-results

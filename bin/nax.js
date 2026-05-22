@@ -1349,6 +1349,7 @@ async function runSingleNetlifyAgent({
       projectRoot,
       runs: [submitted],
       siteId: netlify.siteId,
+      netlifyFilter: netlifyFilter.filter,
       env: netlify.env,
       timeoutMinutes: Number.parseInt(options.timeoutMinutes || '25', 10),
       initialDelayMs: 0,
@@ -3400,8 +3401,11 @@ function reportTerminalLocalRun(reporter, run, projectRoot) {
   })
 }
 
-async function completeLocalStep({ runState, stepState, step, options, projectRoot, netlify, initialDelayMs }) {
+async function completeLocalStep({ runState, stepState, step, options, projectRoot, netlify, netlifyFilter, initialDelayMs }) {
   const timeoutMinutes = Number.parseInt(options.timeoutMinutes || '25', 10)
+  const resolvedNetlifyFilter = netlifyFilter !== undefined
+    ? netlifyFilter
+    : resolveNetlifyFilter({ projectRoot, filter: options.filter }).filter
   if (step.waitFor === WAIT_FOR_AGENT_RESULTS && stepState.runs.some(shouldPollLocalRun)) {
     const reporter = makeStepProgressReporter({
       stepTitle: step.title,
@@ -3414,6 +3418,7 @@ async function completeLocalStep({ runState, stepState, step, options, projectRo
         projectRoot,
         runs: stepState.runs,
         siteId: netlify.siteId,
+        netlifyFilter: resolvedNetlifyFilter,
         env: netlify.env,
         timeoutMinutes,
         initialDelayMs,
@@ -3601,7 +3606,7 @@ async function executeLocalFlow({ flow, steps, options, runState, projectRoot, c
       console.log(submissionBoxes)
     }
 
-    await completeLocalStep({ runState, stepState, step, options, projectRoot, netlify })
+    await completeLocalStep({ runState, stepState, step, options, projectRoot, netlify, netlifyFilter: netlifyFilter.filter })
     completedStepStates.set(step.id, stepState)
     saveRunState(runState)
 
@@ -3808,6 +3813,7 @@ async function handleRetry(runId, options) {
     projectRoot,
     runs: [submitted],
     siteId: netlify.siteId,
+    netlifyFilter: netlifyFilter.filter,
     env: netlify.env,
     timeoutMinutes: Number.parseInt(options.timeoutMinutes || runState.options?.timeoutMinutes || '25', 10),
     initialDelayMs: 0,

@@ -424,6 +424,32 @@ test('showAgentRun treats CLI failures as retryable poll errors', () => {
   assert.equal(shown.error, 'temporary API failure')
 })
 
+test('showAgentRun passes Netlify monorepo filter when provided', () => {
+  const calls = []
+  const shown = showAgentRun({
+    projectRoot: '/tmp/project',
+    runnerId: 'runner-1',
+    siteId: 'site-123',
+    netlifyFilter: 'revenue-engine-frontend',
+    env: {},
+    runCommand(command, args, options) {
+      calls.push({ command, args, options })
+      return { status: 0, stdout: JSON.stringify({ id: 'runner-1', state: 'done' }), stderr: '' }
+    },
+  })
+
+  assert.equal(shown.state, 'done')
+  assert.deepEqual(calls[0].args, [
+    'agents:show',
+    'runner-1',
+    '--json',
+    '--project',
+    'site-123',
+    '--filter',
+    'revenue-engine-frontend',
+  ])
+})
+
 test('listAgentSessions treats malformed JSON as a retryable command error', () => {
   const sessions = listAgentSessions({
     projectRoot: '/tmp/project',
@@ -443,9 +469,11 @@ test('listAgentSessions treats malformed JSON as a retryable command error', () 
 test('waitForLocalAgentRuns retries transient poll errors', async () => {
   let showCount = 0
   const progress = []
+  const showArgs = []
   const result = await waitForLocalAgentRuns({
     projectRoot: '/tmp/project',
     siteId: 'site-123',
+    netlifyFilter: 'revenue-engine-frontend',
     env: {},
     timeoutMinutes: 1,
     initialDelayMs: 0,
@@ -456,6 +484,7 @@ test('waitForLocalAgentRuns retries transient poll errors', async () => {
     },
     runCommand(command, args) {
       if (args[0] === 'agents:show') {
+        showArgs.push(args)
         showCount += 1
         if (showCount === 1) return { status: 1, stdout: '', stderr: 'temporary API failure' }
         return {
@@ -475,6 +504,15 @@ test('waitForLocalAgentRuns retries transient poll errors', async () => {
   assert.equal(result[0].status, 'completed')
   assert.equal(result[0].resultText, 'done')
   assert.match(progress[0], /poll failed, retrying/)
+  assert.deepEqual(showArgs[0], [
+    'agents:show',
+    'runner-1',
+    '--json',
+    '--project',
+    'site-123',
+    '--filter',
+    'revenue-engine-frontend',
+  ])
 })
 
 test('waitForLocalAgentRuns retries malformed session-list JSON', async () => {

@@ -84,7 +84,7 @@ test('resolveNetlifyFilter infers a root filter from netlify.toml build command'
 
 test('resolveNetlifyFilter falls back to a nested netlify.toml build command', () => {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'nax-local-runner-nested-filter-'))
-  const appDir = path.join(tmp, 'clients', 'frontend')
+  const appDir = path.join(tmp, 'apps', 'workspace', 'packages', 'clients', 'frontend')
   fs.mkdirSync(appDir, { recursive: true })
   fs.writeFileSync(path.join(appDir, 'netlify.toml'), [
     '[build]',
@@ -95,13 +95,13 @@ test('resolveNetlifyFilter falls back to a nested netlify.toml build command', (
 
   assert.deepEqual(resolveNetlifyFilter({ projectRoot: tmp }), {
     filter: 'revenue-engine-frontend',
-    source: path.join('clients', 'frontend', 'netlify.toml'),
+    source: path.join('apps', 'workspace', 'packages', 'clients', 'frontend', 'netlify.toml'),
   })
   assert.deepEqual(listNetlifyFilterCandidates(tmp).map((candidate) => ({
     source: candidate.source,
     filter: candidate.filter,
   })), [{
-    source: path.join('clients', 'frontend', 'netlify.toml'),
+    source: path.join('apps', 'workspace', 'packages', 'clients', 'frontend', 'netlify.toml'),
     filter: 'revenue-engine-frontend',
   }])
 })

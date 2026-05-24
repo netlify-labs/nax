@@ -2874,10 +2874,8 @@ function formatDidYouKnowLines(useCase, {
 } = {}) {
   if (!Array.isArray(useCase) || useCase.length < 2) return []
   const [title, description, prompt = ''] = useCase
-  const viewportWidth = Number(width) || 0
-  const maxWidth = viewportWidth > 0
-    ? Math.max(24, viewportWidth - Math.max(0, marginRight) - 2)
-    : undefined
+  const viewportWidth = Number(width) || process.stdout.columns || 100
+  const maxWidth = Math.max(24, viewportWidth - Math.max(0, marginRight) - 2)
   return [
     'While agent runners are doing their magic, here are some other use cases for Netlify Agent runners',
     ...makeBox({
@@ -2902,7 +2900,7 @@ function formatDidYouKnowLines(useCase, {
       borderStyle: 'rounded',
       borderColor: color,
       marginRight,
-      ...(maxWidth ? { maxWidth } : { minWidth: '100%' }),
+      maxWidth,
     }).split('\n'),
   ]
 }

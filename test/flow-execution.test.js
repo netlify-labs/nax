@@ -244,6 +244,26 @@ test('Did you know progress tip reserves terminal edge space', () => {
   }
 })
 
+test('Did you know progress tip does not force full terminal width by default', () => {
+  const originalColumns = Object.getOwnPropertyDescriptor(process.stdout, 'columns')
+  Object.defineProperty(process.stdout, 'columns', { configurable: true, value: 200 })
+  try {
+    const lines = _private.formatDidYouKnowLines([
+      '👀 Code reviews',
+      'Bring in a fresh reviewer that can inspect architecture, tests, and edge cases.',
+      'Audit the code with fresh eyes and identify areas for improvement.',
+    ])
+    const boxLines = lines.slice(1).map(stripAnsi)
+    assert.ok(Math.max(...boxLines.map((line) => line.length)) < 120)
+  } finally {
+    if (originalColumns) {
+      Object.defineProperty(process.stdout, 'columns', originalColumns)
+    } else {
+      delete process.stdout.columns
+    }
+  }
+})
+
 test('TTY progress reporter clears the Agent Runner use case tip after all runs complete', () => {
   const originalWrite = process.stdout.write
   const originalIsTTY = Object.getOwnPropertyDescriptor(process.stdout, 'isTTY')

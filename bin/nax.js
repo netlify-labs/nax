@@ -62,6 +62,7 @@ const { enableGitHubActionsSetup, initSite, readNetlifyProject } = require('../l
 const {
   buildNetlifyEnv,
   currentGitBranch,
+  listNetlifyFilterCandidates,
   resolveNetlifyFilter,
   submitLocalAgentRun,
   waitForLocalAgentRuns,
@@ -99,8 +100,71 @@ function parseCsv(value) {
 
 function maybeReportNetlifyFilter(resolved) {
   if (!resolved?.filter) return
-  if (resolved.source === 'netlify.toml') {
-    console.log(`Netlify app filter: ${resolved.filter} (from netlify.toml)`)
+  if (resolved.source && resolved.source !== 'option') {
+    console.log(`Netlify app filter: ${resolved.filter} (from ${resolved.source})`)
+  }
+}
+
+function netlifyConfigChoiceHint(candidate) {
+  if (candidate.filter) return `uses --filter ${candidate.filter}`
+  return 'no single --filter found in build command'
+}
+
+function sortNetlifyConfigChoices(candidates = []) {
+  return [...candidates].sort((a, b) => {
+    if (Boolean(a.filter) !== Boolean(b.filter)) return a.filter ? -1 : 1
+    return String(a.source || '').localeCompare(String(b.source || ''))
+  })
+}
+
+function formatNetlifyConfigAmbiguity(candidates = []) {
+  const lines = sortNetlifyConfigChoices(candidates).map((candidate) => {
+    const suffix = candidate.filter ? ` -> --filter ${candidate.filter}` : ' -> no single --filter found'
+    return `- ${candidate.source}${suffix}`
+  })
+  return [
+    'Multiple netlify.toml files were found. Pass --filter <app> or run in a TTY and choose one:',
+    ...lines,
+  ].join('\n')
+}
+
+async function chooseNetlifyFilterOption({ projectRoot, options = {} } = {}) {
+  if (options.filter) return options
+  const candidates = listNetlifyFilterCandidates(projectRoot)
+  if (candidates.length <= 1) return options
+
+  if (!process.stdin.isTTY || options.yes) {
+    const uniqueFilters = [...new Set(candidates.map((candidate) => candidate.filter).filter(Boolean))]
+    if (uniqueFilters.length === 1) {
+      const selected = candidates.find((candidate) => candidate.filter === uniqueFilters[0])
+      return {
+        ...options,
+        filter: uniqueFilters[0],
+        netlifyConfig: selected?.source || '',
+      }
+    }
+    throw new Error(formatNetlifyConfigAmbiguity(candidates))
+  }
+
+  const clack = await loadClack()
+  const choices = sortNetlifyConfigChoices(candidates)
+  const selectedSource = await clack.select({
+    message: 'Choose Netlify config for Agent Runner',
+    options: choices.map((candidate) => ({
+      value: candidate.source,
+      label: candidate.source,
+      hint: netlifyConfigChoiceHint(candidate),
+    })),
+  })
+  if (clack.isCancel(selectedSource)) process.exit(0)
+  const selected = candidates.find((candidate) => candidate.source === selectedSource)
+  if (!selected?.filter) {
+    throw new Error(`Selected ${selectedSource} does not contain exactly one Netlify --filter value. Pass --filter <app> explicitly.`)
+  }
+  return {
+    ...options,
+    filter: selected.filter,
+    netlifyConfig: selected.source,
   }
 }
 
@@ -2747,6 +2811,31 @@ const AGENT_RUNNER_USE_CASES = [
   ['✨ UX polish', 'Smooth rough edges with loading states, skeletons, and transitions.', 'Add loading states, skeleton screens, and transitions to improve perceived performance.'],
 ]
 
+function conciseErrorMessage(error, { maxLength = 700 } = {}) {
+  const raw = String(error?.message || error || 'Unknown error').replace(/\s+/g, ' ').trim()
+  if (raw.length <= maxLength) return raw
+  return `${raw.slice(0, maxLength - 1)}…`
+}
+
+function submissionFailureSummary(failures) {
+  const lines = failures
+    .filter((failure) => failure?.label)
+    .map((failure) => `- ${failure.label}: ${conciseErrorMessage(failure.error)}`)
+  return `Netlify agent submission failed for ${lines.length} ${lines.length === 1 ? 'run' : 'runs'}:\n${lines.join('\n')}`
+}
+
+function startSubmissionHeartbeat({ pendingLabels, startedAt = Date.now(), intervalMs = 30000 } = {}) {
+  if (!process.stdout.isTTY) return () => {}
+  const timer = setInterval(() => {
+    const labels = [...pendingLabels]
+    if (labels.length === 0) return
+    const elapsedSeconds = Math.round((Date.now() - startedAt) / 1000)
+    console.log(`Still submitting after ${elapsedSeconds}s: ${labels.join(', ')}`)
+  }, intervalMs)
+  timer.unref?.()
+  return () => clearInterval(timer)
+}
+
 function nextFlavorAt({ min, max }) {
   const range = Math.max(0, max - min)
   return Date.now() + min + Math.floor(Math.random() * (range + 1))
@@ -3015,7 +3104,7 @@ function makeStepProgressReporter({
         row.url = ''
       } else {
         row.status = 'running'
-        row.message = event.retry ? 'retrying once after transient capacity error' : ''
+        row.message = event.retry ? (event.message || 'retrying') : ''
         row.currentTask = event.currentTask || event.run?.currentTask || row.currentTask || ''
         row.url = ''
       }
@@ -3553,52 +3642,70 @@ async function executeLocalFlow({ flow, steps, options, runState, projectRoot, c
 
     console.log(`\nSubmitting ${runs.length} Netlify agent ${runs.length === 1 ? 'run' : 'runs'} in parallel...`)
     const startedAt = Date.now()
-    const submissions = await Promise.allSettled(runs.map(async (run, index) => {
-      const label = `${titleCase(run.agent)} ${prompt.title}`
-      console.log(`- ${label}: submitting${run.existingRunnerId ? ' follow-up' : ''}...`)
-      try {
-        const submitted = await submitLocalAgentRun({
-          run,
-          projectRoot,
-          branch,
-          siteId: netlify.siteId,
-          netlifyFilter: netlifyFilter.filter,
-          env: netlify.env,
-          onRetry: ({ error, nextAttempt, attempts, delayMs }) => {
-            const delaySeconds = Math.round(delayMs / 1000)
-            console.log(`  ${label}: submission failed, retrying ${nextAttempt}/${attempts} in ${delaySeconds}s — ${error.message}`)
-          },
-        })
-        const elapsedSeconds = Math.round((Date.now() - startedAt) / 1000)
-        submitted.submittedAfterSeconds = elapsedSeconds
-        stepState.runs[index] = submitted
-        saveRunState(runState)
-        return submitted
-      } catch (error) {
-        const failedRun = {
-          ...run,
-          status: 'failed',
-          resultText: error?.message || String(error || 'Submission failed'),
-          raw: {
-            ...run.raw,
-            submissionError: error?.message || String(error || 'Submission failed'),
-          },
+    const pendingSubmissionLabels = new Set()
+    const stopSubmissionHeartbeat = startSubmissionHeartbeat({
+      pendingLabels: pendingSubmissionLabels,
+      startedAt,
+    })
+    let submissions
+    try {
+      submissions = await Promise.allSettled(runs.map(async (run, index) => {
+        const label = `${titleCase(run.agent)} ${prompt.title}`
+        pendingSubmissionLabels.add(label)
+        console.log(`- ${label}: submitting${run.existingRunnerId ? ' follow-up' : ''}...`)
+        try {
+          const submitted = await submitLocalAgentRun({
+            run,
+            projectRoot,
+            branch,
+            siteId: netlify.siteId,
+            netlifyFilter: netlifyFilter.filter,
+            env: netlify.env,
+            onRetry: ({ error, nextAttempt, attempts, delayMs }) => {
+              const delaySeconds = Math.round(delayMs / 1000)
+              console.log(`  ${label}: submission failed, retrying ${nextAttempt}/${attempts} in ${delaySeconds}s — ${error.message}`)
+            },
+          })
+          const elapsedSeconds = Math.round((Date.now() - startedAt) / 1000)
+          submitted.submittedAfterSeconds = elapsedSeconds
+          stepState.runs[index] = submitted
+          saveRunState(runState)
+          console.log(`  ${label}: submitted after ${elapsedSeconds}s`)
+          return submitted
+        } catch (error) {
+          const failedRun = {
+            ...run,
+            status: 'failed',
+            resultText: error?.message || String(error || 'Submission failed'),
+            raw: {
+              ...run.raw,
+              submissionError: error?.message || String(error || 'Submission failed'),
+            },
+          }
+          stepState.runs[index] = failedRun
+          saveRunState(runState)
+          console.log(`  ${label}: submission failed — ${conciseErrorMessage(error)}`)
+          throw error
+        } finally {
+          pendingSubmissionLabels.delete(label)
         }
-        stepState.runs[index] = failedRun
-        saveRunState(runState)
-        console.log(`  ${label}: submission failed`)
-        throw error
-      }
-    }))
-    const failedSubmission = submissions.find((result) => result.status === 'rejected')
+      }))
+    } finally {
+      stopSubmissionHeartbeat()
+    }
+    const failedSubmissions = submissions
+      .map((result, index) => result.status === 'rejected'
+        ? { label: `${titleCase(runs[index].agent)} ${prompt.title}`, error: result.reason }
+        : null)
+      .filter(Boolean)
     const submittedRuns = submissions.map((result, index) => {
       if (result.status === 'fulfilled') return result.value
       return stepState.runs[index]
     })
     stepState.runs = submittedRuns
     saveRunState(runState)
-    if (failedSubmission) {
-      throw failedSubmission.reason
+    if (failedSubmissions.length > 0) {
+      throw new Error(submissionFailureSummary(failedSubmissions))
     }
     const submissionBoxes = formatSubmittedLocalRunBoxes({ runs: submittedRuns, prompt, projectRoot })
     if (submissionBoxes) {
@@ -3619,7 +3726,15 @@ async function executeLocalFlow({ flow, steps, options, runState, projectRoot, c
 
 async function resumeLocalFlow({ flow, runState, projectRoot }) {
   trackRunState(runState)
-  const options = runState.options || {}
+  const options = await chooseNetlifyFilterOption({
+    projectRoot,
+    options: runState.options || {},
+  })
+  runState.options = {
+    ...(runState.options || {}),
+    ...options,
+  }
+  saveRunState(runState)
   const netlify = buildNetlifyEnv({ projectRoot })
   const completedStepStates = completedStepMapFromRunState(runState)
   const startIndex = firstRunnableStepIndex(flow, runState)
@@ -3759,7 +3874,20 @@ async function handleRetry(runId, options) {
 
   const netlify = buildNetlifyEnv({ projectRoot })
   const branch = runState.branch || runState.options?.branch || currentGitBranch(projectRoot)
-  const netlifyFilter = resolveNetlifyFilter({ projectRoot, filter: options.filter || runState.options?.filter })
+  const retryOptions = await chooseNetlifyFilterOption({
+    projectRoot,
+    options: {
+      ...(runState.options || {}),
+      ...options,
+      filter: options.filter || runState.options?.filter || '',
+    },
+  })
+  runState.options = {
+    ...(runState.options || {}),
+    ...(retryOptions.filter ? { filter: retryOptions.filter } : {}),
+    ...(retryOptions.netlifyConfig ? { netlifyConfig: retryOptions.netlifyConfig } : {}),
+  }
+  const netlifyFilter = resolveNetlifyFilter({ projectRoot, filter: retryOptions.filter })
   const compactPromptText = buildCompactLocalPromptForRetry({ flow, step: flowStep, runState, run })
   if (!compactPromptText || compactPromptText.length >= String(run.promptText || '').length) {
     throw new Error(`Could not build a shorter prompt for ${run.agent} ${step.id}.`)
@@ -3815,7 +3943,7 @@ async function handleRetry(runId, options) {
     siteId: netlify.siteId,
     netlifyFilter: netlifyFilter.filter,
     env: netlify.env,
-    timeoutMinutes: Number.parseInt(options.timeoutMinutes || runState.options?.timeoutMinutes || '25', 10),
+    timeoutMinutes: Number.parseInt(retryOptions.timeoutMinutes || runState.options?.timeoutMinutes || '25', 10),
     initialDelayMs: 0,
     onProgress: (event) => reporter.updateRun(event),
     onTerminalRun: (terminalRun) => {
@@ -3881,6 +4009,7 @@ async function handleAdHocAgentRun(options = {}) {
   }
 
   if (isNetlifyApiTransport(transport)) {
+    const netlifyOptions = await chooseNetlifyFilterOption({ projectRoot, options })
     await runSingleNetlifyAgent({
       projectRoot,
       agent,
@@ -3895,7 +4024,7 @@ async function handleAdHocAgentRun(options = {}) {
         stepId: 'netlify-agent-run',
         promptName: 'netlify-agent-run',
       },
-      options,
+      options: netlifyOptions,
       startLabel: 'Netlify agent run',
     })
     return
@@ -3975,7 +4104,11 @@ async function handleRun(flowId, options) {
     branchSource: resolvedBranch.source,
   }
 
-  const prepared = await prepareInteractiveFlowRun({ flow, options: branchOptions, transport, projectRoot })
+  const netlifyOptions = isNetlifyApiTransport(transport)
+    ? await chooseNetlifyFilterOption({ projectRoot, options: branchOptions })
+    : branchOptions
+
+  const prepared = await prepareInteractiveFlowRun({ flow, options: netlifyOptions, transport, projectRoot })
   const configuredFlow = prepared.flow
   const configuredOptions = prepared.options
   const steps = prepared.steps
@@ -4416,6 +4549,8 @@ module.exports = {
     completedStepMapFromRunState,
     firstRunnableStepIndex,
     flowAgents,
+    chooseNetlifyFilterOption,
+    conciseErrorMessage,
     buildCompactLocalPromptForRetry,
     buildHandoffPrompt,
     compactTextForRetry,
@@ -4424,6 +4559,7 @@ module.exports = {
     findRunStateForHandoff,
     formatDidYouKnowLines,
     formatHandoffSourceHint,
+    formatNetlifyConfigAmbiguity,
     formatHandoffSourceKind,
     formatHandoffSourceLabel,
     formatHandoffSourceDetailBox,
@@ -4436,9 +4572,11 @@ module.exports = {
     handoffSourceMenuOptions,
     handoffSourceQuery,
     isAdHocRunTarget,
+    netlifyConfigChoiceHint,
     orderSingleRunTransports,
     nextLocalStepMessage,
     localRetryCandidates,
+    sortNetlifyConfigChoices,
     agentStepCompletionSummary,
     normalizeHandoffSourceKind,
     pickFlavor,
@@ -4449,6 +4587,8 @@ module.exports = {
     printSuccessBox,
     readHandoffSummary,
     relativeHandoffPath,
+    startSubmissionHeartbeat,
+    submissionFailureSummary,
     usageSummariesForRunState,
     resultsScopedToGithubRuns,
     runnableSteps,

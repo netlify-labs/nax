@@ -12,6 +12,7 @@ const {
   formatCommandForError,
   inferNetlifyFilterFromCommand,
   latestSessionFromList,
+  listNetlifyFilterCandidates,
   listAgentSessions,
   normalizeCompletedRun,
   readRootNetlifyBuildCommand,
@@ -78,6 +79,48 @@ test('resolveNetlifyFilter infers a root filter from netlify.toml build command'
   assert.deepEqual(resolveNetlifyFilter({ projectRoot: tmp, filter: 'explicit-app' }), {
     filter: 'explicit-app',
     source: 'option',
+  })
+})
+
+test('resolveNetlifyFilter falls back to a nested netlify.toml build command', () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'nax-local-runner-nested-filter-'))
+  const appDir = path.join(tmp, 'clients', 'frontend')
+  fs.mkdirSync(appDir, { recursive: true })
+  fs.writeFileSync(path.join(appDir, 'netlify.toml'), [
+    '[build]',
+    '  command = "pnpm --filter revenue-engine-frontend build:netlify"',
+    '  publish = "/clients/frontend/dist"',
+    '',
+  ].join('\n'))
+
+  assert.deepEqual(resolveNetlifyFilter({ projectRoot: tmp }), {
+    filter: 'revenue-engine-frontend',
+    source: path.join('clients', 'frontend', 'netlify.toml'),
+  })
+  assert.deepEqual(listNetlifyFilterCandidates(tmp).map((candidate) => ({
+    source: candidate.source,
+    filter: candidate.filter,
+  })), [{
+    source: path.join('clients', 'frontend', 'netlify.toml'),
+    filter: 'revenue-engine-frontend',
+  }])
+})
+
+test('resolveNetlifyFilter ignores ambiguous nested netlify.toml filters', () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'nax-local-runner-ambiguous-filter-'))
+  for (const [dir, filter] of [['frontend', 'web'], ['docs', 'docs']]) {
+    const appDir = path.join(tmp, 'clients', dir)
+    fs.mkdirSync(appDir, { recursive: true })
+    fs.writeFileSync(path.join(appDir, 'netlify.toml'), [
+      '[build]',
+      `  command = "pnpm --filter ${filter} build"`,
+      '',
+    ].join('\n'))
+  }
+
+  assert.deepEqual(resolveNetlifyFilter({ projectRoot: tmp }), {
+    filter: '',
+    source: '',
   })
 })
 

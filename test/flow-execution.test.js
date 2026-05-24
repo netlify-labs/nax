@@ -612,6 +612,74 @@ test('orderSingleRunTransports puts Netlify API first', () => {
   assert.deepEqual(ordered.map((transport) => transport.id), ['netlify-api', 'github'])
 })
 
+test('chooseNetlifyFilterOption auto-selects a single nested filter in non-TTY mode', async () => {
+  const projectRoot = tmpRoot()
+  const appDir = path.join(projectRoot, 'clients', 'frontend')
+  fs.mkdirSync(appDir, { recursive: true })
+  fs.writeFileSync(path.join(appDir, 'netlify.toml'), [
+    '[build]',
+    '  command = "pnpm --filter revenue-engine-frontend build:netlify"',
+    '',
+  ].join('\n'))
+  fs.mkdirSync(path.join(projectRoot, 'docs'), { recursive: true })
+  fs.writeFileSync(path.join(projectRoot, 'docs', 'netlify.toml'), [
+    '[build]',
+    '  command = "npm run build"',
+    '',
+  ].join('\n'))
+  const originalIsTTY = Object.getOwnPropertyDescriptor(process.stdin, 'isTTY')
+  Object.defineProperty(process.stdin, 'isTTY', { configurable: true, value: false })
+  try {
+    assert.deepEqual(await _private.chooseNetlifyFilterOption({ projectRoot, options: {} }), {
+      filter: 'revenue-engine-frontend',
+      netlifyConfig: path.join('clients', 'frontend', 'netlify.toml'),
+    })
+  } finally {
+    if (originalIsTTY) {
+      Object.defineProperty(process.stdin, 'isTTY', originalIsTTY)
+    } else {
+      delete process.stdin.isTTY
+    }
+  }
+})
+
+test('chooseNetlifyFilterOption rejects ambiguous configs in non-TTY mode', async () => {
+  const projectRoot = tmpRoot()
+  for (const [dir, filter] of [['frontend', 'web'], ['docs', 'docs']]) {
+    const appDir = path.join(projectRoot, 'clients', dir)
+    fs.mkdirSync(appDir, { recursive: true })
+    fs.writeFileSync(path.join(appDir, 'netlify.toml'), [
+      '[build]',
+      `  command = "pnpm --filter ${filter} build"`,
+      '',
+    ].join('\n'))
+  }
+  const originalIsTTY = Object.getOwnPropertyDescriptor(process.stdin, 'isTTY')
+  Object.defineProperty(process.stdin, 'isTTY', { configurable: true, value: false })
+  try {
+    await assert.rejects(
+      _private.chooseNetlifyFilterOption({ projectRoot, options: {} }),
+      /Multiple netlify\.toml files were found/,
+    )
+  } finally {
+    if (originalIsTTY) {
+      Object.defineProperty(process.stdin, 'isTTY', originalIsTTY)
+    } else {
+      delete process.stdin.isTTY
+    }
+  }
+})
+
+test('sortNetlifyConfigChoices puts configs with inferred filters first', () => {
+  assert.deepEqual(_private.sortNetlifyConfigChoices([
+    { source: '_misc/netlify.toml', filter: '' },
+    { source: 'clients/frontend/netlify.toml', filter: 'revenue-engine-frontend' },
+  ]), [
+    { source: 'clients/frontend/netlify.toml', filter: 'revenue-engine-frontend' },
+    { source: '_misc/netlify.toml', filter: '' },
+  ])
+})
+
 test('success box keeps non-TTY links on one line', () => {
   const originalLog = console.log
   const originalIsTTY = Object.getOwnPropertyDescriptor(process.stdout, 'isTTY')

@@ -10,6 +10,10 @@ function tmpRoot() {
   return fs.mkdtempSync(path.join(os.tmpdir(), 'nax-flow-execution-'))
 }
 
+function stripAnsi(value) {
+  return String(value).replace(/\x1b\[[0-9;]*m/g, '')
+}
+
 function writeRunState(projectRoot, runId, overrides = {}) {
   const dir = path.join(projectRoot, '.nax', 'workflows', runId)
   fs.mkdirSync(dir, { recursive: true })
@@ -223,6 +227,78 @@ test('Did you know progress tip formats a rotating Agent Runner use case', () =>
   assert.match(text, /- "Audit the code with fresh eyes/)
   assert.match(text, /use cases/)
   assert.match(text, /╭|┌/)
+  for (const line of lines.slice(1)) {
+    assert.ok(stripAnsi(line).length <= 72, `line exceeded requested width: ${stripAnsi(line).length}`)
+  }
+})
+
+test('Did you know progress tip reserves terminal edge space', () => {
+  const lines = _private.formatDidYouKnowLines([
+    '🚦 Error handling',
+    'Improve user-facing failures, logging, empty states, and recovery paths.',
+    'Add proper error boundaries, logging, and user-friendly error states throughout the app.',
+  ], { width: 48, marginRight: 3 })
+
+  for (const line of lines.slice(1)) {
+    assert.ok(stripAnsi(line).length <= 45, `line exceeded terminal-safe width: ${stripAnsi(line).length}`)
+  }
+})
+
+test('TTY progress reporter clears the Agent Runner use case tip after all runs complete', () => {
+  const originalWrite = process.stdout.write
+  const originalIsTTY = Object.getOwnPropertyDescriptor(process.stdout, 'isTTY')
+  const writes = []
+  process.stdout.write = (chunk, ...args) => {
+    writes.push(String(chunk))
+    const callback = args.find((arg) => typeof arg === 'function')
+    if (callback) callback()
+    return true
+  }
+  Object.defineProperty(process.stdout, 'isTTY', { configurable: true, value: true })
+  try {
+    const reporter = _private.makeStepProgressReporter({
+      stepTitle: 'Cross Review',
+      total: 2,
+      agents: ['claude', 'gemini'],
+    })
+    reporter.updateRun({
+      run: {
+        agent: 'claude',
+        status: 'completed',
+        links: { sessionUrl: 'https://app.netlify.com/projects/site/agent-runs/runner-1?session=session-1' },
+      },
+      state: 'completed',
+      terminal: true,
+      terminalSuccess: true,
+    })
+    reporter.updateRun({
+      run: {
+        agent: 'gemini',
+        status: 'completed',
+        links: { sessionUrl: 'https://app.netlify.com/projects/site/agent-runs/runner-2?session=session-2' },
+      },
+      state: 'completed',
+      terminal: true,
+      terminalSuccess: true,
+    })
+    reporter.done()
+  } finally {
+    process.stdout.write = originalWrite
+    if (originalIsTTY) {
+      Object.defineProperty(process.stdout, 'isTTY', originalIsTTY)
+    } else {
+      delete process.stdout.isTTY
+    }
+  }
+
+  const progressChunks = writes.filter((chunk) => chunk.includes('Waiting for Cross Review'))
+  const finalProgress = progressChunks.at(-1) || ''
+  assert.match(writes.join(''), /While agent runners are doing their magic/)
+  assert.match(finalProgress, /Waiting for Cross Review: 2\/2 complete/)
+  assert.match(finalProgress, /✓ Claude/)
+  assert.match(finalProgress, /✓ Gemini/)
+  assert.doesNotMatch(finalProgress, /While agent runners are doing their magic/)
+  assert.doesNotMatch(finalProgress, /Use Agent Runs for/)
 })
 
 test('nextLocalStepMessage describes the immediate transition after a local step', () => {

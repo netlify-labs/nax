@@ -2868,35 +2868,41 @@ function agentRunUseCaseTitle(title) {
 }
 
 function formatDidYouKnowLines(useCase, {
-  width = process.stdout.columns || 100,
+  width,
   color = DID_YOU_KNOW_BORDER_COLORS[0],
+  marginRight = 2,
 } = {}) {
   if (!Array.isArray(useCase) || useCase.length < 2) return []
   const [title, description, prompt = ''] = useCase
-  const boxWidth = Math.max(64, Math.min(width || 100, 118))
-  const contentWidth = boxWidth - 6
-  const content = [
-    ...wrapLine(description, {
-      width: contentWidth,
-      indent: '',
-    }),
-    ...(prompt ? [
-      '',
-      'Prompt Examples:',
-      ...wrapLine(`- "${prompt}"`, {
-        width: contentWidth,
-        indent: '  ',
-      }),
-    ] : []),
-  ].join('\n')
+  const viewportWidth = Number(width) || 0
+  const maxWidth = viewportWidth > 0
+    ? Math.max(24, viewportWidth - Math.max(0, marginRight) - 2)
+    : undefined
   return [
     'While agent runners are doing their magic, here are some other use cases for Netlify Agent runners',
     ...makeBox({
       title: agentRunUseCaseTitle(title),
-      content,
+      content: ({ innerWidth }) => {
+        const contentWidth = Math.max(20, innerWidth)
+        return [
+          ...wrapLine(description, {
+            width: contentWidth,
+            indent: '',
+          }),
+          ...(prompt ? [
+            '',
+            'Prompt Examples:',
+            ...wrapLine(`- "${prompt}"`, {
+              width: contentWidth,
+              indent: '  ',
+            }),
+          ] : []),
+        ].join('\n')
+      },
       borderStyle: 'rounded',
       borderColor: color,
-      width: boxWidth,
+      marginRight,
+      ...(maxWidth ? { maxWidth } : { minWidth: '100%' }),
     }).split('\n'),
   ]
 }
@@ -3039,11 +3045,15 @@ function makeStepProgressReporter({
     for (const row of rows.values()) rotateFlavor(row)
     const visibleRows = displayRows()
     const nameWidth = visibleRows.reduce((max, row) => Math.max(max, titleCase(row.agent).length), 0)
-    const useCase = AGENT_RUNNER_USE_CASES[didYouKnowIndex]
-    const useCaseColor = DID_YOU_KNOW_BORDER_COLORS[didYouKnowIndex % DID_YOU_KNOW_BORDER_COLORS.length]
+    const activeRows = visibleRows.some((row) => row.status === 'pending' || row.status === 'running')
+    const didYouKnowLines = activeRows
+      ? formatDidYouKnowLines(AGENT_RUNNER_USE_CASES[didYouKnowIndex], {
+          color: DID_YOU_KNOW_BORDER_COLORS[didYouKnowIndex % DID_YOU_KNOW_BORDER_COLORS.length],
+        })
+      : []
     return [
-      ...formatDidYouKnowLines(useCase, { color: useCaseColor }),
-      '',
+      ...didYouKnowLines,
+      ...(didYouKnowLines.length > 0 ? [''] : []),
       `Waiting for ${stepTitle}: ${completeCount()}/${total} complete`,
       ...visibleRows.map((row) => renderRow(row, nameWidth)),
     ]
@@ -4578,6 +4588,8 @@ module.exports = {
     localRetryCandidates,
     sortNetlifyConfigChoices,
     agentStepCompletionSummary,
+    AGENT_RUNNER_USE_CASES,
+    DID_YOU_KNOW_BORDER_COLORS,
     normalizeHandoffSourceKind,
     pickFlavor,
     formatCompactLocalRunResults,

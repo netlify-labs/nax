@@ -2841,6 +2841,20 @@ function nextFlavorAt({ min, max }) {
   return Date.now() + min + Math.floor(Math.random() * (range + 1))
 }
 
+function visibleLength(line) {
+  return String(line ?? '').replace(/\x1b\[[0-9;]*m/g, '').length
+}
+
+function physicalRowCount(lines, columns) {
+  const cols = Number(columns) || 0
+  if (cols <= 0) return lines.length
+  let count = 0
+  for (const line of lines) {
+    count += Math.max(1, Math.ceil(visibleLength(line) / cols))
+  }
+  return count
+}
+
 function wrapLine(text, { width = 100, indent = '' } = {}) {
   const maxWidth = Math.max(20, width)
   const words = String(text || '').split(/\s+/).filter(Boolean)
@@ -3064,7 +3078,7 @@ function makeStepProgressReporter({
       readline.clearScreenDown(process.stdout)
     }
     process.stdout.write(`${lines.join('\n')}\n`)
-    renderedLines = lines.length
+    renderedLines = physicalRowCount(lines, process.stdout.columns)
   }
   const redraw = () => {
     frame += 1
@@ -4595,6 +4609,8 @@ module.exports = {
     agentStepCompletionSummary,
     AGENT_RUNNER_USE_CASES,
     DID_YOU_KNOW_BORDER_COLORS,
+    physicalRowCount,
+    visibleLength,
     normalizeHandoffSourceKind,
     pickFlavor,
     formatCompactLocalRunResults,

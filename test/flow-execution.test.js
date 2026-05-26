@@ -244,6 +244,18 @@ test('Did you know progress tip reserves terminal edge space', () => {
   }
 })
 
+test('physicalRowCount counts wrapped rows for lines wider than the terminal', () => {
+  // 200-char line in an 80-col terminal wraps to ceil(200/80) = 3 rows.
+  assert.equal(_private.physicalRowCount(['x'.repeat(200)], 80), 3)
+  // Empty line still occupies 1 row.
+  assert.equal(_private.physicalRowCount(['short', '', 'short'], 80), 3)
+  // Falls back to logical count when columns is unknown.
+  assert.equal(_private.physicalRowCount(['x'.repeat(200)], 0), 1)
+  // ANSI escapes don't count toward visible width.
+  const ansi = `\x1b[31m${'x'.repeat(80)}\x1b[0m`
+  assert.equal(_private.physicalRowCount([ansi], 80), 1)
+})
+
 test('Did you know progress tip wraps its header instead of overflowing one logical line', () => {
   const lines = _private.formatDidYouKnowLines([
     '♿ Accessibility',

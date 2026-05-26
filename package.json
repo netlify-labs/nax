@@ -1,6 +1,6 @@
 {
   "name": "@davidwells/netlify-agent-executor",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Run multi step Netlify agent workflows using the world's leading AI models.",
   "type": "commonjs",
   "bin": {

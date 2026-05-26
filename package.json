@@ -21,6 +21,7 @@
     "start": "node bin/nax.js",
     "check": "node --check bin/nax.js && for f in lib/*.js; do node --check \"$f\"; done",
     "dry-run": "node bin/nax.js issue review --dry --force",
+    "try:multiline": "node scripts/try-multiline.js",
     "test": "node --test",
     "publish": "git push origin && git push origin --tags",
     "release:patch": "npm version patch && npm publish",

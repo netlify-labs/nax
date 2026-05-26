@@ -2877,7 +2877,7 @@ function formatDidYouKnowLines(useCase, {
   const viewportWidth = Number(width) || process.stdout.columns || 100
   const maxWidth = Math.max(24, viewportWidth - Math.max(0, marginRight) - 2)
   return [
-    'While agent runners are doing their magic, here are some other use cases for Netlify Agent runners',
+    ...wrapLine('While agent runners are doing their magic, here are some other use cases for Netlify Agent runners', { width: maxWidth }),
     ...makeBox({
       title: agentRunUseCaseTitle(title),
       content: ({ innerWidth }) => {

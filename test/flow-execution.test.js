@@ -225,9 +225,9 @@ test('Did you know progress tip formats a rotating Agent Runner use case', () =>
   assert.match(text, /Bring in a fresh reviewer/)
   assert.match(text, /Prompt Examples:/)
   assert.match(text, /- "Audit the code with fresh eyes/)
-  assert.match(text, /use cases/)
+  assert.match(text, /use\s+cases/)
   assert.match(text, /╭|┌/)
-  for (const line of lines.slice(1)) {
+  for (const line of lines) {
     assert.ok(stripAnsi(line).length <= 72, `line exceeded requested width: ${stripAnsi(line).length}`)
   }
 })
@@ -239,8 +239,27 @@ test('Did you know progress tip reserves terminal edge space', () => {
     'Add proper error boundaries, logging, and user-friendly error states throughout the app.',
   ], { width: 48, marginRight: 3 })
 
-  for (const line of lines.slice(1)) {
+  for (const line of lines) {
     assert.ok(stripAnsi(line).length <= 45, `line exceeded terminal-safe width: ${stripAnsi(line).length}`)
+  }
+})
+
+test('Did you know progress tip wraps its header instead of overflowing one logical line', () => {
+  const lines = _private.formatDidYouKnowLines([
+    '♿ Accessibility',
+    'Review keyboard flows, labels, contrast, landmarks, and WCAG gaps.',
+    'Run an accessibility audit and fix all WCAG 2.1 AA violations.',
+  ], { width: 70, marginRight: 2 })
+
+  const headerLines = []
+  for (const line of lines) {
+    if (/^[╭┌╰└│├┤─]/.test(stripAnsi(line))) break
+    headerLines.push(line)
+  }
+  // Header should wrap onto multiple lines, none exceeding the viewport width.
+  assert.ok(headerLines.length >= 2, `expected wrapped header rows, got ${headerLines.length}`)
+  for (const line of headerLines) {
+    assert.ok(stripAnsi(line).length <= 70, `header row exceeded width: ${stripAnsi(line).length}`)
   }
 })
 

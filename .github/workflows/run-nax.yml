@@ -12,6 +12,17 @@ on:
           - review - Review, cross-review, and synthesize findings
           - ideas - Generate and score product ideas
           - do-next - Recommend the next development task
+          - accessibility-audit - Audit WCAG 2.1 AA accessibility issues
+          - analytics-audit - Find missing product, funnel, and feature telemetry
+          - documentation - Generate or improve README and architecture docs
+          - e2e-tests - Add Playwright end-to-end tests for critical flows
+          - error-handling - Improve error boundaries, logging, retries, failure states
+          - mobile-responsiveness - Improve small-viewport layout and touch targets
+          - performance-audit - Find bottlenecks and safe optimization opportunities
+          - security-audit - Multi-agent security audit + ranked vulnerability report
+          - seo-audit - Audit metadata, crawlability, structured data, and page speed
+          - unit-tests - Add focused unit tests for untested utility/domain code
+          - ux-copy-polish - Improve UX polish, loading/empty states, and copy
   pull_request:
     types: [opened, synchronize, reopened]
 

@@ -1,7 +1,7 @@
 const test = require('node:test')
 const assert = require('node:assert/strict')
 
-const { moveCursor, rowsBelowCursor } = require('../lib/multiline')
+const { collapseTrailingNewlines, moveCursor, rowsBelowCursor } = require('../lib/multiline')
 
 test('moveCursor left within a line decrements colIdx', () => {
   assert.deepEqual(
@@ -129,4 +129,24 @@ test('rowsBelowCursor falls back to logical-line count when columns is unknown',
     rowsBelowCursor({ lines: ['x'.repeat(200), 'abc'], lineIdx: 0, colIdx: 0 }, 0),
     1,
   )
+})
+
+test('collapseTrailingNewlines leaves text without trailing newlines alone', () => {
+  assert.equal(collapseTrailingNewlines('hello'), 'hello')
+  assert.equal(collapseTrailingNewlines('hello\nworld'), 'hello\nworld')
+  assert.equal(collapseTrailingNewlines(''), '')
+})
+
+test('collapseTrailingNewlines preserves a single trailing newline', () => {
+  assert.equal(collapseTrailingNewlines('hello\n'), 'hello\n')
+})
+
+test('collapseTrailingNewlines collapses 2+ trailing newlines to 1', () => {
+  assert.equal(collapseTrailingNewlines('hello\n\n'), 'hello\n')
+  assert.equal(collapseTrailingNewlines('a\n\nnice\n\n\n'), 'a\n\nnice\n')
+})
+
+test('collapseTrailingNewlines preserves embedded blank lines', () => {
+  // Interior blank lines must survive — only trailing runs are collapsed.
+  assert.equal(collapseTrailingNewlines('a\n\nb\n\nc'), 'a\n\nb\n\nc')
 })

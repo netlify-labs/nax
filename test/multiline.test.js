@@ -1,7 +1,7 @@
 const test = require('node:test')
 const assert = require('node:assert/strict')
 
-const { moveCursor } = require('../lib/multiline')
+const { moveCursor, rowsBelowCursor } = require('../lib/multiline')
 
 test('moveCursor left within a line decrements colIdx', () => {
   assert.deepEqual(
@@ -91,5 +91,42 @@ test('moveCursor end sets colIdx to line length', () => {
   assert.deepEqual(
     moveCursor({ lines: ['hello world'], lineIdx: 0, colIdx: 2 }, 'end'),
     { lineIdx: 0, colIdx: 11 },
+  )
+})
+
+test('rowsBelowCursor is 0 at end of the last line', () => {
+  assert.equal(
+    rowsBelowCursor({ lines: ['abc', 'def'], lineIdx: 1, colIdx: 3 }, 80),
+    0,
+  )
+})
+
+test('rowsBelowCursor counts logical lines below when nothing wraps', () => {
+  assert.equal(
+    rowsBelowCursor({ lines: ['abc', 'def', 'ghi'], lineIdx: 0, colIdx: 1 }, 80),
+    2,
+  )
+})
+
+test('rowsBelowCursor accounts for wrapped logical lines below', () => {
+  // 200-char third line wraps to 3 rows at 80 cols.
+  assert.equal(
+    rowsBelowCursor({ lines: ['abc', 'def', 'x'.repeat(200)], lineIdx: 0, colIdx: 0 }, 80),
+    1 + 3,
+  )
+})
+
+test('rowsBelowCursor accounts for wrap within the current line', () => {
+  // Current line wraps to 3 rows; cursor on the first wrap row, no further lines.
+  assert.equal(
+    rowsBelowCursor({ lines: ['x'.repeat(200)], lineIdx: 0, colIdx: 0 }, 80),
+    2,
+  )
+})
+
+test('rowsBelowCursor falls back to logical-line count when columns is unknown', () => {
+  assert.equal(
+    rowsBelowCursor({ lines: ['x'.repeat(200), 'abc'], lineIdx: 0, colIdx: 0 }, 0),
+    1,
   )
 })

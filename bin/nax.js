@@ -58,7 +58,7 @@ const {
   updateSkills,
 } = require('../lib/skills')
 const { NETLIFY_API_TRANSPORT, detectTransports, formatTransportSetupHelp, isNetlifyApiTransport, resolveTransport } = require('../lib/transports')
-const { enableGitHubActionsSetup, initSite, readNetlifyProject } = require('../lib/init')
+const { enableGitHubActionsSetup, findExistingAgentRunnerWorkflow, initSite, readNetlifyProject } = require('../lib/init')
 const {
   buildNetlifyEnv,
   currentGitBranch,
@@ -4271,9 +4271,16 @@ async function handleSkills(subcommand = 'help', options = {}) {
   }
 }
 
-async function shouldEnableGithubActions(options) {
+async function shouldEnableGithubActions(options, { projectRoot } = {}) {
   if (options.githubActions === true) return true
   if (options.githubActions === false) return false
+  const root = projectRoot || options.projectRoot || process.cwd()
+  const detected = findExistingAgentRunnerWorkflow(root)
+  if (detected) {
+    const relative = path.relative(root, detected.path) || detected.path
+    console.log(`Detected existing Netlify Agent Runner workflow: ${relative}`)
+    return true
+  }
   if (!process.stdin.isTTY || options.yes) return true
   const clack = await loadClack()
   const selected = await clack.confirm({
@@ -4293,7 +4300,7 @@ async function handleInit(options) {
     create: options.create === true,
     dryRun: options.dryRun === true,
   })
-  const githubActions = await shouldEnableGithubActions(options)
+  const githubActions = await shouldEnableGithubActions(options, { projectRoot: site.projectRoot })
   if (!githubActions) {
     printInitResult(site, { dryRun: options.dryRun })
     return

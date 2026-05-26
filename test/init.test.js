@@ -11,6 +11,7 @@ const {
   ensureNaxGitignore,
   ensureNetlifyProject,
   ensureWorkflow,
+  findExistingAgentRunnerWorkflow,
   initProject,
   listGitHubSecretNames,
   readLinkedSiteId,
@@ -73,6 +74,45 @@ test('ensureWorkflow creates workflow from bundled template and preserves existi
   assert.equal(result.path, workflowPath)
   assert.match(fs.readFileSync(workflowPath, 'utf8'), /netlify-labs\/agent-runner-action@v1/)
   assert.equal(ensureWorkflow({ projectRoot: tmp }).status, 'exists')
+})
+
+test('findExistingAgentRunnerWorkflow detects the action under any filename', () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'nax-init-test-'))
+  const workflowsDir = path.join(tmp, '.github', 'workflows')
+  fs.mkdirSync(workflowsDir, { recursive: true })
+  fs.writeFileSync(path.join(workflowsDir, 'unrelated.yml'), 'name: CI\n')
+  fs.writeFileSync(path.join(workflowsDir, 'agents.yml'), 'jobs:\n  go:\n    steps:\n      - uses: netlify-labs/agent-runner-action@v1\n')
+
+  const result = findExistingAgentRunnerWorkflow(tmp)
+  assert.ok(result)
+  assert.equal(path.basename(result.path), 'agents.yml')
+})
+
+test('findExistingAgentRunnerWorkflow returns null when no workflow references the action', () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'nax-init-test-'))
+  const workflowsDir = path.join(tmp, '.github', 'workflows')
+  fs.mkdirSync(workflowsDir, { recursive: true })
+  fs.writeFileSync(path.join(workflowsDir, 'ci.yaml'), 'name: CI\n')
+
+  assert.equal(findExistingAgentRunnerWorkflow(tmp), null)
+})
+
+test('findExistingAgentRunnerWorkflow returns null when workflows dir is missing', () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'nax-init-test-'))
+  assert.equal(findExistingAgentRunnerWorkflow(tmp), null)
+})
+
+test('ensureWorkflow skips install when an agent-runner workflow already exists at a different filename', () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'nax-init-test-'))
+  const workflowsDir = path.join(tmp, '.github', 'workflows')
+  fs.mkdirSync(workflowsDir, { recursive: true })
+  const customPath = path.join(workflowsDir, 'agents.yml')
+  fs.writeFileSync(customPath, 'jobs:\n  go:\n    steps:\n      - uses: netlify-labs/agent-runner-action@v1\n')
+
+  const result = ensureWorkflow({ projectRoot: tmp })
+  assert.equal(result.status, 'exists')
+  assert.equal(result.path, customPath)
+  assert.equal(fs.existsSync(path.join(tmp, WORKFLOW_PATH)), false)
 })
 
 test('ensureWorkflow rejects existing unrelated workflow unless force is set', () => {

@@ -1,11 +1,21 @@
 {
   "name": "@davidwells/netlify-agent-executor",
   "version": "0.1.0",
-  "description": "Run multi step Netlify agent workflows using the worlds leading AI models.",
-  "private": true,
+  "description": "Run multi step Netlify agent workflows using the world's leading AI models.",
   "type": "commonjs",
   "bin": {
     "nax": "./bin/nax.js"
+  },
+  "files": [
+    "bin",
+    "lib",
+    "flows",
+    "templates",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=18"
   },
   "scripts": {
     "start": "node bin/nax.js",
@@ -13,6 +23,28 @@
     "dry-run": "node bin/nax.js issue review --dry --force",
     "test": "node --test"
   },
+  "keywords": [
+    "netlify",
+    "agents",
+    "agent-runner",
+    "claude",
+    "gemini",
+    "codex",
+    "ai",
+    "workflow",
+    "cli",
+    "nax"
+  ],
+  "author": "David Wells <hello@davidwells.io>",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/netlify-labs/nax.git"
+  },
+  "bugs": {
+    "url": "https://github.com/netlify-labs/nax/issues"
+  },
+  "homepage": "https://github.com/netlify-labs/nax#readme",
   "dependencies": {
     "@clack/prompts": "^1.4.0",
     "@davidwells/box-logger": "^2.0.8",

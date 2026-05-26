@@ -4,14 +4,14 @@
 
 **Run multi-step Netlify Agent workflows across Claude, Gemini, and Codex — declared in YAML, executed in order, waited on between rounds.**
 
+[![npm](https://img.shields.io/npm/v/@davidwells/netlify-agent-executor.svg)](https://www.npmjs.com/package/@davidwells/netlify-agent-executor)
 [![Node 18+](https://img.shields.io/badge/node-%E2%89%A518-blue.svg)](https://nodejs.org/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](#license)
-[![Status: unpublished](https://img.shields.io/badge/npm-unpublished-lightgrey.svg)](#install)
 
 </div>
 
 ```bash
-git clone https://github.com/netlify-labs/nax.git && cd nax && npm install && npm link
+npm install -g @davidwells/netlify-agent-executor
 nax review          # multi-agent review of the current branch
 ```
 
@@ -109,7 +109,13 @@ nax do-next --branch '#123' --transport netlify-api --force
 
 ## Install
 
-`nax` is currently **unpublished**. Install from source:
+From npm:
+
+```bash
+npm install -g @davidwells/netlify-agent-executor
+```
+
+Or from source:
 
 ```bash
 git clone https://github.com/netlify-labs/nax.git
@@ -436,7 +442,6 @@ nax run review --step <step-id>      # re-run one step from scratch
 
 ## Limitations
 
-- **Unpublished.** Install via clone + `npm link`. No `npm i -g` yet.
 - **Authenticated CLIs only.** Requires logged-in `netlify` and `gh`. No web auth flow.
 - **macOS-only desktop notifications.** `--notify` shells out to `osascript`.
 - **GitHub-only.** No GitLab/Bitbucket transport.

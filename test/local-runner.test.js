@@ -3,12 +3,14 @@ const assert = require('node:assert/strict')
 const fs = require('fs')
 const os = require('os')
 const path = require('path')
+const { spawnSync } = require('child_process')
 
 const {
   createAgentRun,
   createAgentRunAsync,
   createAgentSession,
   createAgentSessionAsync,
+  findNetlifyConfigPaths,
   formatCommandForError,
   inferNetlifyFilterFromCommand,
   latestSessionFromList,
@@ -104,6 +106,42 @@ test('resolveNetlifyFilter falls back to a nested netlify.toml build command', (
     source: path.join('apps', 'workspace', 'packages', 'clients', 'frontend', 'netlify.toml'),
     filter: 'revenue-engine-frontend',
   }])
+})
+
+test('findNetlifyConfigPaths skips netlify.toml inside gitignored directories', () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'nax-local-runner-gitignore-'))
+  spawnSync('git', ['init', '-q'], { cwd: tmp })
+  fs.writeFileSync(path.join(tmp, '.gitignore'), 'projects/data/data-internal/\n')
+
+  fs.writeFileSync(path.join(tmp, 'netlify.toml'), '[build]\n')
+
+  const ignoredDir = path.join(tmp, 'projects', 'data', 'data-internal')
+  fs.mkdirSync(ignoredDir, { recursive: true })
+  fs.writeFileSync(path.join(ignoredDir, 'netlify.toml'), '[build]\n')
+
+  const trackedDir = path.join(tmp, 'projects', 'data', 'snowflake_dbt')
+  fs.mkdirSync(trackedDir, { recursive: true })
+  fs.writeFileSync(path.join(trackedDir, 'netlify.toml'), '[build]\n')
+
+  const results = findNetlifyConfigPaths(tmp).map((p) => path.relative(tmp, p))
+  assert.deepEqual(results.sort(), [
+    'netlify.toml',
+    path.join('projects', 'data', 'snowflake_dbt', 'netlify.toml'),
+  ].sort())
+})
+
+test('findNetlifyConfigPaths returns all paths when project is not a git repo', () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'nax-local-runner-nogit-'))
+  fs.writeFileSync(path.join(tmp, 'netlify.toml'), '[build]\n')
+  const nested = path.join(tmp, 'projects', 'app')
+  fs.mkdirSync(nested, { recursive: true })
+  fs.writeFileSync(path.join(nested, 'netlify.toml'), '[build]\n')
+
+  const results = findNetlifyConfigPaths(tmp).map((p) => path.relative(tmp, p))
+  assert.deepEqual(results.sort(), [
+    'netlify.toml',
+    path.join('projects', 'app', 'netlify.toml'),
+  ].sort())
 })
 
 test('resolveNetlifyFilter ignores ambiguous nested netlify.toml filters', () => {

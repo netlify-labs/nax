@@ -3,6 +3,7 @@ const assert = require('node:assert/strict')
 const fs = require('fs')
 const os = require('os')
 const path = require('path')
+const { spawnSync } = require('child_process')
 
 const { _private } = require('../bin/nax')
 
@@ -92,6 +93,162 @@ test('sourceRunsForStep dedupes within a single input step', () => {
   assert.deepEqual(_private.sourceRunsForStep(step, completed), [
     { agent: 'codex', runnerId: 'runner-1', resultText: 'a', sourceStep: 'review' },
   ])
+})
+
+test('chooseNetlifyFilterOption does not require filters for non-workspace multi-app repos', async () => {
+  const projectRoot = tmpRoot()
+  fs.mkdirSync(path.join(projectRoot, 'frontend'), { recursive: true })
+  fs.mkdirSync(path.join(projectRoot, 'sanity'), { recursive: true })
+  fs.writeFileSync(path.join(projectRoot, 'frontend', 'netlify.toml'), '[build]\n  command = "npm run build"\n')
+  fs.writeFileSync(path.join(projectRoot, 'sanity', 'netlify.toml'), '[build]\n  command = "npm run build"\n')
+
+  const options = { yes: true }
+  const resolved = await _private.chooseNetlifyFilterOption({
+    projectRoot,
+    options,
+    detectWorkspace: async () => ({ isWorkspace: false, workspace: null, packageManager: null, error: '' }),
+  })
+
+  assert.equal(resolved, options)
+})
+
+test('chooseNetlifyFilterOption still requires filters for JavaScript workspaces', async () => {
+  const projectRoot = tmpRoot()
+  fs.mkdirSync(path.join(projectRoot, 'frontend'), { recursive: true })
+  fs.mkdirSync(path.join(projectRoot, 'docs'), { recursive: true })
+  fs.writeFileSync(path.join(projectRoot, 'frontend', 'netlify.toml'), '[build]\n  command = "npm run build"\n')
+  fs.writeFileSync(path.join(projectRoot, 'docs', 'netlify.toml'), '[build]\n  command = "npm run build"\n')
+
+  await assert.rejects(
+    _private.chooseNetlifyFilterOption({
+      projectRoot,
+      options: { yes: true },
+      detectWorkspace: async () => ({ isWorkspace: true, workspace: { packages: [] }, packageManager: { name: 'pnpm' }, error: '' }),
+    }),
+    /Multiple netlify\.toml files were found/,
+  )
+})
+
+test('futureFollowUpReferencesStep detects deferred archive dependencies', () => {
+  const steps = [
+    { id: 'review' },
+    { id: 'cross-review', submit: 'follow-up', input: [{ step: 'review', results: 'all' }] },
+    { id: 'synthesize', submit: 'new-run', input: [{ step: 'review', results: 'all' }] },
+  ]
+
+  assert.equal(_private.futureFollowUpReferencesStep(steps, 0, 'review'), true)
+  assert.equal(_private.futureFollowUpReferencesStep(steps, 1, 'review'), false)
+})
+
+test('shouldArchiveCompletedStep archives intermediate steps only when requested', () => {
+  const steps = [
+    { id: 'review', isArchivable: true },
+    { id: 'cross-review', isArchivable: true },
+    { id: 'synthesize', isArchivable: true },
+  ]
+
+  assert.equal(_private.shouldArchiveCompletedStep({
+    step: steps[0],
+    options: { archive: true },
+    flowSteps: steps,
+    currentStepIndex: 0,
+  }), true)
+  assert.equal(_private.shouldArchiveCompletedStep({
+    step: steps[2],
+    options: { archive: true },
+    flowSteps: steps,
+    currentStepIndex: 2,
+  }), false)
+  assert.equal(_private.shouldArchiveCompletedStep({
+    step: steps[0],
+    options: {},
+    flowSteps: steps,
+    currentStepIndex: 0,
+  }), false)
+  assert.equal(_private.shouldArchiveCompletedStep({
+    step: { id: 'review', isArchivable: false },
+    options: { archive: true },
+    flowSteps: steps,
+    currentStepIndex: 0,
+  }), false)
+  assert.equal(_private.shouldArchiveCompletedStep({
+    step: { id: 'synthesize', autoArchive: true },
+    options: {},
+    flowSteps: steps,
+    currentStepIndex: 2,
+  }), true)
+  assert.equal(_private.shouldArchiveCompletedStep({
+    step: { id: 'review', autoArchive: false },
+    options: { archive: true },
+    flowSteps: steps,
+    currentStepIndex: 0,
+  }), false)
+})
+
+test('archiveEligibleCompletedLocalRuns defers runs needed by follow-up steps and dedupes runner archive calls', () => {
+  const projectRoot = tmpRoot()
+  const runState = writeRunState(projectRoot, 'archive-test', {
+    flowId: 'review',
+    steps: [{
+      id: 'review',
+      title: 'Review',
+      status: 'completed',
+      runs: [{
+        agent: 'codex',
+        status: 'completed',
+        runnerId: 'runner-1',
+        resultText: 'first result',
+      }],
+    }],
+  })
+  const flowSteps = [
+    { id: 'review', isArchivable: true },
+    { id: 'cross-review', isArchivable: true, submit: 'follow-up', input: [{ step: 'review', results: 'all' }] },
+    { id: 'synthesize', isArchivable: true, submit: 'new-run', input: [{ step: 'review', results: 'all' }] },
+  ]
+  const archiveCalls = []
+  const archiveRun = ({ runnerId }) => {
+    archiveCalls.push(runnerId)
+    return { archived: true, error: '' }
+  }
+
+  _private.archiveEligibleCompletedLocalRuns({
+    runState,
+    flowSteps,
+    currentStepIndex: 0,
+    options: { archive: true },
+    projectRoot,
+    netlify: { env: {} },
+    archiveRun,
+  })
+  assert.deepEqual(archiveCalls, [])
+  assert.equal(runState.steps[0].runs[0].archived, undefined)
+
+  runState.steps.push({
+    id: 'cross-review',
+    title: 'Cross Review',
+    status: 'completed',
+    runs: [{
+      agent: 'codex',
+      status: 'completed',
+      runnerId: 'runner-1',
+      resultText: 'follow-up result',
+    }],
+  })
+
+  _private.archiveEligibleCompletedLocalRuns({
+    runState,
+    flowSteps,
+    currentStepIndex: 1,
+    options: { archive: true },
+    projectRoot,
+    netlify: { env: {} },
+    archiveRun,
+  })
+
+  assert.deepEqual(archiveCalls, ['runner-1'])
+  assert.equal(runState.steps[0].runs[0].archived, true)
+  assert.equal(runState.steps[1].runs[0].archived, true)
 })
 
 test('formatCompactLocalRunResults truncates prior local outputs for retry prompts', () => {
@@ -785,7 +942,11 @@ test('chooseNetlifyFilterOption rejects ambiguous configs in non-TTY mode', asyn
   Object.defineProperty(process.stdin, 'isTTY', { configurable: true, value: false })
   try {
     await assert.rejects(
-      _private.chooseNetlifyFilterOption({ projectRoot, options: {} }),
+      _private.chooseNetlifyFilterOption({
+        projectRoot,
+        options: {},
+        detectWorkspace: async () => ({ isWorkspace: true, workspace: { packages: [] }, packageManager: { name: 'pnpm' }, error: '' }),
+      }),
       /Multiple netlify\.toml files were found/,
     )
   } finally {
@@ -805,6 +966,50 @@ test('sortNetlifyConfigChoices puts configs with inferred filters first', () => 
     { source: 'clients/frontend/netlify.toml', filter: 'revenue-engine-frontend' },
     { source: '_misc/netlify.toml', filter: '' },
   ])
+})
+
+test('sortNetlifyConfigChoices prefers the config closest to the invocation directory', () => {
+  const projectRoot = tmpRoot()
+  const frontendDir = path.join(projectRoot, 'frontend')
+  const sanityDir = path.join(projectRoot, 'sanity')
+  const legacyDir = path.join(projectRoot, 'sanity-legacy')
+  assert.deepEqual(_private.sortNetlifyConfigChoices([
+    { source: 'sanity/netlify.toml', configDir: sanityDir, filter: '' },
+    { source: 'frontend/netlify.toml', configDir: frontendDir, filter: '' },
+    { source: 'sanity-legacy/netlify.toml', configDir: legacyDir, filter: '' },
+  ], {
+    projectRoot,
+    invocationDir: legacyDir,
+  }).map((candidate) => candidate.source), [
+    'sanity-legacy/netlify.toml',
+    'frontend/netlify.toml',
+    'sanity/netlify.toml',
+  ])
+})
+
+test('resolveProjectRoot finds the git root when invoked from a subdirectory', () => {
+  const projectRoot = tmpRoot()
+  const childDir = path.join(projectRoot, 'frontend')
+  fs.mkdirSync(childDir, { recursive: true })
+  spawnSync('git', ['init', '-q'], { cwd: projectRoot })
+
+  assert.equal(_private.resolveProjectRoot('', { cwd: childDir }), fs.realpathSync(projectRoot))
+  assert.equal(_private.resolveProjectRoot(childDir, { cwd: projectRoot }), childDir)
+})
+
+test('netlifyConfigChoiceHint explains non-workspace configs without asking for filters', () => {
+  assert.equal(
+    _private.netlifyConfigChoiceHint({ source: 'frontend/netlify.toml', filter: '', siteId: '', stateSource: '' }, { isWorkspace: false }),
+    'config frontend/netlify.toml',
+  )
+})
+
+test('netlifyProjectChoiceLabel prefers linked site ids and otherwise shows directory', () => {
+  assert.equal(
+    _private.netlifyProjectChoiceLabel({ dir: 'frontend', siteId: '1963fff0-bb0c-4f91-8601-f7acd91cd76e' }),
+    'frontend (1963fff0-bb0c-4f91-8601-f7acd91cd76e)',
+  )
+  assert.equal(_private.netlifyProjectChoiceLabel({ dir: 'sanity', siteId: '' }), 'sanity')
 })
 
 test('success box keeps non-TTY links on one line', () => {

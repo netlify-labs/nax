@@ -16,6 +16,8 @@ test('loadFlow reads flow.yml via configorama and normalizes steps', async () =>
   assert.deepEqual(flow.steps[0].agents, ['claude', 'gemini', 'codex'])
   assert.deepEqual(flow.steps[2].agents, ['codex'])
   assert.equal(flow.steps[0].waitFor, 'agent-results')
+  assert.equal(flow.steps[0].autoArchive, null)
+  assert.equal(flow.steps[0].isArchivable, true)
 })
 
 test('listFlows discovers flow directories', async () => {

@@ -58,10 +58,13 @@ const {
   updateSkills,
 } = require('../lib/skills')
 const { NETLIFY_API_TRANSPORT, detectTransports, formatTransportSetupHelp, isNetlifyApiTransport, resolveTransport } = require('../lib/transports')
+const { classifyNetlifyRuntime } = require('../lib/netlify-runtime')
 const { enableGitHubActionsSetup, findExistingAgentRunnerWorkflow, initSite, readNetlifyProject } = require('../lib/init')
 const {
+  archiveAgentRun,
   buildNetlifyEnv,
   currentGitBranch,
+  detectJavascriptWorkspace,
   listNetlifyFilterCandidates,
   resolveNetlifyFilter,
   submitLocalAgentRun,
@@ -98,6 +101,20 @@ function parseCsv(value) {
     .filter(Boolean)
 }
 
+function gitRepositoryRoot(cwd = process.cwd()) {
+  const result = spawnSync('git', ['rev-parse', '--show-toplevel'], {
+    cwd,
+    encoding: 'utf8',
+  })
+  if (result.status !== 0) return ''
+  return result.stdout.trim()
+}
+
+function resolveProjectRoot(optionRoot, { cwd = process.cwd() } = {}) {
+  if (optionRoot) return path.resolve(optionRoot)
+  return gitRepositoryRoot(cwd) || path.resolve(cwd)
+}
+
 function maybeReportNetlifyFilter(resolved) {
   if (!resolved?.filter) return
   if (resolved.source && resolved.source !== 'option') {
@@ -105,13 +122,44 @@ function maybeReportNetlifyFilter(resolved) {
   }
 }
 
-function netlifyConfigChoiceHint(candidate) {
+function maybeReportNetlifySite(options = {}) {
+  if (!options.netlifySiteId) return
+  const source = options.netlifySiteSource ? ` (${options.netlifySiteSource})` : ''
+  console.log(`Netlify site ID: ${options.netlifySiteId}${source}`)
+}
+
+function netlifyProjectChoiceLabel(candidate = {}) {
+  const dir = candidate.dir || candidate.source || 'netlify.toml'
+  if (candidate.siteId) return `${dir} (${candidate.siteId})`
+  return dir
+}
+
+function netlifyConfigChoiceHint(candidate, workspaceDetection = {}) {
   if (candidate.filter) return `uses --filter ${candidate.filter}`
+  if (workspaceDetection.isWorkspace === false) return candidate.source ? `config ${candidate.source}` : ''
   return 'no single --filter found in build command'
 }
 
-function sortNetlifyConfigChoices(candidates = []) {
+function netlifyConfigDistance(candidate = {}, { projectRoot, invocationDir } = {}) {
+  if (!projectRoot || !invocationDir || !candidate.configDir) return 0
+  const configDir = path.resolve(candidate.configDir)
+  const cwd = path.resolve(invocationDir)
+  const relativeFromConfig = path.relative(configDir, cwd)
+  if (!relativeFromConfig) return 0
+  if (!relativeFromConfig.startsWith('..') && !path.isAbsolute(relativeFromConfig)) {
+    return relativeFromConfig.split(path.sep).filter(Boolean).length
+  }
+  const relativeFromCwd = path.relative(cwd, configDir)
+  if (!relativeFromCwd.startsWith('..') && !path.isAbsolute(relativeFromCwd)) {
+    return 100 + relativeFromCwd.split(path.sep).filter(Boolean).length
+  }
+  return 1000 + path.relative(path.resolve(projectRoot), configDir).split(path.sep).filter(Boolean).length
+}
+
+function sortNetlifyConfigChoices(candidates = [], context = {}) {
   return [...candidates].sort((a, b) => {
+    const distance = netlifyConfigDistance(a, context) - netlifyConfigDistance(b, context)
+    if (distance !== 0) return distance
     if (Boolean(a.filter) !== Boolean(b.filter)) return a.filter ? -1 : 1
     return String(a.source || '').localeCompare(String(b.source || ''))
   })
@@ -128,10 +176,21 @@ function formatNetlifyConfigAmbiguity(candidates = []) {
   ].join('\n')
 }
 
-async function chooseNetlifyFilterOption({ projectRoot, options = {} } = {}) {
+function formatNetlifyWorkspaceFilterError(selectedSource, workspaceDetection = {}) {
+  const packageManager = workspaceDetection.packageManager?.name
+    ? ` (${workspaceDetection.packageManager.name} workspace detected)`
+    : ''
+  return [
+    `Selected ${selectedSource} is in a JavaScript workspace${packageManager}, but its build command does not contain exactly one --filter value.`,
+    'Pass --filter <app> explicitly or add a single package-manager filter to the Netlify build command.',
+  ].join(' ')
+}
+
+async function chooseNetlifyFilterOption({ projectRoot, invocationDir = process.cwd(), options = {}, detectWorkspace = detectJavascriptWorkspace } = {}) {
   if (options.filter) return options
   const candidates = listNetlifyFilterCandidates(projectRoot)
   if (candidates.length <= 1) return options
+  const workspaceDetection = await detectWorkspace({ projectRoot, projectDir: projectRoot })
 
   if (!process.stdin.isTTY || options.yes) {
     const uniqueFilters = [...new Set(candidates.map((candidate) => candidate.filter).filter(Boolean))]
@@ -141,30 +200,40 @@ async function chooseNetlifyFilterOption({ projectRoot, options = {} } = {}) {
         ...options,
         filter: uniqueFilters[0],
         netlifyConfig: selected?.source || '',
+        ...(selected?.siteId ? { netlifySiteId: selected.siteId, netlifySiteSource: selected.stateSource } : {}),
       }
     }
+    if (!workspaceDetection.isWorkspace) return options
     throw new Error(formatNetlifyConfigAmbiguity(candidates))
   }
 
   const clack = await loadClack()
-  const choices = sortNetlifyConfigChoices(candidates)
+  const choices = sortNetlifyConfigChoices(candidates, { projectRoot, invocationDir })
   const selectedSource = await clack.select({
-    message: 'Choose Netlify config for Agent Runner',
+    message: 'Multiple Netlify projects detected. Choose where to run Agent Runner.',
     options: choices.map((candidate) => ({
       value: candidate.source,
-      label: candidate.source,
-      hint: netlifyConfigChoiceHint(candidate),
+      label: netlifyProjectChoiceLabel(candidate),
+      hint: netlifyConfigChoiceHint(candidate, workspaceDetection),
     })),
   })
   if (clack.isCancel(selectedSource)) process.exit(0)
   const selected = candidates.find((candidate) => candidate.source === selectedSource)
   if (!selected?.filter) {
-    throw new Error(`Selected ${selectedSource} does not contain exactly one Netlify --filter value. Pass --filter <app> explicitly.`)
+    if (!workspaceDetection.isWorkspace) {
+      return {
+        ...options,
+        netlifyConfig: selectedSource,
+        ...(selected.siteId ? { netlifySiteId: selected.siteId, netlifySiteSource: selected.stateSource } : {}),
+      }
+    }
+    throw new Error(formatNetlifyWorkspaceFilterError(selectedSource, workspaceDetection))
   }
   return {
     ...options,
     filter: selected.filter,
     netlifyConfig: selected.source,
+    ...(selected.siteId ? { netlifySiteId: selected.siteId, netlifySiteSource: selected.stateSource } : {}),
   }
 }
 
@@ -1352,7 +1421,7 @@ async function runSingleNetlifyAgent({
   startLabel,
 } = {}) {
   const branch = options.branch || currentGitBranch(projectRoot)
-  const netlify = buildNetlifyEnv({ projectRoot })
+  const netlify = buildNetlifyEnv({ projectRoot, siteId: options.netlifySiteId })
   const netlifyFilter = resolveNetlifyFilter({ projectRoot, filter: options.filter })
   const runTitle = title || 'Agent Run'
   const run = {
@@ -1375,6 +1444,7 @@ async function runSingleNetlifyAgent({
   }
 
   if (typeof beforeSubmit === 'function') beforeSubmit()
+  maybeReportNetlifySite(options)
   maybeReportNetlifyFilter(netlifyFilter)
   console.log(`\nStarting ${titleCase(agent)} ${startLabel || runTitle.toLowerCase()}...`)
   const startedAt = Date.now()
@@ -2588,6 +2658,90 @@ function localStepStatus(stepState) {
     : 'failed'
 }
 
+function futureFollowUpReferencesStep(flowSteps = [], currentStepIndex, stepId) {
+  return flowSteps.slice(currentStepIndex + 1).some((step) => (
+    step.submit === 'follow-up' &&
+    Array.isArray(step.input) &&
+    step.input.some((input) => input.step === stepId)
+  ))
+}
+
+function stepIndexInFlowSteps(flowSteps = [], currentStepIndex, stepId) {
+  const index = flowSteps.findIndex((step) => step.id === stepId)
+  return index === -1 ? currentStepIndex : index
+}
+
+function shouldArchiveCompletedStep({ step, options = {}, flowSteps = [], currentStepIndex = -1 }) {
+  if (!step) return false
+  if (step.autoArchive === true) return true
+  if (step.autoArchive === false) return false
+  if (options.archive !== true) return false
+  if (step.isArchivable === false) return false
+  const index = stepIndexInFlowSteps(flowSteps, currentStepIndex, step.id)
+  return index !== flowSteps.length - 1
+}
+
+function applyArchiveResultToRunner(runState, runnerId, archiveResult) {
+  const touched = []
+  const archivedAt = new Date().toISOString()
+  for (const stepState of runState.steps || []) {
+    let changed = false
+    for (const run of stepState.runs || []) {
+      if (run.runnerId !== runnerId) continue
+      run.archived = archiveResult.archived === true
+      run.archivedAt = archiveResult.archived === true ? archivedAt : ''
+      run.archiveError = archiveResult.error || ''
+      run.raw = {
+        ...(run.raw || {}),
+        archive: {
+          archived: archiveResult.archived === true,
+          archivedAt: archiveResult.archived === true ? archivedAt : '',
+          error: archiveResult.error || '',
+        },
+      }
+      changed = true
+    }
+    if (changed) touched.push(stepState)
+  }
+  return touched
+}
+
+function archiveEligibleCompletedLocalRuns({ runState, flowSteps, currentStepIndex, options = {}, projectRoot, netlify, archiveRun = archiveAgentRun }) {
+  const archivedThisPass = new Set()
+  const stepById = new Map((flowSteps || []).map((step) => [step.id, step]))
+  for (const stepState of runState.steps || []) {
+    const step = stepById.get(stepState.id)
+    if (!shouldArchiveCompletedStep({ step, options, flowSteps, currentStepIndex })) continue
+    if (stepState.status !== 'completed') continue
+    if (futureFollowUpReferencesStep(flowSteps, currentStepIndex, stepState.id)) continue
+
+    for (const run of stepState.runs || []) {
+      if (run.status !== 'completed' || !run.runnerId || run.archived === true) continue
+      if (archivedThisPass.has(run.runnerId)) continue
+      archivedThisPass.add(run.runnerId)
+
+      const archiveResult = archiveRun({
+        projectRoot,
+        runnerId: run.runnerId,
+        env: netlify.env,
+      })
+      const touchedSteps = applyArchiveResultToRunner(runState, run.runnerId, archiveResult)
+      for (const touchedStep of touchedSteps) {
+        for (const touchedRun of touchedStep.runs || []) {
+          if (touchedRun.runnerId === run.runnerId) persistRunArtifact(runState, touchedStep, touchedRun)
+        }
+        persistStepArtifacts(runState, touchedStep)
+      }
+      saveRunState(runState)
+      if (archiveResult.archived) {
+        console.log(`Archived Netlify agent run ${run.runnerId}`)
+      } else {
+        console.warn(`Failed to archive Netlify agent run ${run.runnerId}${archiveResult.error ? `: ${archiveResult.error}` : ''}`)
+      }
+    }
+  }
+}
+
 function dateMs(value) {
   if (!value) return null
   const time = new Date(value).getTime()
@@ -3585,8 +3739,9 @@ async function executeLocalFlow({ flow, steps, options, runState, projectRoot, c
   const date = options.date || getLocalDate()
   const baseContext = contextForRunState(runState, options)
   const branch = options.branch || currentGitBranch(projectRoot)
-  const netlify = buildNetlifyEnv({ projectRoot })
+  const netlify = buildNetlifyEnv({ projectRoot, siteId: options.netlifySiteId })
   const netlifyFilter = resolveNetlifyFilter({ projectRoot, filter: options.filter })
+  maybeReportNetlifySite(options)
   maybeReportNetlifyFilter(netlifyFilter)
 
   for (const [stepIndex, step] of steps.entries()) {
@@ -3736,6 +3891,14 @@ async function executeLocalFlow({ flow, steps, options, runState, projectRoot, c
     }
 
     await completeLocalStep({ runState, stepState, step, options, projectRoot, netlify, netlifyFilter: netlifyFilter.filter })
+    archiveEligibleCompletedLocalRuns({
+      runState,
+      flowSteps: steps,
+      currentStepIndex: stepIndex,
+      options,
+      projectRoot,
+      netlify,
+    })
     completedStepStates.set(step.id, stepState)
     saveRunState(runState)
 
@@ -3757,7 +3920,7 @@ async function resumeLocalFlow({ flow, runState, projectRoot }) {
     ...options,
   }
   saveRunState(runState)
-  const netlify = buildNetlifyEnv({ projectRoot })
+  const netlify = buildNetlifyEnv({ projectRoot, siteId: options.netlifySiteId })
   const completedStepStates = completedStepMapFromRunState(runState)
   const startIndex = firstRunnableStepIndex(flow, runState)
   if (startIndex >= flow.steps.length) {
@@ -3774,6 +3937,14 @@ async function resumeLocalFlow({ flow, runState, projectRoot }) {
     console.log(`State: ${workflowStatePath(runState.dir)}`)
     console.log(`Repair and continue: ${step.title}`)
     await completeLocalStep({ runState, stepState, step, options, projectRoot, netlify, initialDelayMs: 0 })
+    archiveEligibleCompletedLocalRuns({
+      runState,
+      flowSteps: flow.steps,
+      currentStepIndex: startIndex,
+      options,
+      projectRoot,
+      netlify,
+    })
     completedStepStates.set(step.id, stepState)
     saveRunState(runState)
     if (stepState.status !== 'completed' && stepState.status !== 'dry-run') {
@@ -3894,7 +4065,6 @@ async function handleRetry(runId, options) {
   const flowStep = flow.steps.find((candidate) => candidate.id === step.id)
   if (!flowStep) throw new Error(`Flow ${flow.id} no longer contains step ${step.id}.`)
 
-  const netlify = buildNetlifyEnv({ projectRoot })
   const branch = runState.branch || runState.options?.branch || currentGitBranch(projectRoot)
   const retryOptions = await chooseNetlifyFilterOption({
     projectRoot,
@@ -3904,10 +4074,13 @@ async function handleRetry(runId, options) {
       filter: options.filter || runState.options?.filter || '',
     },
   })
+  const netlify = buildNetlifyEnv({ projectRoot, siteId: retryOptions.netlifySiteId })
   runState.options = {
     ...(runState.options || {}),
     ...(retryOptions.filter ? { filter: retryOptions.filter } : {}),
     ...(retryOptions.netlifyConfig ? { netlifyConfig: retryOptions.netlifyConfig } : {}),
+    ...(retryOptions.netlifySiteId ? { netlifySiteId: retryOptions.netlifySiteId } : {}),
+    ...(retryOptions.netlifySiteSource ? { netlifySiteSource: retryOptions.netlifySiteSource } : {}),
   }
   const netlifyFilter = resolveNetlifyFilter({ projectRoot, filter: retryOptions.filter })
   const compactPromptText = buildCompactLocalPromptForRetry({ flow, step: flowStep, runState, run })
@@ -4013,7 +4186,8 @@ async function handleRetry(runId, options) {
 }
 
 async function handleAdHocAgentRun(options = {}) {
-  const projectRoot = path.resolve(options.projectRoot || process.cwd())
+  const invocationDir = path.resolve(options.invocationDir || process.cwd())
+  const projectRoot = resolveProjectRoot(options.projectRoot, { cwd: invocationDir })
   const transport = await chooseSingleRunTransportInteractively({
     requested: options.transport || 'auto',
     projectRoot,
@@ -4031,7 +4205,7 @@ async function handleAdHocAgentRun(options = {}) {
   }
 
   if (isNetlifyApiTransport(transport)) {
-    const netlifyOptions = await chooseNetlifyFilterOption({ projectRoot, options })
+    const netlifyOptions = await chooseNetlifyFilterOption({ projectRoot, invocationDir, options })
     await runSingleNetlifyAgent({
       projectRoot,
       agent,
@@ -4066,7 +4240,8 @@ async function handleAdHocAgentRun(options = {}) {
 }
 
 async function handleRun(flowId, options) {
-  const projectRoot = path.resolve(options.projectRoot || process.cwd())
+  const invocationDir = path.resolve(process.cwd())
+  const projectRoot = resolveProjectRoot(options.projectRoot, { cwd: invocationDir })
   if (flowId === 'ls' || flowId === 'list') {
     await handleList()
     return
@@ -4074,7 +4249,7 @@ async function handleRun(flowId, options) {
   const wantsAdHoc = !flowId && (options.agent || options.prompt)
   const resolvedFlowId = flowId || (wantsAdHoc ? AD_HOC_RUN_TARGET : (process.stdin.isTTY ? await pickFlowInteractively() : 'review'))
   if (isAdHocRunTarget(resolvedFlowId)) {
-    await handleAdHocAgentRun({ ...options, projectRoot })
+    await handleAdHocAgentRun({ ...options, projectRoot, invocationDir })
     return
   }
   const flow = await loadFlow(resolvedFlowId)
@@ -4127,7 +4302,7 @@ async function handleRun(flowId, options) {
   }
 
   const netlifyOptions = isNetlifyApiTransport(transport)
-    ? await chooseNetlifyFilterOption({ projectRoot, options: branchOptions })
+    ? await chooseNetlifyFilterOption({ projectRoot, invocationDir, options: branchOptions })
     : branchOptions
 
   const prepared = await prepareInteractiveFlowRun({ flow, options: netlifyOptions, transport, projectRoot })
@@ -4285,6 +4460,50 @@ async function handleSkills(subcommand = 'help', options = {}) {
   }
 }
 
+function normalizeCiCommand(commandParts = []) {
+  return (Array.isArray(commandParts) ? commandParts : [commandParts])
+    .map((part) => String(part || '').trim())
+    .filter(Boolean)
+    .join(' ')
+}
+
+function handleCi(commandParts = [], options = {}, {
+  cwd = process.cwd(),
+  env = process.env,
+  runCommand = spawnSync,
+  log = console.log,
+} = {}) {
+  const commandText = normalizeCiCommand(commandParts)
+  if (!commandText) throw new Error('Usage: nax ci <command>')
+
+  const runtime = classifyNetlifyRuntime(env)
+  if (!runtime.isAgentRunner) {
+    if (!options.quiet) log(`nax ci: skipped ${commandText} (${runtime.label}: ${runtime.reason})`)
+    return {
+      skipped: true,
+      status: 0,
+      command: commandText,
+      runtime,
+    }
+  }
+
+  if (!options.quiet) log(`nax ci: running ${commandText} (${runtime.reason})`)
+  const result = runCommand(commandText, [], {
+    cwd,
+    env,
+    shell: true,
+    stdio: 'inherit',
+  })
+  if (result.error) throw result.error
+  return {
+    skipped: false,
+    status: Number.isInteger(result.status) ? result.status : (result.signal ? 1 : 0),
+    signal: result.signal || '',
+    command: commandText,
+    runtime,
+  }
+}
+
 async function shouldEnableGithubActions(options, { projectRoot } = {}) {
   if (options.githubActions === true) return true
   if (options.githubActions === false) return false
@@ -4346,6 +4565,7 @@ function buildProgram() {
     .option('--filter <app>', 'Netlify CLI monorepo app filter for local Netlify agent runs')
     .option('--transport <transport>', 'Where to run: auto, github, netlify-api', 'auto')
     .addOption(new Option('--where <place>', 'Hidden compatibility alias for --transport').hideHelp())
+    .option('--archive', 'Archive completed intermediate Netlify API agent runs')
     .option('--dry', 'Preview the workflow without creating issues/comments')
     .addOption(new Option('--dry-run', 'Hidden compatibility alias for --dry').hideHelp())
     .option('--force', 'Skip confirmation prompts')
@@ -4385,6 +4605,7 @@ function buildProgram() {
     .option('--filter <app>', 'Netlify CLI monorepo app filter for local Netlify agent runs')
     .option('--transport <transport>', 'Where to run: auto, github, netlify-api', 'auto')
     .addOption(new Option('--where <place>', 'Hidden compatibility alias for --transport').hideHelp())
+    .option('--archive', 'Archive completed intermediate Netlify API agent runs')
     .option('--context-file <path>', 'Read additional context from a file')
     .option('--sha <rev>', 'Override the pinned git revision injected into the review context')
     .option('--pr-limit <count>', 'Maximum number of open PRs to include in the merge-state ledger', '10')
@@ -4465,6 +4686,16 @@ function buildProgram() {
     .option('--dry', 'Preview installs without writing files')
     .addOption(new Option('--dry-run', 'Hidden compatibility alias for --dry').hideHelp())
     .action((subcommand, options, command) => handleSkills(subcommand || 'help', actionOptions(options, command)))
+
+  program
+    .command('ci <command...>')
+    .description('Run a shell command only inside Netlify Agent Runner environments')
+    .option('--quiet', 'Do not print skip/run status')
+    .allowUnknownOption(true)
+    .action((commandParts, options, command) => {
+      const result = handleCi(commandParts, actionOptions(options, command))
+      if (!result.skipped && result.status !== 0) process.exitCode = result.status
+    })
 
   program
     .command('issue [prompt]')
@@ -4592,6 +4823,7 @@ module.exports = {
     formatHandoffSourceKind,
     formatHandoffSourceLabel,
     formatHandoffSourceDetailBox,
+    handleCi,
     handoffSourceDetailTitle,
     handoffSourceDetailLines,
     compactCurrentTask,
@@ -4602,13 +4834,19 @@ module.exports = {
     handoffSourceQuery,
     isAdHocRunTarget,
     netlifyConfigChoiceHint,
+    netlifyProjectChoiceLabel,
     orderSingleRunTransports,
+    resolveProjectRoot,
     nextLocalStepMessage,
     localRetryCandidates,
     sortNetlifyConfigChoices,
     agentStepCompletionSummary,
+    applyArchiveResultToRunner,
+    archiveEligibleCompletedLocalRuns,
     AGENT_RUNNER_USE_CASES,
     DID_YOU_KNOW_BORDER_COLORS,
+    futureFollowUpReferencesStep,
+    shouldArchiveCompletedStep,
     physicalRowCount,
     visibleLength,
     normalizeHandoffSourceKind,

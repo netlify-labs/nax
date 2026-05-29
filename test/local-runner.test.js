@@ -6,10 +6,13 @@ const path = require('path')
 const { spawnSync } = require('child_process')
 
 const {
+  archiveAgentRun,
+  buildNetlifyEnv,
   createAgentRun,
   createAgentRunAsync,
   createAgentSession,
   createAgentSessionAsync,
+  detectJavascriptWorkspace,
   findNetlifyConfigPaths,
   formatCommandForError,
   inferNetlifyFilterFromCommand,
@@ -17,6 +20,7 @@ const {
   listNetlifyFilterCandidates,
   listAgentSessions,
   normalizeCompletedRun,
+  readNetlifyState,
   readRootNetlifyBuildCommand,
   resolveNetlifyFilter,
   waitForLocalAgentRuns,
@@ -40,6 +44,86 @@ test('formatCommandForError redacts prompt and API payload values', () => {
     formatCommandForError('netlify', ['api', 'createAgentRunnerSession', '--data', '{"prompt":"secret"}']),
     'netlify api createAgentRunnerSession --data <redacted>',
   )
+})
+
+test('archiveAgentRun invokes Netlify API archive operation', () => {
+  const calls = []
+  const result = archiveAgentRun({
+    projectRoot: '/tmp/project',
+    runnerId: 'runner-1',
+    env: { NETLIFY_AUTH_TOKEN: 'token' },
+    runCommand(command, args, options) {
+      calls.push({ command, args, options })
+      return { status: 0, stdout: '', stderr: '' }
+    },
+  })
+
+  assert.equal(result.archived, true)
+  assert.deepEqual(calls[0].args, [
+    'api',
+    'archiveAgentRunner',
+    '--data',
+    '{"agent_runner_id":"runner-1"}',
+  ])
+  assert.equal(calls[0].options.cwd, '/tmp/project')
+  assert.equal(calls[0].options.allowFailure, true)
+})
+
+test('detectJavascriptWorkspace reports build-info workspace state', async () => {
+  const detected = await detectJavascriptWorkspace({
+    projectRoot: '/tmp/project',
+    getBuildInfo: async (config) => ({
+      jsWorkspaces: {
+        isRoot: true,
+        rootDir: config.rootDir,
+        packages: [{ path: 'frontend', name: 'frontend' }],
+      },
+      packageManager: { name: 'pnpm' },
+    }),
+  })
+
+  assert.equal(detected.isWorkspace, true)
+  assert.equal(detected.workspace.packages[0].path, 'frontend')
+  assert.equal(detected.packageManager.name, 'pnpm')
+  assert.equal(detected.error, '')
+})
+
+test('detectJavascriptWorkspace returns non-workspace when build-info finds no js workspace', async () => {
+  const detected = await detectJavascriptWorkspace({
+    projectRoot: '/tmp/project',
+    getBuildInfo: async () => ({
+      jsWorkspaces: null,
+      packageManager: { name: 'npm' },
+    }),
+  })
+
+  assert.equal(detected.isWorkspace, false)
+  assert.equal(detected.workspace, null)
+  assert.equal(detected.packageManager.name, 'npm')
+})
+
+test('readNetlifyState reads a local Netlify site link', () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'nax-netlify-state-'))
+  fs.mkdirSync(path.join(tmp, '.netlify'), { recursive: true })
+  fs.writeFileSync(path.join(tmp, '.netlify', 'state.json'), JSON.stringify({ siteId: 'site-from-state' }))
+
+  assert.deepEqual(readNetlifyState(tmp), {
+    siteId: 'site-from-state',
+    statePath: path.join(tmp, '.netlify', 'state.json'),
+  })
+})
+
+test('buildNetlifyEnv accepts an explicit selected site id', () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'nax-netlify-env-'))
+  const netlify = buildNetlifyEnv({
+    projectRoot: tmp,
+    siteId: 'selected-site',
+    env: { NETLIFY_AUTH_TOKEN: 'token' },
+  })
+
+  assert.equal(netlify.siteId, 'selected-site')
+  assert.equal(netlify.env.NETLIFY_SITE_ID, 'selected-site')
+  assert.equal(netlify.env.NETLIFY_AUTH_TOKEN, 'token')
 })
 
 test('runAsync redacts sensitive payloads from exec errors', async () => {
@@ -101,10 +185,32 @@ test('resolveNetlifyFilter falls back to a nested netlify.toml build command', (
   })
   assert.deepEqual(listNetlifyFilterCandidates(tmp).map((candidate) => ({
     source: candidate.source,
+    dir: candidate.dir,
     filter: candidate.filter,
   })), [{
     source: path.join('apps', 'workspace', 'packages', 'clients', 'frontend', 'netlify.toml'),
+    dir: path.join('apps', 'workspace', 'packages', 'clients', 'frontend'),
     filter: 'revenue-engine-frontend',
+  }])
+})
+
+test('listNetlifyFilterCandidates includes exact local Netlify site state for config dirs', () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'nax-local-runner-state-'))
+  const appDir = path.join(tmp, 'projects', 'data', 'snowflake_dbt')
+  fs.mkdirSync(path.join(appDir, '.netlify'), { recursive: true })
+  fs.writeFileSync(path.join(appDir, 'netlify.toml'), '[build]\n  command = "npm run build"\n')
+  fs.writeFileSync(path.join(appDir, '.netlify', 'state.json'), JSON.stringify({ siteId: 'site-from-app' }))
+
+  assert.deepEqual(listNetlifyFilterCandidates(tmp).map((candidate) => ({
+    source: candidate.source,
+    dir: candidate.dir,
+    siteId: candidate.siteId,
+    stateSource: candidate.stateSource,
+  })), [{
+    source: path.join('projects', 'data', 'snowflake_dbt', 'netlify.toml'),
+    dir: path.join('projects', 'data', 'snowflake_dbt'),
+    siteId: 'site-from-app',
+    stateSource: path.join('projects', 'data', 'snowflake_dbt', '.netlify', 'state.json'),
   }])
 })
 

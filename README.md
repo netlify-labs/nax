@@ -210,11 +210,20 @@ nax init                  Wire this repo to Netlify + GitHub Actions
 nax handoff               Copy or continue from prior workflow/session results
 nax recent                Browse recent workflow/session/runner artifacts
 nax retry [run-id]        Retry one failed Netlify API agent run, then continue
+nax ci '<command>'        Run a command only inside Netlify Agent Runner
 nax skills install        Install bundled agent skills into detected harness dirs
 nax skills check          Show installed skill versions
 nax skills update         Reinstall the latest bundled skill copy
 nax list                  List available flows
 ```
+
+### `nax ci`
+
+```bash
+nax ci 'npm test && npm run build'
+```
+
+`nax ci` no-ops outside Netlify Agent Runner environments, including normal local shells and Netlify build CI. Inside Agent Runner it executes the command through the shell and exits with the command's status.
 
 ### `nax run` flags
 
@@ -224,6 +233,7 @@ nax list                  List available flows
 | `--force` | Skip confirmation prompts. |
 | `--branch <name>` | Branch to review. Accepts a PR selector like `#123`. |
 | `--transport <kind>` | `auto` (default), `github-actions`, `netlify-api`. |
+| `--archive` | With `netlify-api`, archive completed intermediate agent runs after their results are captured; final-step runs stay visible. |
 | `--step <id>` | Run only that step. |
 | `--from-step <id>` | Run from that step through the end. |
 | `--context <text>` | Extra context appended to every step's prompt. |
@@ -369,6 +379,8 @@ Prompt files are plain Markdown. The runner appends auto-injected review context
 | `agents` | list of `claude`, `gemini`, `codex` | Fan-out targets for this step. |
 | `input` | `[{ step, results }]` | Prior step(s) whose results are passed into this prompt. |
 | `waitFor` | `agent-results` | Block on every agent completing before the next step. |
+| `isArchivable` | `true`, `false` | Opt a step in or out of `--archive` cleanup. Defaults to `true`; final-step runs are still kept unless `autoArchive: true` is set explicitly. |
+| `autoArchive` | `true`, `false` | Explicit per-step override. Use sparingly; `--archive` is the normal cleanup switch. |
 
 ---
 

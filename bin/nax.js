@@ -1927,6 +1927,51 @@ async function selectSearchableOption({
   return clack.select({ message, options, maxItems })
 }
 
+const BUNDLED_WORKFLOW_HINTS = {
+  review: 'Review, cross-review, synthesize',
+  ideas: 'Generate and rank project ideas',
+  'do-next': 'Pick the next development task',
+  'security-audit': 'Find and rank security issues',
+  'performance-audit': 'Find bottlenecks and measurement gaps',
+  'analytics-audit': 'Find missing telemetry',
+  'seo-audit': 'Find metadata and crawlability gaps',
+  'accessibility-audit': 'Find WCAG accessibility issues',
+  'mobile-responsiveness': 'Check mobile layout and touch targets',
+  'e2e-tests': 'Add Playwright tests for critical flows',
+  'unit-tests': 'Add focused unit tests',
+  documentation: 'Improve README and architecture docs',
+  'error-handling': 'Improve errors, logging, and retries',
+  'ux-copy-polish': 'Polish UX states and copy',
+}
+
+function trimWorkflowHint(description = '') {
+  return String(description || '').replace(/\.+$/, '')
+}
+
+function compactWorkflowDescription(description = '', maxLength = 48) {
+  const normalized = String(description || '').replace(/\s+/g, ' ').trim()
+  if (!normalized || normalized.length <= maxLength) return trimWorkflowHint(normalized)
+  const clipped = normalized.slice(0, maxLength + 1)
+  const lastSpace = clipped.lastIndexOf(' ')
+  const prefix = (lastSpace > 24 ? clipped.slice(0, lastSpace) : normalized.slice(0, maxLength)).replace(/[.,;:!?-]+$/, '')
+  return `${prefix}...`
+}
+
+function workflowPickerHint(flow = {}) {
+  if (flow.source === 'bundled' && BUNDLED_WORKFLOW_HINTS[flow.id]) return BUNDLED_WORKFLOW_HINTS[flow.id]
+  return compactWorkflowDescription(flow.description)
+}
+
+function workflowPickerLabel(flow = {}, { includeAdHoc = true } = {}) {
+  if (!includeAdHoc) return flow.source === 'project' ? `${flow.title} (local)` : flow.title
+  return `${flow.source === 'project' ? 'Workflow' : 'NAX Workflow'} - ${flow.title}`
+}
+
+const AD_HOC_RUN_CHOICE = {
+  value: AD_HOC_RUN_TARGET,
+  label: 'Start a single Netlify agent with a custom prompt',
+}
+
 async function pickFlowInteractively({ includeAdHoc = true, projectRoot = process.cwd(), options = {} } = {}) {
   const clack = await loadClack()
   const flows = await listFlows(flowLoadOptions(options, projectRoot))
@@ -1934,17 +1979,11 @@ async function pickFlowInteractively({ includeAdHoc = true, projectRoot = proces
     console.log('Run a single Netlify agent or orchestrate a multi-step agentic workflow.')
   }
   const choices = [
-    ...(includeAdHoc ? [{
-      value: AD_HOC_RUN_TARGET,
-      label: 'Start a single Netlify agent',
-      hint: 'Run one Netlify agent with a custom prompt.',
-    }] : []),
+    ...(includeAdHoc ? [AD_HOC_RUN_CHOICE] : []),
     ...flows.map((flow) => ({
       value: flow.id,
-      label: includeAdHoc
-        ? `Workflow${flow.source === 'project' ? ' (local)' : ''} - ${flow.title}`
-        : flow.source === 'project' ? `${flow.title} (local)` : flow.title,
-      hint: [flow.sourceLabel, flow.description].filter(Boolean).join(' - '),
+      label: workflowPickerLabel(flow, { includeAdHoc }),
+      hint: workflowPickerHint(flow),
     })),
     ...(includeAdHoc ? [{ value: 'cancel', label: 'Cancel' }] : []),
   ]
@@ -4930,6 +4969,7 @@ module.exports = {
   resolveCommentTarget,
   _private: {
     completedStepMapFromRunState,
+    AD_HOC_RUN_CHOICE,
     firstRunnableStepIndex,
     flowAgents,
     chooseNetlifyFilterOption,
@@ -4991,6 +5031,8 @@ module.exports = {
     sourceIssueNumbersForStep,
     sourceRunsForStep,
     withSelectedAgents,
+    workflowPickerLabel,
+    workflowPickerHint,
     uniqueNumbers,
   },
 }

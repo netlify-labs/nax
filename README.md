@@ -250,6 +250,16 @@ nax list
    nax --agent codex --prompt "Check the nav links"
    ```
 
+   The interactive picker separates built-in NAX workflows from project-local workflows:
+
+   ```text
+   ◆  What do you want to run?
+   │  ● Start a single Netlify agent with a custom prompt
+   │  ○ NAX Workflow - Review (Review, cross-review, synthesize)
+   │  ○ NAX Workflow - Performance Audit (Find bottlenecks and measurement gaps)
+   │  ○ Workflow - Local Smoke Test (Minimal project-local workflow for verifying nax...)
+   ```
+
 4. **Run from anywhere in the repo.** `nax` resolves the Git root before transport and Netlify project detection, so subdirectories work:
 
    ```bash
@@ -294,7 +304,7 @@ Run `nax list` to print the live set.
 ```text
 nax [flow]                Pick a flow and run it (interactive if no flow given)
 nax run [flow]            Alias for the above
-nax --agent <name>        Run one Netlify agent with an interactive prompt
+nax --agent <name>        Run one Netlify agent with a custom prompt
 nax run --agent <name>    Same single-agent path, explicit subcommand form
 nax init                  Wire this repo to Netlify + GitHub Actions
 nax handoff               Copy or continue from prior workflow/session results

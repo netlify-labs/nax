@@ -1405,3 +1405,43 @@ test('withSelectedAgents filters each workflow step and runnableSteps drops empt
   assert.deepEqual(filtered.steps[1].agents, [])
   assert.deepEqual(_private.runnableSteps(filtered, {}).map((step) => step.id), ['review'])
 })
+
+test('workflowPickerHint uses compact bundled flow descriptions without source labels', () => {
+  assert.equal(_private.workflowPickerHint({
+    id: 'performance-audit',
+    source: 'bundled',
+    sourceLabel: 'bundled',
+    description: 'Find likely bottlenecks, measurement gaps, and safe optimization opportunities.',
+  }), 'Find bottlenecks and measurement gaps')
+})
+
+test('workflowPickerLabel names project workflows in the main run menu', () => {
+  assert.equal(_private.workflowPickerLabel({
+    source: 'project',
+    title: 'Local Smoke Test',
+  }, { includeAdHoc: true }), 'Workflow - Local Smoke Test')
+})
+
+test('workflowPickerLabel keeps bundled workflows generic in the main run menu', () => {
+  assert.equal(_private.workflowPickerLabel({
+    source: 'bundled',
+    title: 'Performance Audit',
+  }, { includeAdHoc: true }), 'NAX Workflow - Performance Audit')
+})
+
+test('ad hoc run picker choice uses one-line no-hint wording', () => {
+  assert.equal(_private.AD_HOC_RUN_CHOICE.label, 'Start a single Netlify agent with a custom prompt')
+  assert.equal(Object.hasOwn(_private.AD_HOC_RUN_CHOICE, 'hint'), false)
+})
+
+test('workflowPickerHint compacts project flow descriptions without source prefixes', () => {
+  const hint = _private.workflowPickerHint({
+    id: 'custom-audit',
+    source: 'project',
+    sourceLabel: 'project .github/nax-flows',
+    description: 'This custom workflow has a very long description that would otherwise wrap badly in the picker.',
+  })
+
+  assert.equal(hint, 'This custom workflow has a very long description...')
+  assert.equal(hint.includes('project'), false)
+})

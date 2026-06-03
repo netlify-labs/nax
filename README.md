@@ -81,7 +81,7 @@ nax review --from-step synthesize
 
 The `review` workflow looks like this:
 
-```text
+```bash
 ╭────────────────────────────────────────────────────────────────────────────╮
 │  Multi step agent workflow: "Review"                                       │
 ├────────────────────────────────────────────────────────────────────────────┤
@@ -131,11 +131,26 @@ What that produces:
 2. **cross-review** — each agent comments on the *other* agents' issues, via follow-up sessions on the same runner.
 3. **synthesize** — Codex reads both rounds and posts one consensus issue.
 
-The `do-next` flow asks each model to propose the next task and synthesizes one:
+After the `review` is complete, you can use the `nax handoff` command to pass the results on to downstream AI tooling.
 
 ```bash
-nax do-next
-nax do-next --branch '#123' --transport netlify-api --force
+nax handoff
+╭───────────────────────────────────────────────────────────────────────────────────────────╮
+│  Latest result from Claude agent runner                                                   │
+├───────────────────────────────────────────────────────────────────────────────────────────┤
+│  Date:    May 20, 2026, 7:39 PM (14 days ago)                                             │
+│  Summary: .nax/agent-runners/6a0e6eedd90fa5ba6cbb2f6a/summary.md                          │
+│  Preview:                                                                                 │
+│  - Agent: Claude                                                                          │
+╰───────────────────────────────────────────────────────────────────────────────────────────╯
+
+│
+◆  Hand off previous results
+│  ● Copy latest results to clipboard (claude runner 6a0e6eedd90fa5ba6cbb2f6a · agent
+│  runner · .nax/agent-runners/6a0e6eedd90fa5ba6cbb2f6a/summary.md)
+│  ○ Copy path to latest results
+│  ○ Run another AI workflow with latest result: claude runner
+│  6a0e6eedd90fa5ba6cbb2f6a
 ```
 
 ---

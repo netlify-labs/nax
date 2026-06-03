@@ -4,7 +4,7 @@ const fs = require('fs')
 const os = require('os')
 const path = require('path')
 
-const { DEFAULT_PROJECT_FLOWS_DIRS, FLOW_PICKER_ORDER, listFlows, loadFlow, loadStepPrompt, projectFlowDirs } = require('../lib/flows')
+const { DEFAULT_PROJECT_FLOWS_DIRS, FLOW_PICKER_ORDER, listFlows, loadFlow, loadStepPrompt, projectFlowDirs } = require('../../lib/flows')
 
 function writeFlow(projectRoot, flowsDir, id, { title = id, description = '', promptBody = 'Prompt body' } = {}) {
   const flowDir = path.join(projectRoot, flowsDir, id)
@@ -103,6 +103,26 @@ test('loadFlow uses nax.config.json flowsDirs and project flows shadow bundled f
   assert.equal(flows.find((candidate) => candidate.id === 'release-readiness').sourceLabel, 'project .github/nax-flows')
 })
 
+test('loadFlow uses JavaScript nax config files', async () => {
+  const projectRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'nax-flow-js-config-'))
+  fs.writeFileSync(path.join(projectRoot, 'nax.config.js'), [
+    'module.exports = {',
+    '  flowsDirs: ["tools/nax/flows"],',
+    '}',
+    '',
+  ].join('\n'))
+  writeFlow(projectRoot, 'tools/nax/flows', 'js-config-flow', {
+    title: 'JS Config Flow',
+  })
+
+  const dirs = await projectFlowDirs({ projectRoot })
+  assert.deepEqual(dirs.map((dir) => path.relative(projectRoot, dir)), ['tools/nax/flows'])
+
+  const flow = await loadFlow('js-config-flow', { projectRoot })
+  assert.equal(flow.title, 'JS Config Flow')
+  assert.equal(flow.sourceLabel, 'project tools/nax/flows')
+})
+
 test('loadFlow accepts explicit project workflow directories', async () => {
   const projectRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'nax-flow-explicit-'))
   writeFlow(projectRoot, 'agent/flows', 'custom-flow', {
@@ -196,6 +216,50 @@ test('loadFlow accepts json flow files through configorama', async () => {
 
   const flow = await loadFlow('json-flow', { flowsDir: tmp })
   assert.equal(flow.id, 'json-flow')
+  assert.equal(flow.steps[0].id, 'one')
+  assert.equal(loadStepPrompt(flow, flow.steps[0]).title, 'One')
+})
+
+test('loadFlow accepts toml flow files through configorama', async () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'nax-flow-test-'))
+  const flowDir = path.join(tmp, 'toml-flow')
+  fs.mkdirSync(path.join(flowDir, 'prompts'), { recursive: true })
+  fs.writeFileSync(path.join(flowDir, 'flow.toml'), [
+    'id = "toml-flow"',
+    'title = "TOML Flow"',
+    '',
+    '[[steps]]',
+    'id = "one"',
+    'prompt = "prompts/one.md"',
+    'agents = ["codex"]',
+    '',
+  ].join('\n'))
+  fs.writeFileSync(path.join(flowDir, 'prompts', 'one.md'), '---\ntitle: One\n---\n\nBody\n')
+
+  const flow = await loadFlow('toml-flow', { flowsDir: tmp })
+  assert.equal(flow.id, 'toml-flow')
+  assert.equal(flow.title, 'TOML Flow')
+  assert.equal(flow.steps[0].id, 'one')
+  assert.equal(loadStepPrompt(flow, flow.steps[0]).title, 'One')
+})
+
+test('loadFlow accepts JavaScript flow files through configorama', async () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'nax-flow-test-'))
+  const flowDir = path.join(tmp, 'js-flow')
+  fs.mkdirSync(path.join(flowDir, 'prompts'), { recursive: true })
+  fs.writeFileSync(path.join(flowDir, 'flow.js'), [
+    'module.exports = {',
+    '  id: "js-flow",',
+    '  title: "JavaScript Flow",',
+    '  steps: [{ id: "one", prompt: "prompts/one.md", agents: ["codex"] }],',
+    '}',
+    '',
+  ].join('\n'))
+  fs.writeFileSync(path.join(flowDir, 'prompts', 'one.md'), '---\ntitle: One\n---\n\nBody\n')
+
+  const flow = await loadFlow('js-flow', { flowsDir: tmp })
+  assert.equal(flow.id, 'js-flow')
+  assert.equal(flow.title, 'JavaScript Flow')
   assert.equal(flow.steps[0].id, 'one')
   assert.equal(loadStepPrompt(flow, flow.steps[0]).title, 'One')
 })

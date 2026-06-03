@@ -14,7 +14,7 @@ const {
   stepDirectoryName,
   updateLatestSymlink,
   writeGithubStepSummary,
-} = require('../lib/workflow-artifacts')
+} = require('../../lib/workflow-artifacts')
 
 function tmpRoot() {
   return fs.mkdtempSync(path.join(os.tmpdir(), 'nax-workflow-artifacts-'))

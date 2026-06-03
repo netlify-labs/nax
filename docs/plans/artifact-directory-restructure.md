@@ -581,7 +581,7 @@ Keep `include-hidden-files: true` because `.nax/` is hidden.
 
 ## Test Plan
 
-### `test/run-state.test.js`
+### `tests/unit/run-state.test.js`
 
 - `createRunState()` creates `.nax/workflows/<id>/workflow.json`.
 - `listWorkflowStates()` reads `.nax/workflows`.
@@ -589,13 +589,13 @@ Keep `include-hidden-files: true` because `.nax/` is hidden.
 - `latest` symlink points under `.nax/workflows`.
 - One-shot legacy `.nax/runs` rename or orphan warning works.
 
-### `test/workflow-artifacts.test.js`
+### `tests/unit/workflow-artifacts.test.js`
 
 - Step-local files are under `agent-runners/`, not `runs/`.
 - Top summary relative links point to `steps/01-review/agent-runners/claude.md`.
 - `step.json` includes canonical runner/session artifact paths.
 
-### New `test/agent-session-artifacts.test.js`
+### New `tests/unit/agent-session-artifacts.test.js`
 
 - `persistAgentSessionArtifact()` writes `agent-session.json`, `summary.md`, `usage.json`, and `result.md` when result text exists.
 - `persistAgentSessionArtifact()` omits `result.md` for failed, timeout, cancelled, dry-run, or empty-result sessions.
@@ -604,7 +604,7 @@ Keep `include-hidden-files: true` because `.nax/` is hidden.
 - Source metadata supports `handoff`, `workflow-step`, and `manual`.
 - Latest symlink updates.
 
-### New `test/agent-runner-artifacts.test.js`
+### New `tests/unit/agent-runner-artifacts.test.js`
 
 - `persistAgentRunnerArtifact()` writes `agent-runner.json`, `summary.md`, `usage.json`, and `sessions/<session-id>.json`.
 - Runner usage aggregates session usage.
@@ -612,7 +612,7 @@ Keep `include-hidden-files: true` because `.nax/` is hidden.
 - Summary links to canonical session summaries.
 - Latest symlink updates.
 
-### New `test/handoff-sources.test.js`
+### New `tests/unit/handoff-sources.test.js`
 
 - Newest session beats older runner and workflow.
 - Newest runner beats older workflow when no newer session exists.
@@ -621,7 +621,7 @@ Keep `include-hidden-files: true` because `.nax/` is hidden.
 - Empty `.nax` returns a helpful error.
 - No `.nax/runs` fallback after cleanup.
 
-### `test/flow-execution.test.js`
+### `tests/unit/flow-execution.test.js`
 
 - Latest source path can be workflow, runner, or session.
 - Fresh handoff completion persists `.nax/agent-sessions/<session-id>/summary.md`.

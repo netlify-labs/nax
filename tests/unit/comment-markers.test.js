@@ -8,7 +8,7 @@ const {
   parsePromptMarker,
   parseRunnerResultMarker,
   renderPromptMarker,
-} = require('../lib/comment-markers')
+} = require('../../lib/comment-markers')
 
 test('renderPromptMarker emits the canonical shape for valid segments', () => {
   const out = renderPromptMarker({

@@ -649,7 +649,7 @@ Artifacts do not contain:
 
 ## Tests
 
-### Unit tests: `test/workflow-artifacts.test.js`
+### Unit tests: `tests/unit/workflow-artifacts.test.js`
 
 - Writes `summary.md`, `usage.json`, per-step `step.json`/`summary.md`/`usage.json`, and per-agent `.md`/`.json` from a hand-built `runState`.
 - Per-agent JSON contains `resultText` for completed runs.
@@ -691,7 +691,7 @@ If existing `.github/workflows/run-nax.yml` tests exist, extend them to assert t
 
 ### Phase 1 — Artifact writer
 
-`lib/workflow-artifacts.js` plus `test/workflow-artifacts.test.js`. No `bin/nax.js` integration yet.
+`lib/workflow-artifacts.js` plus `tests/unit/workflow-artifacts.test.js`. No `bin/nax.js` integration yet.
 
 Acceptance: tests pass against hand-built local-style and GitHub-style normalized run states.
 
@@ -754,7 +754,7 @@ GitHub enforces 1 MiB per step. Long synthesize outputs from `review` regularly 
 One PR shipping Phases 1–4:
 
 1. `lib/workflow-artifacts.js`
-2. `test/workflow-artifacts.test.js`
+2. `tests/unit/workflow-artifacts.test.js`
 3. `lib/run-state.js` — `persistWorkflowArtifacts` call inside `saveRunState`
 4. `bin/nax.js` — `runState` parameter on `completeLocalStep` and `completeGithubStep`, per-run and per-step persist calls, `try/finally` wrappers
 5. `lib/init.js` + `bin/nax.js init` — `.gitignore` management

@@ -13,7 +13,7 @@ const {
   isUnfinishedLocalRun,
   listRunStates,
   saveRunState,
-} = require('../lib/run-state')
+} = require('../../lib/run-state')
 
 function runState(tmp, overrides = {}) {
   const runId = overrides.runId || `run-${Math.random().toString(16).slice(2)}`

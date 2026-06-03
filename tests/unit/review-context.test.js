@@ -7,7 +7,7 @@ const {
   formatReviewContract,
   formatWorkingTreeSummary,
   resolveRemoteBranchSha,
-} = require('../lib/review-context')
+} = require('../../lib/review-context')
 
 test('formatWorkingTreeSummary reports clean state', () => {
   assert.equal(formatWorkingTreeSummary([]), 'clean')

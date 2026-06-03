@@ -11,7 +11,7 @@ const {
   listBundledSkills,
   readInstalledVersion,
   resolveProviders,
-} = require('../lib/skills')
+} = require('../../lib/skills')
 
 function makeProject() {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'nax-skills-test-'))

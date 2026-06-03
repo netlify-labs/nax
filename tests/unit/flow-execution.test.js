@@ -5,7 +5,7 @@ const os = require('os')
 const path = require('path')
 const { spawnSync } = require('child_process')
 
-const { _private } = require('../bin/nax')
+const { _private } = require('../../bin/nax')
 
 function tmpRoot() {
   return fs.mkdtempSync(path.join(os.tmpdir(), 'nax-flow-execution-'))
@@ -149,7 +149,7 @@ test('chooseNetlifyFilterOption still requires filters for JavaScript workspaces
 test('workflow dry run previews without writing .nax artifacts', () => {
   const projectRoot = tmpRoot()
   const result = spawnSync(process.execPath, [
-    path.join(__dirname, '..', 'bin', 'nax.js'),
+    path.join(__dirname, '..', '..', 'bin', 'nax.js'),
     'review',
     '--dry',
     '--force',
@@ -172,7 +172,7 @@ test('workflow dry run can execute a project-local workflow', () => {
   const projectRoot = tmpRoot()
   writeProjectFlow(projectRoot, 'conversion-audit', { title: 'Conversion Audit' })
   const result = spawnSync(process.execPath, [
-    path.join(__dirname, '..', 'bin', 'nax.js'),
+    path.join(__dirname, '..', '..', 'bin', 'nax.js'),
     'conversion-audit',
     '--dry',
     '--force',

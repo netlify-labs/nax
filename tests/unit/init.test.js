@@ -18,7 +18,7 @@ const {
   readNetlifyCliToken,
   setGitHubSecret,
   siteIdFromStatus,
-} = require('../lib/init')
+} = require('../../lib/init')
 
 test('readLinkedSiteId reads .netlify/state.json and env wins', () => {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'nax-init-test-'))

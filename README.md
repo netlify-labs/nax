@@ -2,7 +2,7 @@
 
 # Netlify-Agent-eXecutor (`nax`)
 
-**Run multi-step Netlify Agent workflows across Claude, Gemini, and Codex — declared in YAML, executed in order, waited on between rounds.**
+**Run multi-step Netlify Agent workflows across Claude, Gemini, and Codex from your Netlify project.**
 
 [![npm](https://img.shields.io/npm/v/@davidwells/netlify-agent-executor.svg)](https://www.npmjs.com/package/@davidwells/netlify-agent-executor)
 [![Node 18+](https://img.shields.io/badge/node-%E2%89%A518-blue.svg)](https://nodejs.org/)
@@ -12,8 +12,12 @@
 
 ```bash
 npm install -g @davidwells/netlify-agent-executor
-nax review          # multi-agent review of the current branch
-nax                 # interactive: run one agent or choose a workflow
+# Connect to your Netlify project or create and connect a new site
+nax init
+# Start using agentic workflows
+nax
+# Run a specific workflow
+nax review
 ```
 
 ---
@@ -31,13 +35,13 @@ You want three AI models to review the same diff, then critique each other's rev
 
 ### The Solution
 
-`nax` makes the orchestration the artifact. A workflow is `flows/<id>/flow.yml`. You run `nax`, pick a flow, pick where to run it, and the steps execute in order — fanning out to multiple agents per step, blocking until every agent finishes, and feeding prior-round output into the next step.
+`nax` makes the orchestration the artifact. A workflow is a `flows/<id>/flow.*` config file plus Markdown prompts. Use YAML if you like it, or write the flow in JSON, JavaScript, TypeScript, or TOML instead. You run `nax`, pick a flow, pick where to run it, and the steps execute in order — fanning out to multiple agents per step, blocking until every agent finishes, and feeding prior-round output into the next step.
 
 ### Why Use `nax`?
 
 | Feature | What it gets you |
 |---|---|
-| **Workflow-first** | Steps and prompts live in YAML + Markdown — diffable, reviewable, repeatable. |
+| **Workflow-first** | Steps and prompts live in config files + Markdown — diffable, reviewable, repeatable. |
 | **Multi-agent fan-out per step** | Claude, Gemini, and Codex run the same prompt in parallel. |
 | **Step gating** | Round N+1 only starts when every agent in round N has finished. |
 | **Follow-up sessions** | A step can reuse a runner from a prior step so its agent sees its own context. |
@@ -92,7 +96,7 @@ nax do-next --branch '#123' --transport netlify-api --force
 
 ## Design Philosophy
 
-- **The YAML is the program.** Flows are not a DSL bolted onto code — they *are* the unit of execution. Anyone can read `flows/review/flow.yml` and tell you exactly what `nax review` will do.
+- **The flow file is the program.** Flows are not a DSL bolted onto code — they *are* the unit of execution. Anyone can read `flows/review/flow.yml` (or `flow.json`, `flow.js`, `flow.ts`, `flow.toml`) and tell you exactly what `nax review` will do.
 - **Steps gate on results, not time.** A step's `waitFor: agent-results` makes the next step wait for every agent in the fan-out, not a wall-clock timeout. Long thinkers don't poison fast ones.
 - **Same flow, two transports.** A flow runs identically on `github-actions` (workflow_dispatch into `netlify-labs/agent-runner-action`) and `netlify-api` (this machine orchestrates the runner directly). You don't rewrite the flow to move it.
 - **Artifacts are first-class.** Every run, runner, and agent session writes a summary into `.nax/` with `latest` symlinks, so the next prompt or the next operator can pick up the trail.
@@ -380,11 +384,11 @@ Each step waits for every agent before the next step starts. Round 2 reuses each
 bin/nax.js          # CLI entrypoint
 lib/                # init, local-runner, flows, run-state, prompts, transports, ...
 flows/<id>/         # workflow definitions and prompts
-flows/<id>/flow.yml # one workflow file per built-in flow
+flows/<id>/flow.*   # one workflow file per built-in flow
 flows/<id>/prompts/ # one Markdown prompt per step
 .github/nax-flows/ # optional committed project-local workflows
 templates/          # bundled GitHub Actions workflow template
-test/               # node:test suites (`npm test`)
+tests/              # unit and integration suites (`npm test`)
 ```
 
 Key modules:
@@ -399,7 +403,9 @@ Key modules:
 
 ## Flow Anatomy
 
-A flow is `<flow-root>/<id>/flow.yml` plus a `prompts/` directory beside it. Built-in flows ship inside the package under `flows/`; project-local flows default to `.github/nax-flows/` and are shown before bundled flows in the picker.
+A flow is `<flow-root>/<id>/flow.*` plus a `prompts/` directory beside it. Built-in flows ship inside the package under `flows/`; project-local flows default to `.github/nax-flows/` and are shown before bundled flows in the picker.
+
+Flow files can be YAML, JSON, JavaScript, TypeScript, or TOML. The examples use YAML because it is compact and easy to skim, but the filename can match your preferred format: `flow.yml`, `flow.json`, `flow.js`, `flow.ts`, or `flow.toml`. TypeScript flow files need a TypeScript runtime such as `tsx` or `ts-node` available in the project.
 
 Project-local example:
 
@@ -408,7 +414,7 @@ Project-local example:
 .github/nax-flows/conversion-audit/prompts/1_audit.md
 ```
 
-Configure one or more project flow roots with `nax.config.json`:
+Configure one or more project flow roots with `nax.config.json` (or the same style of YAML, TOML, JavaScript, or TypeScript config file if you prefer):
 
 ```json
 {
@@ -575,7 +581,7 @@ A: Single-CLI agents can't cheaply give you three independent perspectives on th
 A: `nax` itself is a local CLI. The agents run on Netlify Agent Runner (either via your repo's GitHub Actions or via the Netlify Agent Runner API). What ends up on Netlify is whatever the runner action sends — typically the repo checkout and your prompt.
 
 **Q: Can I write a custom flow?**
-A: Yes — `.github/nax-flows/<id>/flow.yml` plus a `prompts/` dir is the whole contract. Use `nax.config.json` with `flowsDirs` if you want project workflows somewhere else.
+A: Yes — `.github/nax-flows/<id>/flow.*` plus a `prompts/` dir is the whole contract. Use YAML, JSON, JavaScript, TypeScript, or TOML for the flow file. Use `nax.config.json` with `flowsDirs` if you want project workflows somewhere else.
 
 **Q: Can I run only one agent for a step?**
 A: Set the step's `agents:` list to one entry (e.g. `agents: [codex]`). The `synthesize` step in the bundled flows does this.
@@ -583,8 +589,8 @@ A: Set the step's `agents:` list to one entry (e.g. `agents: [codex]`). The `syn
 **Q: What happens if one agent fails mid-step?**
 A: The step still completes when the other agents finish or time out. The failed agent's result is recorded as a failure; downstream steps that depend on it can still run with the surviving results. Use `nax retry` to redo just the failed one.
 
-**Q: Why YAML instead of code?**
-A: YAML is diffable, reviewable, and trivially generatable. A workflow as a text file means a human can read the README, open `flows/review/flow.yml`, and have a full mental model in 30 seconds.
+**Q: Do flows have to be YAML?**
+A: No. YAML is the default in the bundled examples because it is diffable, reviewable, and trivially generatable, but custom flows can be JSON, JavaScript, TypeScript, or TOML too. Use whichever format your team will actually read.
 
 **Q: Can I run this without GitHub Actions?**
 A: Yes — pass `--transport netlify-api` (or skip the workflow file in `nax init --no-github-actions`). The trade-off is that your machine has to stay alive for the duration of the run (or you'll hit the resume path).

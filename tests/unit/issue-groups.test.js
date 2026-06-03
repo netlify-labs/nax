@@ -1,7 +1,7 @@
 const test = require('node:test')
 const assert = require('node:assert/strict')
 
-const { buildGroups, parseWorkflowTitle, formatGroupHint } = require('../lib/issue-groups')
+const { buildGroups, parseWorkflowTitle, formatGroupHint } = require('../../lib/issue-groups')
 
 test('parseWorkflowTitle extracts date, model, and prompt title', () => {
   assert.deepEqual(parseWorkflowTitle('2026-05-07 Claude Review'), {

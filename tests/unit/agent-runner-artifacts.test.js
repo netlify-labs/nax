@@ -8,8 +8,8 @@ const {
   agentRunnerDir,
   listAgentRunnerArtifacts,
   persistAgentRunnerArtifact,
-} = require('../lib/agent-runner-artifacts')
-const { persistAgentSessionArtifact } = require('../lib/agent-session-artifacts')
+} = require('../../lib/agent-runner-artifacts')
+const { persistAgentSessionArtifact } = require('../../lib/agent-session-artifacts')
 
 function tmpRoot() {
   return fs.mkdtempSync(path.join(os.tmpdir(), 'nax-agent-runner-artifacts-'))

@@ -27,7 +27,7 @@ const {
   showAgentRun,
   submitLocalAgentRun,
   runAsync,
-} = require('../lib/local-runner')
+} = require('../../lib/local-runner')
 
 test('latestSessionFromList accepts array and sessions wrapper responses', () => {
   assert.deepEqual(latestSessionFromList([{ id: 's1' }, { id: 's2' }]), { id: 's2' })

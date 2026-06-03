@@ -59,7 +59,15 @@ jobs:
             exit 1
           fi
 
-          if [ ! -f "flows/$flow/flow.yml" ] && [ ! -f "flows/$flow/flow.yaml" ] && [ ! -f "flows/$flow/flow.json" ]; then
+          matched_flow_file=""
+          for extension in yml yaml json toml js cjs mjs ts mts cts; do
+            if [ -f "flows/$flow/flow.$extension" ]; then
+              matched_flow_file="flows/$flow/flow.$extension"
+              break
+            fi
+          done
+
+          if [ -z "$matched_flow_file" ]; then
             echo "::error::Unknown NAX flow: $NAX_FLOW_INPUT"
             exit 1
           fi

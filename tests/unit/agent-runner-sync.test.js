@@ -4,12 +4,12 @@ const fs = require('fs')
 const os = require('os')
 const path = require('path')
 
-const { persistAgentRunnerArtifact } = require('../lib/agent-runner-artifacts')
-const { persistAgentSessionArtifact } = require('../lib/agent-session-artifacts')
+const { persistAgentRunnerArtifact } = require('../../lib/agent-runner-artifacts')
+const { persistAgentSessionArtifact } = require('../../lib/agent-session-artifacts')
 const {
   sessionsFromListPayload,
   syncLastAgentRunner,
-} = require('../lib/agent-runner-sync')
+} = require('../../lib/agent-runner-sync')
 
 function tmpRoot() {
   return fs.mkdtempSync(path.join(os.tmpdir(), 'nax-agent-runner-sync-'))

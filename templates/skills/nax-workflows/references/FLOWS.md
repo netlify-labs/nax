@@ -61,6 +61,8 @@ nax do-next --branch '#123' --transport netlify-api --force
 
 ## Flow Authoring Notes
 
+- A flow is `flows/<id>/flow.*` plus `flows/<id>/prompts/*.md`.
+- Flow files can be YAML, JSON, JavaScript, TypeScript, or TOML.
 - Use `action: issue` for a fresh top-level result.
 - Use `action: comment` when continuing a runner thread.
 - Use `submit: follow-up` only when there is a prior runner for the same agent.

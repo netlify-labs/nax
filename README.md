@@ -4,20 +4,18 @@
 
 **Run multi-step Netlify Agent workflows across Claude, Gemini, and Codex from your Netlify project.**
 
-[![npm](https://img.shields.io/npm/v/@davidwells/netlify-agent-executor.svg)](https://www.npmjs.com/package/@davidwells/netlify-agent-executor)
-[![Node 18+](https://img.shields.io/badge/node-%E2%89%A518-blue.svg)](https://nodejs.org/)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](#license)
-
 </div>
+
+## Quickstart
+
+`nax` uses the [netlify-cli](https://cli.netlify.com/) and [GitHub CLI](https://cli.github.com/). Make sure you have those on your machine for `nax` to operate.
 
 ```bash
 npm install -g @davidwells/netlify-agent-executor
 # Connect to your Netlify project or create and connect a new site
 nax init
-# Start using agentic workflows
+# Start using Netlify agentic workflows
 nax
-# Run a specific workflow
-nax review
 ```
 
 ---
@@ -26,7 +24,7 @@ nax review
 
 ### The Problem
 
-You want three AI models to review the same diff, then critique each other's reviews, then summarize the consensus. Doing this by hand means:
+You want the best possible coding outcome from the world's leading agentic coding models, not just whichever one you happen to subscribe to. Claude Code, Gemini, and Codex each catch different classes of issues; the real value shows up when they review the same work, cross-check each other's findings, and synthesize one consensus. Doing that manually means:
 
 - Opening N issues per model with the same prompt
 - Waiting for each agent run to finish before kicking off the next round
@@ -146,12 +144,14 @@ nax handoff
 
 │
 ◆  Hand off previous results
-│  ● Copy latest results to clipboard (claude runner 6a0e6eedd90fa5ba6cbb2f6a · agent
-│  runner · .nax/agent-runners/6a0e6eedd90fa5ba6cbb2f6a/summary.md)
+│  ● Copy latest results to clipboard (claude runner 6a0e6eedd90fa5ba6cbb2f6a)
 │  ○ Copy path to latest results
-│  ○ Run another AI workflow with latest result: claude runner
-│  6a0e6eedd90fa5ba6cbb2f6a
+│  ○ Run another AI workflow with latest result: claude runner 6a0e6eedd90fa5ba6cbb2f6a
+
+Copied .nax/agent-runners/6a0e6eedd90fa5ba6cbb2f6a/summary.md to clipboard
 ```
+
+This is handy for passing remote Netlify agent runner results into local Claude Code or Codex sessions to continue work on your machine.
 
 ---
 
@@ -206,7 +206,7 @@ npm link    # exposes `nax` globally
 
 **Prerequisites:**
 
-- Node 18+
+- Node 22+
 - [Netlify CLI](https://docs.netlify.com/cli/get-started/) — authenticated (`netlify login`)
 - [GitHub CLI](https://cli.github.com/) — authenticated (`gh auth login`)
 

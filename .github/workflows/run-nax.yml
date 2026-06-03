@@ -45,7 +45,7 @@ jobs:
       BRANCH: ${{ github.head_ref || github.ref_name }}
       NAX_FLOW_INPUT: ${{ github.event.inputs.flow || 'review' }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           fetch-depth: 0
 
@@ -68,7 +68,7 @@ jobs:
           echo "NAX_FLOW=$flow" >> "$GITHUB_ENV"
           echo "Resolved NAX flow: $flow"
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v6
         with:
           node-version: 22
           cache: npm
@@ -111,7 +111,7 @@ jobs:
           fi
       - name: Upload nax run artifacts
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: nax-${{ steps.resolve-flow.outputs.flow }}-${{ github.run_id }}
           path: |

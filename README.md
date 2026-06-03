@@ -13,6 +13,7 @@
 ```bash
 npm install -g @davidwells/netlify-agent-executor
 nax review          # multi-agent review of the current branch
+nax                 # interactive: run one agent or choose a workflow
 ```
 
 ---
@@ -41,8 +42,11 @@ You want three AI models to review the same diff, then critique each other's rev
 | **Step gating** | Round N+1 only starts when every agent in round N has finished. |
 | **Follow-up sessions** | A step can reuse a runner from a prior step so its agent sees its own context. |
 | **Two transports, one CLI** | Run on GitHub Actions or directly via the Netlify Agent Runner API. |
+| **Single-agent runs** | Start Claude, Gemini, or Codex directly without creating a full workflow. |
+| **Project-aware Netlify selection** | Multi-project repos prompt for the Netlify project/config to run against. |
 | **Durable artifacts** | Every workflow, runner, and session lands under `.nax/` with `latest` symlinks. |
 | **Resume** | A killed Netlify API run picks up at the first not-yet-completed step. |
+| **Agent-only CI hooks** | `nax ci '<command>'` runs commands inside Netlify Agent Runner and no-ops elsewhere. |
 | **Auto-injected review context** | Pinned SHA + open-PR ledger appended to every prompt unless you opt out. |
 | **Hand-off in one flag** | `nax handoff -c` copies the latest consensus summary to your clipboard. |
 
@@ -53,11 +57,14 @@ You want three AI models to review the same diff, then critique each other's rev
 The bundled `review` flow runs three rounds against the current branch:
 
 ```bash
-# Preview without creating anything
+# Preview without creating issues, runners, or .nax files
 nax review --dry --force
 
 # Run for real, choose transport interactively
 nax review
+
+# Run one agent without a workflow
+nax --agent gemini --prompt "Check this branch for broken links"
 
 # Specific branch / PR, non-interactively
 nax review --branch fix/auth      --transport github-actions --force
@@ -115,6 +122,14 @@ From npm:
 npm install -g @davidwells/netlify-agent-executor
 ```
 
+Without installing globally:
+
+```bash
+npx @davidwells/netlify-agent-executor review
+npx @davidwells/netlify-agent-executor --agent codex --prompt "Review this change"
+npx @davidwells/netlify-agent-executor ci 'npm test'
+```
+
 Or from source:
 
 ```bash
@@ -165,11 +180,19 @@ nax list
 3. **Run a flow** (interactive picker if you omit the flow id):
 
    ```bash
-   nax              # pick a flow
+   nax              # pick single-agent run or workflow
    nax review       # multi-agent review of current branch
+   nax --agent codex --prompt "Check the nav links"
    ```
 
-4. **Hand off the result** to your IDE / the next session:
+4. **Run from anywhere in the repo.** `nax` resolves the Git root before transport and Netlify project detection, so subdirectories work:
+
+   ```bash
+   cd frontend
+   nax --agent gemini --prompt "Check for broken links"
+   ```
+
+5. **Hand off the result** to your IDE / the next session:
 
    ```bash
    nax handoff -c           # copy latest workflow summary to clipboard
@@ -206,10 +229,13 @@ Run `nax list` to print the live set.
 ```text
 nax [flow]                Pick a flow and run it (interactive if no flow given)
 nax run [flow]            Alias for the above
+nax --agent <name>        Run one Netlify agent with an interactive prompt
+nax run --agent <name>    Same single-agent path, explicit subcommand form
 nax init                  Wire this repo to Netlify + GitHub Actions
 nax handoff               Copy or continue from prior workflow/session results
 nax recent                Browse recent workflow/session/runner artifacts
 nax retry [run-id]        Retry one failed Netlify API agent run, then continue
+nax sync last             Pull remote updates for the latest local Agent Runner
 nax ci '<command>'        Run a command only inside Netlify Agent Runner
 nax skills install        Install bundled agent skills into detected harness dirs
 nax skills check          Show installed skill versions
@@ -225,11 +251,38 @@ nax ci 'npm test && npm run build'
 
 `nax ci` no-ops outside Netlify Agent Runner environments, including normal local shells and Netlify build CI. Inside Agent Runner it executes the command through the shell and exits with the command's status.
 
+This is useful in prompts when you want an agent to run project checks only in the runner environment:
+
+```bash
+nax ci 'npm run typecheck'
+nax ci 'npm test -- --runInBand'
+```
+
+### Single-agent runs
+
+```bash
+nax --agent codex --prompt "Review this branch for regressions"
+nax run --agent gemini --prompt "Check for broken links"
+nax --agent claude --transport netlify-api
+```
+
+If you omit `--prompt` in a TTY, `nax` opens a multiline prompt. Single-agent runs still use the same transport detection, Netlify project picker, artifacts, and handoff support as workflows.
+
+### `nax sync`
+
+```bash
+nax sync last
+```
+
+`nax sync last` reconciles the latest local `.nax/agent-runners/<id>` artifact with remote Netlify Agent Runner sessions. Use it when a follow-up happened out of band in the Netlify UI or another process and the local `.nax` cache is missing the newer session.
+
+The command fetches remote sessions with the Netlify CLI, writes missing or changed sessions under `.nax/agent-sessions/`, and rebuilds the runner rollup under `.nax/agent-runners/`.
+
 ### `nax run` flags
 
 | Flag | What it does |
 |---|---|
-| `--dry` | Preview the workflow without creating issues/comments. |
+| `--dry` | Preview the workflow plan without creating issues, comments, Agent Runner jobs, or `.nax` artifacts. |
 | `--force` | Skip confirmation prompts. |
 | `--branch <name>` | Branch to review. Accepts a PR selector like `#123`. |
 | `--transport <kind>` | `auto` (default), `github-actions`, `netlify-api`. |
@@ -247,6 +300,7 @@ nax ci 'npm test && npm run build'
 | `--no-fetch-results` | Skip prior-round result fetching. |
 | `--issue <list>` | Recovery: comma-separated issue numbers for comment steps. |
 | `--from-issues <list>` | Recovery: source issue numbers to embed for comment steps. |
+| `--filter <app>` | Explicit Netlify JavaScript workspace filter for local Agent Runner API runs. |
 
 ### `nax skills`
 
@@ -273,6 +327,27 @@ nax skills update                        # reinstall latest
 | Resume after interruption | Re-run the issue | `nax` offers to resume the unfinished run |
 
 `--transport auto` (default) prefers `github-actions` if both are configured. Pass `--transport netlify-api` to force Netlify API orchestration. `local-machine` remains as a backwards-compatible alias.
+
+### Multi-project Netlify repos
+
+Repos with multiple `netlify.toml` files prompt before local Agent Runner submission:
+
+```text
+Multiple Netlify projects detected. Choose where to run Agent Runner.
+  frontend
+  sanity-legacy
+  sanity
+```
+
+The picker is ordered by the directory you ran `nax` from, so `cd frontend && nax` puts `frontend` first while still using the Git repo root for transport detection and artifacts.
+
+If a project directory has its own `.netlify/state.json`, the option includes the linked site ID:
+
+```text
+frontend (1963fff0-bb0c-4f91-8601-f7acd91cd76e)
+```
+
+For JavaScript workspaces, `nax` uses `@netlify/build-info` to decide whether a Netlify CLI `--filter` is required. Non-workspace multi-project repos can choose a project without inventing a workspace filter; workspace repos still need one clear filter in the build command or an explicit `--filter <app>`.
 
 ---
 
@@ -307,6 +382,7 @@ lib/                # init, local-runner, flows, run-state, prompts, transports,
 flows/<id>/         # workflow definitions and prompts
 flows/<id>/flow.yml # one workflow file per built-in flow
 flows/<id>/prompts/ # one Markdown prompt per step
+.github/nax-flows/ # optional committed project-local workflows
 templates/          # bundled GitHub Actions workflow template
 test/               # node:test suites (`npm test`)
 ```
@@ -323,7 +399,29 @@ Key modules:
 
 ## Flow Anatomy
 
-A flow is `flows/<id>/flow.yml` plus a `prompts/` directory beside it. Example (`flows/review/flow.yml`):
+A flow is `<flow-root>/<id>/flow.yml` plus a `prompts/` directory beside it. Built-in flows ship inside the package under `flows/`; project-local flows default to `.github/nax-flows/` and are shown before bundled flows in the picker.
+
+Project-local example:
+
+```text
+.github/nax-flows/conversion-audit/flow.yml
+.github/nax-flows/conversion-audit/prompts/1_audit.md
+```
+
+Configure one or more project flow roots with `nax.config.json`:
+
+```json
+{
+  "flowsDirs": [
+    ".github/nax-flows",
+    "tools/nax/flows"
+  ]
+}
+```
+
+You can also pass `--flows-dir <path>` more than once or set `NAX_FLOWS_DIR` / `NAX_FLOWS_DIRS`. Relative paths resolve from the project root. If a project flow uses the same `id` as a bundled flow, the project flow wins.
+
+Example (`flows/review/flow.yml`):
 
 ```yaml
 id: review
@@ -445,10 +543,13 @@ nax run review --step <step-id>      # re-run one step from scratch
 |---|---|
 | `gh: command not found` or `netlify: command not found` | Install and authenticate both CLIs (`gh auth login`, `netlify login`). |
 | `Could not resolve NETLIFY_SITE_ID` | `nax init` couldn't find a linked site. Run `netlify link` or pass `--site-id` / `--site-name` / `--create`. |
+| `No runnable transport detected` from a subdirectory | Upgrade `nax`; current versions resolve the Git root before checking `.github/workflows` and `.netlify/state.json`. |
+| Multiple Netlify projects detected | Pick the directory/project you want. If it is a JavaScript workspace and no filter can be inferred, pass `--filter <app>` or add one clear package-manager filter to the Netlify build command. |
 | `Branch has uncommitted changes` | `nax` warns before submitting. Commit/stash, or accept the warning if you want agents to review WIP. |
 | Agent run times out | Bump `--timeout-minutes`. Default `25`; long-running flows often want `45+`. |
 | `Pinned SHA not on remote` | Auto-injected context pins to a SHA. Push first, or pass `--no-auto-context`. |
 | Resume keeps offering an old run | Decline the prompt; the run state is moved out of "unfinished" once you do. |
+| A Netlify UI follow-up is missing from `.nax` | Run `nax sync last` to refresh the latest local runner from remote sessions. |
 
 ---
 
@@ -458,6 +559,8 @@ nax run review --step <step-id>      # re-run one step from scratch
 - **macOS-only desktop notifications.** `--notify` shells out to `osascript`.
 - **GitHub-only.** No GitLab/Bitbucket transport.
 - **`netlify-api` transport assumes outbound network.** Your machine must reach Netlify's API.
+- **Local site slugs are best-effort.** `nax` can read exact site IDs from `.netlify/state.json`; if a multi-project repo is only linked at the root, per-project options show directories/configs instead of guessed site names.
+- **Sync starts with known local runners.** `nax sync last` refreshes the latest local runner. It does not yet discover every remote Agent Runner for a site.
 - **Three agents.** Claude, Gemini, Codex. Adding more requires extending the runner action and the flow schema.
 - **No partial-failure auto-rollback.** If one agent fails mid-step, the workflow surfaces the failure; you decide whether to `nax retry` or `--from-step`.
 
@@ -472,7 +575,7 @@ A: Single-CLI agents can't cheaply give you three independent perspectives on th
 A: `nax` itself is a local CLI. The agents run on Netlify Agent Runner (either via your repo's GitHub Actions or via the Netlify Agent Runner API). What ends up on Netlify is whatever the runner action sends — typically the repo checkout and your prompt.
 
 **Q: Can I write a custom flow?**
-A: Yes — `flows/<id>/flow.yml` plus a `prompts/` dir is the whole contract. Drop a new flow in the repo and `nax list` will pick it up.
+A: Yes — `.github/nax-flows/<id>/flow.yml` plus a `prompts/` dir is the whole contract. Use `nax.config.json` with `flowsDirs` if you want project workflows somewhere else.
 
 **Q: Can I run only one agent for a step?**
 A: Set the step's `agents:` list to one entry (e.g. `agents: [codex]`). The `synthesize` step in the bundled flows does this.
@@ -485,6 +588,12 @@ A: YAML is diffable, reviewable, and trivially generatable. A workflow as a text
 
 **Q: Can I run this without GitHub Actions?**
 A: Yes — pass `--transport netlify-api` (or skip the workflow file in `nax init --no-github-actions`). The trade-off is that your machine has to stay alive for the duration of the run (or you'll hit the resume path).
+
+**Q: Can I use it from `npx`?**
+A: Yes. Use `npx @davidwells/netlify-agent-executor ...`. For shell commands, quote the command passed to `nax ci`, e.g. `npx @davidwells/netlify-agent-executor ci 'npm test'`.
+
+**Q: Why does the Netlify project picker show directories instead of site names?**
+A: Site IDs are only local when that directory has `.netlify/state.json` or `NETLIFY_SITE_ID` is set. `nax` avoids guessing remote site slugs from config paths; if it cannot prove the site ID, it shows the directory/config.
 
 ---
 

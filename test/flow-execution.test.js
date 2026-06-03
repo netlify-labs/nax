@@ -11,6 +11,23 @@ function tmpRoot() {
   return fs.mkdtempSync(path.join(os.tmpdir(), 'nax-flow-execution-'))
 }
 
+function writeProjectFlow(projectRoot, id, { title = id, promptBody = 'Prompt body' } = {}) {
+  const flowDir = path.join(projectRoot, '.github', 'nax-flows', id)
+  fs.mkdirSync(path.join(flowDir, 'prompts'), { recursive: true })
+  fs.writeFileSync(path.join(flowDir, 'flow.yml'), [
+    `id: ${id}`,
+    `title: ${title}`,
+    'defaults:',
+    '  agents: [codex]',
+    'steps:',
+    '  - id: one',
+    '    title: One',
+    '    prompt: prompts/one.md',
+    '',
+  ].join('\n'))
+  fs.writeFileSync(path.join(flowDir, 'prompts', 'one.md'), `---\ntitle: One\n---\n\n${promptBody}\n`)
+}
+
 function stripAnsi(value) {
   return String(value).replace(/\x1b\[[0-9;]*m/g, '')
 }
@@ -127,6 +144,51 @@ test('chooseNetlifyFilterOption still requires filters for JavaScript workspaces
     }),
     /Multiple netlify\.toml files were found/,
   )
+})
+
+test('workflow dry run previews without writing .nax artifacts', () => {
+  const projectRoot = tmpRoot()
+  const result = spawnSync(process.execPath, [
+    path.join(__dirname, '..', 'bin', 'nax.js'),
+    'review',
+    '--dry',
+    '--force',
+    '--branch',
+    'dry-run-branch',
+    '--transport',
+    'netlify-api',
+  ], {
+    cwd: projectRoot,
+    encoding: 'utf8',
+  })
+
+  assert.equal(result.status, 0, result.stderr || result.stdout)
+  assert.match(result.stdout, /Multi step agent workflow: "Review"/)
+  assert.match(result.stdout, /Dry run only/)
+  assert.equal(fs.existsSync(path.join(projectRoot, '.nax')), false)
+})
+
+test('workflow dry run can execute a project-local workflow', () => {
+  const projectRoot = tmpRoot()
+  writeProjectFlow(projectRoot, 'conversion-audit', { title: 'Conversion Audit' })
+  const result = spawnSync(process.execPath, [
+    path.join(__dirname, '..', 'bin', 'nax.js'),
+    'conversion-audit',
+    '--dry',
+    '--force',
+    '--branch',
+    'dry-run-branch',
+    '--transport',
+    'netlify-api',
+  ], {
+    cwd: projectRoot,
+    encoding: 'utf8',
+  })
+
+  assert.equal(result.status, 0, result.stderr || result.stdout)
+  assert.match(stripAnsi(result.stdout), /Multi step agent workflow:/)
+  assert.match(stripAnsi(result.stdout), /"Conversion Audit"/)
+  assert.equal(fs.existsSync(path.join(projectRoot, '.nax')), false)
 })
 
 test('futureFollowUpReferencesStep detects deferred archive dependencies', () => {
@@ -670,6 +732,7 @@ test('handoff source menu exposes latest actions before previous-source pickers'
 
   assert.deepEqual(options.map((option) => option.label), [
     'Copy latest results to clipboard',
+    'Copy path to latest results',
     'Run another AI workflow with latest result: Do Next',
     'Pick previous workflow',
     'Pick previous agent session',
@@ -678,6 +741,7 @@ test('handoff source menu exposes latest actions before previous-source pickers'
   ])
   assert.match(options[0].hint, /Do Next/)
   assert.match(options[0].hint, /\.nax\/workflows\/workflow-1\/artifacts\/summary\.md/)
+  assert.equal(options[1].hint, '.nax/workflows/workflow-1/artifacts/summary.md')
 })
 
 test('non-TTY progress reporter repeats unchanged run status after heartbeat interval', () => {
@@ -879,6 +943,32 @@ test('agentStepCompletionSummary formats aligned duration and usage rows', () =>
     'Codex:   complete  12min 20s  120.52 credits  40 steps    501,436 tokens',
     'Total:   284.46 credits  94 steps  2,879,224 tokens',
   ].join('\n'))
+})
+
+test('agentStepCompletionSummary includes USD cost when requested', () => {
+  const original = process.env.NAX_INCLUDE_COST
+  process.env.NAX_INCLUDE_COST = '1'
+  try {
+    const summary = _private.agentStepCompletionSummary({
+      stepTitle: 'Review',
+      runs: [
+        {
+          agent: 'claude',
+          status: 'completed',
+          usage: { totalCreditsCost: 46.66, stepsCount: 14, totalTokens: 1014414 },
+        },
+      ],
+    })
+
+    assert.match(summary, /46\.66 credits \(\$0\.26\)/)
+    assert.match(summary, /Total:\s+46\.66 credits \(\$0\.26\)/)
+  } finally {
+    if (original === undefined) {
+      delete process.env.NAX_INCLUDE_COST
+    } else {
+      process.env.NAX_INCLUDE_COST = original
+    }
+  }
 })
 
 test('isAdHocRunTarget recognizes one-off agent run aliases', () => {

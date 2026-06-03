@@ -5,6 +5,7 @@ const {
   aggregateRunUsage,
   buildAgentRunnerJson,
   buildAgentSessionJson,
+  formatCreditsWithCost,
   formatAgentRunUrl,
   formatAgentRunUrlFromAdminUrl,
   formatFileChangesSummary,
@@ -344,6 +345,29 @@ test('usage helpers can format partial usage summaries', () => {
   assert.equal(formatUsageSummary({ totalTokens: 1234 }), '1,234 tokens')
   assert.equal(formatUsageSummary({ stepsCount: 2, creditLimitExceeded: true }), '2 steps, credit limit exceeded')
   assert.equal(formatUsageSummary({}), '')
+})
+
+test('usage helpers include USD cost when requested', () => {
+  assert.equal(formatCreditsWithCost(18, { includeCost: true }), '18 credits ($0.10)')
+  assert.equal(formatCreditsWithCost(1, { includeCost: true }), '1 credits ($0.0056)')
+  assert.equal(
+    formatUsageSummary({ totalCreditsCost: 18, stepsCount: 2, totalTokens: 1234 }, { includeCost: true }),
+    '18 credits ($0.10), 2 steps, 1,234 tokens',
+  )
+})
+
+test('usage helpers include USD cost when NAX_INCLUDE_COST is set', () => {
+  const original = process.env.NAX_INCLUDE_COST
+  process.env.NAX_INCLUDE_COST = '1'
+  try {
+    assert.equal(formatUsageSummary({ totalCreditsCost: 36, totalTokens: 1234 }), '36 credits ($0.20), 1,234 tokens')
+  } finally {
+    if (original === undefined) {
+      delete process.env.NAX_INCLUDE_COST
+    } else {
+      process.env.NAX_INCLUDE_COST = original
+    }
+  }
 })
 
 test('agent run URL helpers include session links only for valid ids', () => {

@@ -30,6 +30,7 @@ const { bodyHasRunnerResultMarker, bodyHasRunnerStatusMarker, parseRunnerResultM
 const {
   formatAgentRunUrl,
   formatAgentRunUrlFromAdminUrl,
+  formatCreditsWithCost,
   formatUsageSummary,
   normalizeGithubRunResult,
   usageSummariesForRunState,
@@ -49,6 +50,7 @@ const {
 const { clearTrackedRunState, trackRunState } = require('../lib/graceful-run-state')
 const { persistAgentRunnerArtifact } = require('../lib/agent-runner-artifacts')
 const { persistAgentSessionArtifact } = require('../lib/agent-session-artifacts')
+const { syncLastAgentRunner } = require('../lib/agent-runner-sync')
 const { listHandoffSources, readHandoffSource, relativeDisplayPath } = require('../lib/handoff-sources')
 const {
   PROVIDER_DIRS,
@@ -323,6 +325,7 @@ function resolveWorkflowBranch({ options, projectRoot }) {
   const requested = String(options.branch || '').trim()
   if (!requested) {
     const branch = currentGitBranch(projectRoot)
+    if (!branch && options.dryRun) return { branch: '(dry run)', source: 'dry-run' }
     if (!branch) throw new Error('Could not resolve the current git branch. Pass --branch <name> explicitly.')
     return { branch, source: 'current-branch' }
   }
@@ -336,6 +339,13 @@ function resolveWorkflowBranch({ options, projectRoot }) {
   }
 
   return { branch: requested, source: 'explicit-branch' }
+}
+
+function resolveDryRunTransport({ requestedTransport, projectRoot }) {
+  const requested = requestedTransport || 'auto'
+  if (requested && requested !== 'auto') return resolveTransport(requested, [])
+  const detections = detectTransports({ projectRoot })
+  return detections.find((candidate) => candidate.available)?.id || NETLIFY_API_TRANSPORT
 }
 
 function remotePinnedOptions({ options, projectRoot, transport }) {
@@ -458,7 +468,25 @@ function normalizeOptionAliases(resolved) {
   if (resolved.where && (!resolved.transport || resolved.transport === 'auto')) {
     resolved.transport = resolved.where
   }
+  if (resolved.cost === true) {
+    process.env.NAX_INCLUDE_COST = '1'
+  }
   return resolved
+}
+
+function flowLoadOptions(options = {}, projectRoot = options.projectRoot || process.cwd()) {
+  return {
+    projectRoot,
+    flowsDir: options.flowsDir,
+    flowsDirs: options.flowsDirs,
+  }
+}
+
+function flowFromRunState(runState = {}) {
+  if (runState.flow && typeof runState.flow === 'object' && Array.isArray(runState.flow.steps)) {
+    return runState.flow
+  }
+  return null
 }
 
 function mergeCommandOptions(command, options) {
@@ -1082,9 +1110,10 @@ async function handleComment(promptName, options) {
   }
 }
 
-async function handleList() {
-  for (const flow of await listFlows()) {
-    console.log(`${flow.id}\t${flow.title}\t${flow.description}`)
+async function handleList(options = {}) {
+  const projectRoot = resolveProjectRoot(options.projectRoot, { cwd: process.cwd() })
+  for (const flow of await listFlows(flowLoadOptions(options, projectRoot))) {
+    console.log(`${flow.id}\t${flow.title}\t${flow.description}\t${flow.sourceLabel || flow.source || ''}`)
   }
 }
 
@@ -1308,6 +1337,11 @@ function handoffSourceMenuOptions({ sources = [], latestSource = {}, projectRoot
       value: 'copy-latest',
       label: 'Copy latest results to clipboard',
       hint: `${latestSource.title || latestSource.id || 'Latest'} · ${formatHandoffSourceHint(latestSource, projectRoot)}`,
+    },
+    {
+      value: 'copy-latest-path',
+      label: 'Copy path to latest results',
+      hint: latestSource.displayPath || relativeDisplayPath(projectRoot, latestSource.summaryPath || ''),
     },
     {
       value: 'workflow-latest',
@@ -1711,6 +1745,7 @@ async function chooseHandoffSourceInteractively({ projectRoot, latestSource }) {
   })
   if (clack.isCancel(selected) || selected === 'cancel') return { action: 'cancel' }
   if (selected === 'copy-latest') return { source: latestSource, action: 'copy' }
+  if (selected === 'copy-latest-path') return { source: latestSource, action: 'copy-path' }
   if (selected === 'workflow-latest') return { source: latestSource, action: 'workflow' }
 
   const [, kind] = String(selected).split(':')
@@ -1795,6 +1830,11 @@ async function handleHandoff(runId, options) {
     console.log(`\nCopied ${handoff.displayPath} to clipboard with ${command}.`)
     return
   }
+  if (action === 'copy-path') {
+    const command = copyToClipboard(handoff.displayPath)
+    console.log(`\nCopied ${handoff.displayPath} path to clipboard with ${command}.`)
+    return
+  }
 
   const clack = await loadClack()
   const instructions = await promptForOptionalHandoffInstructions()
@@ -1821,7 +1861,7 @@ async function handleHandoff(runId, options) {
     return
   }
 
-  const flowId = options.flow || await pickFlowInteractively({ includeAdHoc: false })
+  const flowId = options.flow || await pickFlowInteractively({ includeAdHoc: false, projectRoot, options })
   if (clack.isCancel(flowId)) return
   console.log(`Including prior results summary:\n${handoff.displayPath}`)
   await handleRun(flowId, {
@@ -1832,14 +1872,14 @@ async function handleHandoff(runId, options) {
 }
 
 async function handlePreviewBoxes(flowId, options) {
-  const id = flowId || (await pickFlowInteractively({ includeAdHoc: false }))
+  const projectRoot = options.projectRoot || process.cwd()
+  const id = flowId || (await pickFlowInteractively({ includeAdHoc: false, projectRoot, options }))
   if (isAdHocRunTarget(id)) {
     throw new Error('Preview boxes are only available for workflows.')
   }
-  const flow = await loadFlow(id)
+  const flow = await loadFlow(id, flowLoadOptions(options, projectRoot))
   const steps = flow.steps.filter((step) => (step.agents || []).length > 0)
   const transport = isNetlifyApiTransport(options.transport) ? NETLIFY_API_TRANSPORT : 'github'
-  const projectRoot = options.projectRoot || process.cwd()
   printFlowPlan({
     flow,
     steps,
@@ -1887,13 +1927,13 @@ async function selectSearchableOption({
   return clack.select({ message, options, maxItems })
 }
 
-async function pickFlowInteractively({ includeAdHoc = true } = {}) {
+async function pickFlowInteractively({ includeAdHoc = true, projectRoot = process.cwd(), options = {} } = {}) {
   const clack = await loadClack()
-  const flows = await listFlows()
+  const flows = await listFlows(flowLoadOptions(options, projectRoot))
   if (includeAdHoc) {
     console.log('Run a single Netlify agent or orchestrate a multi-step agentic workflow.')
   }
-  const options = [
+  const choices = [
     ...(includeAdHoc ? [{
       value: AD_HOC_RUN_TARGET,
       label: 'Start a single Netlify agent',
@@ -1901,15 +1941,17 @@ async function pickFlowInteractively({ includeAdHoc = true } = {}) {
     }] : []),
     ...flows.map((flow) => ({
       value: flow.id,
-      label: includeAdHoc ? `Workflow - ${flow.title}` : flow.title,
-      hint: flow.description,
+      label: includeAdHoc
+        ? `Workflow${flow.source === 'project' ? ' (local)' : ''} - ${flow.title}`
+        : flow.source === 'project' ? `${flow.title} (local)` : flow.title,
+      hint: [flow.sourceLabel, flow.description].filter(Boolean).join(' - '),
     })),
     ...(includeAdHoc ? [{ value: 'cancel', label: 'Cancel' }] : []),
   ]
   const selected = await selectSearchableOption({
     clack,
     message: includeAdHoc ? 'What do you want to run?' : 'Choose workflow',
-    options,
+    options: choices,
     placeholder: 'Type to filter workflows...',
   })
   if (clack.isCancel(selected) || selected === 'cancel') process.exit(0)
@@ -2392,6 +2434,7 @@ async function prepareInteractiveFlowRun({ flow, options, transport, projectRoot
       flow: configuredFlow,
       options,
       steps,
+      previewPrinted: false,
     }
   }
 
@@ -2445,6 +2488,16 @@ async function prepareInteractiveFlowRun({ flow, options, transport, projectRoot
     context: manualContext,
   })
 
+  if (configuredOptions.dryRun) {
+    console.log('Dry run only. No issues, comments, Agent Runner jobs, or .nax artifacts will be created.')
+    return {
+      flow: configuredFlow,
+      options: configuredOptions,
+      steps,
+      previewPrinted: true,
+    }
+  }
+
   const confirmed = await clack.confirm({
     message: `Start the "${configuredFlow.title}" agent workflow?`,
     initialValue: true,
@@ -2459,6 +2512,7 @@ async function prepareInteractiveFlowRun({ flow, options, transport, projectRoot
     flow: configuredFlow,
     options: configuredOptions,
     steps,
+    previewPrinted: true,
   }
 }
 
@@ -2810,7 +2864,7 @@ function stepDurationMs(runs = []) {
 }
 
 function formatCreditsValue(value) {
-  return Number.isFinite(value) ? `${value.toFixed(2).replace(/\.?0+$/, '')} credits` : ''
+  return Number.isFinite(value) ? formatCreditsWithCost(value) : ''
 }
 
 function formatCountValue(value, label) {
@@ -4047,7 +4101,10 @@ async function handleRetry(runId, options) {
     throw new Error(`Run ${runState.runId} uses ${runState.transport || 'unknown'} transport; retry currently supports Netlify API runs only.`)
   }
 
-  const flow = await loadFlow(runState.flowId)
+  const flow = flowFromRunState(runState) || await loadFlow(runState.flowId, flowLoadOptions({
+    ...(runState.options || {}),
+    ...options,
+  }, projectRoot))
   const candidates = localRetryCandidates(runState, {
     stepId: options.step,
     agent: options.agent,
@@ -4243,16 +4300,16 @@ async function handleRun(flowId, options) {
   const invocationDir = path.resolve(process.cwd())
   const projectRoot = resolveProjectRoot(options.projectRoot, { cwd: invocationDir })
   if (flowId === 'ls' || flowId === 'list') {
-    await handleList()
+    await handleList({ ...options, projectRoot })
     return
   }
   const wantsAdHoc = !flowId && (options.agent || options.prompt)
-  const resolvedFlowId = flowId || (wantsAdHoc ? AD_HOC_RUN_TARGET : (process.stdin.isTTY ? await pickFlowInteractively() : 'review'))
+  const resolvedFlowId = flowId || (wantsAdHoc ? AD_HOC_RUN_TARGET : (process.stdin.isTTY ? await pickFlowInteractively({ projectRoot, options }) : 'review'))
   if (isAdHocRunTarget(resolvedFlowId)) {
     await handleAdHocAgentRun({ ...options, projectRoot, invocationDir })
     return
   }
-  const flow = await loadFlow(resolvedFlowId)
+  const flow = await loadFlow(resolvedFlowId, flowLoadOptions(options, projectRoot))
 
   const resumable = findLatestUnfinishedRun(projectRoot, { flowId: flow.id })
   if (resumable && process.stdin.isTTY && !options.yes && !options.dryRun) {
@@ -4263,10 +4320,11 @@ async function handleRun(flowId, options) {
     })
     if (clack.isCancel(selected)) process.exit(0)
     if (selected) {
+      const resumableFlow = flowFromRunState(resumable) || flow
       if (resumable.transport === 'github') {
-        await resumeGithubFlow({ flow, runState: resumable })
+        await resumeGithubFlow({ flow: resumableFlow, runState: resumable })
       } else {
-        await resumeLocalFlow({ flow, runState: resumable, projectRoot })
+        await resumeLocalFlow({ flow: resumableFlow, runState: resumable, projectRoot })
       }
       return
     }
@@ -4275,23 +4333,28 @@ async function handleRun(flowId, options) {
   }
 
   const flowOptions = await collectFlowOptions(flow, options)
-  const detections = detectTransports({ projectRoot })
   const requestedTransport = flowOptions.transport || flow.defaults.transport
-  if ((requestedTransport === 'auto' || !requestedTransport) && detections.every((candidate) => !candidate.available)) {
-    throw new Error(formatTransportSetupHelp(detections))
-  }
-  const transport = process.stdin.isTTY
-    ? await chooseTransportInteractively({ requested: requestedTransport, projectRoot })
-    : resolveTransport(requestedTransport, detections)
-  const selectedDetection = detections.find((candidate) => candidate.id === transport)
-  if (!selectedDetection?.available) {
-    throw new Error(
-      [
-        `Transport "${transport}" is not available: ${selectedDetection?.reason || 'unknown reason'}`,
-        '',
-        formatTransportSetupHelp(detections),
-      ].join('\n'),
-    )
+  let transport
+  if (flowOptions.dryRun) {
+    transport = resolveDryRunTransport({ requestedTransport, projectRoot })
+  } else {
+    const detections = detectTransports({ projectRoot })
+    if ((requestedTransport === 'auto' || !requestedTransport) && detections.every((candidate) => !candidate.available)) {
+      throw new Error(formatTransportSetupHelp(detections))
+    }
+    transport = process.stdin.isTTY
+      ? await chooseTransportInteractively({ requested: requestedTransport, projectRoot })
+      : resolveTransport(requestedTransport, detections)
+    const selectedDetection = detections.find((candidate) => candidate.id === transport)
+    if (!selectedDetection?.available) {
+      throw new Error(
+        [
+          `Transport "${transport}" is not available: ${selectedDetection?.reason || 'unknown reason'}`,
+          '',
+          formatTransportSetupHelp(detections),
+        ].join('\n'),
+      )
+    }
   }
 
   const resolvedBranch = resolveWorkflowBranch({ options: flowOptions, projectRoot })
@@ -4301,7 +4364,7 @@ async function handleRun(flowId, options) {
     branchSource: resolvedBranch.source,
   }
 
-  const netlifyOptions = isNetlifyApiTransport(transport)
+  const netlifyOptions = isNetlifyApiTransport(transport) && !branchOptions.dryRun
     ? await chooseNetlifyFilterOption({ projectRoot, invocationDir, options: branchOptions })
     : branchOptions
 
@@ -4309,6 +4372,21 @@ async function handleRun(flowId, options) {
   const configuredFlow = prepared.flow
   const configuredOptions = prepared.options
   const steps = prepared.steps
+
+  if (configuredOptions.dryRun) {
+    if (!prepared.previewPrinted) {
+      printFlowPlan({
+        flow: configuredFlow,
+        steps,
+        transport,
+        branch: configuredOptions.branch,
+        context: configuredOptions.context,
+      })
+      console.log('Dry run only. No issues, comments, Agent Runner jobs, or .nax artifacts will be created.')
+    }
+    return
+  }
+
   const runContext = buildFlowRunContext({ options: configuredOptions, projectRoot, transport })
 
   const runState = createRunState({
@@ -4504,6 +4582,28 @@ function handleCi(commandParts = [], options = {}, {
   }
 }
 
+function handleSync(target = 'last', options = {}, {
+  cwd = process.cwd(),
+  env = process.env,
+  runCommand,
+  log = console.log,
+} = {}) {
+  const projectRoot = resolveProjectRoot(options.projectRoot, { cwd })
+  const selected = String(target || 'last').trim().toLowerCase()
+  if (selected !== 'last') {
+    throw new Error('Only `nax sync last` is supported right now.')
+  }
+  const netlify = buildNetlifyEnv({ projectRoot, env })
+  const result = syncLastAgentRunner({
+    projectRoot,
+    env: netlify.env,
+    runCommand,
+  })
+  log(`Synced Agent Runner ${result.runnerId}: ${result.syncedSessionCount}/${result.remoteSessionCount} remote sessions`)
+  if (result.dir) log(`Updated: ${relativeDisplayPath(projectRoot, result.dir)}`)
+  return result
+}
+
 async function shouldEnableGithubActions(options, { projectRoot } = {}) {
   if (options.githubActions === true) return true
   if (options.githubActions === false) return false
@@ -4551,10 +4651,18 @@ async function handleInit(options) {
   printInitResult(result, { dryRun: options.dryRun })
 }
 
+function hiddenCostOption() {
+  return new Option('--cost', 'Include estimated USD cost beside Netlify credit usage').hideHelp()
+}
+
+function addFlowsDirOption(command) {
+  return command.option('--flows-dir <path>', 'Project workflow directory; repeatable', collectOption, [])
+}
+
 function buildProgram() {
   const program = new Command()
 
-  program
+  addFlowsDirOption(program
     .name('nax')
     .description('Run multi step Netlify agent workflows using the worlds leading AI models')
     .argument('[workflow]', 'Workflow to run, e.g. review')
@@ -4566,7 +4674,8 @@ function buildProgram() {
     .option('--transport <transport>', 'Where to run: auto, github, netlify-api', 'auto')
     .addOption(new Option('--where <place>', 'Hidden compatibility alias for --transport').hideHelp())
     .option('--archive', 'Archive completed intermediate Netlify API agent runs')
-    .option('--dry', 'Preview the workflow without creating issues/comments')
+    .addOption(hiddenCostOption())
+    .option('--dry', 'Preview the workflow without creating issues, runner jobs, or .nax artifacts')
     .addOption(new Option('--dry-run', 'Hidden compatibility alias for --dry').hideHelp())
     .option('--force', 'Skip confirmation prompts')
     .addOption(new Option('--yes', 'Hidden compatibility alias for --force').hideHelp())
@@ -4574,7 +4683,7 @@ function buildProgram() {
     .action((workflow, options, command) => {
       const resolvedOptions = actionOptions(options, command)
       return handleRun(workflow || null, resolvedOptions)
-    })
+    }))
 
   program
     .command('init')
@@ -4593,7 +4702,7 @@ function buildProgram() {
     .option('--skip-secrets', 'Create/link project and workflow without setting GitHub secrets')
     .action((options, command) => handleInit(actionOptions(options, command)))
 
-  program
+  addFlowsDirOption(program
     .command('run [flow]')
     .description('Run a Netlify Agent Runner workflow')
     .option('--project-root <path>', 'Project root for flow execution')
@@ -4606,6 +4715,7 @@ function buildProgram() {
     .option('--transport <transport>', 'Where to run: auto, github, netlify-api', 'auto')
     .addOption(new Option('--where <place>', 'Hidden compatibility alias for --transport').hideHelp())
     .option('--archive', 'Archive completed intermediate Netlify API agent runs')
+    .addOption(hiddenCostOption())
     .option('--context-file <path>', 'Read additional context from a file')
     .option('--sha <rev>', 'Override the pinned git revision injected into the review context')
     .option('--pr-limit <count>', 'Maximum number of open PRs to include in the merge-state ledger', '10')
@@ -4620,14 +4730,14 @@ function buildProgram() {
     .option('--from-issues <list>', 'Recovery: comma-separated source issue numbers to embed for comment steps')
     .option('--from-issue <list>', 'Alias for --from-issues')
     .option('--timeout-minutes <count>', 'Minutes to wait for each step to complete', '25')
-    .option('--dry', 'Preview the workflow without creating issues/comments')
+    .option('--dry', 'Preview the workflow without creating issues, runner jobs, or .nax artifacts')
     .addOption(new Option('--dry-run', 'Hidden compatibility alias for --dry').hideHelp())
     .option('--force', 'Skip confirmation prompts')
     .addOption(new Option('--yes', 'Hidden compatibility alias for --force').hideHelp())
     .option('--notify', 'Show a desktop notification when the flow finishes')
     .option('--no-auto-context', 'Do not inject the automatic review contract, pinned SHA snapshot, or PR ledger')
     .option('--no-fetch-results', 'Do not fetch round results from prior steps')
-    .action((flow, options, command) => handleRun(flow, actionOptions(options, command)))
+    .action((flow, options, command) => handleRun(flow, actionOptions(options, command))))
 
   program
     .command('recent')
@@ -4635,14 +4745,17 @@ function buildProgram() {
     .option('--run-id <id>', 'Skip the picker and show a specific artifact id')
     .option('--type <kind>', 'Filter by workflow, agent-runner, agent-session, or all', 'all')
     .option('--limit <n>', 'Maximum artifacts to show in the picker', '25')
+    .addOption(hiddenCostOption())
     .action((options, command) => handleRecent(actionOptions(options, command)))
 
   const addRetryOptions = (command) => command
     .option('--project-root <path>', 'Project root containing .nax workflows and agent artifacts')
+    .option('--flows-dir <path>', 'Project workflow directory; repeatable', collectOption, [])
     .option('--flow <id>', 'Flow id filter when run id is omitted')
     .option('--step <id>', 'Failed step id to retry')
     .option('--agent <name>', 'Failed agent to retry, e.g. claude')
     .option('--timeout-minutes <count>', 'Minutes to wait for the retried run', '25')
+    .addOption(hiddenCostOption())
     .action((runId, options, command) => handleRetry(runId || '', actionOptions(options, command)))
 
   addRetryOptions(
@@ -4651,7 +4764,7 @@ function buildProgram() {
       .description('Retry one failed Netlify API agent run with a compact prompt, then continue the workflow'),
   )
 
-  program
+  addFlowsDirOption(program
     .command('handoff [run-id]')
     .description('Copy or continue from the latest workflow, agent runner, or agent session summary')
     .option('--project-root <path>', 'Project root containing .nax workflows and agent artifacts')
@@ -4670,10 +4783,11 @@ function buildProgram() {
     .option('--filter <app>', 'Netlify CLI monorepo app filter for local Netlify agent runs')
     .option('--context <text>', 'Additional context prepended before the handoff summary')
     .option('--timeout-minutes <count>', 'Minutes to wait for each Netlify API step or fresh handoff run', '25')
+    .addOption(hiddenCostOption())
     .option('--force', 'Skip confirmation prompts for chained workflow runs')
     .addOption(new Option('--yes', 'Hidden compatibility alias for --force').hideHelp())
     .option('--no-auto-context', 'Do not inject automatic context for chained workflow runs')
-    .action((runId, options, command) => handleHandoff(runId || '', actionOptions(options, command)))
+    .action((runId, options, command) => handleHandoff(runId || '', actionOptions(options, command))))
 
   program
     .command('skills [subcommand]')
@@ -4696,6 +4810,12 @@ function buildProgram() {
       const result = handleCi(commandParts, actionOptions(options, command))
       if (!result.skipped && result.status !== 0) process.exitCode = result.status
     })
+
+  program
+    .command('sync [target]')
+    .description('Sync local .nax artifacts from remote Netlify Agent Runner state')
+    .option('--project-root <path>', 'Project root containing .nax artifacts')
+    .action((target, options, command) => handleSync(target || 'last', actionOptions(options, command)))
 
   program
     .command('issue [prompt]')
@@ -4753,15 +4873,18 @@ function buildProgram() {
     .command('list')
     .alias('ls')
     .description('List available workflows')
-    .action(handleList)
+    .option('--project-root <path>', 'Project root containing project workflows')
+    .option('--flows-dir <path>', 'Project workflow directory; repeatable', collectOption, [])
+    .action((options, command) => handleList(actionOptions(options, command)))
 
-  program
+  addFlowsDirOption(program
     .command('preview-boxes [flow]')
     .description('Preview the flow plan and success boxes without running the workflow')
+    .option('--project-root <path>', 'Project root containing project workflows')
     .option('--transport <transport>', 'Transport to render (github|netlify-api|local)', 'github')
     .option('--branch <branch>', 'Branch label to display', 'master')
     .option('--context <context>', 'Additional context indicator', '')
-    .action((flow, options, command) => handlePreviewBoxes(flow, actionOptions(options, command)))
+    .action((flow, options, command) => handlePreviewBoxes(flow, actionOptions(options, command))))
 
   program
     .command('preview-spinner')
@@ -4824,6 +4947,7 @@ module.exports = {
     formatHandoffSourceLabel,
     formatHandoffSourceDetailBox,
     handleCi,
+    handleSync,
     handoffSourceDetailTitle,
     handoffSourceDetailLines,
     compactCurrentTask,

@@ -4,7 +4,26 @@ const fs = require('fs')
 const os = require('os')
 const path = require('path')
 
-const { FLOW_PICKER_ORDER, listFlows, loadFlow, loadStepPrompt } = require('../lib/flows')
+const { DEFAULT_PROJECT_FLOWS_DIRS, FLOW_PICKER_ORDER, listFlows, loadFlow, loadStepPrompt, projectFlowDirs } = require('../lib/flows')
+
+function writeFlow(projectRoot, flowsDir, id, { title = id, description = '', promptBody = 'Prompt body' } = {}) {
+  const flowDir = path.join(projectRoot, flowsDir, id)
+  fs.mkdirSync(path.join(flowDir, 'prompts'), { recursive: true })
+  fs.writeFileSync(path.join(flowDir, 'flow.yml'), [
+    `id: ${id}`,
+    `title: ${title}`,
+    description ? `description: ${description}` : '',
+    'defaults:',
+    '  agents: [codex]',
+    'steps:',
+    '  - id: one',
+    '    title: One',
+    '    prompt: prompts/one.md',
+    '',
+  ].filter((line) => line !== '').join('\n'))
+  fs.writeFileSync(path.join(flowDir, 'prompts', 'one.md'), `---\ntitle: One Prompt\n---\n\n${promptBody}\n`)
+  return flowDir
+}
 
 test('loadFlow reads flow.yml via configorama and normalizes steps', async () => {
   const flow = await loadFlow('review')
@@ -41,6 +60,58 @@ test('listFlows discovers flow directories', async () => {
   ]) {
     assert.ok(ids.includes(id), `expected ${id} to be discovered`)
   }
+})
+
+test('listFlows discovers project workflows before bundled workflows', async () => {
+  const projectRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'nax-flow-project-'))
+  writeFlow(projectRoot, DEFAULT_PROJECT_FLOWS_DIRS[0], 'conversion-audit', {
+    title: 'Conversion Audit',
+    description: 'Project conversion review',
+  })
+
+  const flows = await listFlows({ projectRoot })
+  assert.equal(flows[0].id, 'conversion-audit')
+  assert.equal(flows[0].source, 'project')
+  assert.equal(flows[0].sourceLabel, 'project .github/nax-flows')
+  assert.ok(flows.some((flow) => flow.id === 'review' && flow.source === 'bundled'))
+})
+
+test('loadFlow uses nax.config.json flowsDirs and project flows shadow bundled flows', async () => {
+  const projectRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'nax-flow-config-'))
+  fs.writeFileSync(path.join(projectRoot, 'nax.config.json'), JSON.stringify({
+    flowsDirs: ['tools/nax/flows', '.github/nax-flows'],
+  }, null, 2))
+  writeFlow(projectRoot, 'tools/nax/flows', 'review', {
+    title: 'Project Review',
+    promptBody: 'Project review prompt',
+  })
+  writeFlow(projectRoot, '.github/nax-flows', 'release-readiness', {
+    title: 'Release Readiness',
+  })
+
+  const dirs = await projectFlowDirs({ projectRoot })
+  assert.deepEqual(dirs.map((dir) => path.relative(projectRoot, dir)), ['tools/nax/flows', '.github/nax-flows'])
+
+  const flow = await loadFlow('review', { projectRoot })
+  assert.equal(flow.title, 'Project Review')
+  assert.equal(flow.source, 'project')
+  assert.equal(flow.sourceLabel, 'project tools/nax/flows')
+  assert.equal(loadStepPrompt(flow, flow.steps[0]).body.trim(), 'Project review prompt')
+
+  const flows = await listFlows({ projectRoot })
+  assert.equal(flows.filter((candidate) => candidate.id === 'review').length, 1)
+  assert.equal(flows.find((candidate) => candidate.id === 'release-readiness').sourceLabel, 'project .github/nax-flows')
+})
+
+test('loadFlow accepts explicit project workflow directories', async () => {
+  const projectRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'nax-flow-explicit-'))
+  writeFlow(projectRoot, 'agent/flows', 'custom-flow', {
+    title: 'Custom Flow',
+  })
+
+  const flow = await loadFlow('custom-flow', { projectRoot, flowsDir: 'agent/flows' })
+  assert.equal(flow.title, 'Custom Flow')
+  assert.equal(flow.sourceLabel, 'project agent/flows')
 })
 
 test('listFlows orders primary workflows for the picker', async () => {

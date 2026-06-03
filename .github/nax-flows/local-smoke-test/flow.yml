@@ -1,0 +1,20 @@
+id: local-smoke-test
+title: Local Smoke Test
+description: Minimal project-local workflow for verifying nax discovers .github/nax-flows.
+
+defaults:
+  transport: auto
+  notify: false
+  agents:
+    - codex
+
+steps:
+  - id: smoke
+    title: Smoke Test
+    description: Confirm the project-local workflow loaded and can run a single agent step.
+    prompt: prompts/1_smoke-test.md
+    action: issue
+    submit: new-run
+    agents:
+      - codex
+    waitFor: agent-results

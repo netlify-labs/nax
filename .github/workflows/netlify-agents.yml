@@ -46,17 +46,17 @@ jobs:
         github.event.sender.login != 'netlify[bot]'
       )
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 30
     permissions:
       contents: write
       pull-requests: write
       issues: write
     steps:
-      - uses: netlify-labs/agent-runner-action@v1
+      - uses: netlify-labs/agent-runner-action@main
         with:
           netlify-auth-token: ${{ secrets.NETLIFY_AUTH_TOKEN }}
           netlify-site-id: ${{ secrets.NETLIFY_SITE_ID }}
-          timeout-minutes: '25'
+          timeout-minutes: '30'
           # Optional settings:
           # default-agent: 'codex'
           # manage-labels: 'false'

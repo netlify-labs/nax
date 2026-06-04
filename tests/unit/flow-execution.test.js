@@ -1799,6 +1799,8 @@ test('formatFlowList renders workflows as stacked boxes', () => {
       description: 'Minimal project-local workflow for verifying nax discovers project flow directories.',
       source: 'project',
       sourceLabel: 'project .github/nax-flows',
+      dir: path.join('/repo', '.github', 'nax-flows', 'local-smoke-test'),
+      steps: [{ agents: ['codex'] }],
     },
     {
       id: 'review',
@@ -1806,8 +1808,10 @@ test('formatFlowList renders workflows as stacked boxes', () => {
       description: 'Review, cross-review, and synthesize findings with multiple Netlify agents.',
       source: 'bundled',
       sourceLabel: 'bundled',
+      dir: path.join('/repo', 'flows', 'review'),
+      steps: [{ agents: ['claude', 'gemini', 'codex'] }],
     },
-  ], { columns: 84 }))
+  ], { columns: 84, baseDir: '/repo' }))
 
   assert.match(output, /local-smoke-test/)
   assert.match(output, /Local Smoke Test/)
@@ -1815,6 +1819,9 @@ test('formatFlowList renders workflows as stacked boxes', () => {
   assert.match(output, /review/)
   assert.match(output, /Review/)
   assert.match(output, /bundled/)
+  assert.doesNotMatch(output, /Steps:/)
+  assert.doesNotMatch(output, /Models:/)
+  assert.doesNotMatch(output, /Location:/)
   assert.equal(output.split('\n').filter((line) => line.startsWith('╭')).length, 1)
   assert.equal(output.split('\n').filter((line) => line.startsWith('╰')).length, 1)
   assert.doesNotMatch(output, /\t/)
@@ -1822,6 +1829,45 @@ test('formatFlowList renders workflows as stacked boxes', () => {
   for (const line of output.split('\n')) {
     assert.ok(line.length <= 80, `line exceeded requested width: ${line}`)
   }
+})
+
+test('formatFlowList verbose output includes workflow metadata', () => {
+  const output = stripAnsi(_private.formatFlowList([
+    {
+      id: 'review',
+      title: 'Review',
+      description: 'Review, cross-review, and synthesize findings with multiple Netlify agents.',
+      source: 'bundled',
+      sourceLabel: 'bundled',
+      dir: path.join('/repo', 'flows', 'review'),
+      steps: [
+        { agents: ['claude', 'gemini', 'codex'] },
+        { agents: ['codex'] },
+      ],
+    },
+  ], { columns: 100, verbose: true, baseDir: '/repo' }))
+
+  assert.match(output, /Location:\s+\.\/flows\/review/)
+  assert.match(output, /Steps:\s+2/)
+  assert.match(output, /Models:\s+Claude, Gemini, Codex/)
+  assert.match(output, /agents\.\s+│\n│\s+│\n│\s+Steps:/)
+  assert.match(output, /Steps:\s+2\s+│\n│\s+Models:\s+Claude, Gemini, Codex\s+│\n│\s+Location:/)
+})
+
+test('formatFlowList verbose output keeps external workflow directories absolute', () => {
+  const output = stripAnsi(_private.formatFlowList([
+    {
+      id: 'review',
+      title: 'Review',
+      description: 'Review the project.',
+      source: 'bundled',
+      sourceLabel: 'bundled',
+      dir: path.join('/usr', 'local', 'lib', 'node_modules', 'nax', 'src', 'flows', 'review'),
+      steps: [{ agents: ['codex'] }],
+    },
+  ], { columns: 120, verbose: true, baseDir: '/repo/site' }))
+
+  assert.match(output, /Location:\s+\/usr\/local\/lib\/node_modules\/nax\/src\/flows\/review/)
 })
 
 test('formatFlowListJson returns workflow items and metadata', () => {

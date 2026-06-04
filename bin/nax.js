@@ -38,7 +38,7 @@ const {
 } = require('../src/agent-run-results')
 const { runGh } = require('../src/gh-cli')
 const { multiline } = require('../src/multiline')
-const { WAIT_FOR_AGENT_RESULTS, listFlows, loadFlow, loadStepPrompt } = require('../src/flows')
+const { WAIT_FOR_AGENT_RESULTS, listFlows, loadFlow, loadStepPrompt } = requireWithoutArgvFlag('--verbose', () => require('../src/flows'))
 const { createRunState, dismissRunState, isUnfinishedRun, listRunStates, saveRunState, workflowStatePath } = require('../src/run-state')
 const {
   artifactsRootForRunState,
@@ -81,6 +81,17 @@ const ROUND_LABEL_BY_PROMPT = {
   'cross-score': 'Idea Proposals',
   react: 'Ideas And Cross-Scores',
   'synthesize-ideas': 'Idea Duel Outputs',
+}
+
+function requireWithoutArgvFlag(flag, load) {
+  if (!process.argv.includes(flag)) return load()
+  const originalArgv = process.argv
+  process.argv = process.argv.filter((arg) => arg !== flag)
+  try {
+    return load()
+  } finally {
+    process.argv = originalArgv
+  }
 }
 
 const GITHUB_ISSUE_BODY_LIMIT = 65536
@@ -1135,13 +1146,14 @@ async function handleComment(promptName, options) {
 }
 
 async function handleList(options = {}) {
-  const projectRoot = resolveProjectRoot(options.projectRoot, { cwd: process.cwd() })
+  const invocationDir = process.cwd()
+  const projectRoot = resolveProjectRoot(options.projectRoot, { cwd: invocationDir })
   const flows = await listFlows(flowLoadOptions(options, projectRoot))
   if (options.json) {
     console.log(formatFlowListJson(flows))
     return
   }
-  console.log(formatFlowList(flows))
+  console.log(formatFlowList(flows, { verbose: options.verbose, baseDir: invocationDir }))
 }
 
 function absolutePathOrEmpty(value, baseDir = '') {
@@ -1188,22 +1200,53 @@ function formatFlowListJson(flows = {}) {
   return JSON.stringify({ count: items.length, items }, null, 2)
 }
 
-function formatFlowListBox(flow = {}, { width = 100 } = {}) {
+function flowListModels(flow = {}) {
+  const models = []
+  const seen = new Set()
+  for (const step of flow.steps || []) {
+    for (const agent of step.agents || []) {
+      if (seen.has(agent)) continue
+      seen.add(agent)
+      models.push(titleCase(agent))
+    }
+  }
+  return models
+}
+
+function formatFlowDirectory(flow = {}, baseDir = process.cwd()) {
+  if (!flow.dir) return ''
+  const absoluteDir = absolutePathOrEmpty(flow.dir)
+  const relative = path.relative(baseDir || process.cwd(), absoluteDir)
+  if (relative && !relative.startsWith('..') && !path.isAbsolute(relative)) return `./${relative}`
+  return absoluteDir
+}
+
+function formatFlowListBox(flow = {}, { width = 100, verbose = false, baseDir = process.cwd() } = {}) {
   const innerWidth = Math.max(20, width - 6)
   const id = flow.id || 'workflow'
   const title = flow.title || id
-  const description = flow.description ? wordWrap(flow.description, innerWidth) : ''
+  const lines = []
+  if (flow.description) lines.push(wordWrap(flow.description, innerWidth))
+  if (verbose) {
+    const steps = Array.isArray(flow.steps) ? flow.steps.length : 0
+    const models = flowListModels(flow).join(', ') || 'none'
+    const directory = formatFlowDirectory(flow, baseDir)
+    if (lines.length > 0) lines.push('')
+    lines.push(`Steps:      ${steps}`)
+    lines.push(`Models:     ${models}`)
+    if (directory) lines.push(`Location:   ${directory}`)
+  }
   return {
     title: {
       left: `${id} - ${title}`,
       right: flow.sourceLabel || flow.source || '',
       truncate: true,
     },
-    content: description,
+    content: lines.join('\n'),
   }
 }
 
-function formatFlowList(flows = [], { columns = process.stdout.columns || 100 } = {}) {
+function formatFlowList(flows = [], { columns = process.stdout.columns || 100, verbose = false, baseDir = process.cwd() } = {}) {
   const width = Math.min(120, Math.max(72, Math.floor(columns * 0.95)))
   if (flows.length === 0) {
     return makeBox({
@@ -1214,7 +1257,7 @@ function formatFlowList(flows = [], { columns = process.stdout.columns || 100 } 
       width,
     })
   }
-  return makeStackedBoxes(flows.map((flow) => formatFlowListBox(flow, { width })), {
+  return makeStackedBoxes(flows.map((flow) => formatFlowListBox(flow, { width, verbose, baseDir })), {
     borderText: `Workflows (${flows.length})`,
     borderStyle: 'rounded',
     borderColor: TEAL_COLOR,
@@ -5536,6 +5579,7 @@ function buildProgram() {
     .option('--project-root <path>', 'Project root containing project workflows')
     .option('--flows-dir <path>', 'Project workflow directory; repeatable', collectOption, [])
     .option('--json', 'Print available workflows as JSON')
+    .option('--verbose', 'Include step count, models, and workflow location')
     .action((options, command) => handleList(actionOptions(options, command)))
 
   addFlowsDirOption(program

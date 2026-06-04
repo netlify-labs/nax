@@ -2025,7 +2025,7 @@ function workflowPickerLabel(flow = {}, { includeAdHoc = true } = {}) {
 
 const AD_HOC_RUN_CHOICE = {
   value: AD_HOC_RUN_TARGET,
-  label: 'Start a single Netlify agent with a custom prompt',
+  label: 'Start a single agent with a prompt',
 }
 
 function ansiColor(code, value) {
@@ -2049,7 +2049,7 @@ function printInteractiveIntroBox() {
       right: terminalTrafficLights(),
     },
     content: {
-      left: "Run a single Netlify agent or orchestrate a multi-step agentic workflow\nusing the world's leading AI coding tools: Claude Code, Codex, and Gemini",
+      left: "Run a single agent or orchestrate a multi-step agentic workflow using\nthe world's leading AI coding tools: Claude Code, Codex, and Gemini",
       paddingLeft: 2,
       paddingRight: 2,
       paddingTop: 0,

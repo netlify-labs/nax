@@ -1769,6 +1769,142 @@ test('waitForGithubStep retries transient loader errors and still completes', as
   assert.equal(results[0].replies[0].url, resultUrl)
 })
 
+test('waitForGithubStep waits for remaining runs after one agent fails', async () => {
+  const claudePromptUrl = 'https://x/issues/23#prompt'
+  const geminiPromptUrl = 'https://x/issues/24#prompt'
+  const codexPromptUrl = 'https://x/issues/25#prompt'
+  const claudeFailureUrl = 'https://x/issues/23#failure'
+  const geminiResultUrl = 'https://x/issues/24#result'
+  const codexResultUrl = 'https://x/issues/25#result'
+  let calls = 0
+  const issueFor = (issueNumber) => {
+    if (issueNumber === 23) {
+      return {
+        number: 23,
+        title: '2026-06-03 Claude Generate Ideas',
+        url: 'https://x/issues/23',
+        comments: [
+          { url: claudePromptUrl, body: '@netlify claude react\n<!-- netlify-workflow-prompt:react:claude:2026-06-03 -->' },
+          { url: claudeFailureUrl, body: '### Agent Run failed\n\nfork/exec /opt/build-bin/agent-runner: argument list too long\n<!-- netlify-agent-run-result:runner-23:session-23 -->' },
+        ],
+      }
+    }
+    if (issueNumber === 24) {
+      return {
+        number: 24,
+        title: '2026-06-03 Gemini Generate Ideas',
+        url: 'https://x/issues/24',
+        comments: [
+          { url: geminiPromptUrl, body: '@netlify gemini react\n<!-- netlify-workflow-prompt:react:gemini:2026-06-03 -->' },
+          ...(calls > 1 ? [{ url: geminiResultUrl, body: 'gemini done\n<!-- netlify-agent-run-result:runner-24:session-24 -->' }] : []),
+        ],
+      }
+    }
+    return {
+      number: 25,
+      title: '2026-06-03 Codex Generate Ideas',
+      url: 'https://x/issues/25',
+      comments: [
+        { url: codexPromptUrl, body: '@netlify codex react\n<!-- netlify-workflow-prompt:react:codex:2026-06-03 -->' },
+        ...(calls > 1 ? [{ url: codexResultUrl, body: 'codex done\n<!-- netlify-agent-run-result:runner-25:session-25 -->' }] : []),
+      ],
+    }
+  }
+  const runs = [
+    { issueNumber: 23, commentUrl: claudePromptUrl, agent: 'claude' },
+    { issueNumber: 24, commentUrl: geminiPromptUrl, agent: 'gemini' },
+    { issueNumber: 25, commentUrl: codexPromptUrl, agent: 'codex' },
+  ]
+  const terminalResults = []
+
+  await assert.rejects(
+    _private.waitForGithubStep({
+      repo: 'example/repo',
+      issueNumbers: [23, 24, 25],
+      runs,
+      step: { id: 'react', title: 'React To Scores', agents: ['claude', 'gemini', 'codex'] },
+      timeoutMinutes: 1,
+      pollMs: 1,
+      loader: ({ issueNumber }) => {
+        if (issueNumber === 23) calls += 1
+        return issueFor(issueNumber)
+      },
+      onRunResult(event) {
+        terminalResults.push(event)
+      },
+    }),
+    /Step "react" has failed agent runs[\s\S]*#23 2026-06-03 Claude Generate Ideas/,
+  )
+
+  assert.equal(calls, 2)
+  assert.deepEqual(terminalResults.map((event) => `${event.run.agent}:${event.status}`).sort(), [
+    'claude:failed',
+    'codex:completed',
+    'gemini:completed',
+  ])
+})
+
+test('waitForGithubStep reports already saved failed runs after remaining runs complete', async () => {
+  const claudeFailureUrl = 'https://x/issues/23#failure'
+  const geminiPromptUrl = 'https://x/issues/24#prompt'
+  const codexPromptUrl = 'https://x/issues/25#prompt'
+  const geminiResultUrl = 'https://x/issues/24#result'
+  const codexResultUrl = 'https://x/issues/25#result'
+  const runs = [
+    {
+      issueNumber: 23,
+      commentUrl: claudeFailureUrl,
+      agent: 'claude',
+      status: 'failed',
+      resultText: 'fork/exec /opt/build-bin/agent-runner: argument list too long',
+    },
+    { issueNumber: 24, commentUrl: geminiPromptUrl, agent: 'gemini' },
+    { issueNumber: 25, commentUrl: codexPromptUrl, agent: 'codex' },
+  ]
+
+  await assert.rejects(
+    _private.waitForGithubStep({
+      repo: 'example/repo',
+      issueNumbers: [23, 24, 25],
+      runs,
+      step: { id: 'react', title: 'React To Scores', agents: ['claude', 'gemini', 'codex'] },
+      timeoutMinutes: 1,
+      pollMs: 1,
+      loader: ({ issueNumber }) => {
+        if (issueNumber === 23) {
+          return {
+            number: 23,
+            title: '2026-06-03 Claude Generate Ideas',
+            url: 'https://x/issues/23',
+            comments: [{ url: claudeFailureUrl, body: '### Agent Run failed\n<!-- netlify-agent-run-result:runner-23:session-23 -->' }],
+          }
+        }
+        if (issueNumber === 24) {
+          return {
+            number: 24,
+            title: '2026-06-03 Gemini Generate Ideas',
+            url: 'https://x/issues/24',
+            comments: [
+              { url: geminiPromptUrl, body: '@netlify gemini react\n<!-- netlify-workflow-prompt:react:gemini:2026-06-03 -->' },
+              { url: geminiResultUrl, body: 'gemini done\n<!-- netlify-agent-run-result:runner-24:session-24 -->' },
+            ],
+          }
+        }
+        return {
+          number: 25,
+          title: '2026-06-03 Codex Generate Ideas',
+          url: 'https://x/issues/25',
+          comments: [
+            { url: codexPromptUrl, body: '@netlify codex react\n<!-- netlify-workflow-prompt:react:codex:2026-06-03 -->' },
+            { url: codexResultUrl, body: 'codex done\n<!-- netlify-agent-run-result:runner-25:session-25 -->' },
+          ],
+        }
+      },
+    }),
+    /#23 2026-06-03 Claude Generate Ideas[\s\S]*argument list too long/,
+  )
+})
+
 test('waitForGithubStep aborts after maxConsecutiveFailures poll errors', async () => {
   const loader = () => {
     throw new Error('HTTP 500: gateway')
@@ -1834,7 +1970,7 @@ test('waitForGithubStep surfaces failed GitHub Actions runs before status commen
         terminalResults.push(event)
       },
     }),
-    /failed GitHub Actions runs before agent status comments were posted[\s\S]*argument list too long/,
+    /failed agent runs[\s\S]*GitHub Action failed before the Netlify Agent Runner could post status comments[\s\S]*argument list too long/,
   )
 
   assert.equal(terminalResults.length, 1)
@@ -2025,4 +2161,25 @@ test('workflowPickerHint compacts project flow descriptions without source prefi
 
   assert.equal(hint, 'This custom workflow has a very long description...')
   assert.equal(hint.includes('project'), false)
+})
+
+test('contextWithOutputBudget appends default chained-output guidance', () => {
+  const context = _private.contextWithOutputBudget('Base context', {}, { hasFutureSteps: true })
+
+  assert.match(context, /Base context/)
+  assert.match(context, /## Output Budget/)
+  assert.match(context, /12,000 bytes/)
+  assert.match(context, /reused as input to later workflow steps/)
+  assert.match(context, /Omit:/)
+})
+
+test('contextWithOutputBudget is configurable and can be disabled', () => {
+  const tuned = _private.contextWithOutputBudget('', { outputBudgetBytes: '8000' }, { hasPriorResults: true })
+  assert.match(tuned, /8,000 bytes/)
+
+  const disabled = _private.contextWithOutputBudget('Base context', { outputBudget: false }, { hasFutureSteps: true })
+  assert.equal(disabled, 'Base context')
+
+  const notChained = _private.contextWithOutputBudget('Base context', {}, {})
+  assert.equal(notChained, 'Base context')
 })

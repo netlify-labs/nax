@@ -11,6 +11,15 @@ const PROMPT_HEADER_PATTERN = /^@\S+\s+(claude|gemini|codex)\b/i
 const STRUCTURED_HEADING_PATTERN = /^##\s+2\.\s+Structured\s+(Findings|Consensus)[^\n]*$/m
 const NEXT_SECTION_PATTERN = /^##\s+3\./m
 const FENCED_JSON_PATTERN = /```json\s*\n([\s\S]*?)\n```/
+const RESULT_HEADING_PATTERN = /^###\s+Result:[^\n]*\n+/m
+const CHAINING_NOISE_SECTION_NAMES = new Set([
+  'repository state',
+  'architecture report',
+  'reality check',
+  'scoring notes',
+  'score calibration',
+  'idea selection rationale',
+])
 
 /** @param {Record<string, any>} param0 */
 function loadIssueWithComments({ repo, issueNumber }) {
@@ -163,9 +172,57 @@ function extractStructuredSection(body) {
   }
 }
 
+function normalizeHeadingName(value) {
+  return String(value || '')
+    .replace(/^[0-9]+[.)]\s*/, '')
+    .replace(/[`*_~]/g, '')
+    .trim()
+    .toLowerCase()
+}
+
+function stripTopLevelSections(body, sectionNames = CHAINING_NOISE_SECTION_NAMES) {
+  const text = String(body || '')
+  const headingPattern = /^##\s+([^\n]+)\n?/gm
+  const matches = [...text.matchAll(headingPattern)]
+  if (matches.length === 0) return text
+
+  let output = ''
+  let cursor = 0
+  for (let index = 0; index < matches.length; index += 1) {
+    const match = matches[index]
+    const start = match.index || 0
+    const end = index + 1 < matches.length ? matches[index + 1].index || text.length : text.length
+    const headingName = normalizeHeadingName(match[1])
+    if (!sectionNames.has(headingName)) {
+      output += text.slice(cursor, end)
+    } else {
+      output += text.slice(cursor, start)
+    }
+    cursor = end
+  }
+  output += text.slice(cursor)
+  return output
+}
+
+function stripRunnerResultWrapper(body) {
+  const text = String(body || '').trim()
+  const resultMatch = RESULT_HEADING_PATTERN.exec(text)
+  if (resultMatch) return text.slice(resultMatch.index + resultMatch[0].length).trim()
+  return text
+}
+
+function sanitizeAgentReplyBody(body) {
+  const original = String(body || '').trim()
+  if (!original) return ''
+
+  const withoutWrapper = stripRunnerResultWrapper(original)
+  const withoutNoise = stripTopLevelSections(withoutWrapper).trim()
+  return withoutNoise || withoutWrapper || original
+}
+
 /** @param {any} body @param {Record<string, any>} param1 */
-function renderReplyBody(body, { structuredOnly }) {
-  const trimmed = String(body || '').trim()
+function renderReplyBody(body, { structuredOnly, sanitize = true } = {}) {
+  const trimmed = sanitize ? sanitizeAgentReplyBody(body) : String(body || '').trim()
   if (!structuredOnly) return trimmed
 
   const section = extractStructuredSection(trimmed)
@@ -184,7 +241,7 @@ function renderReplyBody(body, { structuredOnly }) {
 }
 
 /** @param {Record<string, any>} param0 */
-function formatRoundResults({ heading = 'Prior Round Outputs', results, structuredOnly = false }) {
+function formatRoundResults({ heading = 'Prior Round Outputs', results, structuredOnly = false, sanitizeReplies = true }) {
   if (!Array.isArray(results) || results.length === 0) return ''
 
   const lines = [`## ${heading}`, '']
@@ -223,7 +280,7 @@ function formatRoundResults({ heading = 'Prior Round Outputs', results, structur
         if (reply.author?.login) lines.push(`Author: \`${reply.author.login}\``)
         if (reply.createdAt) lines.push(`Posted: \`${reply.createdAt}\``)
         lines.push('')
-        lines.push(renderReplyBody(reply.body, { structuredOnly }))
+        lines.push(renderReplyBody(reply.body, { structuredOnly, sanitize: sanitizeReplies }))
         lines.push('')
       })
     }
@@ -311,4 +368,7 @@ module.exports = {
   pickAgentReplyComment,
   pickAgentReplyComments,
   rawIssuesFromResults,
+  sanitizeAgentReplyBody,
+  stripRunnerResultWrapper,
+  stripTopLevelSections,
 }

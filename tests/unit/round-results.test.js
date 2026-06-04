@@ -10,6 +10,7 @@ const {
   pickAgentReplyComment,
   pickAgentReplyComments,
   rawIssuesFromResults,
+  sanitizeAgentReplyBody,
 } = require('../../src/round-results')
 
 test('inferModelFromTitle pulls model out of standard issue titles', () => {
@@ -224,6 +225,72 @@ test('formatRoundResults still accepts the legacy single-reply shape', () => {
 test('formatRoundResults returns empty string when no results', () => {
   assert.equal(formatRoundResults({ results: [] }), '')
   assert.equal(formatRoundResults({ results: null }), '')
+})
+
+test('sanitizeAgentReplyBody strips runner wrapper and repeated chaining boilerplate', () => {
+  const body = [
+    '### [Run #1 | claude | Agent Run completed](https://app.netlify.com/run) ✅',
+    '',
+    '**Prompt:**',
+    '',
+    '> prompt preview',
+    '',
+    '### Result: Generate project improvement ideas',
+    '',
+    'Short useful intro.',
+    '',
+    '## Repository State',
+    '',
+    '- `checked_out_sha`: abc',
+    '',
+    '## Architecture Report',
+    '',
+    'Long repeated architecture inventory.',
+    '',
+    '## Structured Ideas',
+    '',
+    '```json',
+    '[{"id":"CLAUDE-1"}]',
+    '```',
+  ].join('\n')
+
+  const out = sanitizeAgentReplyBody(body)
+  assert.doesNotMatch(out, /Prompt:/)
+  assert.doesNotMatch(out, /Repository State/)
+  assert.doesNotMatch(out, /Architecture Report/)
+  assert.match(out, /Short useful intro/)
+  assert.match(out, /## Structured Ideas/)
+  assert.match(out, /\[\{"id":"CLAUDE-1"\}\]/)
+})
+
+test('formatRoundResults sanitizes replies by default and can preserve raw replies explicitly', () => {
+  const result = {
+    issueNumber: 29,
+    issueTitle: '2026-05-07 Claude Ideas',
+    issueUrl: 'https://github.com/x/y/issues/29',
+    model: 'claude',
+    replies: [{
+      url: 'https://github.com/x/y/issues/29#issuecomment-1',
+      body: [
+        '### Result: Ideas',
+        '',
+        '## Repository State',
+        'noisy state',
+        '',
+        '## Structured Ideas',
+        '```json',
+        '[{"id":"A"}]',
+        '```',
+      ].join('\n'),
+    }],
+  }
+
+  const sanitized = formatRoundResults({ results: [result] })
+  assert.doesNotMatch(sanitized, /Repository State/)
+  assert.match(sanitized, /Structured Ideas/)
+
+  const raw = formatRoundResults({ results: [result], sanitizeReplies: false })
+  assert.match(raw, /Repository State/)
 })
 
 test('fetchRoundResults emits fetching/fetched progress events per issue', () => {

@@ -97,9 +97,10 @@ function requireWithoutArgvFlag(flag, load) {
 const GITHUB_ISSUE_BODY_LIMIT = 65536
 const BODY_SAFETY_MARGIN = 536
 const BODY_FALLBACK_THRESHOLD = GITHUB_ISSUE_BODY_LIMIT - BODY_SAFETY_MARGIN
-const GITHUB_ACTION_TRIGGER_TEXT_WARNING_BYTES = 96 * 1024
-const GITHUB_ACTION_TRIGGER_TEXT_SAFE_MAX_BYTES = 120000
+const GITHUB_ACTION_TRIGGER_TEXT_WARNING_BYTES = 70 * 1024
+const GITHUB_ACTION_TRIGGER_TEXT_SAFE_MAX_BYTES = 80000
 const GITHUB_ACTION_TRIGGER_TEXT_ENV_PREFIX = 'TRIGGER_TEXT='
+const DEFAULT_OUTPUT_BUDGET_BYTES = 12000
 const COMPACT_LOCAL_RESULT_CHAR_LIMIT = 6000
 const COMPACT_LOCAL_RESULTS_TOTAL_LIMIT = 36000
 const COMPACT_LOCAL_CONTEXT_CHAR_LIMIT = 12000
@@ -202,6 +203,56 @@ function enforceGithubActionPromptBudget(plan, { dryRun = false } = {}) {
     )
   }
   return { violations, warnings }
+}
+
+function parsePositiveInteger(value, fallback) {
+  if (value === undefined || value === null || value === '') return fallback
+  const parsed = Number.parseInt(String(value), 10)
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback
+}
+
+function outputBudgetEnabled(options = {}) {
+  if (options.outputBudget === false) return false
+  const raw = String(process.env.NAX_OUTPUT_BUDGET || '').trim().toLowerCase()
+  if (['0', 'false', 'no', 'off'].includes(raw)) return false
+  return true
+}
+
+function outputBudgetBytes(options = {}) {
+  return parsePositiveInteger(
+    options.outputBudgetBytes || process.env.NAX_OUTPUT_BUDGET_BYTES,
+    DEFAULT_OUTPUT_BUDGET_BYTES,
+  )
+}
+
+function buildOutputBudgetContext({ bytes = DEFAULT_OUTPUT_BUDGET_BYTES } = {}) {
+  return [
+    '## Output Budget',
+    '',
+    `Your response will be reused as input to later workflow steps. Keep the final answer concise and aim to stay under ${bytes.toLocaleString()} bytes.`,
+    '',
+    'Prioritize:',
+    '',
+    '1. Required structured JSON blocks, scores, rankings, and final recommendations.',
+    '2. Concise evidence that changes downstream decisions.',
+    '3. Links or references instead of repeated long prose when possible.',
+    '',
+    'Omit:',
+    '',
+    '- repeated repository state, git status, and architecture inventories',
+    '- prompt recaps, methodology narration, and generic preamble',
+    '- long file lists unless they directly affect the result',
+    '- duplicate rationale already captured in structured output',
+  ].join('\n')
+}
+
+function shouldApplyOutputBudget({ options = {}, hasPriorResults = false, hasFutureSteps = false } = {}) {
+  return outputBudgetEnabled(options) && (hasPriorResults || hasFutureSteps)
+}
+
+function contextWithOutputBudget(context, options = {}, details = {}) {
+  if (!shouldApplyOutputBudget({ options, ...details })) return context || ''
+  return joinContext(context, buildOutputBudgetContext({ bytes: outputBudgetBytes(options) }))
 }
 
 function gitRepositoryRoot(cwd = process.cwd()) {
@@ -808,7 +859,7 @@ function printPlan(plan, { dryRun }) {
     console.log(`\n- ${issue.title}`)
     console.log(`  model: ${issue.model}`)
     console.log(`  prompt: ${issue.promptName}`)
-    console.log(`  body: ${issue.body.length} chars`)
+    console.log(`  body: ${issue.body.length} chars / ${utf8ByteLength(issue.body).toLocaleString()} bytes`)
   }
 }
 
@@ -825,7 +876,7 @@ function printCommentPlan(plan, { dryRun }) {
     }
     console.log(`  model: ${issue.model}`)
     console.log(`  prompt: ${issue.promptName}`)
-    console.log(`  body: ${issue.body.length} chars`)
+    console.log(`  body: ${issue.body.length} chars / ${utf8ByteLength(issue.body).toLocaleString()} bytes`)
   }
 }
 
@@ -1065,12 +1116,16 @@ async function chooseCommentInteractively(initialPromptName, options) {
 function buildAndMaybeFallbackPlan(input, planBuilder) {
   const heading = input.options.fromIssuesHeading || ROUND_LABEL_BY_PROMPT[input.promptName] || 'Prior Round Outputs'
   const results = Array.isArray(input.roundResultsRaw) ? input.roundResultsRaw : []
+  const context = contextWithOutputBudget(input.context, input.options, {
+    hasPriorResults: results.length > 0,
+    hasFutureSteps: input.hasFutureSteps === true,
+  })
 
   const formatFor = (structuredOnly) =>
     results.length === 0 ? '' : formatRoundResults({ heading, results, structuredOnly })
 
   const fullRoundResults = formatFor(false)
-  let plan = planBuilder({ ...input, roundResults: fullRoundResults })
+  let plan = planBuilder({ ...input, context, roundResults: fullRoundResults })
 
   const oversized = plan.issues.some((issue) => issue.body.length > BODY_FALLBACK_THRESHOLD)
   if (oversized && input.promptName === 'summarize-consensus' && results.length > 0) {
@@ -1080,7 +1135,7 @@ function buildAndMaybeFallbackPlan(input, planBuilder) {
         'falling back to structured-findings JSON only for embedded round outputs.',
     )
     const structuredRoundResults = formatFor(true)
-    plan = planBuilder({ ...input, roundResults: structuredRoundResults })
+    plan = planBuilder({ ...input, context, roundResults: structuredRoundResults })
     const stillOversized = plan.issues.find((issue) => issue.body.length > BODY_FALLBACK_THRESHOLD)
     if (stillOversized) {
       console.error(
@@ -4073,6 +4128,51 @@ function findGithubRunnerFailures(results, runs = []) {
 const GITHUB_POLL_MAX_CONSECUTIVE_FAILURES = 5
 const GITHUB_ACTION_FAILURE_GRACE_MS = 60000
 
+function githubTerminalRunCount({ scopedResults = [], runs = [], failures = [], actionFailures = [] } = {}) {
+  const terminal = new Set()
+  for (const result of scopedResults) {
+    if ((result.replies || []).length > 0) terminal.add(result.issueNumber)
+  }
+  for (const run of runs || []) {
+    if (run.status === 'completed' || run.status === 'failed' || run.status === 'timeout') terminal.add(run.issueNumber)
+  }
+  for (const failure of failures || []) terminal.add(failure.issueNumber)
+  for (const failure of actionFailures || []) terminal.add(failure.issueNumber)
+  return terminal.size
+}
+
+function githubFailureDetail(failures = []) {
+  return failures
+    .map((failure) => `#${failure.issueNumber} ${failure.issueTitle}: ${failure.summary}${failure.url ? ` (${failure.url})` : ''}`)
+    .join('\n')
+}
+
+function githubSavedRunFailures(scopedResults = [], runs = [], existingIssueNumbers = new Set()) {
+  const byIssueNumber = new Map((scopedResults || []).map((result) => [result.issueNumber, result]))
+  return (runs || [])
+    .filter((run) => (run.status === 'failed' || run.status === 'timeout') && !existingIssueNumbers.has(run.issueNumber))
+    .map((run) => {
+      const result = byIssueNumber.get(run.issueNumber) || {}
+      return {
+        issueNumber: run.issueNumber,
+        issueTitle: result.issueTitle || run.issueTitle || titleCase(run.agent || 'agent'),
+        url: run.links?.commentUrl || run.commentUrl || run.links?.agentRunUrl || '',
+        summary: conciseErrorMessage(run.resultText || run.failureReason || run.status || 'Agent run failed'),
+      }
+    })
+}
+
+function githubCombinedFailures({ scopedResults = [], runs = [], failures = [], actionFailures = [] } = {}) {
+  const seen = new Set()
+  const combined = []
+  for (const failure of [...failures, ...actionFailures]) {
+    combined.push(failure)
+    if (Number.isFinite(failure.issueNumber)) seen.add(failure.issueNumber)
+  }
+  combined.push(...githubSavedRunFailures(scopedResults, runs, seen))
+  return combined
+}
+
 function normalizeGithubActionTitle(value) {
   return String(value || '').toLowerCase().replace(/\s+/g, ' ').trim()
 }
@@ -4333,12 +4433,6 @@ async function waitForGithubStep({
             await onRunResult({ result, reply, run, status: 'failed' })
           }
         }
-        const detail = failures
-          .map((failure) => `#${failure.issueNumber} ${failure.issueTitle}: ${failure.summary}${failure.url ? ` (${failure.url})` : ''}`)
-          .join('\n')
-        reporter.fail(`${step.title}: ${completeCount}/${scopedResults.length} complete, ${failures.length} failed`)
-        settled = true
-        throw new Error(`Step "${step.id}" has failed agent runs:\n${detail}`)
       }
       const actionFailures = findGithubActionRunFailures({
         repo,
@@ -4368,14 +4462,17 @@ async function waitForGithubStep({
             status: 'failed',
           })
         }
-        const detail = actionFailures
-          .map((failure) => `#${failure.issueNumber} ${failure.issueTitle}: ${failure.summary}${failure.url ? ` (${failure.url})` : ''}`)
-          .join('\n')
-        reporter.fail(`${step.title}: ${completeCount}/${scopedResults.length} complete, ${actionFailures.length} GitHub Actions failed`)
-        settled = true
-        throw new Error(`Step "${step.id}" has failed GitHub Actions runs before agent status comments were posted:\n${detail}`)
       }
-      if (completeCount === scopedResults.length) {
+      const combinedFailures = githubCombinedFailures({ scopedResults, runs, failures, actionFailures })
+      const failureCount = combinedFailures.length
+      const terminalCount = githubTerminalRunCount({ scopedResults, runs, failures, actionFailures })
+      if (terminalCount === scopedResults.length) {
+        if (failureCount > 0) {
+          const detail = githubFailureDetail(combinedFailures)
+          reporter.fail(`${step.title}: ${completeCount}/${scopedResults.length} complete, ${failureCount} failed`)
+          settled = true
+          throw new Error(`Step "${step.id}" has failed agent runs:\n${detail}`)
+        }
         reporter.done(`${step.title}: ${completeCount}/${scopedResults.length} complete`)
         settled = true
         return scopedResults
@@ -4393,14 +4490,6 @@ async function waitForGithubStep({
       })
       const { scopedResults, completeCount } = await reconcileResults(finalResults)
       const failures = findGithubRunnerFailures(finalResults, runs)
-      if (failures.length > 0) {
-        const detail = failures
-          .map((failure) => `#${failure.issueNumber} ${failure.issueTitle}: ${failure.summary}${failure.url ? ` (${failure.url})` : ''}`)
-          .join('\n')
-        reporter.fail(`${step.title}: ${completeCount}/${scopedResults.length} complete, ${failures.length} failed`)
-        settled = true
-        throw new Error(`Step "${step.id}" has failed agent runs:\n${detail}`)
-      }
       const actionFailures = findGithubActionRunFailures({
         repo,
         results: finalResults,
@@ -4429,12 +4518,18 @@ async function waitForGithubStep({
             status: 'failed',
           })
         }
-        const detail = actionFailures
-          .map((failure) => `#${failure.issueNumber} ${failure.issueTitle}: ${failure.summary}${failure.url ? ` (${failure.url})` : ''}`)
-          .join('\n')
-        reporter.fail(`${step.title}: ${completeCount}/${scopedResults.length} complete, ${actionFailures.length} GitHub Actions failed`)
+      }
+      const combinedFailures = githubCombinedFailures({ scopedResults, runs, failures, actionFailures })
+      const failureCount = combinedFailures.length
+      const terminalCount = githubTerminalRunCount({ scopedResults, runs, failures, actionFailures })
+      if (failureCount > 0) {
+        const detail = githubFailureDetail(combinedFailures)
+        const status = terminalCount === scopedResults.length
+          ? `${completeCount}/${scopedResults.length} complete, ${failureCount} failed`
+          : `${completeCount}/${scopedResults.length} complete, ${failureCount} failed, ${scopedResults.length - terminalCount} timed out`
+        reporter.fail(`${step.title}: ${status}`)
         settled = true
-        throw new Error(`Step "${step.id}" has failed GitHub Actions runs before agent status comments were posted:\n${detail}`)
+        throw new Error(`Step "${step.id}" has failed agent runs:\n${detail}`)
       }
       if (completeCount === scopedResults.length) {
         reporter.done(`${step.title}: ${completeCount}/${scopedResults.length} complete`)
@@ -4454,9 +4549,10 @@ async function waitForGithubStep({
 }
 
 function githubStepStatus(stepState) {
-  return stepState.runs.every((run) => run.status === 'completed' || run.status === 'dry-run')
-    ? 'completed'
-    : 'submitted'
+  const runs = Array.isArray(stepState?.runs) ? stepState.runs : []
+  if (runs.length > 0 && runs.every((run) => run.status === 'completed' || run.status === 'dry-run')) return 'completed'
+  if (runs.some((run) => run.status === 'failed' || run.status === 'timeout')) return 'failed'
+  return 'submitted'
 }
 
 /** @param {Record<string, any>} param0 */
@@ -4494,6 +4590,7 @@ async function completeGithubStep({ runState, repo, stepState, step, options }) 
         },
       })
       for (const run of stepState.runs) {
+        if (run.status === 'failed' || run.status === 'timeout') continue
         const result = results.find((item) => item.issueNumber === run.issueNumber)
         const replies = result?.replies || []
         const latest = replies[replies.length - 1]
@@ -4510,6 +4607,7 @@ async function completeGithubStep({ runState, repo, stepState, step, options }) 
     stepState.status = githubStepStatus(stepState)
     saveRunState(runState)
   } finally {
+    stepState.status = githubStepStatus(stepState)
     persistStepArtifacts(runState, stepState)
   }
   return stepState
@@ -4560,6 +4658,7 @@ async function executeGithubFlow({ flow, steps, options, runState, completedStep
       options: stepOptions,
       context: baseContext,
       roundResultsRaw,
+      hasFutureSteps: stepIndex < steps.length - 1,
     }
     const plan = buildAndMaybeFallbackPlan(
       input,
@@ -4762,7 +4861,11 @@ async function executeLocalFlow({ flow, steps, options, runState, projectRoot, c
     const sourceRuns = sourceRunsForStep(step, completedStepStates)
     const roundResults = formatLocalRunResults(sourceRuns)
     const compactRoundResults = formatCompactLocalRunResults(sourceRuns)
-    const compactContext = compactTextForRetry(baseContext, COMPACT_LOCAL_CONTEXT_CHAR_LIMIT, 'Additional Context')
+    const stepContext = contextWithOutputBudget(baseContext, options, {
+      hasPriorResults: sourceRuns.length > 0,
+      hasFutureSteps: stepIndex < steps.length - 1,
+    })
+    const compactContext = compactTextForRetry(stepContext, COMPACT_LOCAL_CONTEXT_CHAR_LIMIT, 'Additional Context')
     const runs = step.agents.map((agent) => {
       const followUpRun = step.submit === 'follow-up'
         ? sourceRuns.find((sourceRun) => sourceRun.agent === agent && sourceRun.runnerId)
@@ -4770,7 +4873,7 @@ async function executeLocalFlow({ flow, steps, options, runState, projectRoot, c
       const promptText = buildLocalAgentPrompt({
         model: agent,
         prompt,
-        context: baseContext,
+        context: stepContext,
         roundResults,
         date,
       })
@@ -4805,7 +4908,7 @@ async function executeLocalFlow({ flow, steps, options, runState, projectRoot, c
     for (const run of runs) {
       console.log(`\n- ${titleCase(run.agent)} ${prompt.title}`)
       console.log(`  prompt: ${prompt.name}`)
-      console.log(`  body: ${run.promptText.length} chars`)
+      console.log(`  body: ${run.promptText.length} chars / ${utf8ByteLength(run.promptText).toLocaleString()} bytes`)
     }
 
     if (options.dryRun) {
@@ -5674,6 +5777,12 @@ function hiddenCostOption() {
   return new Option('--cost', 'Include estimated USD cost beside Netlify credit usage').hideHelp()
 }
 
+function addOutputBudgetOptions(command) {
+  return command
+    .option('--no-output-budget', 'Do not append output size guidance to chained workflow prompts')
+    .option('--output-budget-bytes <bytes>', `Target response size for chained workflow outputs (default: ${DEFAULT_OUTPUT_BUDGET_BYTES})`)
+}
+
 function addFlowsDirOption(command) {
   return command.option('--flows-dir <path>', 'Project workflow directory; repeatable', collectOption, [])
 }
@@ -5681,7 +5790,7 @@ function addFlowsDirOption(command) {
 function buildProgram() {
   const program = new Command()
 
-  addFlowsDirOption(program
+  addOutputBudgetOptions(addFlowsDirOption(program
     .name('nax')
     .description('Run multi step Netlify agent workflows using the worlds leading AI models')
     .argument('[workflow]', 'Workflow to run, e.g. review')
@@ -5702,7 +5811,7 @@ function buildProgram() {
     .action((workflow, options, command) => {
       const resolvedOptions = actionOptions(options, command)
       return handleRun(workflow || null, resolvedOptions)
-    }))
+    })))
 
   program
     .command('init')
@@ -5721,7 +5830,7 @@ function buildProgram() {
     .option('--skip-secrets', 'Create/link project and workflow without setting GitHub secrets')
     .action((options, command) => handleInit(actionOptions(options, command)))
 
-  addFlowsDirOption(program
+  addOutputBudgetOptions(addFlowsDirOption(program
     .command('run [flow]')
     .description('Run a Netlify Agent Runner workflow')
     .option('--project-root <path>', 'Project root for flow execution')
@@ -5756,7 +5865,7 @@ function buildProgram() {
     .option('--notify', 'Show a desktop notification when the flow finishes')
     .option('--no-auto-context', 'Do not inject the automatic review contract, pinned SHA snapshot, or PR ledger')
     .option('--no-fetch-results', 'Do not fetch round results from prior steps')
-    .action((flow, options, command) => handleRun(flow, actionOptions(options, command))))
+    .action((flow, options, command) => handleRun(flow, actionOptions(options, command)))))
 
   program
     .command('recent')
@@ -5958,9 +6067,11 @@ module.exports = {
     flowAgents,
     chooseNetlifyFilterOption,
     conciseErrorMessage,
+    buildOutputBudgetContext,
     buildCompactLocalPromptForRetry,
     buildHandoffPrompt,
     compactTextForRetry,
+    contextWithOutputBudget,
     enforceGithubActionPromptBudget,
     copyToClipboard,
     findGithubRunnerFailures,
@@ -6014,6 +6125,8 @@ module.exports = {
     githubActionFailureReason,
     githubActionFailureSummary,
     githubActionRunMatchesResult,
+    outputBudgetBytes,
+    outputBudgetEnabled,
     shouldArchiveCompletedStep,
     shouldPollGithubRun,
     physicalRowCount,

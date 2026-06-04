@@ -129,6 +129,28 @@ function hasRepairableRuns(step) {
   })
 }
 
+function isCompletedStep(step) {
+  if (!step) return false
+  if (step.status === 'completed' || step.status === 'dry-run') return true
+  const runs = Array.isArray(step.runs) ? step.runs : []
+  return runs.length > 0 && runs.every((run) => run.status === 'completed' || run.status === 'dry-run')
+}
+
+function hasRemainingInterruptedSteps(state) {
+  if (state?.status !== 'interrupted') return false
+  const flowSteps = Array.isArray(state.flow?.steps) ? state.flow.steps : []
+  const savedSteps = Array.isArray(state.steps) ? state.steps : []
+  if (flowSteps.length === 0 || savedSteps.length === 0) return false
+
+  const savedById = new Map(savedSteps.map((step) => [step.id, step]))
+  for (const flowStep of flowSteps) {
+    const saved = savedById.get(flowStep.id)
+    if (!saved) return true
+    if (!isCompletedStep(saved)) return false
+  }
+  return false
+}
+
 function isNetlifyApiTransport(transport) {
   return transport === 'netlify-api' || transport === 'local'
 }
@@ -142,6 +164,7 @@ function transportMatches(candidate, requested) {
 function isUnfinishedRun(state) {
   if (state?.status === 'dismissed' || state?.dismissedAt) return false
   if (!Array.isArray(state.steps) || state.steps.length === 0) return false
+  if (hasRemainingInterruptedSteps(state)) return true
   return state.steps.some((step) => {
     return step.status === 'running' ||
       step.status === 'submitted' ||

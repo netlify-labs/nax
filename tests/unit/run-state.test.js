@@ -22,6 +22,8 @@ function runState(tmp, overrides = {}) {
     runId,
     flowId: 'review',
     flowTitle: 'Review',
+    ...(overrides.status ? { status: overrides.status } : {}),
+    ...(overrides.flow ? { flow: overrides.flow } : {}),
     transport: overrides.transport || 'netlify-api',
     projectRoot: tmp,
     createdAt: overrides.createdAt || '2026-05-12T00:00:00.000Z',
@@ -99,6 +101,27 @@ test('isUnfinishedRun detects submitted GitHub issue runs', () => {
 
   assert.equal(isUnfinishedRun(state), true)
   assert.equal(isUnfinishedLocalRun(state), false)
+})
+
+test('isUnfinishedRun detects interrupted workflow with completed prefix and remaining steps', () => {
+  const state = runState('/tmp/x', {
+    status: 'interrupted',
+    transport: 'github',
+    flow: {
+      id: 'ideas',
+      steps: [
+        { id: 'ideate' },
+        { id: 'cross-score' },
+        { id: 'react' },
+      ],
+    },
+    steps: [
+      { id: 'ideate', status: 'completed', runs: [{ issueNumber: 1, status: 'completed' }] },
+      { id: 'cross-score', status: 'completed', runs: [{ issueNumber: 1, status: 'completed' }] },
+    ],
+  })
+
+  assert.equal(isUnfinishedRun(state), true)
 })
 
 test('findLatestUnfinishedRun can filter by transport', () => {

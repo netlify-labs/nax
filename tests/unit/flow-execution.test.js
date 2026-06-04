@@ -1825,6 +1825,7 @@ test('formatFlowList renders workflows as stacked boxes', () => {
 })
 
 test('formatFlowListJson returns workflow items and metadata', () => {
+  const flowDir = path.join('/repo', 'flows', 'review')
   const output = _private.formatFlowListJson([
     {
       id: 'review',
@@ -1832,10 +1833,10 @@ test('formatFlowListJson returns workflow items and metadata', () => {
       description: 'Review and synthesize.',
       source: 'bundled',
       sourceLabel: 'bundled',
-      sourceDir: '/repo/flows',
+      sourceDir: path.join('/repo', 'flows'),
       sourcePriority: 1,
-      dir: '/repo/flows/review',
-      file: '/repo/flows/review/flow.yml',
+      dir: flowDir,
+      file: path.join(flowDir, 'flow.yml'),
       defaults: { transport: 'auto', notify: false, agents: ['codex'] },
       options: { reviewDepth: 'deep' },
       steps: [{
@@ -1858,9 +1859,12 @@ test('formatFlowListJson returns workflow items and metadata', () => {
   assert.equal(parsed.count, 1)
   assert.equal(parsed.items[0].id, 'review')
   assert.equal(parsed.items[0].sourceLabel, 'bundled')
+  assert.equal(parsed.items[0].sourceDir, path.join('/repo', 'flows'))
+  assert.equal(parsed.items[0].dir, flowDir)
+  assert.equal(parsed.items[0].file, path.join(flowDir, 'flow.yml'))
   assert.equal(parsed.items[0].defaults.agents[0], 'codex')
   assert.equal(parsed.items[0].options.reviewDepth, 'deep')
-  assert.equal(parsed.items[0].steps[0].prompt, 'prompts/1_review.md')
+  assert.equal(parsed.items[0].steps[0].prompt, path.join(flowDir, 'prompts', '1_review.md'))
   assert.equal(parsed.items[0].steps[0].isArchivable, true)
 })
 

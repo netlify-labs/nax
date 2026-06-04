@@ -1144,17 +1144,25 @@ async function handleList(options = {}) {
   console.log(formatFlowList(flows))
 }
 
+function absolutePathOrEmpty(value, baseDir = '') {
+  if (!value) return ''
+  const raw = String(value)
+  if (path.isAbsolute(raw)) return raw
+  return path.resolve(baseDir || process.cwd(), raw)
+}
+
 function flowListJsonItem(flow = {}) {
+  const flowDir = absolutePathOrEmpty(flow.dir)
   return {
     id: flow.id || '',
     title: flow.title || '',
     description: flow.description || '',
     source: flow.source || '',
     sourceLabel: flow.sourceLabel || '',
-    sourceDir: flow.sourceDir || '',
+    sourceDir: absolutePathOrEmpty(flow.sourceDir),
     sourcePriority: flow.sourcePriority ?? null,
-    dir: flow.dir || '',
-    file: flow.file || '',
+    dir: flowDir,
+    file: absolutePathOrEmpty(flow.file, flowDir),
     defaults: flow.defaults || {},
     options: flow.options || {},
     steps: Array.isArray(flow.steps)
@@ -1162,7 +1170,7 @@ function flowListJsonItem(flow = {}) {
         id: step.id || '',
         title: step.title || '',
         description: step.description || '',
-        prompt: step.prompt || '',
+        prompt: absolutePathOrEmpty(step.prompt, flowDir),
         action: step.action || '',
         submit: step.submit || '',
         agents: Array.isArray(step.agents) ? step.agents : [],

@@ -551,6 +551,7 @@ module.exports = {
   persistWorkflowArtifacts,
   resultUrlForRun,
   safeArtifactName,
+  stepArtifactsDir,
   stepDirectoryName,
   updateLatestSymlink,
   writeAtomic,

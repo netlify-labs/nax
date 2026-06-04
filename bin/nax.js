@@ -32,6 +32,7 @@ const {
   formatAgentRunUrlFromAdminUrl,
   formatCreditsWithCost,
   formatUsageSummary,
+  netlifyAgentRunUrlFromBody,
   normalizeGithubRunResult,
   usageSummariesForRunState,
 } = require('../src/agent-run-results')
@@ -45,6 +46,7 @@ const {
   persistStepArtifacts,
   persistWorkflowArtifacts,
   safeArtifactName,
+  stepArtifactsDir,
   writeGithubStepSummary,
 } = require('../src/workflow-artifacts')
 const { clearTrackedRunState, trackRunState } = require('../src/graceful-run-state')
@@ -2275,12 +2277,93 @@ function wrapBoxLines(lines, width) {
 
 const STEP_MAX_WIDTH = 200
 const OUTER_TERMINAL_RATIO = 0.8
+const SUCCESS_COLOR = '#22c55e'
+const ERROR_COLOR = '#ef4444'
+const MUTED_COLOR = '#64748b'
+const TEAL_COLOR = '#0d9488'
+
+function rgbAnsi(hex) {
+  const normalized = String(hex || '').replace(/^#/, '')
+  if (!/^[\da-f]{6}$/i.test(normalized)) return ''
+  const r = parseInt(normalized.slice(0, 2), 16)
+  const g = parseInt(normalized.slice(2, 4), 16)
+  const b = parseInt(normalized.slice(4, 6), 16)
+  return `\x1b[38;2;${r};${g};${b}m`
+}
+
+function colorText(text, color) {
+  const open = rgbAnsi(color)
+  if (!open || (process.env.NO_COLOR && !process.env.FORCE_COLOR)) return text
+  return `${open}${text}\x1b[39m`
+}
+
+function resumeStatusColor(status) {
+  if (status === 'completed' || status === 'dry-run') return SUCCESS_COLOR
+  if (status === 'failed' || status === 'timeout') return ERROR_COLOR
+  return ''
+}
+
+/** @param {Record<string, any> | null | undefined} savedStep */
+function savedStepStatus(savedStep) {
+  if (!savedStep) return 'pending'
+  if (savedStep.status === 'dry-run') return 'dry-run'
+  if (savedStep.status === 'completed') return 'completed'
+  const runs = Array.isArray(savedStep.runs) ? savedStep.runs : []
+  if (runs.length > 0 && runs.every((run) => run.status === 'completed' || run.status === 'dry-run')) {
+    return 'completed'
+  }
+  if (savedStep.status === 'failed' || savedStep.status === 'timeout') return savedStep.status
+  return savedStep.status || 'running'
+}
+
+function resumeStepDecorations({ steps = [], runState = null } = {}) {
+  if (!runState) return new Map()
+  const byId = new Map((runState.steps || []).map((step) => [step.id, step]))
+  let resumeMarked = false
+  return new Map(steps.map((step) => {
+    const status = savedStepStatus(byId.get(step.id))
+    let label = ''
+    if (status === 'completed' || status === 'dry-run') label = 'completed'
+    else if (!resumeMarked) {
+      label = 'resume here'
+      resumeMarked = true
+    } else {
+      label = 'pending'
+    }
+    return [step.id, { status, label }]
+  }))
+}
+
+function savedAgentStatus(savedStep, agent) {
+  const stepStatus = savedStepStatus(savedStep)
+  const runs = Array.isArray(savedStep?.runs) ? savedStep.runs : []
+  const normalizedAgent = String(agent || '').toLowerCase()
+  const run = runs.find((candidate) => String(candidate?.agent || '').toLowerCase() === normalizedAgent)
+  if (run?.status) return run.status
+  if (stepStatus === 'completed' || stepStatus === 'dry-run' || stepStatus === 'failed' || stepStatus === 'timeout') {
+    return stepStatus
+  }
+  return ''
+}
+
+function stepResultsSummaryPath({ runState = null, savedStep = null, projectRoot = process.cwd() } = {}) {
+  const status = savedStepStatus(savedStep)
+  if (!(status === 'completed' || status === 'dry-run' || status === 'failed' || status === 'timeout')) return ''
+  if (!runState || !savedStep) return ''
+  const summaryPath = path.join(stepArtifactsDir(runState, savedStep), 'summary.md')
+  if (!fs.existsSync(summaryPath)) return ''
+  const displayPath = relativeDisplayPath(projectRoot || runState.projectRoot || process.cwd(), summaryPath)
+  return displayPath && !path.isAbsolute(displayPath) && !displayPath.startsWith('./')
+    ? `./${displayPath}`
+    : displayPath
+}
 
 /** @param {Record<string, any>} param0 */
-function printFlowPlan({ flow, steps, transport, branch, context }) {
-  const teal = '#0d9488'
+function printFlowPlan({ flow, steps, transport, branch, context, runState = null }) {
   const terminalWidth = process.stdout.columns || 100
   const outerMaxWidth = Math.max(60, Math.floor(terminalWidth * OUTER_TERMINAL_RATIO))
+  const decorations = resumeStepDecorations({ steps, runState })
+  const savedStepsById = new Map((runState?.steps || []).map((step) => [step.id, step]))
   const hasContext = context && context.trim()
   const flowDescriptionLines = flow.description
     ? wordWrap(flow.description, outerMaxWidth - 6).split('\n')
@@ -2293,7 +2376,11 @@ function printFlowPlan({ flow, steps, transport, branch, context }) {
     ...(hasContext ? ['Additional context: yes'] : []),
   ]
   const headings = steps.map((step, i) => `${i + 1}. ${step.title}`)
-  const actionLabels = steps.map((step) => stepActionLabel(step, transport))
+  const actionLabels = steps.map((step) => {
+    const label = stepActionLabel(step, transport)
+    const stateLabel = decorations.get(step.id)?.label
+    return stateLabel ? `${stateLabel} · ${label}` : label
+  })
   const descriptions = steps.map((step) => resolveStepDescription(flow, step))
   const chipsWidth = (agents) =>
     agents.reduce((sum, a) => sum + titleCase(a).length + 4, 0) + Math.max(0, agents.length - 1)
@@ -2310,18 +2397,38 @@ function printFlowPlan({ flow, steps, transport, branch, context }) {
   const arrowPad = ' '.repeat(Math.floor(stepWidth / 2) - 1)
 
   const stepBlocks = steps.map((step, i) => {
+    const savedStep = savedStepsById.get(step.id)
+    const resultsPath = stepResultsSummaryPath({
+      runState,
+      savedStep,
+      projectRoot: runState?.projectRoot || process.cwd(),
+    })
     const chips = makeHorizontalBoxes(
-      step.agents.map((agent) => ({
-        content: titleCase(agent),
-        borderStyle: 'rounded',
-        paddingLeft: 1,
-        paddingRight: 1,
-      })),
+      step.agents.map((agent) => {
+        const color = resumeStatusColor(savedAgentStatus(savedStep, agent))
+        const label = titleCase(agent)
+        return {
+          content: color ? colorText(label, color) : label,
+          borderStyle: 'rounded',
+          borderColor: color || undefined,
+          paddingLeft: 1,
+          paddingRight: 1,
+        }
+      }),
       { gap: 1 },
     )
-    const content = wrappedDescriptions[i]
-      ? `${wrappedDescriptions[i]}\n${chips}`
-      : chips
+    const lines = [
+      wrappedDescriptions[i],
+      chips,
+      resultsPath ? `Results: ${resultsPath}` : '',
+    ].filter(Boolean)
+    const content = lines.join('\n')
+    const decoration = decorations.get(step.id)
+    const stepBorderColor = decoration?.label === 'completed'
+      ? SUCCESS_COLOR
+      : decoration?.label === 'pending'
+        ? MUTED_COLOR
+        : TEAL_COLOR
     const box = makeBox({
       title: {
         left: headings[i],
@@ -2329,7 +2436,7 @@ function printFlowPlan({ flow, steps, transport, branch, context }) {
       },
       content,
       borderStyle: 'rounded',
-      borderColor: teal,
+      borderColor: stepBorderColor,
       width: stepWidth,
     })
     if (i === steps.length - 1) return box
@@ -2341,7 +2448,7 @@ function printFlowPlan({ flow, steps, transport, branch, context }) {
     title: `Multi step agent workflow: "${flow.title}"`,
     content: `${metaLines.join('\n')}\n\n${stepBlocks}`,
     borderStyle: 'rounded',
-    borderColor: teal,
+    borderColor: TEAL_COLOR,
     width: outerWidth,
   }))
   console.log('')
@@ -3114,8 +3221,9 @@ function localRetryCandidates(runState, { stepId, agent } = {}) {
 function shouldPollGithubRun(run) {
   if (!run.issueNumber) return false
   if (run.status === 'dry-run') return false
-  if (run.status === 'failed' || run.status === 'timeout') return false
+  if (run.status === 'failed') return false
   if (run.status === 'completed' && run.resultText) return false
+  if (run.status === 'timeout' && run.resultText) return false
   return true
 }
 
@@ -3170,7 +3278,7 @@ const AGENT_RUNNER_USE_CASES = [
   ['⚡ Performance improvements', 'Find slow paths, heavy bundles, expensive queries, and easy wins.', 'Scan our code base for performance bottlenecks and suggest improvements.'],
   ['📊 Telemetry and analytics', 'Spot missing events, weak funnels, and visibility gaps.', 'What analytics things are we not tracking but probably should?'],
   ['🔎 SEO audit', 'Check pages for crawlability, metadata, broken links, alt text, and page speed.', 'Audit our site for SEO issues like missing meta tags, broken links, slow pages, and missing alt text.'],
-  ['✍️ Copy improvements', 'Tighten messaging, calls to action, and conversion copy.', 'Rewrite our landing page copy to be more compelling and conversion-focused.'],
+  ['📝 Copy improvements', 'Tighten messaging, calls to action, and conversion copy.', 'Rewrite our landing page copy to be more compelling and conversion-focused.'],
   ['♿ Accessibility', 'Review keyboard flows, labels, contrast, landmarks, and WCAG gaps.', 'Run an accessibility audit and fix all WCAG 2.1 AA violations.'],
   ['📱 Mobile responsiveness', 'Inspect small viewports and fix layouts that collapse poorly.', 'Improve the mobile responsiveness and audit every page on small viewports.'],
   ['🎭 End-to-end tests', 'Cover critical user journeys with browser-level tests.', 'Add end-to-end tests for our critical user flows using Playwright.'],
@@ -3325,7 +3433,7 @@ function formatTtyProgressRow(row, { nameWidth, frame, orchestrator = DEFAULT_OR
   const icon = STEP_SPINNER_FRAMES[frame % STEP_SPINNER_FRAMES.length]
   const label = row.message || `${row.emoji} ${orchestrator} ${row.phrase}`
   const currentTask = compactCurrentTask(row.currentTask)
-  return `${icon} ${name} · ${label}${currentTask ? ` - "${currentTask}"` : ''}`
+  return `${icon} ${name} · ${label}${currentTask ? ` - "${currentTask}"` : ''}${row.url ? ` - ${row.url}` : ''}`
 }
 
 /** @param {Record<string, any>} param0 */
@@ -3364,9 +3472,12 @@ function makeStepProgressReporter({
           return
         }
         lastRunLogs.set(id, { message, loggedAt: now, checkCount })
+        const runUrl = event.run?.links?.sessionUrl || event.run?.links?.agentRunUrl || ''
         const usageLine = event.terminalSuccess ? formatUsageLogLine(event.run?.usage) : ''
+        const runUrlLine = runUrl && !String(message).includes(runUrl) ? `Agent run: ${runUrl}` : ''
         console.log([
           `${message} (check #${checkCount})`,
+          runUrlLine,
           usageLine,
         ].filter(Boolean).join('\n'))
       },
@@ -3397,6 +3508,7 @@ function makeStepProgressReporter({
       status: 'pending',
       message: '',
       currentTask: '',
+      hasRunUpdate: false,
     }
     assignFlavor(row)
     return row
@@ -3481,6 +3593,11 @@ function makeStepProgressReporter({
   }
   return {
     setCount: (n) => {
+      const hasRunSpecificRows = [...rows.values()].some((row) => row.hasRunUpdate)
+      if (hasRunSpecificRows) {
+        redraw()
+        return
+      }
       let remaining = n
       for (const row of rows.values()) {
         row.status = remaining > 0 ? 'completed' : 'running'
@@ -3491,6 +3608,7 @@ function makeStepProgressReporter({
     },
     updateRun: (event) => {
       const row = rowForAgent(event.run?.agent)
+      row.hasRunUpdate = true
       row.state = event.state || row.state
       if (event.terminalSuccess || event.run?.status === 'completed') {
         row.status = 'completed'
@@ -3506,7 +3624,7 @@ function makeStepProgressReporter({
         row.status = 'running'
         row.message = event.retry ? (event.message || 'retrying') : ''
         row.currentTask = event.currentTask || event.run?.currentTask || row.currentTask || ''
-        row.url = ''
+        row.url = event.run?.links?.sessionUrl || event.run?.links?.agentRunUrl || row.url || ''
       }
       redraw()
     },
@@ -3549,6 +3667,48 @@ function githubFailureCommentsForRun(result, run = {}) {
     const body = String(comment?.body || '')
     return isGithubFailureResultBody(body) || (bodyHasRunnerStatusMarker(body) && /\bNetlify Agent Run failed\b/i.test(body))
   })
+}
+
+function githubStatusCommentsForRun(result, run = {}) {
+  return commentsAfterGithubPrompt(result, run).filter((comment) => {
+    const body = String(comment?.body || '')
+    return bodyHasRunnerStatusMarker(body) && netlifyAgentRunUrlFromBody(body)
+  })
+}
+
+function githubRunStatusFromStatusComment(body, fallback = 'running') {
+  const text = String(body || '')
+  if (/\bNetlify Agent Run completed\b/i.test(text) || /\bAgent Run completed\b/i.test(text)) return 'completed'
+  if (/\bNetlify Agent Run failed\b/i.test(text) || /\bAgent Run failed\b/i.test(text)) return 'failed'
+  if (/\bNetlify Agent Run timed out\b/i.test(text) || /\bAgent Run timed out\b/i.test(text)) return 'timeout'
+  return fallback
+}
+
+function applyGithubStatusCommentToRun(result, run = {}) {
+  const statusComments = githubStatusCommentsForRun(result, run)
+  const latest = statusComments[statusComments.length - 1]
+  const body = latest?.body || ''
+  const agentRunUrl = netlifyAgentRunUrlFromBody(body)
+  if (!agentRunUrl) return null
+  const status = githubRunStatusFromStatusComment(body, 'running')
+  const links = {
+    ...(run.links || {}),
+    agentRunUrl,
+    ...(agentRunUrl.includes('?session=') ? { sessionUrl: agentRunUrl } : {}),
+  }
+  run.links = links
+  if (!run.status || run.status === 'submitted' || run.status === 'pending' || status !== 'running') {
+    run.status = status
+  }
+  return {
+    comment: latest,
+    run: {
+      ...run,
+      links,
+      status,
+    },
+    agentRunUrl,
+  }
 }
 
 function resultsScopedToGithubRuns(results, runs = []) {
@@ -3609,6 +3769,49 @@ async function waitForGithubStep({
   let settled = false
   let consecutiveFailures = 0
   const emittedResults = new Set()
+  const reconcileResults = async (results) => {
+    const scopedResults = resultsScopedToGithubRuns(results, runs)
+    for (const result of scopedResults) {
+      const run = runs.find((candidate) => candidate.issueNumber === result.issueNumber) || {}
+      const statusUpdate = applyGithubStatusCommentToRun(result, run)
+      if (statusUpdate) {
+        reporter.updateRun({
+          result,
+          reply: statusUpdate.comment,
+          run: statusUpdate.run,
+          state: run.status || 'running',
+        })
+      }
+      const replies = result.replies || []
+      const latest = replies[replies.length - 1]
+      if (!latest?.url) continue
+      const key = `${result.issueNumber}:${latest.url}`
+      if (emittedResults.has(key)) continue
+      emittedResults.add(key)
+      const agentRunUrl = netlifyAgentRunUrlFromBody(latest.body || '')
+      reporter.updateRun({
+        result,
+        reply: latest,
+        run: {
+          ...run,
+          links: {
+            ...(run.links || {}),
+            agentRunUrl: agentRunUrl || run.links?.agentRunUrl || '',
+            sessionUrl: agentRunUrl.includes('?session=')
+              ? agentRunUrl
+              : run.links?.sessionUrl || '',
+          },
+          status: 'completed',
+        },
+        state: 'completed',
+        terminalSuccess: true,
+      })
+      await onRunResult({ result, reply: latest, run, status: 'completed' })
+    }
+    const completeCount = scopedResults.filter((r) => (r.replies || []).length > 0).length
+    reporter.setCount(completeCount)
+    return { scopedResults, completeCount }
+  }
 
   try {
     while (Date.now() < deadline) {
@@ -3637,19 +3840,7 @@ async function waitForGithubStep({
         await new Promise((resolve) => setTimeout(resolve, pollMs))
         continue
       }
-      const scopedResults = resultsScopedToGithubRuns(results, runs)
-      for (const result of scopedResults) {
-        const run = runs.find((candidate) => candidate.issueNumber === result.issueNumber) || {}
-        const replies = result.replies || []
-        const latest = replies[replies.length - 1]
-        if (!latest?.url) continue
-        const key = `${result.issueNumber}:${latest.url}`
-        if (emittedResults.has(key)) continue
-        emittedResults.add(key)
-        await onRunResult({ result, reply: latest, run, status: 'completed' })
-      }
-      const completeCount = scopedResults.filter((r) => (r.replies || []).length > 0).length
-      reporter.setCount(completeCount)
+      const { scopedResults, completeCount } = await reconcileResults(results)
       const failures = findGithubRunnerFailures(results, runs)
       if (failures.length > 0) {
         for (const result of results || []) {
@@ -3674,6 +3865,34 @@ async function waitForGithubStep({
         return scopedResults
       }
       await new Promise((resolve) => setTimeout(resolve, pollMs))
+    }
+    try {
+      reporter.message('deadline reached; reconciling GitHub comments one last time')
+      const finalResults = fetchRoundResults({
+        repo,
+        issueNumbers: numbers,
+        embedAll: true,
+        requireResultMarker: true,
+        loader,
+      })
+      const { scopedResults, completeCount } = await reconcileResults(finalResults)
+      const failures = findGithubRunnerFailures(finalResults, runs)
+      if (failures.length > 0) {
+        const detail = failures
+          .map((failure) => `#${failure.issueNumber} ${failure.issueTitle}: ${failure.summary}${failure.url ? ` (${failure.url})` : ''}`)
+          .join('\n')
+        reporter.fail(`${step.title}: ${completeCount}/${scopedResults.length} complete, ${failures.length} failed`)
+        settled = true
+        throw new Error(`Step "${step.id}" has failed agent runs:\n${detail}`)
+      }
+      if (completeCount === scopedResults.length) {
+        reporter.done(`${step.title}: ${completeCount}/${scopedResults.length} complete`)
+        settled = true
+        return scopedResults
+      }
+    } catch (err) {
+      if (/has failed agent runs/.test(String(err?.message || ''))) throw err
+      reporter.message(`final GitHub reconciliation failed: ${err.message}`)
     }
     reporter.fail(`Timed out waiting for ${step.title}`)
     settled = true
@@ -3719,6 +3938,7 @@ async function completeGithubStep({ runState, repo, stepState, step, options }) 
           if (index !== -1) {
             Object.assign(stepState.runs[index], normalized)
             persistRunArtifact(runState, stepState, stepState.runs[index])
+            saveRunState(runState)
           }
         },
       })
@@ -3737,6 +3957,7 @@ async function completeGithubStep({ runState, repo, stepState, step, options }) 
       }
     }
     stepState.status = githubStepStatus(stepState)
+    saveRunState(runState)
   } finally {
     persistStepArtifacts(runState, stepState)
   }
@@ -4218,6 +4439,24 @@ async function resumeGithubFlow({ flow, runState }) {
 
   const step = flow.steps[startIndex]
   const stepState = (runState.steps || []).find((candidate) => candidate.id === step.id)
+  if (stepState && githubStepStatus(stepState) === 'completed') {
+    console.log(`Resuming ${runState.runId}`)
+    console.log(`Flow: ${flow.title}`)
+    console.log(`State: ${workflowStatePath(runState.dir)}`)
+    console.log(`Repair and continue: ${step.title} is already complete`)
+    stepState.status = 'completed'
+    completedStepStates.set(step.id, stepState)
+    saveRunState(runState)
+    await executeGithubFlow({
+      flow,
+      steps: flow.steps.slice(startIndex + 1),
+      options,
+      runState,
+      completedStepStates,
+    })
+    clearTrackedRunState(runState, { completed: true })
+    return
+  }
   if (stepState && stepState.runs?.some(shouldPollGithubRun)) {
     console.log(`Resuming ${runState.runId}`)
     console.log(`Flow: ${flow.title}`)
@@ -4499,6 +4738,21 @@ async function handleRun(flowId, options) {
     if (clack.isCancel(selected)) process.exit(0)
     if (selected) {
       const resumableFlow = flowFromRunState(resumable) || flow
+      const resumableSteps = runnableSteps(resumableFlow, resumable.options || {})
+      printFlowPlan({
+        flow: resumableFlow,
+        steps: resumableSteps.length > 0 ? resumableSteps : resumableFlow.steps,
+        transport: resumable.transport || 'github',
+        branch: resumable.options?.branch || currentGitBranch(projectRoot),
+        context: resumable.options?.context || '',
+        runState: resumable,
+      })
+      const resumeAfterPreview = await clack.confirm({
+        message: `Resume ${resumableFlow.title} from saved run ${resumable.runId}?`,
+        initialValue: true,
+      })
+      if (clack.isCancel(resumeAfterPreview)) process.exit(0)
+      if (!resumeAfterPreview) return
       if (resumable.transport === 'github') {
         await resumeGithubFlow({ flow: resumableFlow, runState: resumable })
       } else {
@@ -5124,6 +5378,7 @@ module.exports = {
     compactTextForRetry,
     copyToClipboard,
     findGithubRunnerFailures,
+    applyGithubStatusCommentToRun,
     findRunStateForHandoff,
     formatDidYouKnowLines,
     formatCompactHandoffSourceHint,
@@ -5158,7 +5413,9 @@ module.exports = {
     AGENT_RUNNER_USE_CASES,
     DID_YOU_KNOW_BORDER_COLORS,
     futureFollowUpReferencesStep,
+    githubStepStatus,
     shouldArchiveCompletedStep,
+    shouldPollGithubRun,
     physicalRowCount,
     visibleLength,
     normalizeHandoffSourceKind,
@@ -5170,6 +5427,11 @@ module.exports = {
     printSuccessBox,
     readHandoffSummary,
     relativeHandoffPath,
+    resumeStatusColor,
+    resumeStepDecorations,
+    savedAgentStatus,
+    savedStepStatus,
+    stepResultsSummaryPath,
     startSubmissionHeartbeat,
     submissionFailureSummary,
     usageSummariesForRunState,

@@ -1824,6 +1824,46 @@ test('formatFlowList renders workflows as stacked boxes', () => {
   }
 })
 
+test('formatFlowListJson returns workflow items and metadata', () => {
+  const output = _private.formatFlowListJson([
+    {
+      id: 'review',
+      title: 'Review',
+      description: 'Review and synthesize.',
+      source: 'bundled',
+      sourceLabel: 'bundled',
+      sourceDir: '/repo/flows',
+      sourcePriority: 1,
+      dir: '/repo/flows/review',
+      file: '/repo/flows/review/flow.yml',
+      defaults: { transport: 'auto', notify: false, agents: ['codex'] },
+      options: { reviewDepth: 'deep' },
+      steps: [{
+        id: 'review',
+        title: 'Review',
+        description: 'Read the code.',
+        prompt: 'prompts/1_review.md',
+        action: 'issue',
+        submit: 'new-run',
+        agents: ['codex'],
+        input: [],
+        waitFor: 'agent-results',
+        autoArchive: null,
+        isArchivable: true,
+      }],
+    },
+  ])
+  const parsed = JSON.parse(output)
+
+  assert.equal(parsed.count, 1)
+  assert.equal(parsed.items[0].id, 'review')
+  assert.equal(parsed.items[0].sourceLabel, 'bundled')
+  assert.equal(parsed.items[0].defaults.agents[0], 'codex')
+  assert.equal(parsed.items[0].options.reviewDepth, 'deep')
+  assert.equal(parsed.items[0].steps[0].prompt, 'prompts/1_review.md')
+  assert.equal(parsed.items[0].steps[0].isArchivable, true)
+})
+
 test('workflowPickerLabel names project workflows in the main run menu', () => {
   assert.equal(_private.workflowPickerLabel({
     source: 'project',

@@ -5603,6 +5603,7 @@ module.exports = {
     formatLatestHandoffSourceHint,
     formatFlowList,
     formatFlowListBox,
+    formatFlowListJson,
     formatNetlifyConfigAmbiguity,
     formatHandoffSourceKind,
     formatHandoffSourceLabel,

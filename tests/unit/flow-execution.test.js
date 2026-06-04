@@ -911,6 +911,43 @@ test('formatSubmittedLocalRunBoxes renders submitted local run details', () => {
   assert.match(output, /Submitted after: 6s/)
 })
 
+test('submitted local run boxes keep non-TTY run links on one line', () => {
+  const originalIsTTY = Object.getOwnPropertyDescriptor(process.stdout, 'isTTY')
+  const originalColumns = Object.getOwnPropertyDescriptor(process.stdout, 'columns')
+  const longUrl = 'https://app.netlify.com/projects/revenue-engine-dev/agent-runs/6a212d2178e44c51e0ec5cc9?session=6a21320a88a8244624caad44'
+  Object.defineProperty(process.stdout, 'isTTY', { configurable: true, value: false })
+  Object.defineProperty(process.stdout, 'columns', { configurable: true, value: 80 })
+  try {
+    const output = stripAnsi(_private.formatSubmittedLocalRunBoxes({
+      prompt: { title: 'Cross Review' },
+      runs: [
+        {
+          agent: 'gemini',
+          runnerId: '6a212d2178e44c51e0ec5cc9',
+          sessionId: '6a21320a88a8244624caad44',
+          status: 'submitted',
+          submittedAfterSeconds: 6,
+          links: { sessionUrl: longUrl },
+        },
+      ],
+    }))
+    const urlLines = output.split('\n').filter((line) => line.includes('https://app.netlify.com/'))
+    assert.equal(urlLines.length, 1)
+    assert.ok(urlLines[0].includes(longUrl), urlLines[0])
+  } finally {
+    if (originalIsTTY) {
+      Object.defineProperty(process.stdout, 'isTTY', originalIsTTY)
+    } else {
+      delete process.stdout.isTTY
+    }
+    if (originalColumns) {
+      Object.defineProperty(process.stdout, 'columns', originalColumns)
+    } else {
+      delete process.stdout.columns
+    }
+  }
+})
+
 test('non-TTY progress reporter aligns agent and state columns', () => {
   const originalLog = console.log
   const originalIsTTY = Object.getOwnPropertyDescriptor(process.stdout, 'isTTY')

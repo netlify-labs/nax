@@ -2860,9 +2860,10 @@ function formatSubmittedLocalRunBoxes({ runs = [], prompt = {}, projectRoot }) {
   if (runs.length === 0) return ''
   const teal = '#0d9488'
   const terminalWidth = process.stdout.columns || 120
-  const width = Math.min(120, Math.max(76, Math.floor(terminalWidth * 0.95)))
+  const ttyWidth = Math.min(120, Math.max(76, Math.floor(terminalWidth * 0.95)))
   return runs.map((run) => {
     const label = `${titleCase(run.agent)} ${prompt.title || 'Agent Run'}`
+    const titleRight = run.sessionId || run.runnerId || ''
     const runUrl = run.links?.sessionUrl ||
       run.links?.agentRunUrl ||
       (projectRoot ? localAgentRunUrl({ projectRoot, runnerId: run.runnerId, sessionId: run.sessionId }) : '')
@@ -2874,10 +2875,15 @@ function formatSubmittedLocalRunBoxes({ runs = [], prompt = {}, projectRoot }) {
       Number.isFinite(run.submittedAfterSeconds) ? `Submitted after: ${run.submittedAfterSeconds}s` : '',
       runUrl ? `View run:\n${runUrl}` : '',
     ].filter(Boolean).join('\n')
+    const longest = Math.max(
+      label.length + titleRight.length + 4,
+      ...content.split('\n').map((line) => line.length),
+    )
+    const width = process.stdout.isTTY ? ttyWidth : longest + 6
     return makeBox({
       title: {
         left: label,
-        right: run.sessionId || run.runnerId || '',
+        right: titleRight,
       },
       content,
       borderStyle: 'rounded',

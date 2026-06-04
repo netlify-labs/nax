@@ -1430,6 +1430,29 @@ test('findGithubRunnerFailures ignores old failures before the submitted prompt 
   assert.deepEqual(failures, [])
 })
 
+test('githubActionTriggerTextMetrics measures the environment string that GitHub Actions must launch', () => {
+  const metrics = _private.githubActionTriggerTextMetrics('x'.repeat(134626))
+  assert.equal(metrics.bodyChars, 134626)
+  assert.equal(metrics.bodyBytes, 134626)
+  assert.equal(metrics.envBytes, 134639)
+})
+
+test('enforceGithubActionPromptBudget rejects prompts that would exceed the GitHub Actions env string limit', () => {
+  const plan = {
+    issues: [{
+      model: 'claude',
+      promptName: 'react',
+      issueTitle: '2026-06-03 Claude Generate Ideas',
+      body: 'x'.repeat(134626),
+    }],
+  }
+
+  assert.throws(
+    () => _private.enforceGithubActionPromptBudget(plan),
+    /Prompt too large for GitHub Actions Agent Runner[\s\S]*Estimated TRIGGER_TEXT= env string: 134,639 bytes[\s\S]*Argument list too long/,
+  )
+})
+
 test('shouldPollGithubRun repairs timed out GitHub runs without saved result text', () => {
   assert.equal(_private.shouldPollGithubRun({ issueNumber: 97, status: 'timeout', resultText: '' }), true)
   assert.equal(_private.shouldPollGithubRun({ issueNumber: 97, status: 'timeout', resultText: 'saved result' }), false)
@@ -1763,6 +1786,65 @@ test('waitForGithubStep aborts after maxConsecutiveFailures poll errors', async 
     }),
     /aborted after 3 consecutive poll failures/,
   )
+})
+
+test('waitForGithubStep surfaces failed GitHub Actions runs before status comments are posted', async () => {
+  const promptUrl = 'https://github.com/example/repo/issues/97#issuecomment-prompt'
+  const promptBody = 'x'.repeat(134626)
+  const issue = {
+    number: 97,
+    title: '2026-06-03 Claude Generate Ideas',
+    url: 'https://github.com/example/repo/issues/97',
+    comments: [
+      {
+        url: promptUrl,
+        createdAt: '2026-06-04T03:12:56Z',
+        body: `${promptBody}\n<!-- netlify-workflow-prompt:react:claude:2026-06-03 -->`,
+      },
+    ],
+  }
+  const run = {
+    issueNumber: 97,
+    commentUrl: promptUrl,
+    agent: 'claude',
+    promptText: promptBody,
+  }
+  const terminalResults = []
+
+  await assert.rejects(
+    _private.waitForGithubStep({
+      repo: 'example/repo',
+      issueNumbers: [97],
+      runs: [run],
+      step: { id: 'react', title: 'React To Scores', agents: ['claude'] },
+      timeoutMinutes: 1,
+      pollMs: 1,
+      loader: () => issue,
+      actionRunFailureGraceMs: 0,
+      actionRunLoader: () => [{
+        databaseId: 26928003297,
+        displayTitle: '2026-06-03 Claude Generate Ideas',
+        createdAt: '2026-06-04T03:12:59Z',
+        status: 'completed',
+        conclusion: 'failure',
+        url: 'https://github.com/example/repo/actions/runs/26928003297',
+      }],
+      actionRunLogLoader: () => "An error occurred trying to start process '/node' with working directory '/repo'. Argument list too long",
+      onRunResult(event) {
+        terminalResults.push(event)
+      },
+    }),
+    /failed GitHub Actions runs before agent status comments were posted[\s\S]*argument list too long/,
+  )
+
+  assert.equal(terminalResults.length, 1)
+  assert.equal(terminalResults[0].status, 'failed')
+  assert.equal(run.status, 'failed')
+  assert.equal(run.failureKind, 'github-action-launch-failed')
+  assert.equal(run.failureReason, 'argument-list-too-long')
+  assert.equal(run.actionRunUrl, 'https://github.com/example/repo/actions/runs/26928003297')
+  assert.equal(run.promptBytes, 134626)
+  assert.equal(run.promptEnvBytes, 134639)
 })
 
 test('withSelectedAgents filters each workflow step and runnableSteps drops empty steps', () => {

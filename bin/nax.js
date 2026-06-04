@@ -97,6 +97,9 @@ function requireWithoutArgvFlag(flag, load) {
 const GITHUB_ISSUE_BODY_LIMIT = 65536
 const BODY_SAFETY_MARGIN = 536
 const BODY_FALLBACK_THRESHOLD = GITHUB_ISSUE_BODY_LIMIT - BODY_SAFETY_MARGIN
+const GITHUB_ACTION_TRIGGER_TEXT_WARNING_BYTES = 96 * 1024
+const GITHUB_ACTION_TRIGGER_TEXT_SAFE_MAX_BYTES = 120000
+const GITHUB_ACTION_TRIGGER_TEXT_ENV_PREFIX = 'TRIGGER_TEXT='
 const COMPACT_LOCAL_RESULT_CHAR_LIMIT = 6000
 const COMPACT_LOCAL_RESULTS_TOTAL_LIMIT = 36000
 const COMPACT_LOCAL_CONTEXT_CHAR_LIMIT = 12000
@@ -114,6 +117,91 @@ function parseCsv(value) {
     .split(',')
     .map((item) => item.trim())
     .filter(Boolean)
+}
+
+function utf8ByteLength(value) {
+  return Buffer.byteLength(String(value || ''), 'utf8')
+}
+
+function githubActionTriggerTextMetrics(body) {
+  const bodyBytes = utf8ByteLength(body)
+  return {
+    bodyChars: String(body || '').length,
+    bodyBytes,
+    envBytes: utf8ByteLength(GITHUB_ACTION_TRIGGER_TEXT_ENV_PREFIX) + bodyBytes,
+    warningBytes: GITHUB_ACTION_TRIGGER_TEXT_WARNING_BYTES,
+    safeMaxBytes: GITHUB_ACTION_TRIGGER_TEXT_SAFE_MAX_BYTES,
+  }
+}
+
+function githubActionPromptBudgetLabel(issue) {
+  const agent = issue.model || issue.agent || 'agent'
+  const prompt = issue.promptName || issue.prompt || 'prompt'
+  const title = issue.issueTitle || issue.title || ''
+  return `${title ? `${title}: ` : ''}${titleCase(agent)} ${prompt}`
+}
+
+function githubActionPromptBudgetViolations(plan) {
+  return (plan.issues || [])
+    .map((issue) => ({
+      issue,
+      label: githubActionPromptBudgetLabel(issue),
+      ...githubActionTriggerTextMetrics(issue.body),
+    }))
+    .filter((item) => item.envBytes > GITHUB_ACTION_TRIGGER_TEXT_SAFE_MAX_BYTES)
+}
+
+function githubActionPromptBudgetWarnings(plan) {
+  return (plan.issues || [])
+    .map((issue) => ({
+      issue,
+      label: githubActionPromptBudgetLabel(issue),
+      ...githubActionTriggerTextMetrics(issue.body),
+    }))
+    .filter((item) =>
+      item.envBytes > GITHUB_ACTION_TRIGGER_TEXT_WARNING_BYTES
+      && item.envBytes <= GITHUB_ACTION_TRIGGER_TEXT_SAFE_MAX_BYTES)
+}
+
+function formatGithubActionPromptBudgetError(violations) {
+  const lines = [
+    'Prompt too large for GitHub Actions Agent Runner.',
+    '',
+    `Safe max: ${GITHUB_ACTION_TRIGGER_TEXT_SAFE_MAX_BYTES.toLocaleString()} bytes for the estimated ${GITHUB_ACTION_TRIGGER_TEXT_ENV_PREFIX} environment string.`,
+    `Warning threshold: ${GITHUB_ACTION_TRIGGER_TEXT_WARNING_BYTES.toLocaleString()} bytes.`,
+    '',
+  ]
+  for (const violation of violations) {
+    lines.push(`${violation.label}:`)
+    lines.push(`  Body: ${violation.bodyChars.toLocaleString()} chars / ${violation.bodyBytes.toLocaleString()} bytes`)
+    lines.push(`  Estimated ${GITHUB_ACTION_TRIGGER_TEXT_ENV_PREFIX} env string: ${violation.envBytes.toLocaleString()} bytes`)
+    lines.push(`  Over safe max by: ${(violation.envBytes - GITHUB_ACTION_TRIGGER_TEXT_SAFE_MAX_BYTES).toLocaleString()} bytes`)
+  }
+  lines.push('')
+  lines.push('This would likely fail in GitHub Actions with: Argument list too long.')
+  return lines.join('\n')
+}
+
+function enforceGithubActionPromptBudget(plan, { dryRun = false } = {}) {
+  const violations = githubActionPromptBudgetViolations(plan)
+  if (violations.length > 0) {
+    const message = formatGithubActionPromptBudgetError(violations)
+    if (!dryRun) throw new Error(message)
+    console.error(`\n${message}`)
+    return { violations, warnings: [] }
+  }
+
+  const warnings = githubActionPromptBudgetWarnings(plan)
+  for (const warning of warnings) {
+    console.error(
+      [
+        `Warning: ${warning.label} is close to the GitHub Actions Agent Runner prompt limit.`,
+        `  Body: ${warning.bodyChars.toLocaleString()} chars / ${warning.bodyBytes.toLocaleString()} bytes`,
+        `  Estimated ${GITHUB_ACTION_TRIGGER_TEXT_ENV_PREFIX} env string: ${warning.envBytes.toLocaleString()} bytes`,
+      ].join('\n'),
+    )
+  }
+  return { violations, warnings }
 }
 
 function gitRepositoryRoot(cwd = process.cwd()) {
@@ -3910,6 +3998,12 @@ function githubStatusCommentsForRun(result, run = {}) {
   })
 }
 
+function githubPromptCommentForRun(result, run = {}) {
+  if (!run.commentUrl) return null
+  const comments = Array.isArray(result?.comments) ? result.comments : []
+  return comments.find((comment) => comment.url === run.commentUrl) || null
+}
+
 function githubRunStatusFromStatusComment(body, fallback = 'running') {
   const text = String(body || '')
   if (/\bNetlify Agent Run completed\b/i.test(text) || /\bAgent Run completed\b/i.test(text)) return 'completed'
@@ -3977,6 +4071,156 @@ function findGithubRunnerFailures(results, runs = []) {
 }
 
 const GITHUB_POLL_MAX_CONSECUTIVE_FAILURES = 5
+const GITHUB_ACTION_FAILURE_GRACE_MS = 60000
+
+function normalizeGithubActionTitle(value) {
+  return String(value || '').toLowerCase().replace(/\s+/g, ' ').trim()
+}
+
+function githubActionRunMatchesResult(actionRun, result, run = {}) {
+  const title = normalizeGithubActionTitle(actionRun?.displayTitle)
+  if (!title) return false
+  const issueTitle = normalizeGithubActionTitle(result?.issueTitle)
+  if (issueTitle && title === issueTitle) return true
+  if (issueTitle && title.includes(issueTitle)) return true
+  const agent = normalizeGithubActionTitle(run.agent || result?.model)
+  return Boolean(agent && title.includes(agent))
+}
+
+function actionRunCreatedNearPrompt(actionRun, promptCreatedAt, { beforeMs = 15000, afterMs = 10 * 60 * 1000 } = {}) {
+  const promptMs = Date.parse(promptCreatedAt || '')
+  const actionMs = Date.parse(actionRun?.createdAt || '')
+  if (!Number.isFinite(promptMs) || !Number.isFinite(actionMs)) return false
+  return actionMs >= promptMs - beforeMs && actionMs <= promptMs + afterMs
+}
+
+function listRecentGithubActionRuns({ repo, since }) {
+  const result = runGh([
+    'run',
+    'list',
+    '--repo',
+    repo,
+    '--limit',
+    '50',
+    '--json',
+    'databaseId,displayTitle,createdAt,conclusion,status,url',
+  ], {
+    attempts: 1,
+    timeout: 30000,
+  })
+  let runs = []
+  try {
+    runs = JSON.parse(result.stdout || '[]')
+  } catch {
+    runs = []
+  }
+  const sinceMs = Date.parse(since || '')
+  return runs.filter((run) => {
+    if (run.status !== 'completed' || run.conclusion !== 'failure') return false
+    if (!Number.isFinite(sinceMs)) return true
+    const createdMs = Date.parse(run.createdAt || '')
+    return Number.isFinite(createdMs) && createdMs >= sinceMs - 15000
+  })
+}
+
+function loadGithubActionRunFailureLog({ repo, databaseId }) {
+  if (!databaseId) return ''
+  const result = runGh([
+    'run',
+    'view',
+    String(databaseId),
+    '--repo',
+    repo,
+    '--log-failed',
+  ], {
+    allowFailure: true,
+    attempts: 1,
+    timeout: 30000,
+  })
+  return [result.stdout, result.stderr].filter(Boolean).join('\n')
+}
+
+function githubActionFailureReason(log) {
+  const text = String(log || '')
+  if (/argument list too long/i.test(text)) return 'argument-list-too-long'
+  return 'github-action-failed'
+}
+
+function githubActionFailureSummary({ reason, promptBytes, envBytes }) {
+  if (reason === 'argument-list-too-long') {
+    const suffix = promptBytes
+      ? ` Prompt body was ${promptBytes.toLocaleString()} bytes${envBytes ? ` (${envBytes.toLocaleString()} bytes as ${GITHUB_ACTION_TRIGGER_TEXT_ENV_PREFIX} env string)` : ''}.`
+      : ''
+    return `GitHub Action failed before the Netlify Agent Runner could post status comments: argument list too long.${suffix}`
+  }
+  return 'GitHub Action failed before the Netlify Agent Runner could post status comments.'
+}
+
+function findGithubActionRunFailures({
+  repo,
+  results,
+  runs = [],
+  actionRunLoader = listRecentGithubActionRuns,
+  actionRunLogLoader = loadGithubActionRunFailureLog,
+  now = Date.now(),
+  graceMs = GITHUB_ACTION_FAILURE_GRACE_MS,
+}) {
+  const prompts = []
+  for (const result of results || []) {
+    const run = runs.find((candidate) => candidate.issueNumber === result.issueNumber) || {}
+    if (githubResultRepliesForRun(result, run).length > 0 || githubFailureCommentsForRun(result, run).length > 0) continue
+    const prompt = githubPromptCommentForRun(result, run)
+    if (!prompt?.createdAt) continue
+    const promptMs = Date.parse(prompt.createdAt)
+    if (!Number.isFinite(promptMs) || now - promptMs < graceMs) continue
+    prompts.push({ result, run, prompt, promptMs })
+  }
+  if (prompts.length === 0) return []
+
+  const since = new Date(Math.min(...prompts.map((item) => item.promptMs)) - 15000).toISOString()
+  let actionRuns = []
+  try {
+    actionRuns = actionRunLoader({ repo, since }) || []
+  } catch {
+    actionRuns = []
+  }
+
+  const failures = []
+  const usedActionRuns = new Set()
+  for (const item of prompts) {
+    const candidates = actionRuns
+      .filter((actionRun) => !usedActionRuns.has(actionRun.databaseId || actionRun.url))
+      .filter((actionRun) => githubActionRunMatchesResult(actionRun, item.result, item.run))
+      .filter((actionRun) => actionRunCreatedNearPrompt(actionRun, item.prompt.createdAt))
+      .sort((a, b) => Math.abs(Date.parse(a.createdAt) - item.promptMs) - Math.abs(Date.parse(b.createdAt) - item.promptMs))
+    const actionRun = candidates[0]
+    if (!actionRun) continue
+    usedActionRuns.add(actionRun.databaseId || actionRun.url)
+    const log = actionRunLogLoader({ repo, databaseId: actionRun.databaseId }) || ''
+    const reason = githubActionFailureReason(log)
+    const metrics = githubActionTriggerTextMetrics(item.run.promptText || item.prompt.body || '')
+    failures.push({
+      issueNumber: item.result.issueNumber,
+      issueTitle: item.result.issueTitle,
+      agent: item.run.agent || item.result.model || '',
+      url: actionRun.url || '',
+      actionRunId: actionRun.databaseId || '',
+      createdAt: actionRun.createdAt || '',
+      reason,
+      summary: githubActionFailureSummary({
+        reason,
+        promptBytes: metrics.bodyBytes,
+        envBytes: metrics.envBytes,
+      }),
+      promptBytes: metrics.bodyBytes,
+      promptEnvBytes: metrics.envBytes,
+      result: item.result,
+      run: item.run,
+      log,
+    })
+  }
+  return failures
+}
 
 /** @param {Record<string, any>} param0 */
 async function waitForGithubStep({
@@ -3989,6 +4233,9 @@ async function waitForGithubStep({
   loader,
   onRunResult = () => {},
   maxConsecutiveFailures = GITHUB_POLL_MAX_CONSECUTIVE_FAILURES,
+  actionRunLoader = listRecentGithubActionRuns,
+  actionRunLogLoader = loadGithubActionRunFailureLog,
+  actionRunFailureGraceMs = GITHUB_ACTION_FAILURE_GRACE_MS,
 }) {
   const numbers = issueNumbers.length > 0
     ? issueNumbers
@@ -4093,6 +4340,41 @@ async function waitForGithubStep({
         settled = true
         throw new Error(`Step "${step.id}" has failed agent runs:\n${detail}`)
       }
+      const actionFailures = findGithubActionRunFailures({
+        repo,
+        results,
+        runs,
+        actionRunLoader,
+        actionRunLogLoader,
+        graceMs: actionRunFailureGraceMs,
+      })
+      if (actionFailures.length > 0) {
+        for (const failure of actionFailures) {
+          const run = runs.find((candidate) => candidate.issueNumber === failure.issueNumber) || failure.run || {}
+          Object.assign(run, {
+            status: 'failed',
+            failureKind: 'github-action-launch-failed',
+            failureReason: failure.reason,
+            actionRunUrl: failure.url,
+            actionRunId: failure.actionRunId,
+            promptBytes: failure.promptBytes,
+            promptEnvBytes: failure.promptEnvBytes,
+            resultText: failure.summary,
+          })
+          await onRunResult({
+            result: failure.result,
+            reply: null,
+            run,
+            status: 'failed',
+          })
+        }
+        const detail = actionFailures
+          .map((failure) => `#${failure.issueNumber} ${failure.issueTitle}: ${failure.summary}${failure.url ? ` (${failure.url})` : ''}`)
+          .join('\n')
+        reporter.fail(`${step.title}: ${completeCount}/${scopedResults.length} complete, ${actionFailures.length} GitHub Actions failed`)
+        settled = true
+        throw new Error(`Step "${step.id}" has failed GitHub Actions runs before agent status comments were posted:\n${detail}`)
+      }
       if (completeCount === scopedResults.length) {
         reporter.done(`${step.title}: ${completeCount}/${scopedResults.length} complete`)
         settled = true
@@ -4118,6 +4400,41 @@ async function waitForGithubStep({
         reporter.fail(`${step.title}: ${completeCount}/${scopedResults.length} complete, ${failures.length} failed`)
         settled = true
         throw new Error(`Step "${step.id}" has failed agent runs:\n${detail}`)
+      }
+      const actionFailures = findGithubActionRunFailures({
+        repo,
+        results: finalResults,
+        runs,
+        actionRunLoader,
+        actionRunLogLoader,
+        graceMs: actionRunFailureGraceMs,
+      })
+      if (actionFailures.length > 0) {
+        for (const failure of actionFailures) {
+          const run = runs.find((candidate) => candidate.issueNumber === failure.issueNumber) || failure.run || {}
+          Object.assign(run, {
+            status: 'failed',
+            failureKind: 'github-action-launch-failed',
+            failureReason: failure.reason,
+            actionRunUrl: failure.url,
+            actionRunId: failure.actionRunId,
+            promptBytes: failure.promptBytes,
+            promptEnvBytes: failure.promptEnvBytes,
+            resultText: failure.summary,
+          })
+          await onRunResult({
+            result: failure.result,
+            reply: null,
+            run,
+            status: 'failed',
+          })
+        }
+        const detail = actionFailures
+          .map((failure) => `#${failure.issueNumber} ${failure.issueTitle}: ${failure.summary}${failure.url ? ` (${failure.url})` : ''}`)
+          .join('\n')
+        reporter.fail(`${step.title}: ${completeCount}/${scopedResults.length} complete, ${actionFailures.length} GitHub Actions failed`)
+        settled = true
+        throw new Error(`Step "${step.id}" has failed GitHub Actions runs before agent status comments were posted:\n${detail}`)
       }
       if (completeCount === scopedResults.length) {
         reporter.done(`${step.title}: ${completeCount}/${scopedResults.length} complete`)
@@ -4254,6 +4571,7 @@ async function executeGithubFlow({ flow, steps, options, runState, completedStep
     } else {
       printPlan(plan, { dryRun: options.dryRun })
     }
+    enforceGithubActionPromptBudget(plan, { dryRun: options.dryRun })
 
     if (options.dryRun) {
       stepState.status = 'dry-run'
@@ -5643,8 +5961,11 @@ module.exports = {
     buildCompactLocalPromptForRetry,
     buildHandoffPrompt,
     compactTextForRetry,
+    enforceGithubActionPromptBudget,
     copyToClipboard,
     findGithubRunnerFailures,
+    findGithubActionRunFailures,
+    formatGithubActionPromptBudgetError,
     applyGithubStatusCommentToRun,
     findLatestResumableRun,
     findRunStateForHandoff,
@@ -5687,6 +6008,12 @@ module.exports = {
     DID_YOU_KNOW_BORDER_COLORS,
     futureFollowUpReferencesStep,
     githubStepStatus,
+    githubActionPromptBudgetViolations,
+    githubActionPromptBudgetWarnings,
+    githubActionTriggerTextMetrics,
+    githubActionFailureReason,
+    githubActionFailureSummary,
+    githubActionRunMatchesResult,
     shouldArchiveCompletedStep,
     shouldPollGithubRun,
     physicalRowCount,

@@ -2025,7 +2025,7 @@ function workflowPickerLabel(flow = {}, { includeAdHoc = true } = {}) {
 
 const AD_HOC_RUN_CHOICE = {
   value: AD_HOC_RUN_TARGET,
-  label: 'Start a single agent with a prompt',
+  label: 'Start a single Netlify agent with a custom prompt',
 }
 
 function ansiColor(code, value) {

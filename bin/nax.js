@@ -39,7 +39,7 @@ const {
 const { runGh } = require('../src/gh-cli')
 const { multiline } = require('../src/multiline')
 const { WAIT_FOR_AGENT_RESULTS, listFlows, loadFlow, loadStepPrompt } = require('../src/flows')
-const { createRunState, dismissRunState, findLatestUnfinishedRun, listRunStates, saveRunState, workflowStatePath } = require('../src/run-state')
+const { createRunState, dismissRunState, isUnfinishedRun, listRunStates, saveRunState, workflowStatePath } = require('../src/run-state')
 const {
   artifactsRootForRunState,
   persistRunArtifact,
@@ -1137,7 +1137,47 @@ async function handleComment(promptName, options) {
 async function handleList(options = {}) {
   const projectRoot = resolveProjectRoot(options.projectRoot, { cwd: process.cwd() })
   const flows = await listFlows(flowLoadOptions(options, projectRoot))
+  if (options.json) {
+    console.log(formatFlowListJson(flows))
+    return
+  }
   console.log(formatFlowList(flows))
+}
+
+function flowListJsonItem(flow = {}) {
+  return {
+    id: flow.id || '',
+    title: flow.title || '',
+    description: flow.description || '',
+    source: flow.source || '',
+    sourceLabel: flow.sourceLabel || '',
+    sourceDir: flow.sourceDir || '',
+    sourcePriority: flow.sourcePriority ?? null,
+    dir: flow.dir || '',
+    file: flow.file || '',
+    defaults: flow.defaults || {},
+    options: flow.options || {},
+    steps: Array.isArray(flow.steps)
+      ? flow.steps.map((step) => ({
+        id: step.id || '',
+        title: step.title || '',
+        description: step.description || '',
+        prompt: step.prompt || '',
+        action: step.action || '',
+        submit: step.submit || '',
+        agents: Array.isArray(step.agents) ? step.agents : [],
+        input: Array.isArray(step.input) ? step.input : [],
+        waitFor: step.waitFor || '',
+        autoArchive: step.autoArchive,
+        isArchivable: step.isArchivable,
+      }))
+      : [],
+  }
+}
+
+function formatFlowListJson(flows = {}) {
+  const items = Array.isArray(flows) ? flows.map(flowListJsonItem) : []
+  return JSON.stringify({ count: items.length, items }, null, 2)
 }
 
 function formatFlowListBox(flow = {}, { width = 100 } = {}) {
@@ -1265,6 +1305,43 @@ function formatRelativeTime(value, now = Date.now()) {
   const count = Math.max(1, Math.round(absMs / unitMs))
   const label = `${count} ${unit}${count === 1 ? '' : 's'}`
   return diffMs > 0 ? `in ${label}` : `${label} ago`
+}
+
+function formatDetailedRelativeTime(value, now = Date.now()) {
+  if (!value) return ''
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return ''
+  const diffMs = date.getTime() - now
+  let remaining = Math.abs(diffMs)
+  /** @type {Array<[string, number]>} */
+  const units = [
+    ['day', 24 * 60 * 60 * 1000],
+    ['hour', 60 * 60 * 1000],
+    ['minute', 60 * 1000],
+    ['second', 1000],
+  ]
+  const parts = []
+  for (const [unit, unitMs] of units) {
+    if (parts.length >= 2) break
+    const count = Math.floor(remaining / unitMs)
+    if (count <= 0) continue
+    remaining -= count * unitMs
+    parts.push(`${count} ${unit}${count === 1 ? '' : 's'}`)
+  }
+  if (parts.length === 0) parts.push('just now')
+  const label = parts.length === 1 ? parts[0] : `${parts[0]} and ${parts[1]}`
+  if (label === 'just now') return label
+  return diffMs > 0 ? `in ${label}` : `${label} ago`
+}
+
+function timestampMs(value) {
+  if (!value) return null
+  const time = new Date(value).getTime()
+  return Number.isFinite(time) ? time : null
+}
+
+function runStateActivityMs(runState = {}) {
+  return timestampMs(runState.updatedAt) || timestampMs(runState.createdAt)
 }
 
 function formatHumanRunDate(value) {
@@ -2311,6 +2388,7 @@ function wrapBoxLines(lines, width) {
 
 const STEP_MAX_WIDTH = 200
 const OUTER_TERMINAL_RATIO = 0.8
+const DEFAULT_RESUME_WINDOW_MS = 24 * 60 * 60 * 1000
 const SUCCESS_COLOR = '#22c55e'
 const ERROR_COLOR = '#ef4444'
 const MUTED_COLOR = '#64748b'
@@ -2335,6 +2413,13 @@ function resumeStatusColor(status) {
   if (status === 'completed' || status === 'dry-run') return SUCCESS_COLOR
   if (status === 'failed' || status === 'timeout') return ERROR_COLOR
   return ''
+}
+
+function isAutomaticResumeCandidate(runState = {}, { allStates = [], now = Date.now() } = {}) {
+  if (!isUnfinishedRun(runState)) return false
+  if (allStates[0]?.runId === runState.runId) return true
+  const activity = runStateActivityMs(runState)
+  return Number.isFinite(activity) && now - activity <= DEFAULT_RESUME_WINDOW_MS
 }
 
 /** @param {Record<string, any> | null | undefined} savedStep */
@@ -2390,6 +2475,70 @@ function stepResultsSummaryPath({ runState = null, savedStep = null, projectRoot
   return displayPath && !path.isAbsolute(displayPath) && !displayPath.startsWith('./')
     ? `./${displayPath}`
     : displayPath
+}
+
+function workflowSummaryDisplayPath(runState = {}, projectRoot = process.cwd()) {
+  const summaryPath = artifactsRootForRunState(runState)
+    ? path.join(artifactsRootForRunState(runState), 'summary.md')
+    : ''
+  if (!summaryPath || !fs.existsSync(summaryPath)) return ''
+  const displayPath = relativeDisplayPath(projectRoot || runState.projectRoot || process.cwd(), summaryPath)
+  return displayPath && !path.isAbsolute(displayPath) && !displayPath.startsWith('./')
+    ? `./${displayPath}`
+    : displayPath
+}
+
+function resumeLastStepTitle(runState = {}) {
+  const steps = Array.isArray(runState.steps) ? runState.steps : []
+  if (steps.length === 0) return ''
+  const active = steps.find((step) => {
+    const status = savedStepStatus(step)
+    return status !== 'completed' && status !== 'dry-run'
+  })
+  const step = active || steps[steps.length - 1]
+  return step?.title || step?.id || ''
+}
+
+function resumeRunDetailsTitle(runState = {}) {
+  const title = runState.flowTitle || runState.flowId || 'workflow'
+  return `Unfinished "${title}" workflow run found`
+}
+
+function formatResumeRunDetails(runState = {}, { projectRoot = process.cwd(), now = Date.now() } = {}) {
+  const started = runState.createdAt || ''
+  const updated = runState.updatedAt || runState.createdAt || ''
+  const startedDate = formatHumanRunDate(started)
+  const startedAgo = formatDetailedRelativeTime(started, now)
+  const updatedDate = formatHumanRunDate(updated)
+  const updatedAgo = formatDetailedRelativeTime(updated, now)
+  const statePath = runState.dir ? relativeDisplayPath(projectRoot, workflowStatePath(runState.dir)) : ''
+  const summaryPath = workflowSummaryDisplayPath(runState, projectRoot)
+  const lastStep = resumeLastStepTitle(runState)
+  return [
+    lastStep ? `Last Step: ${lastStep}` : '',
+    `Run ID: ${runState.runId || 'unknown'}`,
+    `Transport: ${runState.transport || 'unknown'}`,
+    startedDate ? `Started: ${startedDate}${startedAgo ? ` (${startedAgo})` : ''}` : '',
+    updatedDate && updated !== started ? `Updated: ${updatedDate}${updatedAgo ? ` (${updatedAgo})` : ''}` : '',
+    statePath ? `State: ${statePath}` : '',
+    summaryPath ? `Summary: ${summaryPath}` : '',
+  ].filter(Boolean)
+}
+
+function printResumeRunDetails(runState = {}, { projectRoot = process.cwd() } = {}) {
+  const lines = formatResumeRunDetails(runState, { projectRoot })
+  if (lines.length === 0) return
+  const terminalWidth = process.stdout.columns || 100
+  const width = Math.min(Math.max(...lines.map((line) => line.length)) + 6, Math.max(60, Math.floor(terminalWidth * OUTER_TERMINAL_RATIO)))
+  console.log('')
+  console.log(makeBox({
+    title: resumeRunDetailsTitle(runState),
+    content: lines.join('\n'),
+    borderStyle: 'rounded',
+    borderColor: TEAL_COLOR,
+    width,
+  }))
+  console.log('')
 }
 
 /** @param {Record<string, any>} param0 */
@@ -4747,6 +4896,70 @@ async function handleAdHocAgentRun(options = {}) {
   })
 }
 
+/** @param {{ projectRoot: string, options?: Record<string, any>, flow?: Record<string, any> | null, now?: number }} param0 */
+async function findLatestResumableRun({ projectRoot, options = {}, flow = null, now = Date.now() }) {
+  const states = listRunStates(projectRoot)
+  for (const state of states) {
+    if (flow && state.flowId !== flow.id) continue
+    if (!isUnfinishedRun(state)) continue
+    if (!isAutomaticResumeCandidate(state, { allStates: states, now })) continue
+    const embeddedFlow = flowFromRunState(state)
+    if (embeddedFlow) return { runState: state, flow: embeddedFlow }
+    if (flow) return { runState: state, flow }
+    try {
+      const loadedFlow = await loadFlow(state.flowId, flowLoadOptions({ ...(state.options || {}), ...options }, projectRoot))
+      return { runState: state, flow: loadedFlow }
+    } catch (error) {
+      dismissRunState(state, { reason: 'flow-unavailable' })
+      console.warn(`Skipped stale unfinished run ${state.runId}: ${error.message}`)
+    }
+  }
+  return null
+}
+
+/** @param {{ projectRoot: string, options?: Record<string, any>, flow?: Record<string, any> | null }} param0 */
+async function maybeResumeUnfinishedRun({ projectRoot, options = {}, flow = null }) {
+  if (!process.stdin.isTTY || options.yes || options.dryRun) return false
+  const resumableEntry = await findLatestResumableRun({ projectRoot, options, flow })
+  if (!resumableEntry) return false
+  const { runState: resumable, flow: resumableFlow } = resumableEntry
+
+  const clack = await loadClack()
+  printResumeRunDetails(resumable, { projectRoot })
+  const selected = await clack.confirm({
+    message: 'Resume and complete this unfinished workflow run?',
+    initialValue: true,
+  })
+  if (clack.isCancel(selected)) process.exit(0)
+  if (!selected) {
+    dismissRunState(resumable)
+    console.log(`Dismissed unfinished run ${resumable.runId}`)
+    return false
+  }
+
+  const resumableSteps = runnableSteps(resumableFlow, resumable.options || {})
+  printFlowPlan({
+    flow: resumableFlow,
+    steps: resumableSteps.length > 0 ? resumableSteps : resumableFlow.steps,
+    transport: resumable.transport || 'github',
+    branch: resumable.options?.branch || currentGitBranch(projectRoot),
+    context: resumable.options?.context || '',
+    runState: resumable,
+  })
+  const resumeAfterPreview = await clack.confirm({
+    message: `Resume ${resumableFlow.title} from saved run ${resumable.runId}?`,
+    initialValue: true,
+  })
+  if (clack.isCancel(resumeAfterPreview)) process.exit(0)
+  if (!resumeAfterPreview) return true
+  if (resumable.transport === 'github') {
+    await resumeGithubFlow({ flow: resumableFlow, runState: resumable })
+  } else {
+    await resumeLocalFlow({ flow: resumableFlow, runState: resumable, projectRoot })
+  }
+  return true
+}
+
 async function handleRun(flowId, options) {
   const invocationDir = path.resolve(process.cwd())
   const projectRoot = resolveProjectRoot(options.projectRoot, { cwd: invocationDir })
@@ -4755,6 +4968,7 @@ async function handleRun(flowId, options) {
     return
   }
   const wantsAdHoc = !flowId && (options.agent || options.prompt)
+  if (!flowId && !wantsAdHoc && await maybeResumeUnfinishedRun({ projectRoot, options })) return
   const resolvedFlowId = flowId || (wantsAdHoc ? AD_HOC_RUN_TARGET : (process.stdin.isTTY ? await pickFlowInteractively({ projectRoot, options }) : 'review'))
   if (isAdHocRunTarget(resolvedFlowId)) {
     await handleAdHocAgentRun({ ...options, projectRoot, invocationDir })
@@ -4762,41 +4976,7 @@ async function handleRun(flowId, options) {
   }
   const flow = await loadFlow(resolvedFlowId, flowLoadOptions(options, projectRoot))
 
-  const resumable = findLatestUnfinishedRun(projectRoot, { flowId: flow.id })
-  if (resumable && process.stdin.isTTY && !options.yes && !options.dryRun) {
-    const clack = await loadClack()
-    const selected = await clack.confirm({
-      message: `Found unfinished ${resumable.transport || 'workflow'} run ${resumable.runId}. Resume and complete it?`,
-      initialValue: true,
-    })
-    if (clack.isCancel(selected)) process.exit(0)
-    if (selected) {
-      const resumableFlow = flowFromRunState(resumable) || flow
-      const resumableSteps = runnableSteps(resumableFlow, resumable.options || {})
-      printFlowPlan({
-        flow: resumableFlow,
-        steps: resumableSteps.length > 0 ? resumableSteps : resumableFlow.steps,
-        transport: resumable.transport || 'github',
-        branch: resumable.options?.branch || currentGitBranch(projectRoot),
-        context: resumable.options?.context || '',
-        runState: resumable,
-      })
-      const resumeAfterPreview = await clack.confirm({
-        message: `Resume ${resumableFlow.title} from saved run ${resumable.runId}?`,
-        initialValue: true,
-      })
-      if (clack.isCancel(resumeAfterPreview)) process.exit(0)
-      if (!resumeAfterPreview) return
-      if (resumable.transport === 'github') {
-        await resumeGithubFlow({ flow: resumableFlow, runState: resumable })
-      } else {
-        await resumeLocalFlow({ flow: resumableFlow, runState: resumable, projectRoot })
-      }
-      return
-    }
-    dismissRunState(resumable)
-    console.log(`Dismissed unfinished run ${resumable.runId}`)
-  }
+  if (await maybeResumeUnfinishedRun({ projectRoot, options, flow })) return
 
   const flowOptions = await collectFlowOptions(flow, options)
   const requestedTransport = flowOptions.transport || flow.defaults.transport
@@ -5347,6 +5527,7 @@ function buildProgram() {
     .description('List available workflows')
     .option('--project-root <path>', 'Project root containing project workflows')
     .option('--flows-dir <path>', 'Project workflow directory; repeatable', collectOption, [])
+    .option('--json', 'Print available workflows as JSON')
     .action((options, command) => handleList(actionOptions(options, command)))
 
   addFlowsDirOption(program
@@ -5413,7 +5594,9 @@ module.exports = {
     copyToClipboard,
     findGithubRunnerFailures,
     applyGithubStatusCommentToRun,
+    findLatestResumableRun,
     findRunStateForHandoff,
+    formatDetailedRelativeTime,
     formatDidYouKnowLines,
     formatCompactHandoffSourceHint,
     formatHandoffSourceHint,
@@ -5428,6 +5611,7 @@ module.exports = {
     handleSync,
     handoffSourceDetailTitle,
     handoffSourceDetailLines,
+    isAutomaticResumeCandidate,
     compactCurrentTask,
     formatTtyProgressRow,
     formatSubmittedLocalRunBoxes,
@@ -5463,11 +5647,15 @@ module.exports = {
     printSuccessBox,
     readHandoffSummary,
     relativeHandoffPath,
+    formatResumeRunDetails,
+    resumeLastStepTitle,
+    resumeRunDetailsTitle,
     resumeStatusColor,
     resumeStepDecorations,
     savedAgentStatus,
     savedStepStatus,
     stepResultsSummaryPath,
+    workflowSummaryDisplayPath,
     startSubmissionHeartbeat,
     submissionFailureSummary,
     usageSummariesForRunState,

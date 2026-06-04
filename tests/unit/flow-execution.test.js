@@ -1527,6 +1527,148 @@ test('stepResultsSummaryPath returns existing finished step summary path for res
   )
 })
 
+test('formatDetailedRelativeTime includes two useful time units', () => {
+  const now = new Date('2026-06-04T12:00:00').getTime()
+  assert.equal(
+    _private.formatDetailedRelativeTime('2026-06-02T06:30:00', now),
+    '2 days and 5 hours ago',
+  )
+  assert.equal(
+    _private.formatDetailedRelativeTime('2026-06-04T12:00:30', now),
+    'in 30 seconds',
+  )
+})
+
+test('formatResumeRunDetails shows timestamps and artifact summary path', () => {
+  const projectRoot = tmpRoot()
+  const runState = {
+    projectRoot,
+    runId: '2026-06-04T01-03-58-737Z-ideas',
+    flowId: 'ideas',
+    flowTitle: 'Ideas',
+    transport: 'github',
+    createdAt: '2026-06-02T06:30:00',
+    updatedAt: '2026-06-02T07:45:00',
+    steps: [
+      { id: 'ideate', title: 'Generate Ideas', status: 'completed' },
+      { id: 'cross-score', title: 'Cross Score Ideas', status: 'running' },
+    ],
+    dir: path.join(projectRoot, '.nax', 'workflows', '2026-06-04T01-03-58-737Z-ideas'),
+  }
+  const summaryPath = path.join(runState.dir, 'artifacts', 'summary.md')
+  fs.mkdirSync(path.dirname(summaryPath), { recursive: true })
+  fs.writeFileSync(summaryPath, '# Ideas\n')
+
+  const lines = _private.formatResumeRunDetails(runState, {
+    projectRoot,
+    now: new Date('2026-06-04T12:00:00').getTime(),
+  })
+
+  assert.equal(_private.resumeRunDetailsTitle(runState), 'Unfinished "Ideas" workflow run found')
+  assert.equal(_private.resumeLastStepTitle(runState), 'Cross Score Ideas')
+  assert.equal(lines[0], 'Last Step: Cross Score Ideas')
+  assert.equal(lines[1], 'Run ID: 2026-06-04T01-03-58-737Z-ideas')
+  assert.equal(lines[2], 'Transport: github')
+  assert.match(lines[3], /^Started: .+ \(2 days and 5 hours ago\)$/)
+  assert.match(lines[4], /^Updated: .+ \(2 days and 4 hours ago\)$/)
+  assert.equal(lines[5], 'State: .nax/workflows/2026-06-04T01-03-58-737Z-ideas/workflow.json')
+  assert.equal(lines[6], 'Summary: ./.nax/workflows/2026-06-04T01-03-58-737Z-ideas/artifacts/summary.md')
+})
+
+test('findLatestResumableRun skips stale unfinished runs with unavailable flows', async () => {
+  const projectRoot = tmpRoot()
+  writeRunState(projectRoot, 'stale-review-cycle', {
+    flowId: 'review-cycle',
+    flowTitle: 'Review Cycle',
+    status: undefined,
+    createdAt: '2026-06-04T12:00:00',
+    updatedAt: '2026-06-04T12:00:00',
+    steps: [{ id: 'review', title: 'Review', status: 'running', runs: [] }],
+  })
+  const validFlow = {
+    id: 'ideas',
+    title: 'Ideas',
+    description: 'Generate ideas.',
+    defaults: { agents: ['codex'] },
+    steps: [{ id: 'ideate', title: 'Generate Ideas', agents: ['codex'] }],
+  }
+  writeRunState(projectRoot, 'valid-ideas', {
+    flowId: 'ideas',
+    flowTitle: 'Ideas',
+    flow: validFlow,
+    status: undefined,
+    createdAt: '2026-06-04T11:00:00',
+    updatedAt: '2026-06-04T11:00:00',
+    steps: [{ id: 'ideate', title: 'Generate Ideas', status: 'running', runs: [] }],
+  })
+
+  const warnings = []
+  const originalWarn = console.warn
+  console.warn = (message) => warnings.push(message)
+  try {
+    const resumable = await _private.findLatestResumableRun({
+      projectRoot,
+      now: new Date('2026-06-04T12:30:00').getTime(),
+    })
+    assert.equal(resumable.runState.runId, 'valid-ideas')
+    assert.equal(resumable.flow.title, 'Ideas')
+  } finally {
+    console.warn = originalWarn
+  }
+
+  const stale = JSON.parse(fs.readFileSync(path.join(projectRoot, '.nax', 'workflows', 'stale-review-cycle', 'workflow.json'), 'utf8'))
+  assert.equal(stale.status, 'dismissed')
+  assert.equal(stale.dismissReason, 'flow-unavailable')
+  assert.match(warnings[0], /Skipped stale unfinished run stale-review-cycle/)
+})
+
+test('findLatestResumableRun ignores old unfinished runs that are not the latest workflow', async () => {
+  const projectRoot = tmpRoot()
+  writeRunState(projectRoot, 'newer-completed', {
+    flowId: 'review',
+    flowTitle: 'Review',
+    status: 'completed',
+    createdAt: '2026-06-04T12:00:00',
+    updatedAt: '2026-06-04T12:00:00',
+  })
+  const oldFlow = {
+    id: 'ideas',
+    title: 'Ideas',
+    defaults: { agents: ['codex'] },
+    steps: [{ id: 'ideate', title: 'Generate Ideas', agents: ['codex'] }],
+  }
+  writeRunState(projectRoot, 'old-ideas', {
+    flowId: 'ideas',
+    flowTitle: 'Ideas',
+    flow: oldFlow,
+    status: undefined,
+    createdAt: '2026-06-02T11:00:00',
+    updatedAt: '2026-06-02T11:00:00',
+    steps: [{ id: 'ideate', title: 'Generate Ideas', status: 'running', runs: [] }],
+  })
+
+  const resumable = await _private.findLatestResumableRun({
+    projectRoot,
+    now: new Date('2026-06-04T12:00:00').getTime(),
+  })
+  assert.equal(resumable, null)
+
+  const old = JSON.parse(fs.readFileSync(path.join(projectRoot, '.nax', 'workflows', 'old-ideas', 'workflow.json'), 'utf8'))
+  assert.equal(old.status, undefined)
+})
+
+test('isAutomaticResumeCandidate accepts the latest workflow even when older than 24 hours', () => {
+  const runState = {
+    runId: 'old-latest',
+    updatedAt: '2026-06-01T12:00:00',
+    steps: [{ id: 'ideate', status: 'running', runs: [] }],
+  }
+  assert.equal(_private.isAutomaticResumeCandidate(runState, {
+    allStates: [runState],
+    now: new Date('2026-06-04T12:00:00').getTime(),
+  }), true)
+})
+
 test('waitForGithubStep does a final GitHub reconciliation before timing out', async () => {
   const promptUrl = 'https://x/issues/97#prompt'
   const resultUrl = 'https://x/issues/97#result'

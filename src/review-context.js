@@ -39,6 +39,7 @@ function resolveRepoRoot(explicitRepoRoot) {
   )
 }
 
+/** @param {Record<string, any>} param0 */
 function resolvePinnedSha({ repoRoot, sha }) {
   const rev = sha || 'HEAD'
   return requireCommand(
@@ -87,6 +88,7 @@ function formatWorkingTreeSummary(lines) {
   return `dirty\n${preview.join('\n')}`
 }
 
+/** @param {Record<string, any>} param0 */
 function formatReviewContract({ pinnedSha }) {
   return [
     '## Review Contract',
@@ -102,6 +104,7 @@ function formatReviewContract({ pinnedSha }) {
   ].join('\n')
 }
 
+/** @param {Record<string, any>} param0 */
 function formatRepositorySnapshot({ repoRoot, branch, pinnedSha, pinnedSource, generatedAt }) {
   const lines = [
     '## Repository Snapshot',
@@ -124,6 +127,7 @@ function containsCommit(repoRoot, ancestorSha, descendantSha) {
   return 'unknown'
 }
 
+/** @param {Record<string, any>} param0 */
 function loadOpenPullRequests({ repo, limit = 10 }) {
   const result = runGh([
     'pr',
@@ -158,6 +162,7 @@ function loadOpenPullRequests({ repo, limit = 10 }) {
   }
 }
 
+/** @param {Record<string, any>} param0 */
 function formatMergeStateLedger({ repoRoot, pinnedSha, pullRequests, error }) {
   if (error) {
     return [
@@ -199,6 +204,7 @@ function formatMergeStateLedger({ repoRoot, pinnedSha, pullRequests, error }) {
   return lines.join('\n')
 }
 
+/** @param {Record<string, any>} param0 */
 function buildAutomaticContext({
   repo,
   repoRoot: explicitRepoRoot,
@@ -241,6 +247,7 @@ function parseRemoteBranchTarget(upstream, fallbackBranch) {
   return { remote, branch: branchParts.join('/') }
 }
 
+/** @param {Record<string, any>} param0 */
 function resolveRemoteBranchSha({ repoRoot: explicitRepoRoot, branch, run = runCommand } = {}) {
   const repoRoot = resolveRepoRoot(explicitRepoRoot)
   const hasExplicitBranch = Boolean(branch)

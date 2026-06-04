@@ -6,9 +6,10 @@ const { assertGhAuthenticated, runGh } = require('./gh-cli')
 
 const WORKFLOW_PATH = path.join('.github', 'workflows', 'netlify-agents.yml')
 const WORKFLOWS_DIR = path.join('.github', 'workflows')
-const WORKFLOW_TEMPLATE_PATH = path.join(__dirname, '..', 'templates', 'netlify-agents.yml')
+const WORKFLOW_TEMPLATE_PATH = path.join(__dirname, 'templates', 'netlify-agents.yml')
 const AGENT_RUNNER_MARKER = 'netlify-labs/agent-runner-action'
 
+/** @param {any} command @param {any} args @param {Record<string, any>} param2 */
 function run(command, args, { cwd, input, env = process.env, allowFailure = false, stdio } = {}) {
   const spawnOptions = {
     cwd,
@@ -53,7 +54,7 @@ function readNetlifyStatus(projectRoot) {
   const result = run('netlify', ['status', '--json'], { cwd: projectRoot, allowFailure: true })
   if (result.status !== 0) return null
   try {
-    return JSON.parse(result.stdout)
+    return JSON.parse(String(result.stdout || ''))
   } catch {
     return null
   }
@@ -85,6 +86,7 @@ function readNetlifyProject(projectRoot, env = process.env) {
   return siteId ? { ...project, siteId } : null
 }
 
+/** @param {Record<string, any>} param0 */
 function resolveGitHubRepo({ projectRoot, repo }) {
   if (repo) return repo
   const result = runGh(['repo', 'view', '--json', 'nameWithOwner', '--jq', '.nameWithOwner'], {
@@ -102,6 +104,7 @@ function defaultSiteName(projectRoot, repo) {
     .replace(/^-+|-+$/g, '')
 }
 
+/** @param {Record<string, any>} param0 */
 function readNetlifyCliToken({ env = process.env, home = os.homedir() } = {}) {
   if (env.NETLIFY_AUTH_TOKEN) {
     return { token: env.NETLIFY_AUTH_TOKEN, source: 'NETLIFY_AUTH_TOKEN' }
@@ -161,6 +164,7 @@ function findExistingAgentRunnerWorkflow(projectRoot) {
   return null
 }
 
+/** @param {Record<string, any>} param0 */
 function ensureWorkflow({ projectRoot, force = false, dryRun = false } = {}) {
   const detected = findExistingAgentRunnerWorkflow(projectRoot)
   if (detected) {
@@ -181,6 +185,7 @@ function ensureWorkflow({ projectRoot, force = false, dryRun = false } = {}) {
   return { path: workflowPath, status: exists ? 'replaced' : 'created' }
 }
 
+/** @param {Record<string, any>} param0 */
 function ensureNaxGitignore({ projectRoot, dryRun = false } = {}) {
   const gitignorePath = path.join(projectRoot, '.gitignore')
   const entryPattern = /^\.nax\/?$/m
@@ -213,6 +218,7 @@ function defaultInitNotice(projectRoot) {
   console.log(`No netlify project detected in ${projectRoot}\n`)
 }
 
+/** @param {Record<string, any>} param0 */
 function ensureNetlifyProject({ projectRoot, repo, siteId, siteName, create = false, dryRun = false, env = process.env, runCommand = run, readProject = readNetlifyProject, initNotice = defaultInitNotice } = {}) {
   const linked = dryRun ? null : readProject(projectRoot, env)
   if (linked?.siteId) {
@@ -252,6 +258,7 @@ function ensureNetlifyProject({ projectRoot, repo, siteId, siteName, create = fa
   return { siteId: '', status: 'would-init' }
 }
 
+/** @param {Record<string, any>} param0 */
 function listGitHubSecretNames({ projectRoot, repo, runCommand } = {}) {
   const result = runGh(['secret', 'list', '--repo', repo, '--json', 'name'], {
     cwd: projectRoot,
@@ -266,6 +273,7 @@ function listGitHubSecretNames({ projectRoot, repo, runCommand } = {}) {
   }
 }
 
+/** @param {Record<string, any>} param0 */
 function setGitHubSecret({ projectRoot, repo, name, value, dryRun = false, existingSecrets, runCommand }) {
   if (!value) throw new Error(`Cannot set ${name}: missing value.`)
   if (dryRun) return { name, status: 'would-set' }
@@ -296,6 +304,7 @@ function assertGitRepository(root) {
   if (result.status !== 0) throw new Error(`Not inside a git repository: ${root}`)
 }
 
+/** @param {Record<string, any>} param0 */
 function initSite({
   projectRoot = process.cwd(),
   repo,
@@ -330,6 +339,7 @@ function initSite({
   }
 }
 
+/** @param {Record<string, any>} param0 */
 function enableGitHubActionsSetup({
   projectRoot,
   repo,
@@ -417,6 +427,7 @@ function enableGitHubActionsSetup({
   }
 }
 
+/** @param {Record<string, any>} param0 */
 function initProject({
   projectRoot = process.cwd(),
   repo,

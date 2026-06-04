@@ -33,7 +33,7 @@ You want the best possible coding outcome from the world's leading agentic codin
 
 ### The Solution
 
-`nax` makes the orchestration the artifact. A workflow is a `flows/<id>/flow.*` config file plus Markdown prompts. Use YAML if you like it, or write the flow in JSON, JavaScript, TypeScript, or TOML instead. You run `nax`, pick a flow, pick where to run it, and the steps execute in order — fanning out to multiple agents per step, blocking until every agent finishes, and feeding prior-round output into the next step.
+`nax` makes the orchestration the artifact. A workflow is a `flow.*` config file plus Markdown prompts. Use YAML if you like it, or write the flow in JSON, JavaScript, TypeScript, or TOML instead. You run `nax`, pick a flow, pick where to run it, and the steps execute in order — fanning out to multiple agents per step, blocking until every agent finishes, and feeding prior-round output into the next step.
 
 ### Why Use `nax`?
 
@@ -158,7 +158,7 @@ This is handy for passing remote Netlify agent runner results into local Claude 
 
 ## Design Philosophy
 
-- **The flow file is the program.** Flows are not a DSL bolted onto code — they *are* the unit of execution. Anyone can read `flows/review/flow.yml` (or `flow.json`, `flow.js`, `flow.ts`, `flow.toml`) and tell you exactly what `nax review` will do.
+- **The flow file is the program.** Flows are not a DSL bolted onto code — they *are* the unit of execution. Anyone can read a workflow's `flow.yml` (or `flow.json`, `flow.js`, `flow.ts`, `flow.toml`) and tell you exactly what `nax review` will do.
 - **Steps gate on results, not time.** A step's `waitFor: agent-results` makes the next step wait for every agent in the fan-out, not a wall-clock timeout. Long thinkers don't poison fast ones.
 - **Same flow, two transports.** A flow runs identically on `github-actions` (workflow_dispatch into `netlify-labs/agent-runner-action`) and `netlify-api` (this machine orchestrates the runner directly). You don't rewrite the flow to move it.
 - **Artifacts are first-class.** Every run, runner, and agent session writes a summary into `.nax/` with `latest` symlinks, so the next prompt or the next operator can pick up the trail.
@@ -454,28 +454,28 @@ Each step waits for every agent before the next step starts. Round 2 reuses each
 
 ```text
 bin/nax.js          # CLI entrypoint
-lib/                # init, local-runner, flows, run-state, prompts, transports, ...
-flows/<id>/         # workflow definitions and prompts
-flows/<id>/flow.*   # one workflow file per built-in flow
-flows/<id>/prompts/ # one Markdown prompt per step
+src/                # init, local-runner, flows, run-state, prompts, transports, ...
+src/flows/<id>/     # bundled workflow definitions and prompts
+src/flows/<id>/flow.*   # one workflow file per built-in flow
+src/flows/<id>/prompts/ # one Markdown prompt per step
 .github/nax-flows/ # optional committed project-local workflows
-templates/          # bundled GitHub Actions workflow template
+src/templates/      # bundled GitHub Actions workflow and skill templates
 tests/              # unit and integration suites (`npm test`)
 ```
 
 Key modules:
 
-- `lib/transports.js:1` — transport resolution and dispatch.
-- `lib/local-runner.js:1` — Netlify Agent Runner API orchestration.
-- `lib/run-state.js:1` — `.nax/workflows/<id>/workflow.json` durable state.
-- `lib/workflow-artifacts.js:1` — summary rollups.
-- `lib/round-results.js:1` — prior-round result fetching for follow-up steps.
+- `src/transports.js:1` — transport resolution and dispatch.
+- `src/local-runner.js:1` — Netlify Agent Runner API orchestration.
+- `src/run-state.js:1` — `.nax/workflows/<id>/workflow.json` durable state.
+- `src/workflow-artifacts.js:1` — summary rollups.
+- `src/round-results.js:1` — prior-round result fetching for follow-up steps.
 
 ---
 
 ## Flow Anatomy
 
-A flow is `<flow-root>/<id>/flow.*` plus a `prompts/` directory beside it. Built-in flows ship inside the package under `flows/`; project-local flows default to `.github/nax-flows/` and are shown before bundled flows in the picker.
+A flow is `<flow-root>/<id>/flow.*` plus a `prompts/` directory beside it. Built-in flows ship inside the package under `src/flows/`; project-local flows default to `.github/nax-flows/` and are shown before bundled flows in the picker.
 
 Flow files can be YAML, JSON, JavaScript, TypeScript, or TOML. The examples use YAML because it is compact and easy to skim, but the filename can match your preferred format: `flow.yml`, `flow.json`, `flow.js`, `flow.ts`, or `flow.toml`. TypeScript flow files need a TypeScript runtime such as `tsx` or `ts-node` available in the project.
 
@@ -499,7 +499,7 @@ Configure one or more project flow roots with `nax.config.json` (or the same sty
 
 You can also pass `--flows-dir <path>` more than once or set `NAX_FLOWS_DIR` / `NAX_FLOWS_DIRS`. Relative paths resolve from the project root. If a project flow uses the same `id` as a bundled flow, the project flow wins.
 
-Example (`flows/review/flow.yml`):
+Example (`src/flows/review/flow.yml`):
 
 ```yaml
 id: review

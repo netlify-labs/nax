@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 'use strict'
 
-const { multiline } = require('../lib/multiline')
+const { multiline } = require('../src/multiline')
 
 function parseFlag(argv, name) {
   const i = argv.indexOf(`--${name}`)

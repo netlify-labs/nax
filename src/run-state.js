@@ -44,6 +44,8 @@ function legacyRunStateFiles(projectRoot) {
     .filter((filePath) => fs.existsSync(filePath))
 }
 
+let cleanupLegacyRunsDirWarned = false
+
 function cleanupLegacyRunsDir(projectRoot) {
   const oldDir = legacyRunsDir(projectRoot)
   const newDir = getWorkflowsDir(projectRoot)
@@ -73,8 +75,8 @@ function cleanupLegacyRunsDir(projectRoot) {
       orphaned.push(filePath)
     }
   }
-  if (orphaned.length > 0 && !cleanupLegacyRunsDir.warned) {
-    cleanupLegacyRunsDir.warned = true
+  if (orphaned.length > 0 && !cleanupLegacyRunsDirWarned) {
+    cleanupLegacyRunsDirWarned = true
     console.warn([
       'Unfinished legacy nax runs still exist under .nax/runs and were not migrated because .nax/workflows already exists:',
       ...orphaned.map((filePath) => `- ${filePath}`),
@@ -153,6 +155,7 @@ function isUnfinishedLocalRun(state) {
   return isUnfinishedRun(state)
 }
 
+/** @param {any} projectRoot @param {Record<string, any>} param1 */
 function findLatestUnfinishedRun(projectRoot, { flowId, transport } = {}) {
   return listRunStates(projectRoot).find((state) => {
     if (flowId && state.flowId !== flowId) return false
@@ -161,10 +164,12 @@ function findLatestUnfinishedRun(projectRoot, { flowId, transport } = {}) {
   }) || null
 }
 
+/** @param {any} projectRoot @param {Record<string, any>} param1 */
 function findLatestUnfinishedLocalRun(projectRoot, { flowId } = {}) {
   return findLatestUnfinishedRun(projectRoot, { flowId, transport: 'netlify-api' })
 }
 
+/** @param {Record<string, any>} param0 */
 function createRunState({ projectRoot, flow, transport, options = {}, now = new Date() }) {
   const runId = createRunId(flow.id, now)
   cleanupLegacyRunsDir(projectRoot)
@@ -199,6 +204,7 @@ function saveRunState(state) {
   return next
 }
 
+/** @param {any} state @param {Record<string, any>} param1 */
 function dismissRunState(state, { reason = 'user-declined-resume', now = new Date() } = {}) {
   return saveRunState({
     ...state,

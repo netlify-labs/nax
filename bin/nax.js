@@ -7,7 +7,7 @@ const readline = require('readline')
 const { spawnSync } = require('child_process')
 const { Command, Option } = require('commander')
 const { makeBox, makeHorizontalBoxes } = require('@davidwells/box-logger')
-const flavorMessages = require('../lib/flavor-messages.json')
+const flavorMessages = require('../src/flavor-messages.json')
 const {
   DEFAULT_MODELS,
   buildIssueBody,
@@ -17,16 +17,16 @@ const {
   loadPrompt,
   resolveRepo,
   titleCase,
-} = require('../lib/prompts')
-const { buildAutomaticContext, resolveRemoteBranchSha } = require('../lib/review-context')
+} = require('../src/prompts')
+const { buildAutomaticContext, resolveRemoteBranchSha } = require('../src/review-context')
 const {
   assertCrossReviewComplete,
   fetchRoundResults,
   formatRoundResults,
   rawIssuesFromResults,
-} = require('../lib/round-results')
-const { formatGroupHint, listRecentIssueGroups } = require('../lib/issue-groups')
-const { bodyHasRunnerResultMarker, bodyHasRunnerStatusMarker, parseRunnerResultMarker } = require('../lib/comment-markers')
+} = require('../src/round-results')
+const { formatGroupHint, listRecentIssueGroups } = require('../src/issue-groups')
+const { bodyHasRunnerResultMarker, bodyHasRunnerStatusMarker, parseRunnerResultMarker } = require('../src/comment-markers')
 const {
   formatAgentRunUrl,
   formatAgentRunUrlFromAdminUrl,
@@ -34,11 +34,11 @@ const {
   formatUsageSummary,
   normalizeGithubRunResult,
   usageSummariesForRunState,
-} = require('../lib/agent-run-results')
-const { runGh } = require('../lib/gh-cli')
-const { multiline } = require('../lib/multiline')
-const { WAIT_FOR_AGENT_RESULTS, listFlows, loadFlow, loadStepPrompt } = require('../lib/flows')
-const { createRunState, dismissRunState, findLatestUnfinishedRun, listRunStates, saveRunState, workflowStatePath } = require('../lib/run-state')
+} = require('../src/agent-run-results')
+const { runGh } = require('../src/gh-cli')
+const { multiline } = require('../src/multiline')
+const { WAIT_FOR_AGENT_RESULTS, listFlows, loadFlow, loadStepPrompt } = require('../src/flows')
+const { createRunState, dismissRunState, findLatestUnfinishedRun, listRunStates, saveRunState, workflowStatePath } = require('../src/run-state')
 const {
   artifactsRootForRunState,
   persistRunArtifact,
@@ -46,22 +46,22 @@ const {
   persistWorkflowArtifacts,
   safeArtifactName,
   writeGithubStepSummary,
-} = require('../lib/workflow-artifacts')
-const { clearTrackedRunState, trackRunState } = require('../lib/graceful-run-state')
-const { persistAgentRunnerArtifact } = require('../lib/agent-runner-artifacts')
-const { persistAgentSessionArtifact } = require('../lib/agent-session-artifacts')
-const { syncLastAgentRunner } = require('../lib/agent-runner-sync')
-const { listHandoffSources, readHandoffSource, relativeDisplayPath } = require('../lib/handoff-sources')
+} = require('../src/workflow-artifacts')
+const { clearTrackedRunState, trackRunState } = require('../src/graceful-run-state')
+const { persistAgentRunnerArtifact } = require('../src/agent-runner-artifacts')
+const { persistAgentSessionArtifact } = require('../src/agent-session-artifacts')
+const { syncLastAgentRunner } = require('../src/agent-runner-sync')
+const { listHandoffSources, readHandoffSource, relativeDisplayPath } = require('../src/handoff-sources')
 const {
   PROVIDER_DIRS,
   checkSkills,
   installSkills,
   listBundledSkills,
   updateSkills,
-} = require('../lib/skills')
-const { NETLIFY_API_TRANSPORT, detectTransports, formatTransportSetupHelp, isNetlifyApiTransport, resolveTransport } = require('../lib/transports')
-const { classifyNetlifyRuntime } = require('../lib/netlify-runtime')
-const { enableGitHubActionsSetup, findExistingAgentRunnerWorkflow, initSite, readNetlifyProject } = require('../lib/init')
+} = require('../src/skills')
+const { NETLIFY_API_TRANSPORT, detectTransports, formatTransportSetupHelp, isNetlifyApiTransport, resolveTransport } = require('../src/transports')
+const { classifyNetlifyRuntime } = require('../src/netlify-runtime')
+const { enableGitHubActionsSetup, findExistingAgentRunnerWorkflow, initSite, readNetlifyProject } = require('../src/init')
 const {
   archiveAgentRun,
   buildNetlifyEnv,
@@ -71,7 +71,7 @@ const {
   resolveNetlifyFilter,
   submitLocalAgentRun,
   waitForLocalAgentRuns,
-} = require('../lib/local-runner')
+} = require('../src/local-runner')
 
 const ROUND_LABEL_BY_PROMPT = {
   'cross-review': 'Round 1 Outputs',
@@ -112,6 +112,7 @@ function gitRepositoryRoot(cwd = process.cwd()) {
   return result.stdout.trim()
 }
 
+/** @param {any} optionRoot @param {Record<string, any>} param1 */
 function resolveProjectRoot(optionRoot, { cwd = process.cwd() } = {}) {
   if (optionRoot) return path.resolve(optionRoot)
   return gitRepositoryRoot(cwd) || path.resolve(cwd)
@@ -142,6 +143,7 @@ function netlifyConfigChoiceHint(candidate, workspaceDetection = {}) {
   return 'no single --filter found in build command'
 }
 
+/** @param {any} candidate @param {Record<string, any>} param1 */
 function netlifyConfigDistance(candidate = {}, { projectRoot, invocationDir } = {}) {
   if (!projectRoot || !invocationDir || !candidate.configDir) return 0
   const configDir = path.resolve(candidate.configDir)
@@ -188,6 +190,7 @@ function formatNetlifyWorkspaceFilterError(selectedSource, workspaceDetection = 
   ].join(' ')
 }
 
+/** @param {Record<string, any>} param0 */
 async function chooseNetlifyFilterOption({ projectRoot, invocationDir = process.cwd(), options = {}, detectWorkspace = detectJavascriptWorkspace } = {}) {
   if (options.filter) return options
   const candidates = listNetlifyFilterCandidates(projectRoot)
@@ -268,6 +271,7 @@ function joinContext(...parts) {
   return parts.filter(Boolean).join('\n\n')
 }
 
+/** @param {any} options @param {Record<string, any>} param1 */
 function fetchRoundResultsForOptions(options, { embedAll } = {}) {
   if (options.fetchResults === false) return []
   const issueNumbers = parseCsv(options.fromIssues || options.fromIssue)
@@ -306,6 +310,7 @@ function isPullRequestSelector(value) {
   return /^#?\d+$/.test(String(value || '').trim())
 }
 
+/** @param {Record<string, any>} param0 */
 function resolvePullRequestBranch({ selector, repo, projectRoot }) {
   const number = String(selector).trim().replace(/^#/, '')
   const result = spawnSync(
@@ -321,6 +326,7 @@ function resolvePullRequestBranch({ selector, repo, projectRoot }) {
   return branch
 }
 
+/** @param {Record<string, any>} param0 */
 function resolveWorkflowBranch({ options, projectRoot }) {
   const requested = String(options.branch || '').trim()
   if (!requested) {
@@ -341,6 +347,7 @@ function resolveWorkflowBranch({ options, projectRoot }) {
   return { branch: requested, source: 'explicit-branch' }
 }
 
+/** @param {Record<string, any>} param0 */
 function resolveDryRunTransport({ requestedTransport, projectRoot }) {
   const requested = requestedTransport || 'auto'
   if (requested && requested !== 'auto') return resolveTransport(requested, [])
@@ -348,6 +355,7 @@ function resolveDryRunTransport({ requestedTransport, projectRoot }) {
   return detections.find((candidate) => candidate.available)?.id || NETLIFY_API_TRANSPORT
 }
 
+/** @param {Record<string, any>} param0 */
 function remotePinnedOptions({ options, projectRoot, transport }) {
   if (options.autoContext === false || options.sha || options.pinnedSha) return options
   if (!isNetlifyApiTransport(transport) && transport !== 'github') return options
@@ -360,6 +368,7 @@ function remotePinnedOptions({ options, projectRoot, transport }) {
   }
 }
 
+/** @param {Record<string, any>} param0 */
 function buildFlowRunContext({ options, projectRoot, transport }) {
   const contextOptions = remotePinnedOptions({ options, projectRoot, transport })
   const automatic = readAutoContext(contextOptions)
@@ -416,6 +425,7 @@ function readRemoteInvisibleGitState(projectRoot) {
   }
 }
 
+/** @param {Record<string, any>} param0 */
 async function confirmRemoteRunnerCanMissLocalChanges({ projectRoot, branch, options }) {
   if (!process.stdin.isTTY || options.yes || options.dryRun) return
 
@@ -514,6 +524,7 @@ function actionOptions(options, command) {
   return normalizeOptionAliases(commandOptions(options) || {})
 }
 
+/** @param {Record<string, any>} param0 */
 function createIssue({ repo, title, body, labels }) {
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'workflow-issue-'))
   const bodyFile = path.join(tmpDir, 'body.md')
@@ -530,6 +541,7 @@ function createIssue({ repo, title, body, labels }) {
   }
 }
 
+/** @param {Record<string, any>} param0 */
 function createComment({ repo, issueNumber, body }) {
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'workflow-comment-'))
   const bodyFile = path.join(tmpDir, 'body.md')
@@ -545,6 +557,7 @@ function createComment({ repo, issueNumber, body }) {
   }
 }
 
+/** @param {Record<string, any>} param0 */
 function createPullRequestComment({ repo, prNumber, body }) {
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'workflow-pr-comment-'))
   const bodyFile = path.join(tmpDir, 'body.md')
@@ -560,6 +573,7 @@ function createPullRequestComment({ repo, prNumber, body }) {
   }
 }
 
+/** @param {Record<string, any>} param0 */
 function createDiscussionComment({ repo, targetKind, targetNumber, body }) {
   if (targetKind === 'pr') {
     return createPullRequestComment({ repo, prNumber: targetNumber, body })
@@ -567,6 +581,7 @@ function createDiscussionComment({ repo, targetKind, targetNumber, body }) {
   return createComment({ repo, issueNumber: targetNumber, body })
 }
 
+/** @param {Record<string, any>} param0 */
 function loadIssueMeta({ repo, issueNumber, includeComments = false }) {
   const fields = ['number', 'title', 'url']
   if (includeComments) fields.push('comments')
@@ -584,6 +599,7 @@ function loadIssueMeta({ repo, issueNumber, includeComments = false }) {
   return JSON.parse(result.stdout)
 }
 
+/** @param {Record<string, any>} param0 */
 function loadPullRequestMeta({ repo, prNumber }) {
   const result = spawnSync(
     'gh',
@@ -647,6 +663,7 @@ function extractLinkedPullRequest(commentBody, fallbackRepo) {
   }
 }
 
+/** @param {Record<string, any>} param0 */
 function resolveCommentTarget({ repo, issueNumber }) {
   const issueMeta = loadIssueMeta({ repo, issueNumber, includeComments: true })
   const linkedPullRequest = (issueMeta.comments || [])
@@ -683,6 +700,7 @@ function resolveCommentTarget({ repo, issueNumber }) {
   }
 }
 
+/** @param {any} plan @param {Record<string, any>} param1 */
 function printPlan(plan, { dryRun }) {
   console.log(`\n${dryRun ? 'Dry run' : 'Create issues'}: ${plan.repo}`)
   for (const issue of plan.issues) {
@@ -693,6 +711,7 @@ function printPlan(plan, { dryRun }) {
   }
 }
 
+/** @param {any} plan @param {Record<string, any>} param1 */
 function printCommentPlan(plan, { dryRun }) {
   console.log(`\n${dryRun ? 'Dry run' : 'Create comments'}: ${plan.repo}`)
   for (const issue of plan.issues) {
@@ -709,6 +728,7 @@ function printCommentPlan(plan, { dryRun }) {
   }
 }
 
+/** @param {Record<string, any>} param0 */
 function buildPlan({ promptName, prompt: promptOverride, options, context, roundResults, roundResultsRaw }) {
   const prompt = promptOverride || loadPrompt(promptName)
   const models = parseCsv(options.models).length > 0 ? parseCsv(options.models) : DEFAULT_MODELS
@@ -738,6 +758,7 @@ function buildPlan({ promptName, prompt: promptOverride, options, context, round
   return { repo, labels, issues }
 }
 
+/** @param {Record<string, any>} param0 */
 function buildCommentPlan({ promptName, prompt: promptOverride, options, context, roundResults }) {
   const prompt = promptOverride || loadPrompt(promptName)
   const repo = resolveRepo(options.repo)
@@ -787,6 +808,7 @@ async function pickPromptInteractively() {
   return selected
 }
 
+/** @param {Record<string, any>} param0 */
 async function selectIssueGroup({ clack, options, message, allowSkip = false }) {
   let groups
   try {
@@ -802,8 +824,8 @@ async function selectIssueGroup({ clack, options, message, allowSkip = false }) 
     hint: formatGroupHint(group),
   }))
 
-  groupOptions.push({ value: '__manual__', label: 'Enter issue numbers manually' })
-  if (allowSkip) groupOptions.push({ value: '__skip__', label: 'Skip — no prior round results' })
+  groupOptions.push({ value: '__manual__', label: 'Enter issue numbers manually', hint: '' })
+  if (allowSkip) groupOptions.push({ value: '__skip__', label: 'Skip — no prior round results', hint: '' })
 
   const selected = await clack.select({ message, options: groupOptions })
   if (clack.isCancel(selected)) process.exit(0)
@@ -1134,6 +1156,7 @@ function normalizeHandoffSourceKind(value) {
   throw new Error(`Unknown handoff source type "${value}". Expected workflow, agent-runner, or agent-session.`)
 }
 
+/** @param {Record<string, any>} param0 */
 function handoffSourceQuery({ runId = '', options = {} } = {}) {
   if (options.workflow) return { kind: 'workflow', id: options.workflow }
   if (options.runner) return { kind: 'agent-runner', id: options.runner }
@@ -1195,6 +1218,7 @@ function formatRelativeTime(value, now = Date.now()) {
   if (Number.isNaN(date.getTime())) return ''
   const diffMs = date.getTime() - now
   const absMs = Math.abs(diffMs)
+  /** @type {Array<[string, number]>} */
   const units = [
     ['day', 24 * 60 * 60 * 1000],
     ['hour', 60 * 60 * 1000],
@@ -1296,6 +1320,7 @@ function handoffSourceDetailTitle(source = {}) {
 
 const HANDOFF_DETAIL_LABEL_WIDTH = 9
 
+/** @param {any} label @param {any} value @param {any} width @param {Record<string, any>} param3 */
 function formatHandoffDetailField(label, value, width, { block = false } = {}) {
   const text = String(value || '').trim()
   if (!text) return []
@@ -1311,6 +1336,7 @@ function formatHandoffDetailField(label, value, width, { block = false } = {}) {
   ))
 }
 
+/** @param {any} source @param {any} projectRoot @param {Record<string, any>} param2 */
 function handoffSourceDetailLines(source = {}, projectRoot = process.cwd(), { width = 100 } = {}) {
   const updatedAt = handoffSourceUpdatedAt(source)
   const date = formatHumanRunDate(updatedAt)
@@ -1343,6 +1369,7 @@ function formatHandoffSourceDetailBox(source = {}, projectRoot = process.cwd()) 
   })
 }
 
+/** @param {Record<string, any>} param0 */
 function handoffSourceMenuOptions({ sources = [], latestSource = {}, projectRoot = process.cwd() } = {}) {
   const options = [
     {
@@ -1367,10 +1394,10 @@ function handoffSourceMenuOptions({ sources = [], latestSource = {}, projectRoot
     },
   ]
   const hasKind = (kind) => sources.some((source) => source.kind === kind)
-  if (hasKind('workflow')) options.push({ value: 'pick:workflow', label: 'Pick previous workflow' })
-  if (hasKind('agent-session')) options.push({ value: 'pick:agent-session', label: 'Pick previous agent session' })
-  if (hasKind('agent-runner')) options.push({ value: 'pick:agent-runner', label: 'Pick previous agent runner' })
-  options.push({ value: 'cancel', label: 'Cancel' })
+  if (hasKind('workflow')) options.push({ value: 'pick:workflow', label: 'Pick previous workflow', hint: '' })
+  if (hasKind('agent-session')) options.push({ value: 'pick:agent-session', label: 'Pick previous agent session', hint: '' })
+  if (hasKind('agent-runner')) options.push({ value: 'pick:agent-runner', label: 'Pick previous agent runner', hint: '' })
+  options.push({ value: 'cancel', label: 'Cancel', hint: '' })
   return options
 }
 
@@ -1460,6 +1487,7 @@ async function promptForOptionalHandoffInstructions() {
   return String(value || '').trim()
 }
 
+/** @param {Record<string, any>} param0 */
 async function runSingleNetlifyAgent({
   projectRoot,
   agent,
@@ -1603,6 +1631,7 @@ async function runSingleNetlifyAgent({
   }
 }
 
+/** @param {Record<string, any>} param0 */
 async function runFreshHandoffAgent({ projectRoot, agent, promptText, summaryDisplayPath, source, options = {} }) {
   await runSingleNetlifyAgent({
     projectRoot,
@@ -1628,6 +1657,7 @@ async function runFreshHandoffAgent({ projectRoot, agent, promptText, summaryDis
   })
 }
 
+/** @param {Record<string, any>} param0 */
 async function runSingleGithubAgent({ projectRoot, agent, promptText, source, options = {} } = {}) {
   const repo = resolveRepo(options.repo)
   const date = options.date || getLocalDate()
@@ -1746,6 +1776,7 @@ async function runSingleGithubAgent({ projectRoot, agent, promptText, source, op
   }
 }
 
+/** @param {Record<string, any>} param0 */
 async function chooseHandoffSourceInteractively({ projectRoot, latestSource }) {
   const clack = await loadClack()
   const sources = listHandoffSources(projectRoot).map((source) => ({
@@ -1931,6 +1962,7 @@ async function handlePreviewBoxes(flowId, options) {
   printSuccessBox({ flow, runState: fakeRunState, transport, projectRoot })
 }
 
+/** @param {Record<string, any>} param0 */
 async function selectSearchableOption({
   clack,
   message,
@@ -1985,6 +2017,7 @@ function workflowPickerHint(flow = {}) {
   return compactWorkflowDescription(flow.description)
 }
 
+/** @param {any} flow @param {Record<string, any>} param1 */
 function workflowPickerLabel(flow = {}, { includeAdHoc = true } = {}) {
   if (!includeAdHoc) return flow.source === 'project' ? `${flow.title} (local)` : flow.title
   return `${flow.source === 'project' ? 'Workflow' : 'NAX Workflow'} - ${flow.title}`
@@ -1995,11 +2028,46 @@ const AD_HOC_RUN_CHOICE = {
   label: 'Start a single Netlify agent with a custom prompt',
 }
 
+function ansiColor(code, value) {
+  if (process.env.NO_COLOR && !process.env.FORCE_COLOR) return value
+  return `\x1b[${code}m${value}\x1b[39m`
+}
+
+function terminalTrafficLights() {
+  return [
+    ansiColor(31, '●'),
+    ansiColor(33, '●'),
+    ansiColor(32, '●'),
+  ].join(' ')
+}
+
+function printInteractiveIntroBox() {
+  const teal = '#0d9488'
+  console.log(makeBox({
+    title: {
+      left: 'Netlify Agent Runner Executor',
+      right: terminalTrafficLights(),
+    },
+    content: {
+      left: "Run a single Netlify agent or orchestrate a multi-step agentic workflow\nusing the world's leading AI coding tools: Claude Code, Codex, and Gemini",
+      paddingLeft: 2,
+      paddingRight: 2,
+      paddingTop: 0,
+      paddingBottom: 0,
+    },
+    borderStyle: 'rounded',
+    borderColor: teal,
+    maxWidth: 88,
+    wrapText: true,
+  }))
+}
+
+/** @param {Record<string, any>} param0 */
 async function pickFlowInteractively({ includeAdHoc = true, projectRoot = process.cwd(), options = {} } = {}) {
   const clack = await loadClack()
   const flows = await listFlows(flowLoadOptions(options, projectRoot))
   if (includeAdHoc) {
-    console.log('Run a single Netlify agent or orchestrate a multi-step agentic workflow.')
+    printInteractiveIntroBox()
   }
   const choices = [
     ...(includeAdHoc ? [AD_HOC_RUN_CHOICE] : []),
@@ -2046,6 +2114,7 @@ async function promptForAdHocAgentPrompt(initialPrompt) {
   return text
 }
 
+/** @param {Record<string, any>} param0 */
 async function chooseTransportInteractively({ requested, projectRoot }) {
   const clack = await loadClack()
   const detections = detectTransports({ projectRoot })
@@ -2077,6 +2146,7 @@ function orderSingleRunTransports(transports = []) {
   })
 }
 
+/** @param {Record<string, any>} param0 */
 async function chooseSingleRunTransportInteractively({ requested, projectRoot }) {
   const detections = detectTransports({ projectRoot })
   if (requested && requested !== 'auto') {
@@ -2206,6 +2276,7 @@ function wrapBoxLines(lines, width) {
 const STEP_MAX_WIDTH = 200
 const OUTER_TERMINAL_RATIO = 0.8
 
+/** @param {Record<string, any>} param0 */
 function printFlowPlan({ flow, steps, transport, branch, context }) {
   const teal = '#0d9488'
   const terminalWidth = process.stdout.columns || 100
@@ -2285,10 +2356,11 @@ function finalRunForRunState(runState) {
   return { step: lastStep, run: runs[runs.length - 1] }
 }
 
+/** @param {Record<string, any>} param0 */
 function localAgentRunUrl({ projectRoot, runnerId, sessionId }) {
   if (!runnerId) return ''
   try {
-    const project = readNetlifyProject(projectRoot)
+    const project = /** @type {Record<string, any> | null} */ (readNetlifyProject(projectRoot))
     if (project?.adminUrl) {
       return formatAgentRunUrlFromAdminUrl(project.adminUrl, runnerId, sessionId)
     }
@@ -2299,6 +2371,7 @@ function localAgentRunUrl({ projectRoot, runnerId, sessionId }) {
   return ''
 }
 
+/** @param {Record<string, any>} param0 */
 function formatSubmittedLocalRunBoxes({ runs = [], prompt = {}, projectRoot }) {
   if (runs.length === 0) return ''
   const teal = '#0d9488'
@@ -2330,6 +2403,7 @@ function formatSubmittedLocalRunBoxes({ runs = [], prompt = {}, projectRoot }) {
   }).join('\n')
 }
 
+/** @param {Record<string, any>} param0 */
 function printSuccessBox({ flow, runState, transport, projectRoot }) {
   const green = '#22c55e'
   const final = finalRunForRunState(runState)
@@ -2385,6 +2459,7 @@ function relativeHandoffPath(projectRoot, summaryPath) {
   return relative && !relative.startsWith('..') ? relative : summaryPath
 }
 
+/** @param {any} projectRoot @param {Record<string, any>} param1 */
 function findRunStateForHandoff(projectRoot, { runId } = {}) {
   const states = listRunStates(projectRoot)
   if (runId) {
@@ -2395,6 +2470,7 @@ function findRunStateForHandoff(projectRoot, { runId } = {}) {
   return states[0] || null
 }
 
+/** @param {Record<string, any>} param0 */
 function readHandoffSummary({ projectRoot, runId } = {}) {
   if (runId) {
     const runState = findRunStateForHandoff(projectRoot, { runId })
@@ -2419,11 +2495,13 @@ function readHandoffSummary({ projectRoot, runId } = {}) {
   return readHandoffSource(projectRoot)
 }
 
+/** @param {Record<string, any>} param0 */
 function readSelectedHandoffSource({ projectRoot, runId = '', options = {} } = {}) {
   const query = handoffSourceQuery({ runId, options })
   return readHandoffSource(projectRoot, query)
 }
 
+/** @param {Record<string, any>} param0 */
 function buildHandoffPrompt({ instructions = '', summaryPath = '', summaryText = '' } = {}) {
   return [
     String(instructions || '').trim()
@@ -2452,6 +2530,7 @@ function printPostSuccessHandoffHint(runState, projectRoot) {
   console.log('')
 }
 
+/** @param {any} text @param {Record<string, any>} param1 */
 function copyToClipboard(text, { platform = process.platform, runCommand = spawnSync } = {}) {
   const candidates = platform === 'darwin'
     ? [['pbcopy', []]]
@@ -2465,6 +2544,7 @@ function copyToClipboard(text, { platform = process.platform, runCommand = spawn
     : 'Could not copy to clipboard. Install wl-copy or xclip, or open the summary file directly.')
 }
 
+/** @param {any} source @param {Record<string, any>} param1 */
 async function openHandoffSource(source = {}, { projectRoot = process.cwd(), opener } = {}) {
   const summaryPath = source.summaryPath || source.displayPath || ''
   if (!summaryPath) throw new Error('No previous results file path is available to open.')
@@ -2494,6 +2574,7 @@ function printPartialArtifactHint(runState) {
   console.log('')
 }
 
+/** @param {Record<string, any>} param0 */
 async function prepareInteractiveFlowRun({ flow, options, transport, projectRoot }) {
   if (!process.stdin.isTTY || options.yes) {
     const selected = parseCsv(options.models)
@@ -2673,6 +2754,7 @@ function compactTextForRetry(text, limit, label = 'content') {
   return `${value.slice(0, headLength).trimEnd()}${note}${value.slice(value.length - tailLength).trimStart()}`
 }
 
+/** @param {any} runs @param {Record<string, any>} param1 */
 function formatCompactLocalRunResults(runs, {
   perRunLimit = COMPACT_LOCAL_RESULT_CHAR_LIMIT,
   totalLimit = COMPACT_LOCAL_RESULTS_TOTAL_LIMIT,
@@ -2710,6 +2792,7 @@ function formatCompactLocalRunResults(runs, {
   return parts.join('\n')
 }
 
+/** @param {Record<string, any>} param0 */
 function buildLocalAgentPrompt({ model, prompt, context, roundResults }) {
   const summaryLabel = `${titleCase(prompt.name)} instructions`
   const parts = [
@@ -2734,6 +2817,7 @@ function buildLocalAgentPrompt({ model, prompt, context, roundResults }) {
   return parts.join('\n')
 }
 
+/** @param {Record<string, any>} param0 */
 function buildCompactLocalPromptForRetry({ flow, step, runState, run }) {
   const savedCompact = String(run.compactPromptText || '').trim()
   const savedPrompt = String(run.promptText || '')
@@ -2797,6 +2881,7 @@ function stepIndexInFlowSteps(flowSteps = [], currentStepIndex, stepId) {
   return index === -1 ? currentStepIndex : index
 }
 
+/** @param {Record<string, any>} param0 */
 function shouldArchiveCompletedStep({ step, options = {}, flowSteps = [], currentStepIndex = -1 }) {
   if (!step) return false
   if (step.autoArchive === true) return true
@@ -2832,6 +2917,7 @@ function applyArchiveResultToRunner(runState, runnerId, archiveResult) {
   return touched
 }
 
+/** @param {Record<string, any>} param0 */
 function archiveEligibleCompletedLocalRuns({ runState, flowSteps, currentStepIndex, options = {}, projectRoot, netlify, archiveRun = archiveAgentRun }) {
   const archivedThisPass = new Set()
   const stepById = new Map((flowSteps || []).map((step) => [step.id, step]))
@@ -2943,6 +3029,7 @@ function formatCountValue(value, label) {
   return Number.isFinite(value) ? `${Number(value).toLocaleString('en-US')} ${label}` : ''
 }
 
+/** @param {Record<string, any>} param0 */
 function agentStepCompletionSummary({ stepTitle, runs = [], failedCount = 0 } = {}) {
   const doneCount = runs.filter((run) => run.status === 'completed').length
   const duration = formatDurationMs(stepDurationMs(runs))
@@ -3006,6 +3093,7 @@ function shouldPollLocalRun(run) {
   return true
 }
 
+/** @param {any} runState @param {Record<string, any>} param1 */
 function localRetryCandidates(runState, { stepId, agent } = {}) {
   const requestedAgent = String(agent || '').trim().toLowerCase()
   return (runState.steps || []).flatMap((step, stepIndex) => {
@@ -3054,6 +3142,7 @@ async function makeProgressReporter(initialMessage) {
   }
 }
 
+/** @param {Record<string, any>} param0 */
 function pickFlavor({ used = new Set(), random = Math.random } = {}) {
   if (flavorMessages.length === 0) return ['', '']
   const start = Math.floor(random() * flavorMessages.length)
@@ -3091,6 +3180,7 @@ const AGENT_RUNNER_USE_CASES = [
   ['✨ UX polish', 'Smooth rough edges with loading states, skeletons, and transitions.', 'Add loading states, skeleton screens, and transitions to improve perceived performance.'],
 ]
 
+/** @param {any} error @param {Record<string, any>} param1 */
 function conciseErrorMessage(error, { maxLength = 700 } = {}) {
   const raw = String(error?.message || error || 'Unknown error').replace(/\s+/g, ' ').trim()
   if (raw.length <= maxLength) return raw
@@ -3104,6 +3194,7 @@ function submissionFailureSummary(failures) {
   return `Netlify agent submission failed for ${lines.length} ${lines.length === 1 ? 'run' : 'runs'}:\n${lines.join('\n')}`
 }
 
+/** @param {Record<string, any>} param0 */
 function startSubmissionHeartbeat({ pendingLabels, startedAt = Date.now(), intervalMs = 30000 } = {}) {
   if (!process.stdout.isTTY) return () => {}
   const timer = setInterval(() => {
@@ -3116,6 +3207,7 @@ function startSubmissionHeartbeat({ pendingLabels, startedAt = Date.now(), inter
   return () => clearInterval(timer)
 }
 
+/** @param {Record<string, any>} param0 */
 function nextFlavorAt({ min, max }) {
   const range = Math.max(0, max - min)
   return Date.now() + min + Math.floor(Math.random() * (range + 1))
@@ -3135,6 +3227,7 @@ function physicalRowCount(lines, columns) {
   return count
 }
 
+/** @param {any} text @param {Record<string, any>} param1 */
 function wrapLine(text, { width = 100, indent = '' } = {}) {
   const maxWidth = Math.max(20, width)
   const words = String(text || '').split(/\s+/).filter(Boolean)
@@ -3161,6 +3254,7 @@ function agentRunUseCaseTitle(title) {
   return `${match[1]} Use Agent Runs for ${match[2]}`
 }
 
+/** @param {any} useCase @param {Record<string, any>} param1 */
 function formatDidYouKnowLines(useCase, {
   width,
   color = DID_YOU_KNOW_BORDER_COLORS[0],
@@ -3199,6 +3293,7 @@ function formatDidYouKnowLines(useCase, {
   ]
 }
 
+/** @param {any} event @param {Record<string, any>} param1 */
 function formatNonTtyRunStatusMessage(event = {}, { agentWidth = 0, stateWidth = 0 } = {}) {
   const run = event.run || {}
   const agent = String(run.agent || 'agent')
@@ -3212,6 +3307,7 @@ function formatUsageLogLine(usage) {
   return summary ? `**Usage:** ${summary.replace(/, /g, ' · ')}` : ''
 }
 
+/** @param {any} value @param {Record<string, any>} param1 */
 function compactCurrentTask(value, { max = 96 } = {}) {
   const text = String(value || '')
     .replace(/\s+/g, ' ')
@@ -3221,6 +3317,7 @@ function compactCurrentTask(value, { max = 96 } = {}) {
   return `${text.slice(0, Math.max(0, max - 1)).trimEnd()}…`
 }
 
+/** @param {any} row @param {Record<string, any>} param1 */
 function formatTtyProgressRow(row, { nameWidth, frame, orchestrator = DEFAULT_ORCHESTRATOR } = {}) {
   const name = titleCase(row.agent).padEnd(nameWidth, ' ')
   if (row.status === 'completed') return `✓ ${name} · 🟢 complete${row.url ? ` - ${row.url}` : ''}`
@@ -3231,6 +3328,7 @@ function formatTtyProgressRow(row, { nameWidth, frame, orchestrator = DEFAULT_OR
   return `${icon} ${name} · ${label}${currentTask ? ` - "${currentTask}"` : ''}`
 }
 
+/** @param {Record<string, any>} param0 */
 function makeStepProgressReporter({
   stepTitle,
   total,
@@ -3486,6 +3584,7 @@ function findGithubRunnerFailures(results, runs = []) {
 
 const GITHUB_POLL_MAX_CONSECUTIVE_FAILURES = 5
 
+/** @param {Record<string, any>} param0 */
 async function waitForGithubStep({
   repo,
   issueNumbers = [],
@@ -3590,6 +3689,7 @@ function githubStepStatus(stepState) {
     : 'submitted'
 }
 
+/** @param {Record<string, any>} param0 */
 async function completeGithubStep({ runState, repo, stepState, step, options }) {
   const timeoutMinutes = Number.parseInt(options.timeoutMinutes || '25', 10)
   if (step.waitFor !== WAIT_FOR_AGENT_RESULTS) {
@@ -3643,6 +3743,7 @@ async function completeGithubStep({ runState, repo, stepState, step, options }) 
   return stepState
 }
 
+/** @param {Record<string, any>} param0 */
 async function executeGithubFlow({ flow, steps, options, runState, completedStepStates = new Map() }) {
   const repo = resolveRepo(options.repo)
   const date = options.date || getLocalDate()
@@ -3792,6 +3893,7 @@ function reportTerminalLocalRun(reporter, run, projectRoot) {
   })
 }
 
+/** @param {Record<string, any>} param0 */
 async function completeLocalStep({ runState, stepState, step, options, projectRoot, netlify, netlifyFilter, initialDelayMs }) {
   const timeoutMinutes = Number.parseInt(options.timeoutMinutes || '25', 10)
   const resolvedNetlifyFilter = netlifyFilter !== undefined
@@ -3861,6 +3963,7 @@ async function completeLocalStep({ runState, stepState, step, options, projectRo
   return stepState
 }
 
+/** @param {Record<string, any>} param0 */
 async function executeLocalFlow({ flow, steps, options, runState, projectRoot, completedStepStates = new Map() }) {
   const date = options.date || getLocalDate()
   const baseContext = contextForRunState(runState, options)
@@ -4035,6 +4138,7 @@ async function executeLocalFlow({ flow, steps, options, runState, projectRoot, c
   }
 }
 
+/** @param {Record<string, any>} param0 */
 async function resumeLocalFlow({ flow, runState, projectRoot }) {
   trackRunState(runState)
   const options = await chooseNetlifyFilterOption({
@@ -4099,6 +4203,7 @@ async function resumeLocalFlow({ flow, runState, projectRoot }) {
   clearTrackedRunState(runState, { completed: true })
 }
 
+/** @param {Record<string, any>} param0 */
 async function resumeGithubFlow({ flow, runState }) {
   trackRunState(runState)
   const options = runState.options || {}
@@ -4145,6 +4250,7 @@ async function resumeGithubFlow({ flow, runState }) {
   clearTrackedRunState(runState, { completed: true })
 }
 
+/** @param {any} projectRoot @param {Record<string, any>} param1 */
 function findRunStateForRetry(projectRoot, { runId, flowId, stepId, agent } = {}) {
   const states = listRunStates(projectRoot)
   if (runId) {
@@ -4511,6 +4617,7 @@ async function handleRun(flowId, options) {
   }
 }
 
+/** @param {any} result @param {Record<string, any>} param1 */
 function printInitResult(result, { dryRun = false } = {}) {
   const prefix = dryRun ? 'Would initialize' : 'Initialized'
   console.log(`${prefix}: ${result.projectRoot}`)
@@ -4589,10 +4696,10 @@ async function handleSkills(subcommand = 'help', options = {}) {
   }
   switch (subcommand) {
     case 'install':
-      printSkillInstallResults(installSkills({ ...common, dryRun: options.dryRun === true }), { dryRun: options.dryRun === true })
+      printSkillInstallResults(installSkills({ ...common, dryRun: options.dryRun === true }))
       return
     case 'update':
-      printSkillInstallResults(updateSkills({ ...common, dryRun: options.dryRun === true }), { dryRun: options.dryRun === true })
+      printSkillInstallResults(updateSkills({ ...common, dryRun: options.dryRun === true }))
       return
     case 'check':
       printSkillCheckResults(checkSkills(common))
@@ -4617,6 +4724,7 @@ function normalizeCiCommand(commandParts = []) {
     .join(' ')
 }
 
+/** @param {any} commandParts @param {any} options @param {Record<string, any>} param2 */
 function handleCi(commandParts = [], options = {}, {
   cwd = process.cwd(),
   env = process.env,
@@ -4654,6 +4762,7 @@ function handleCi(commandParts = [], options = {}, {
   }
 }
 
+/** @param {any} target @param {any} options @param {Record<string, any>} param2 */
 function handleSync(target = 'last', options = {}, {
   cwd = process.cwd(),
   env = process.env,
@@ -4676,6 +4785,7 @@ function handleSync(target = 'last', options = {}, {
   return result
 }
 
+/** @param {any} options @param {Record<string, any>} param1 */
 async function shouldEnableGithubActions(options, { projectRoot } = {}) {
   if (options.githubActions === true) return true
   if (options.githubActions === false) return false
@@ -4887,7 +4997,9 @@ function buildProgram() {
     .command('sync [target]')
     .description('Sync local .nax artifacts from remote Netlify Agent Runner state')
     .option('--project-root <path>', 'Project root containing .nax artifacts')
-    .action((target, options, command) => handleSync(target || 'last', actionOptions(options, command)))
+    .action((target, options, command) => {
+      handleSync(target || 'last', actionOptions(options, command))
+    })
 
   program
     .command('issue [prompt]')
@@ -4972,7 +5084,7 @@ function buildProgram() {
 
   for (const hiddenCommandName of ['issue', 'comment', 'preview-boxes', 'preview-spinner']) {
     const command = program.commands.find((candidate) => candidate.name() === hiddenCommandName)
-    if (command) command._hidden = true
+    if (command) /** @type {any} */ (command)._hidden = true
   }
 
   return program

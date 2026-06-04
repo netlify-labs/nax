@@ -27,7 +27,7 @@ const {
   showAgentRun,
   submitLocalAgentRun,
   runAsync,
-} = require('../../lib/local-runner')
+} = require('../../src/local-runner')
 
 test('latestSessionFromList accepts array and sessions wrapper responses', () => {
   assert.deepEqual(latestSessionFromList([{ id: 's1' }, { id: 's2' }]), { id: 's2' })
@@ -131,8 +131,9 @@ test('runAsync redacts sensitive payloads from exec errors', async () => {
   await assert.rejects(
     runAsync(process.execPath, ['-e', 'process.exit(1)', '--data', payload]),
     (error) => {
-      assert.match(error.message, /--data <redacted>/)
-      assert.doesNotMatch(error.message, /secret prompt/)
+      const err = /** @type {Error} */ (error)
+      assert.match(err.message, /--data <redacted>/)
+      assert.doesNotMatch(err.message, /secret prompt/)
       return true
     },
   )

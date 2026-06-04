@@ -3,7 +3,7 @@ const path = require('path')
 
 const PACKAGE_ROOT = path.join(__dirname, '..')
 const PACKAGE_JSON_PATH = path.join(PACKAGE_ROOT, 'package.json')
-const BUNDLED_SKILLS_DIR = path.join(PACKAGE_ROOT, 'templates', 'skills')
+const BUNDLED_SKILLS_DIR = path.join(__dirname, 'templates', 'skills')
 const PROVIDER_DIRS = [
   '.claude',
   '.codex',
@@ -53,6 +53,7 @@ function parseList(value) {
     .filter(Boolean)
 }
 
+/** @param {Record<string, any>} param0 */
 function listBundledSkills({ skillsDir = BUNDLED_SKILLS_DIR } = {}) {
   if (!fs.existsSync(skillsDir)) return []
   return fs
@@ -63,6 +64,7 @@ function listBundledSkills({ skillsDir = BUNDLED_SKILLS_DIR } = {}) {
     .sort((a, b) => a.localeCompare(b))
 }
 
+/** @param {Record<string, any>} param0 */
 function resolveSkillNames({ skill, allSkills = false, skillsDir = BUNDLED_SKILLS_DIR } = {}) {
   const bundled = listBundledSkills({ skillsDir })
   if (allSkills) return bundled
@@ -80,6 +82,7 @@ function findExistingProviders(projectRoot) {
   return PROVIDER_DIRS.filter((provider) => fs.existsSync(path.join(projectRoot, provider)))
 }
 
+/** @param {Record<string, any>} param0 */
 function resolveProviders({ projectRoot, providers, allProviders = false } = {}) {
   if (allProviders) return PROVIDER_DIRS
   const requested = parseList(providers).map(normalizeProvider).filter(Boolean)
@@ -120,6 +123,7 @@ function readInstalledVersion(skillRoot) {
   return content.match(/^version:\s*(.+)$/m)?.[1]?.trim().replace(/^["']|["']$/g, '') || null
 }
 
+/** @param {Record<string, any>} param0 */
 function copySkillDir({ src, dest, substitutions = {}, version, dryRun = false }) {
   if (dryRun) return
   fs.mkdirSync(dest, { recursive: true })
@@ -141,6 +145,7 @@ function copySkillDir({ src, dest, substitutions = {}, version, dryRun = false }
   }
 }
 
+/** @param {Record<string, any>} param0 */
 function installSkills({
   projectRoot = findProjectRoot(),
   providers,
@@ -190,6 +195,7 @@ function updateSkills(options = {}) {
   return installSkills(options)
 }
 
+/** @param {Record<string, any>} param0 */
 function checkSkills({
   projectRoot = findProjectRoot(),
   providers,

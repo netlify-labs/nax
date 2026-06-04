@@ -30,6 +30,7 @@ function trackRunState(runState) {
   return runState
 }
 
+/** @param {any} runState @param {Record<string, any>} param1 */
 function clearTrackedRunState(runState, { completed = false } = {}) {
   if (runState && activeRunState !== runState) return
   if (completed && activeRunState) {

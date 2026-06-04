@@ -117,6 +117,7 @@ function filterOutGitignored(paths, cwd) {
   return paths.filter((candidate) => !ignored.has(candidate))
 }
 
+/** @param {any} projectRoot @param {Record<string, any>} param1 */
 function findNetlifyConfigPaths(projectRoot, { maxDepth = 6 } = {}) {
   const root = path.resolve(projectRoot || process.cwd())
   const configs = []
@@ -165,6 +166,7 @@ function listNetlifyFilterCandidates(projectRoot) {
     })
 }
 
+/** @param {Record<string, any>} param0 */
 async function detectJavascriptWorkspace({ projectRoot, projectDir, getBuildInfo } = {}) {
   const root = path.resolve(projectRoot || process.cwd())
   const baseDir = path.resolve(projectDir || root)
@@ -209,6 +211,7 @@ function inferNetlifyFilterFromCommand(command) {
   return unique.length === 1 ? unique[0] : ''
 }
 
+/** @param {Record<string, any>} param0 */
 function resolveNetlifyFilter({ projectRoot, filter } = {}) {
   if (filter) return { filter: String(filter), source: 'option' }
   const root = path.resolve(projectRoot || process.cwd())
@@ -254,6 +257,7 @@ function resultDetail(command, args, result) {
   return redactCommandDetail(command, args, [detail, timeoutDetail, signalDetail].filter(Boolean).join('; '))
 }
 
+/** @param {any} command @param {any} args @param {Record<string, any>} param2 */
 function run(command, args, { cwd, env = process.env, allowFailure = false, timeout = 30000 } = {}) {
   const result = spawnSync(command, args, {
     cwd,
@@ -269,6 +273,7 @@ function run(command, args, { cwd, env = process.env, allowFailure = false, time
   return result
 }
 
+/** @param {any} command @param {any} args @param {Record<string, any>} param2 */
 function runAsync(command, args, { cwd, env = process.env, allowFailure = false, timeout = 30000 } = {}) {
   return new Promise((resolve, reject) => {
     execFile(command, args, {
@@ -336,6 +341,7 @@ function isRetryableSubmissionError(error) {
   ].some((needle) => text.includes(needle))
 }
 
+/** @param {any} fn @param {Record<string, any>} param1 */
 async function withSubmissionRetry(fn, {
   attempts = DEFAULT_SUBMISSION_RETRY_ATTEMPTS,
   delayMs = DEFAULT_SUBMISSION_RETRY_DELAY_MS,
@@ -363,6 +369,7 @@ async function withSubmissionRetry(fn, {
   throw new Error('Submission retry failed unexpectedly.')
 }
 
+/** @param {Record<string, any>} param0 */
 function buildNetlifyEnv({ env = process.env, projectRoot, siteId: explicitSiteId } = {}) {
   const token = readNetlifyCliToken({ env })
   const siteId = explicitSiteId || readLinkedSiteId(projectRoot, env)
@@ -421,6 +428,7 @@ function compactPromptForArgumentLimitRetry(runState) {
   return compactPromptText
 }
 
+/** @param {any} runState @param {any} rawRetry @param {Record<string, any>} param2 */
 function appendAutoRetryMetadata(runState, rawRetry, {
   autoRetryCount,
   promptShrinkRetryCount,
@@ -449,6 +457,7 @@ function appendAutoRetryMetadata(runState, rawRetry, {
   }
 }
 
+/** @param {Record<string, any>} param0 */
 function createAgentRun({
   projectRoot,
   promptText,
@@ -477,6 +486,7 @@ function createAgentRun({
   }
 }
 
+/** @param {Record<string, any>} param0 */
 async function createAgentRunAsync({
   projectRoot,
   promptText,
@@ -516,6 +526,7 @@ async function createAgentRunAsync({
   })
 }
 
+/** @param {Record<string, any>} param0 */
 function createAgentSession({
   projectRoot,
   runnerId,
@@ -548,6 +559,7 @@ function createAgentSession({
   }
 }
 
+/** @param {Record<string, any>} param0 */
 async function createAgentSessionAsync({
   projectRoot,
   runnerId,
@@ -592,6 +604,7 @@ async function createAgentSessionAsync({
   })
 }
 
+/** @param {Record<string, any>} param0 */
 async function submitLocalAgentRun({
   run,
   projectRoot,
@@ -645,6 +658,7 @@ async function submitLocalAgentRun({
   }
 }
 
+/** @param {Record<string, any>} param0 */
 function showAgentRun({ projectRoot, runnerId, siteId, netlifyFilter, env, runCommand = run } = {}) {
   const args = ['agents:show', runnerId, '--json', '--project', siteId]
   if (netlifyFilter) args.push('--filter', netlifyFilter)
@@ -680,6 +694,7 @@ function showAgentRun({ projectRoot, runnerId, siteId, netlifyFilter, env, runCo
   }
 }
 
+/** @param {Record<string, any>} param0 */
 function listAgentSessions({ projectRoot, runnerId, env, runCommand = run } = {}) {
   const data = JSON.stringify({ agent_runner_id: runnerId })
   const result = runCommand('netlify', ['api', 'listAgentRunnerSessions', '--data', data], {
@@ -715,6 +730,7 @@ function listAgentSessions({ projectRoot, runnerId, env, runCommand = run } = {}
   }
 }
 
+/** @param {Record<string, any>} param0 */
 function archiveAgentRun({ projectRoot, runnerId, env, runCommand = run } = {}) {
   if (!runnerId) throw new Error('Netlify agent runner ID is required to archive a run.')
   const data = JSON.stringify({ agent_runner_id: runnerId })
@@ -737,6 +753,7 @@ function archiveAgentRun({ projectRoot, runnerId, env, runCommand = run } = {}) 
   }
 }
 
+/** @param {Record<string, any>} param0 */
 function normalizeCompletedRun({ run, shown, sessions }) {
   const session = sessions.latest && Object.keys(sessions.latest).length > 0
     ? sessions.latest
@@ -773,6 +790,7 @@ function normalizeCompletedRun({ run, shown, sessions }) {
   })
 }
 
+/** @param {Record<string, any>} param0 */
 function normalizeFailedRun({ run, shown, sessions }) {
   const session = sessions?.latest && Object.keys(sessions.latest).length > 0
     ? sessions.latest
@@ -793,6 +811,7 @@ function normalizeFailedRun({ run, shown, sessions }) {
   })
 }
 
+/** @param {Record<string, any>} param0 */
 async function waitForLocalAgentRuns({
   projectRoot,
   runs,

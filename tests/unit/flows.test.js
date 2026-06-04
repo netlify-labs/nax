@@ -4,8 +4,9 @@ const fs = require('fs')
 const os = require('os')
 const path = require('path')
 
-const { DEFAULT_PROJECT_FLOWS_DIRS, FLOW_PICKER_ORDER, listFlows, loadFlow, loadStepPrompt, projectFlowDirs } = require('../../lib/flows')
+const { DEFAULT_PROJECT_FLOWS_DIRS, FLOW_PICKER_ORDER, listFlows, loadFlow, loadStepPrompt, projectFlowDirs } = require('../../src/flows')
 
+/** @param {any} projectRoot @param {any} flowsDir @param {any} id @param {Record<string, any>} param3 */
 function writeFlow(projectRoot, flowsDir, id, { title = id, description = '', promptBody = 'Prompt body' } = {}) {
   const flowDir = path.join(projectRoot, flowsDir, id)
   fs.mkdirSync(path.join(flowDir, 'prompts'), { recursive: true })

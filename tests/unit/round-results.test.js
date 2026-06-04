@@ -10,7 +10,7 @@ const {
   pickAgentReplyComment,
   pickAgentReplyComments,
   rawIssuesFromResults,
-} = require('../../lib/round-results')
+} = require('../../src/round-results')
 
 test('inferModelFromTitle pulls model out of standard issue titles', () => {
   assert.equal(inferModelFromTitle('2026-05-07 Claude Review'), 'claude')

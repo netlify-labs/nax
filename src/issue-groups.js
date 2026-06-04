@@ -12,6 +12,7 @@ function parseWorkflowTitle(title) {
   }
 }
 
+/** @param {Record<string, any>} param0 */
 function listRepoIssues({ repo, limit = 60, state = 'all' }) {
   const result = spawnSync(
     'gh',
@@ -71,6 +72,7 @@ function buildGroups(issues) {
   })
 }
 
+/** @param {Record<string, any>} param0 */
 function listRecentIssueGroups({ repo, limit = 60, state = 'all', loader = listRepoIssues }) {
   return buildGroups(loader({ repo, limit, state }))
 }

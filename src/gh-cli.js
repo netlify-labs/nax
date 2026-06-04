@@ -44,6 +44,7 @@ function formatGhError(args, result, prefix) {
   return `${base}${detail ? `: ${detail}` : ''}`
 }
 
+/** @param {any} args @param {Record<string, any>} param1 */
 function runGh(args, {
   cwd,
   input,
@@ -81,6 +82,7 @@ function runGh(args, {
   throw new Error(formatGhError(args, lastResult, errorPrefix))
 }
 
+/** @param {Record<string, any>} param0 */
 function assertGhAuthenticated({ cwd, env = process.env, runCommand = spawnSync, force = false } = {}) {
   if (ghAuthValidated && !force) return
   runGh(['auth', 'status'], {

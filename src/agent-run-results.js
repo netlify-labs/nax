@@ -165,6 +165,7 @@ function aggregateFileChanges(records = []) {
 }
 
 function addUsage(a = {}, b = {}) {
+  /** @type {Record<string, any>} */
   const result = { ...a }
   for (const [key, value] of Object.entries(b || {})) {
     if (typeof value === 'number' && Number.isFinite(value)) {
@@ -325,6 +326,7 @@ function statusIsTerminal(status) {
   return TERMINAL_STATUSES.has(String(status || '').toLowerCase())
 }
 
+/** @param {Record<string, any>} param0 */
 function sessionArtifactId({ sessionId, agent, createdAt, updatedAt } = {}) {
   if (sessionId && ID_FORMAT.test(String(sessionId))) return String(sessionId)
   const stamp = String(updatedAt || createdAt || new Date().toISOString()).replace(/[:.]/g, '-')
@@ -491,6 +493,7 @@ function buildAgentRunnerMarkdown(input = {}) {
   return lines.join('\n')
 }
 
+/** @param {Record<string, any>} param0 */
 function normalizeAgentRunResult({
   run = {},
   runner = {},
@@ -535,6 +538,7 @@ function normalizeAgentRunResult({
   }
 }
 
+/** @param {Record<string, any>} param0 */
 function normalizeGithubRunResult({ run = {}, result = null, reply = null, status, marker = null }) {
   const commentUrl = reply?.url || run.commentUrl || ''
   const issueUrl = result?.issueUrl || run.issueUrl || ''

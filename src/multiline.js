@@ -5,6 +5,7 @@ function collapseTrailingNewlines(text) {
   return String(text ?? '').replace(/\n{2,}$/, '\n')
 }
 
+/** @param {Record<string, any>} param0 @param {any} columns */
 function rowsBelowCursor({ lines, lineIdx, colIdx }, columns) {
   const cols = Number(columns) || 0
   if (cols <= 0) return lines.length - 1 - lineIdx
@@ -18,6 +19,7 @@ function rowsBelowCursor({ lines, lineIdx, colIdx }, columns) {
   return rows
 }
 
+/** @param {Record<string, any>} param0 @param {any} direction */
 function moveCursor({ lines, lineIdx, colIdx }, direction) {
   switch (direction) {
     case 'left':
@@ -47,6 +49,7 @@ function moveCursor({ lines, lineIdx, colIdx }, direction) {
   }
 }
 
+/** @param {Record<string, any>} param0 */
 function multiline({ message, placeholder = '', initialValue = '' }) {
   return new Promise((resolve) => {
     if (!process.stdin.isTTY || !process.stdin.setRawMode) {

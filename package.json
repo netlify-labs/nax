@@ -8,9 +8,7 @@
   },
   "files": [
     "bin",
-    "lib",
-    "flows",
-    "templates",
+    "src",
     "README.md",
     "LICENSE"
   ],
@@ -19,7 +17,8 @@
   },
   "scripts": {
     "start": "node bin/nax.js",
-    "check": "node --check bin/nax.js && for f in lib/*.js; do node --check \"$f\"; done",
+    "check": "node --check bin/nax.js && for f in src/*.js; do node --check \"$f\"; done && npm run typecheck",
+    "typecheck": "tsc -p tsconfig.json",
     "dry-run": "node bin/nax.js issue review --dry --force",
     "try:multiline": "node scripts/try-multiline.js",
     "test": "node --test tests/unit/*.test.js tests/integration/*.test.js",
@@ -61,6 +60,8 @@
     "open": "^10.2.0"
   },
   "devDependencies": {
-    "tsx": "^4.22.4"
+    "@types/node": "^25.9.1",
+    "tsx": "^4.22.4",
+    "typescript": "^6.0.3"
   }
 }

@@ -140,8 +140,8 @@ The compact prompt keeps the current step instructions intact and trims only emb
 Flows live in:
 
 ```text
-flows/<id>/flow.*
-flows/<id>/prompts/*.md
+<flows-dir>/<id>/flow.*
+<flows-dir>/<id>/prompts/*.md
 ```
 
 Flow files can be YAML, JSON, JavaScript, TypeScript, or TOML. TypeScript flow

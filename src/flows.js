@@ -3,7 +3,7 @@ const path = require('path')
 const configorama = require('configorama')
 const { loadPromptFile } = require('./prompts')
 
-const FLOWS_DIR = path.join(__dirname, '..', 'flows')
+const FLOWS_DIR = path.join(__dirname, 'flows')
 const DEFAULT_PROJECT_FLOWS_DIRS = ['.github/nax-flows']
 const CONFIG_FILE_EXTENSIONS = ['json', 'yml', 'yaml', 'toml', 'js', 'cjs', 'mjs', 'ts', 'mts', 'cts']
 const FLOW_FILE_EXTENSIONS = ['yml', 'yaml', 'json', 'toml', 'js', 'cjs', 'mjs', 'ts', 'mts', 'cts']
@@ -84,6 +84,7 @@ async function readNaxConfig(projectRoot) {
   return {}
 }
 
+/** @param {Record<string, any>} param0 */
 async function projectFlowDirs({ projectRoot, flowsDir, flowsDirs, env = process.env } = {}) {
   const root = projectRoot ? path.resolve(projectRoot) : ''
   if (!root) return []
@@ -162,6 +163,7 @@ function normalizeBoolean(value, fallback = false) {
   return fallback
 }
 
+/** @param {any} raw @param {Record<string, any>} param1 */
 function normalizeFlow(raw, { id, dir, file, source = {} }) {
   const flowId = String(raw.id || id || path.basename(dir))
   const defaults = raw.defaults && typeof raw.defaults === 'object' ? raw.defaults : {}

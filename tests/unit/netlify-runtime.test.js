@@ -1,7 +1,7 @@
 const test = require('node:test')
 const assert = require('node:assert/strict')
 
-const { classifyNetlifyRuntime, isNetlifyAgentRunner, isTruthy } = require('../../lib/netlify-runtime')
+const { classifyNetlifyRuntime, isNetlifyAgentRunner, isTruthy } = require('../../src/netlify-runtime')
 const { _private } = require('../../bin/nax')
 
 test('classifyNetlifyRuntime detects local environments', () => {

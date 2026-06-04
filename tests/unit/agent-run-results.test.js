@@ -15,8 +15,8 @@ const {
   normalizeGithubRunResult,
   normalizeUsage,
   usageSummariesForRunState,
-} = require('../../lib/agent-run-results')
-const { parseRunnerResultMarker } = require('../../lib/comment-markers')
+} = require('../../src/agent-run-results')
+const { parseRunnerResultMarker } = require('../../src/comment-markers')
 
 test('normalizeUsage standardizes compact usage fields from snake_case and camelCase payloads', () => {
   assert.deepEqual(normalizeUsage({

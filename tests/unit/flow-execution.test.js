@@ -11,6 +11,7 @@ function tmpRoot() {
   return fs.mkdtempSync(path.join(os.tmpdir(), 'nax-flow-execution-'))
 }
 
+/** @param {any} projectRoot @param {any} id @param {Record<string, any>} param2 */
 function writeProjectFlow(projectRoot, id, { title = id, promptBody = 'Prompt body' } = {}) {
   const flowDir = path.join(projectRoot, '.github', 'nax-flows', id)
   fs.mkdirSync(path.join(flowDir, 'prompts'), { recursive: true })
@@ -294,7 +295,9 @@ test('archiveEligibleCompletedLocalRuns defers runs needed by follow-up steps an
       agent: 'codex',
       status: 'completed',
       runnerId: 'runner-1',
+      sessionId: 'session-1',
       resultText: 'follow-up result',
+      usage: { totalCreditsCost: 0, stepsCount: 0, totalTokens: 0 },
     }],
   })
 

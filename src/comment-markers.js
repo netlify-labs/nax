@@ -17,6 +17,7 @@ function validateSegment(field, value) {
   }
 }
 
+/** @param {Record<string, any>} param0 */
 function renderPromptMarker({ promptName, model, date }) {
   validateSegment('promptName', promptName)
   validateSegment('model', model)

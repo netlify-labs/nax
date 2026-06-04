@@ -29,6 +29,7 @@ function sessionUrl(agentRunUrl, id) {
   return agentRunUrl.includes('?') ? `${agentRunUrl}&session=${id}` : `${agentRunUrl}?session=${id}`
 }
 
+/** @param {Record<string, any>} param0 */
 function persistRemoteSession({ projectRoot, runner, session, source }) {
   const id = sessionId(session)
   if (!id) return null
@@ -55,6 +56,7 @@ function persistRemoteSession({ projectRoot, runner, session, source }) {
   })
 }
 
+/** @param {Record<string, any>} param0 */
 function syncAgentRunner({ projectRoot, runner, env, runCommand } = {}) {
   if (!projectRoot) throw new Error('Project root is required to sync Agent Runner artifacts.')
   if (!runner?.runnerId) throw new Error('Agent Runner ID is required to sync remote sessions.')
@@ -97,6 +99,7 @@ function syncAgentRunner({ projectRoot, runner, env, runCommand } = {}) {
   }
 }
 
+/** @param {Record<string, any>} param0 */
 function syncLastAgentRunner({ projectRoot, env, runCommand } = {}) {
   const [runner] = listAgentRunnerArtifacts(projectRoot)
   if (!runner) {

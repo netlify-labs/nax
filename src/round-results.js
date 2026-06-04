@@ -12,6 +12,7 @@ const STRUCTURED_HEADING_PATTERN = /^##\s+2\.\s+Structured\s+(Findings|Consensus
 const NEXT_SECTION_PATTERN = /^##\s+3\./m
 const FENCED_JSON_PATTERN = /```json\s*\n([\s\S]*?)\n```/
 
+/** @param {Record<string, any>} param0 */
 function loadIssueWithComments({ repo, issueNumber }) {
   const result = spawnSync(
     'gh',
@@ -35,6 +36,7 @@ function loadIssueWithComments({ repo, issueNumber }) {
   return JSON.parse(result.stdout)
 }
 
+/** @param {any} comments @param {Record<string, any>} param1 */
 function pickAgentReplyComments(comments, { all = false, requireResultMarker = false } = {}) {
   if (!Array.isArray(comments)) return []
 
@@ -86,6 +88,7 @@ function modelLabel(model) {
   return model.charAt(0).toUpperCase() + model.slice(1)
 }
 
+/** @param {Record<string, any>} param0 */
 function fetchRoundResults({
   repo,
   issueNumbers,
@@ -160,6 +163,7 @@ function extractStructuredSection(body) {
   }
 }
 
+/** @param {any} body @param {Record<string, any>} param1 */
 function renderReplyBody(body, { structuredOnly }) {
   const trimmed = String(body || '').trim()
   if (!structuredOnly) return trimmed
@@ -179,6 +183,7 @@ function renderReplyBody(body, { structuredOnly }) {
   ].join('\n')
 }
 
+/** @param {Record<string, any>} param0 */
 function formatRoundResults({ heading = 'Prior Round Outputs', results, structuredOnly = false }) {
   if (!Array.isArray(results) || results.length === 0) return ''
 

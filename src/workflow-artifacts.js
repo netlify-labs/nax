@@ -159,6 +159,7 @@ function resultUrlForRun(run = {}) {
   return links.sessionUrl || links.agentRunUrl || links.commentUrl || links.issueUrl || links.deployUrl || links.prUrl || ''
 }
 
+/** @param {Record<string, any>} param0 */
 function buildAgentJson({ runState = {}, step = {}, run = {}, attemptNumber = null } = {}) {
   return {
     schemaVersion: 1,
@@ -180,6 +181,7 @@ function buildAgentJson({ runState = {}, step = {}, run = {}, attemptNumber = nu
   }
 }
 
+/** @param {Record<string, any>} param0 */
 function buildAgentMarkdown({ runState, step, run }) {
   const title = `${run.agent || 'Agent'} · ${step.title || step.id || 'Step'}`
   const lines = [
@@ -238,6 +240,7 @@ function runArtifactLinks(runState, step, run, linkPrefix = '') {
   return links
 }
 
+/** @param {Record<string, any>} param0 */
 function buildStepJson({ runState = {}, step = {}, ordinal = stepOrdinal(runState, step) } = {}) {
   const usage = usageSummariesForRunState({ steps: [step] }).steps[0]?.usage || {}
   const runsDir = runsArtifactsDir(runState, step)
@@ -274,6 +277,7 @@ function buildStepJson({ runState = {}, step = {}, ordinal = stepOrdinal(runStat
   }
 }
 
+/** @param {Record<string, any>} param0 */
 function buildStepMarkdown({ runState, step, linkPrefix = '' }) {
   const usage = usageSummariesForRunState({ steps: [step] }).steps[0]?.summary || ''
   const currentDir = linkPrefix ? artifactsRootForRunState(runState) : stepArtifactsDir(runState, step)

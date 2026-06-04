@@ -1,7 +1,7 @@
 const test = require('node:test')
 const assert = require('node:assert/strict')
 
-const { buildIssueBody, buildIssueTitle, listPromptNames, loadPrompt } = require('../../lib/prompts')
+const { buildIssueBody, buildIssueTitle, listPromptNames, loadPrompt } = require('../../src/prompts')
 
 const fakePrompt = {
   name: 'summarize-consensus',

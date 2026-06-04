@@ -4,10 +4,10 @@ const fs = require('fs')
 const os = require('os')
 const path = require('path')
 
-const { persistAgentRunnerArtifact } = require('../../lib/agent-runner-artifacts')
-const { persistAgentSessionArtifact } = require('../../lib/agent-session-artifacts')
-const { listHandoffSources, readHandoffSource } = require('../../lib/handoff-sources')
-const { persistWorkflowArtifacts } = require('../../lib/workflow-artifacts')
+const { persistAgentRunnerArtifact } = require('../../src/agent-runner-artifacts')
+const { persistAgentSessionArtifact } = require('../../src/agent-session-artifacts')
+const { listHandoffSources, readHandoffSource } = require('../../src/handoff-sources')
+const { persistWorkflowArtifacts } = require('../../src/workflow-artifacts')
 
 function tmpRoot() {
   return fs.mkdtempSync(path.join(os.tmpdir(), 'nax-handoff-sources-'))

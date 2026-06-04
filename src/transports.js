@@ -51,6 +51,7 @@ function hasLocalNetlifySite(projectRoot, env = process.env) {
   return Boolean(readLinkedSiteId(projectRoot, env))
 }
 
+/** @param {Record<string, any>} param0 */
 function detectTransports({ projectRoot = process.cwd(), env = process.env } = {}) {
   const githubReady = hasAgentRunnerAction(projectRoot)
   const localCliReady = hasNetlifyCli()
@@ -61,8 +62,8 @@ function detectTransports({ projectRoot = process.cwd(), env = process.env } = {
       title: 'GitHub Actions via agent-runner-action',
       available: githubReady,
       reason: githubReady
-        ? 'Detected netlify-labs/agent-runner-action in .github/workflows.'
-        : 'No github action with netlify-labs/agent-runner-action detected.',
+        ? 'netlify-labs/agent-runner-action workflow detected'
+        : 'No GitHub action detected',
     },
     {
       id: NETLIFY_API_TRANSPORT,

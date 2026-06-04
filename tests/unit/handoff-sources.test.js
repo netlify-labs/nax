@@ -68,6 +68,69 @@ test('readHandoffSource uses a newer standalone agent session when it is newest'
   const source = readHandoffSource(projectRoot)
   assert.equal(source.kind, 'agent-session')
   assert.equal(source.id, 'session-1')
+  assert.equal(source.summaryText, 'Session result.')
+})
+
+test('readHandoffSource uses runner session result text for agent runner handoff', () => {
+  const projectRoot = tmpRoot()
+  const session = persistAgentSessionArtifact({
+    projectRoot,
+    run: {
+      agent: 'codex',
+      status: 'completed',
+      runnerId: 'runner-1',
+      sessionId: 'session-1',
+      resultText: 'Full session result.',
+    },
+    updatedAt: '2026-05-20T22:00:00.000Z',
+  })
+  persistAgentRunnerArtifact({ projectRoot, runnerId: 'runner-1', session: session.session })
+
+  const source = readHandoffSource(projectRoot, { kind: 'agent-runner', id: 'runner-1' })
+
+  assert.equal(source.kind, 'agent-runner')
+  assert.match(source.summaryText, /^# Codex Agent Runner · runner-1/)
+  assert.match(source.summaryText, /- Runner ID: `runner-1`/)
+  assert.match(source.summaryText, /---\n\nFull session result\./)
+  assert.doesNotMatch(source.summaryText, /## Sessions/)
+})
+
+test('readHandoffSource concatenates multiple runner session results', () => {
+  const projectRoot = tmpRoot()
+  const first = persistAgentSessionArtifact({
+    projectRoot,
+    run: {
+      agent: 'codex',
+      status: 'completed',
+      runnerId: 'runner-1',
+      sessionId: 'session-1',
+      resultText: 'First session result.',
+    },
+    updatedAt: '2026-05-20T20:00:00.000Z',
+  })
+  const second = persistAgentSessionArtifact({
+    projectRoot,
+    run: {
+      agent: 'codex',
+      status: 'completed',
+      runnerId: 'runner-1',
+      sessionId: 'session-2',
+      resultText: 'Second session result.',
+    },
+    updatedAt: '2026-05-20T21:00:00.000Z',
+  })
+  persistAgentRunnerArtifact({ projectRoot, runnerId: 'runner-1', session: first.session })
+  persistAgentRunnerArtifact({ projectRoot, runnerId: 'runner-1', session: second.session })
+
+  const source = readHandoffSource(projectRoot, { kind: 'agent-runner', id: 'runner-1' })
+
+  assert.match(source.summaryText, /^# Codex Agent Runner · runner-1/)
+  assert.match(source.summaryText, /---\n\n## Session session-1/)
+  assert.match(source.summaryText, /## Session session-1/)
+  assert.match(source.summaryText, /Source: \.nax\/agent-sessions\/session-1\/result\.md/)
+  assert.match(source.summaryText, /First session result\./)
+  assert.match(source.summaryText, /## Session session-2/)
+  assert.match(source.summaryText, /Second session result\./)
 })
 
 test('readHandoffSource can select an explicit workflow source', () => {

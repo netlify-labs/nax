@@ -648,6 +648,24 @@ test('copyToClipboard uses the platform clipboard command', () => {
   assert.deepEqual(calls, [{ cmd: 'pbcopy', args: [], input: 'summary' }])
 })
 
+test('openHandoffSource opens the absolute summary path', async () => {
+  const projectRoot = tmpRoot()
+  const summaryPath = path.join(projectRoot, '.nax/agent-runners/runner-1/summary.md')
+  fs.mkdirSync(path.dirname(summaryPath), { recursive: true })
+  fs.writeFileSync(summaryPath, '# Summary\n')
+  const calls = []
+
+  const opened = await _private.openHandoffSource({
+    displayPath: '.nax/agent-runners/runner-1/summary.md',
+  }, {
+    projectRoot,
+    opener: async (target) => calls.push(target),
+  })
+
+  assert.equal(opened, summaryPath)
+  assert.deepEqual(calls, [summaryPath])
+})
+
 test('handoff source flags map to explicit artifact queries', () => {
   assert.deepEqual(_private.handoffSourceQuery({ runId: 'workflow-1', options: {} }), {
     kind: 'workflow',
@@ -715,10 +733,11 @@ test('handoff source details summarize latest workflow content', () => {
 
 test('handoff source menu exposes latest actions before previous-source pickers', () => {
   const latestSource = {
-    kind: 'workflow',
-    id: 'workflow-1',
-    title: 'Do Next',
-    displayPath: '.nax/workflows/workflow-1/artifacts/summary.md',
+    kind: 'agent-runner',
+    id: '6a20be9c14c516253be5fe14',
+    title: 'codex runner 6a20be9c14c516253be5fe14',
+    displayPath: '.nax/agent-runners/6a20be9c14c516253be5fe14/summary.md',
+    source: { agent: 'codex' },
   }
   const options = _private.handoffSourceMenuOptions({
     latestSource,
@@ -731,17 +750,19 @@ test('handoff source menu exposes latest actions before previous-source pickers'
   })
 
   assert.deepEqual(options.map((option) => option.label), [
-    'Copy latest results to clipboard',
-    'Copy path to latest results',
-    'Run another AI workflow with latest result: Do Next',
+    'Copy latest results markdown to clipboard',
+    'Copy latest results filePath to clipboard',
+    'Open latest results in code editor',
+    'Run followup prompt with previous results',
     'Pick previous workflow',
     'Pick previous agent session',
     'Pick previous agent runner',
     'Cancel',
   ])
-  assert.match(options[0].hint, /Do Next/)
-  assert.match(options[0].hint, /\.nax\/workflows\/workflow-1\/artifacts\/summary\.md/)
-  assert.equal(options[1].hint, '.nax/workflows/workflow-1/artifacts/summary.md')
+  assert.equal(options[0].hint, 'from codex .nax/agent-runners/6a20be9c14c516253be5fe14/summary.md')
+  assert.equal(options[1].hint, '.nax/agent-runners/6a20be9c14c516253be5fe14/summary.md')
+  assert.equal(options[2].hint, '.nax/agent-runners/6a20be9c14c516253be5fe14/summary.md')
+  assert.equal(options[3].hint, 'codex .nax/agent-runners/6a20be9c14c516253be5fe14/summary.md')
 })
 
 test('non-TTY progress reporter repeats unchanged run status after heartbeat interval', () => {

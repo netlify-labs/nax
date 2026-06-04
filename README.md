@@ -144,9 +144,10 @@ nax handoff
 
 │
 ◆  Hand off previous results
-│  ● Copy latest results to clipboard (claude runner 6a0e6eedd90fa5ba6cbb2f6a)
-│  ○ Copy path to latest results
-│  ○ Run another AI workflow with latest result: claude runner 6a0e6eedd90fa5ba6cbb2f6a
+│  ● Copy latest results markdown to clipboard (from claude .nax/agent-runners/6a0e6eedd90fa5ba6cbb2f6a/summary.md)
+│  ○ Copy latest results filePath to clipboard (.nax/agent-runners/6a0e6eedd90fa5ba6cbb2f6a/summary.md)
+│  ○ Open latest results in code editor (.nax/agent-runners/6a0e6eedd90fa5ba6cbb2f6a/summary.md)
+│  ○ Run followup prompt with previous results (claude .nax/agent-runners/6a0e6eedd90fa5ba6cbb2f6a/summary.md)
 
 Copied .nax/agent-runners/6a0e6eedd90fa5ba6cbb2f6a/summary.md to clipboard
 ```

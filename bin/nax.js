@@ -1171,6 +1171,18 @@ function formatHandoffSourceHint(source = {}, projectRoot = process.cwd()) {
   return `${formatHandoffSourceKind(source.kind)} · ${displayPath}`
 }
 
+function formatLatestHandoffSourceHint(source = {}, projectRoot = process.cwd()) {
+  const displayPath = source.displayPath || relativeDisplayPath(projectRoot, source.summaryPath || '')
+  const payload = handoffSourcePayload(source)
+  const agent = String(payload.agent || source.agent || '').trim().toLowerCase()
+  const origin = agent || String(source.title || source.id || 'latest').trim()
+  return ['from', origin, displayPath].filter(Boolean).join(' ')
+}
+
+function formatCompactHandoffSourceHint(source = {}, projectRoot = process.cwd()) {
+  return formatLatestHandoffSourceHint(source, projectRoot).replace(/^from\s+/, '')
+}
+
 function truncateOneLine(value, max = 160) {
   const text = String(value || '').replace(/\s+/g, ' ').trim()
   if (text.length <= max) return text
@@ -1335,18 +1347,23 @@ function handoffSourceMenuOptions({ sources = [], latestSource = {}, projectRoot
   const options = [
     {
       value: 'copy-latest',
-      label: 'Copy latest results to clipboard',
-      hint: `${latestSource.title || latestSource.id || 'Latest'} · ${formatHandoffSourceHint(latestSource, projectRoot)}`,
+      label: 'Copy latest results markdown to clipboard',
+      hint: formatLatestHandoffSourceHint(latestSource, projectRoot),
     },
     {
       value: 'copy-latest-path',
-      label: 'Copy path to latest results',
+      label: 'Copy latest results filePath to clipboard',
+      hint: latestSource.displayPath || relativeDisplayPath(projectRoot, latestSource.summaryPath || ''),
+    },
+    {
+      value: 'open-latest',
+      label: 'Open latest results in code editor',
       hint: latestSource.displayPath || relativeDisplayPath(projectRoot, latestSource.summaryPath || ''),
     },
     {
       value: 'workflow-latest',
-      label: `Run another AI workflow with latest result: ${latestSource.title || latestSource.id || 'Latest'}`,
-      hint: formatHandoffSourceHint(latestSource, projectRoot),
+      label: 'Run followup prompt with previous results',
+      hint: formatCompactHandoffSourceHint(latestSource, projectRoot),
     },
   ]
   const hasKind = (kind) => sources.some((source) => source.kind === kind)
@@ -1746,6 +1763,7 @@ async function chooseHandoffSourceInteractively({ projectRoot, latestSource }) {
   if (clack.isCancel(selected) || selected === 'cancel') return { action: 'cancel' }
   if (selected === 'copy-latest') return { source: latestSource, action: 'copy' }
   if (selected === 'copy-latest-path') return { source: latestSource, action: 'copy-path' }
+  if (selected === 'open-latest') return { source: latestSource, action: 'open' }
   if (selected === 'workflow-latest') return { source: latestSource, action: 'workflow' }
 
   const [, kind] = String(selected).split(':')
@@ -1833,6 +1851,11 @@ async function handleHandoff(runId, options) {
   if (action === 'copy-path') {
     const command = copyToClipboard(handoff.displayPath)
     console.log(`\nCopied ${handoff.displayPath} path to clipboard with ${command}.`)
+    return
+  }
+  if (action === 'open') {
+    await openHandoffSource(handoff, { projectRoot })
+    console.log(`\nOpened ${handoff.displayPath}.`)
     return
   }
 
@@ -2440,6 +2463,16 @@ function copyToClipboard(text, { platform = process.platform, runCommand = spawn
   throw new Error(platform === 'darwin'
     ? 'Could not copy to clipboard with pbcopy.'
     : 'Could not copy to clipboard. Install wl-copy or xclip, or open the summary file directly.')
+}
+
+async function openHandoffSource(source = {}, { projectRoot = process.cwd(), opener } = {}) {
+  const summaryPath = source.summaryPath || source.displayPath || ''
+  if (!summaryPath) throw new Error('No previous results file path is available to open.')
+  const absolutePath = path.isAbsolute(summaryPath) ? summaryPath : path.resolve(projectRoot, summaryPath)
+  if (!fs.existsSync(absolutePath)) throw new Error(`Previous results file does not exist: ${absolutePath}`)
+  const openFile = opener || (await import('open')).default
+  await openFile(absolutePath)
+  return absolutePath
 }
 
 function artifactDirectoryHasFiles(dir) {
@@ -4981,7 +5014,9 @@ module.exports = {
     findGithubRunnerFailures,
     findRunStateForHandoff,
     formatDidYouKnowLines,
+    formatCompactHandoffSourceHint,
     formatHandoffSourceHint,
+    formatLatestHandoffSourceHint,
     formatNetlifyConfigAmbiguity,
     formatHandoffSourceKind,
     formatHandoffSourceLabel,
@@ -4999,6 +5034,7 @@ module.exports = {
     isAdHocRunTarget,
     netlifyConfigChoiceHint,
     netlifyProjectChoiceLabel,
+    openHandoffSource,
     orderSingleRunTransports,
     resolveProjectRoot,
     nextLocalStepMessage,

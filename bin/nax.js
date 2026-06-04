@@ -6,7 +6,7 @@ const path = require('path')
 const readline = require('readline')
 const { spawnSync } = require('child_process')
 const { Command, Option } = require('commander')
-const { makeBox, makeHorizontalBoxes } = require('@davidwells/box-logger')
+const { makeBox, makeHorizontalBoxes, makeStackedBoxes } = require('@davidwells/box-logger')
 const flavorMessages = require('../src/flavor-messages.json')
 const {
   DEFAULT_MODELS,
@@ -1136,9 +1136,43 @@ async function handleComment(promptName, options) {
 
 async function handleList(options = {}) {
   const projectRoot = resolveProjectRoot(options.projectRoot, { cwd: process.cwd() })
-  for (const flow of await listFlows(flowLoadOptions(options, projectRoot))) {
-    console.log(`${flow.id}\t${flow.title}\t${flow.description}\t${flow.sourceLabel || flow.source || ''}`)
+  const flows = await listFlows(flowLoadOptions(options, projectRoot))
+  console.log(formatFlowList(flows))
+}
+
+function formatFlowListBox(flow = {}, { width = 100 } = {}) {
+  const innerWidth = Math.max(20, width - 6)
+  const id = flow.id || 'workflow'
+  const title = flow.title || id
+  const description = flow.description ? wordWrap(flow.description, innerWidth) : ''
+  return {
+    title: {
+      left: `${id} - ${title}`,
+      right: flow.sourceLabel || flow.source || '',
+      truncate: true,
+    },
+    content: description,
   }
+}
+
+function formatFlowList(flows = [], { columns = process.stdout.columns || 100 } = {}) {
+  const width = Math.min(120, Math.max(72, Math.floor(columns * 0.95)))
+  if (flows.length === 0) {
+    return makeBox({
+      title: 'Workflows',
+      content: 'No workflows found.',
+      borderStyle: 'rounded',
+      borderColor: MUTED_COLOR,
+      width,
+    })
+  }
+  return makeStackedBoxes(flows.map((flow) => formatFlowListBox(flow, { width })), {
+    borderText: `Workflows (${flows.length})`,
+    borderStyle: 'rounded',
+    borderColor: TEAL_COLOR,
+    disableTitleSeparator: true,
+    maxWidth: width,
+  })
 }
 
 function formatRunTimestamp(value) {
@@ -5384,6 +5418,8 @@ module.exports = {
     formatCompactHandoffSourceHint,
     formatHandoffSourceHint,
     formatLatestHandoffSourceHint,
+    formatFlowList,
+    formatFlowListBox,
     formatNetlifyConfigAmbiguity,
     formatHandoffSourceKind,
     formatHandoffSourceLabel,

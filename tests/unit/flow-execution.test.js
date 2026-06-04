@@ -1649,6 +1649,39 @@ test('workflowPickerHint uses compact bundled flow descriptions without source l
   }), 'Find bottlenecks and measurement gaps')
 })
 
+test('formatFlowList renders workflows as stacked boxes', () => {
+  const output = stripAnsi(_private.formatFlowList([
+    {
+      id: 'local-smoke-test',
+      title: 'Local Smoke Test',
+      description: 'Minimal project-local workflow for verifying nax discovers project flow directories.',
+      source: 'project',
+      sourceLabel: 'project .github/nax-flows',
+    },
+    {
+      id: 'review',
+      title: 'Review',
+      description: 'Review, cross-review, and synthesize findings with multiple Netlify agents.',
+      source: 'bundled',
+      sourceLabel: 'bundled',
+    },
+  ], { columns: 84 }))
+
+  assert.match(output, /local-smoke-test/)
+  assert.match(output, /Local Smoke Test/)
+  assert.match(output, /project \.github\/nax-flows/)
+  assert.match(output, /review/)
+  assert.match(output, /Review/)
+  assert.match(output, /bundled/)
+  assert.equal(output.split('\n').filter((line) => line.startsWith('╭')).length, 1)
+  assert.equal(output.split('\n').filter((line) => line.startsWith('╰')).length, 1)
+  assert.doesNotMatch(output, /\t/)
+  assert.doesNotMatch(output, /\n\n/)
+  for (const line of output.split('\n')) {
+    assert.ok(line.length <= 80, `line exceeded requested width: ${line}`)
+  }
+})
+
 test('workflowPickerLabel names project workflows in the main run menu', () => {
   assert.equal(_private.workflowPickerLabel({
     source: 'project',

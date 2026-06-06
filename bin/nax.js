@@ -3718,6 +3718,29 @@ function physicalRowCount(lines, columns) {
   return count
 }
 
+/** @param {Record<string, any>} param0 */
+function clearRenderedProgressFrame({
+  rows = 0,
+  lines = [],
+  columns,
+  output = process.stdout,
+  controls = readline,
+} = {}) {
+  const previousColumns = Number(columns) || 0
+  const currentColumns = Number(output.columns) || Number(process.stdout.columns) || previousColumns
+  const clearRows = Math.max(
+    Number(rows) || 0,
+    physicalRowCount(lines, previousColumns),
+    physicalRowCount(lines, currentColumns),
+  )
+  if (clearRows > 0) {
+    controls.moveCursor(output, 0, -clearRows)
+    controls.cursorTo(output, 0)
+    controls.clearScreenDown(output)
+  }
+  return clearRows
+}
+
 /** @param {any} text @param {Record<string, any>} param1 */
 function wrapLine(text, { width = 100, indent = '' } = {}) {
   const maxWidth = Math.max(20, width)
@@ -3901,6 +3924,8 @@ function makeStepProgressReporter({
   }
   let frame = 0
   let renderedLines = 0
+  let renderedFrameLines = []
+  let renderedColumns = process.stdout.columns
   let finished = false
   let didYouKnowIndex = 0
   let nextDidYouKnowAt = Date.now() + DID_YOU_KNOW_ROTATE_MS
@@ -3945,13 +3970,15 @@ function makeStepProgressReporter({
   }
   const writeLines = (lines) => {
     if (finished) return
-    if (renderedLines > 0) {
-      readline.moveCursor(process.stdout, 0, -renderedLines)
-      readline.cursorTo(process.stdout, 0)
-      readline.clearScreenDown(process.stdout)
-    }
+    clearRenderedProgressFrame({
+      rows: renderedLines,
+      lines: renderedFrameLines,
+      columns: renderedColumns,
+    })
     process.stdout.write(`${lines.join('\n')}\n`)
     renderedLines = physicalRowCount(lines, process.stdout.columns)
+    renderedFrameLines = lines
+    renderedColumns = process.stdout.columns
   }
   const redraw = () => {
     frame += 1
@@ -3964,14 +3991,16 @@ function makeStepProgressReporter({
   const stop = (msg) => {
     finished = true
     clearInterval(timer)
-    if (renderedLines > 0) {
-      readline.moveCursor(process.stdout, 0, -renderedLines)
-      readline.cursorTo(process.stdout, 0)
-      readline.clearScreenDown(process.stdout)
-    }
+    clearRenderedProgressFrame({
+      rows: renderedLines,
+      lines: renderedFrameLines,
+      columns: renderedColumns,
+    })
     const lines = renderLines()
     process.stdout.write(`${lines.join('\n')}\n`)
     renderedLines = 0
+    renderedFrameLines = []
+    renderedColumns = process.stdout.columns
     if (msg) console.log(`\n${msg}`)
   }
   return {
@@ -6135,6 +6164,7 @@ module.exports = {
     outputBudgetEnabled,
     shouldArchiveCompletedStep,
     shouldPollGithubRun,
+    clearRenderedProgressFrame,
     physicalRowCount,
     visibleLength,
     normalizeHandoffSourceKind,

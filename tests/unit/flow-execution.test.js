@@ -559,6 +559,32 @@ test('physicalRowCount counts wrapped rows for lines wider than the terminal', (
   assert.equal(_private.physicalRowCount([ansi], 80), 1)
 })
 
+test('progress frame clearing accounts for terminal width changes', () => {
+  const calls = []
+  const output = { columns: 60 }
+  const lines = ['x'.repeat(119), 'short']
+  const controls = {
+    moveCursor: (_output, dx, dy) => calls.push(['moveCursor', dx, dy]),
+    cursorTo: (_output, x) => calls.push(['cursorTo', x]),
+    clearScreenDown: () => calls.push(['clearScreenDown']),
+  }
+
+  const cleared = _private.clearRenderedProgressFrame({
+    rows: 2,
+    lines,
+    columns: 120,
+    output,
+    controls,
+  })
+
+  assert.equal(cleared, 3)
+  assert.deepEqual(calls, [
+    ['moveCursor', 0, -3],
+    ['cursorTo', 0],
+    ['clearScreenDown'],
+  ])
+})
+
 test('Did you know progress tip wraps its header instead of overflowing one logical line', () => {
   const lines = _private.formatDidYouKnowLines([
     '♿ Accessibility',

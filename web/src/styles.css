@@ -230,22 +230,12 @@ body {
   overflow-wrap: anywhere;
 }
 
-.path-code-row {
-  position: relative;
-}
-
-.path-code-openable {
-  padding-right: 42px;
-}
-
-.path-open-button {
-  position: absolute;
-  top: 7px;
-  right: 7px;
-}
-
 .field-value {
   overflow-wrap: anywhere;
+}
+
+.artifact-actions {
+  display: inline-flex;
 }
 
 .prompt-markdown {

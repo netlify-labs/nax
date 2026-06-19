@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
-import { ActionIcon, Alert, Anchor, Badge, Box, Code, Group, Modal, Paper, ScrollArea, Stack, Text, Timeline, Title, Tooltip, UnstyledButton } from '@mantine/core'
-import { Check, ExternalLink, GitBranch, History, RotateCcw } from 'lucide-react'
+import { ActionIcon, Alert, Anchor, Badge, Box, Group, Modal, Paper, ScrollArea, Stack, Text, Timeline, Title, Tooltip, UnstyledButton } from '@mantine/core'
+import { Check, Copy, ExternalLink, GitBranch, History, RotateCcw } from 'lucide-react'
 import { getRunDetails, openLocalFile } from '../api'
 import { AgentIcon } from './AgentIcon'
 import { MarkdownRenderer } from './MarkdownRenderer'
@@ -370,9 +370,9 @@ export function RecentRuns({ runs, selectedRunId, onSelect, onResume }: Props) {
                           {activeEntry.status}
                         </Badge>
                       ) : null}
+                      {!activeEntry.section && activeEntry.absolutePath ? <ArtifactActions filePath={activeEntry.absolutePath} /> : null}
                     </Group>
                     {activeEntry.section ? <RunSectionMeta section={activeEntry.section} /> : null}
-                    {!activeEntry.section && activeEntry.absolutePath ? <ArtifactPath filePath={activeEntry.absolutePath} /> : null}
                     <Box className="prompt-markdown run-details-markdown">
                       {activeEntry.markdown ? (
                         <MarkdownRenderer>{activeEntry.markdown}</MarkdownRenderer>
@@ -427,15 +427,16 @@ function RunSectionMeta({ section }: { section: RunDetailsSection }) {
         {section.runnerId ? <Badge variant="light" color="gray">runner {section.runnerId}</Badge> : null}
         {section.sessionId ? <Badge variant="light" color="gray">session {section.sessionId}</Badge> : null}
         {sessionUrl ? <Anchor href={sessionUrl} target="_blank" rel="noreferrer" size="xs">Open in Netlify</Anchor> : null}
+        {section.absolutePath ? <ArtifactActions filePath={section.absolutePath} /> : null}
       </Group>
-      {section.absolutePath ? <ArtifactPath filePath={section.absolutePath} /> : null}
     </Stack>
   )
 }
 
-function ArtifactPath({ filePath }: { filePath: string }) {
+function ArtifactActions({ filePath }: { filePath: string }) {
   const [error, setError] = useState('')
   const [opening, setOpening] = useState(false)
+  const [copied, setCopied] = useState(false)
 
   const openPath = async () => {
     setOpening(true)
@@ -449,25 +450,30 @@ function ArtifactPath({ filePath }: { filePath: string }) {
     }
   }
 
+  const copyPath = async () => {
+    setError('')
+    try {
+      await navigator.clipboard.writeText(filePath)
+      setCopied(true)
+      window.setTimeout(() => setCopied(false), 1200)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err))
+    }
+  }
+
   return (
-    <Box>
-      <Box className="path-code-row">
-        <Code block className="path-code path-code-openable">{filePath}</Code>
-        <Tooltip label="Open file">
-          <ActionIcon
-            className="path-open-button"
-            aria-label="Open file"
-            variant="subtle"
-            color="gray"
-            size="sm"
-            loading={opening}
-            onClick={openPath}
-          >
-            <ExternalLink size={14} />
-          </ActionIcon>
-        </Tooltip>
-      </Box>
+    <Group gap={4} wrap="nowrap" className="artifact-actions">
+      <Tooltip label={copied ? 'Copied' : 'Copy file path'}>
+        <ActionIcon aria-label="Copy file path" variant="subtle" color="gray" size="sm" onClick={copyPath}>
+          <Copy size={14} />
+        </ActionIcon>
+      </Tooltip>
+      <Tooltip label="Open file">
+        <ActionIcon aria-label="Open file" variant="subtle" color="gray" size="sm" loading={opening} onClick={openPath}>
+          <ExternalLink size={14} />
+        </ActionIcon>
+      </Tooltip>
       {error ? <Text size="xs" c="red" mt={4}>{error}</Text> : null}
-    </Box>
+    </Group>
   )
 }

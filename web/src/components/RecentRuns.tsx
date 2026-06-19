@@ -115,8 +115,8 @@ function buildTimelineEntries(
   const entries: TimelineEntry[] = [{
     id: 'summary',
     kind: 'summary',
-    title: 'Results',
-    subtitle: run?.status || 'summary',
+    title: run ? `"${workflowName(run)}" Workflow Completed` : 'Workflow Completed',
+    subtitle: 'click to view results',
     status: run?.status || 'completed',
     path: details.summaryPath || run?.summaryPath || runId(run || {}),
     markdown: details.summaryMarkdown,

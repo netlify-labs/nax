@@ -162,6 +162,7 @@ body {
 
 .canvas-shell {
   --workflow-edge-color: light-dark(var(--mantine-color-gray-6), var(--mantine-color-dark-1));
+  --workflow-edge-done-color: light-dark(var(--mantine-color-green-6), var(--mantine-color-green-4));
   position: relative;
   min-width: 0;
   min-height: 0;
@@ -628,6 +629,10 @@ body {
 .react-flow__edge.animated .react-flow__edge-path {
   stroke-dasharray: 7 7;
   animation: workflow-edge-dash 900ms linear infinite;
+}
+
+.react-flow__edge.workflow-edge-done .react-flow__edge-path {
+  stroke: var(--workflow-edge-done-color);
 }
 
 @keyframes workflow-edge-dash {

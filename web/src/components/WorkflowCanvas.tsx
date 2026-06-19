@@ -18,6 +18,9 @@ const nodeTypes = {
   workflowStep: WorkflowNode,
 }
 
+const completedStatuses = new Set(['completed', 'dry-run'])
+const activeOrCompletedStatuses = new Set(['running', 'submitted', 'completed', 'dry-run'])
+
 type Props = {
   graph: WorkflowGraph | null
   loading: boolean
@@ -37,14 +40,29 @@ function FlowBody({ graph, loading, onSelectNode, fitViewKey }: FlowBodyProps) {
   const { fitView } = useReactFlow()
   const lastFitViewKey = useRef('')
   const nodes = useMemo(() => (graph?.nodes || []) as Node[], [graph])
-  const edges = useMemo(() => (graph?.edges || []).map(({ label: _label, ...edge }) => ({
-    ...edge,
-    animated: true,
-    markerEnd: {
-      type: MarkerType.ArrowClosed,
-      color: 'var(--workflow-edge-color)',
-    },
-  })) as Edge[], [graph])
+  const edges = useMemo(() => {
+    const nodeStatuses = new Map(
+      nodes.map((node) => [node.id, (node.data as WorkflowGraphNodeData).status || '']),
+    )
+    return (graph?.edges || []).map(({ label: _label, ...edge }) => {
+      const sourceStatus = nodeStatuses.get(edge.source) || ''
+      const targetStatus = nodeStatuses.get(edge.target) || ''
+      const doneEdge = completedStatuses.has(sourceStatus) && activeOrCompletedStatuses.has(targetStatus)
+      const edgeColor = doneEdge ? 'var(--workflow-edge-done-color)' : 'var(--workflow-edge-color)'
+      return {
+        ...edge,
+        animated: true,
+        className: doneEdge ? 'workflow-edge-done' : undefined,
+        style: {
+          stroke: edgeColor,
+        },
+        markerEnd: {
+          type: MarkerType.ArrowClosed,
+          color: edgeColor,
+        },
+      }
+    }) as Edge[]
+  }, [graph, nodes])
 
   useEffect(() => {
     if (!graph) return

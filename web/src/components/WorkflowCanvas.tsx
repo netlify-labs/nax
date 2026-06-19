@@ -1,4 +1,4 @@
-import { useEffect, useMemo } from 'react'
+import { useEffect, useMemo, useRef } from 'react'
 import { Box, Text } from '@mantine/core'
 import {
   Background,
@@ -26,8 +26,13 @@ type Props = {
   onSelectNode: (node: WorkflowGraphNodeData | null) => void
 }
 
-function FlowBody({ graph, loading, onSelectNode }: Props) {
+type FlowBodyProps = Props & {
+  fitViewKey: string
+}
+
+function FlowBody({ graph, loading, onSelectNode, fitViewKey }: FlowBodyProps) {
   const { fitView } = useReactFlow()
+  const lastFitViewKey = useRef('')
   const nodes = useMemo(() => (graph?.nodes || []) as Node[], [graph])
   const edges = useMemo(() => (graph?.edges || []).map(({ label: _label, ...edge }) => ({
     ...edge,
@@ -40,10 +45,12 @@ function FlowBody({ graph, loading, onSelectNode }: Props) {
 
   useEffect(() => {
     if (!graph) return
+    if (lastFitViewKey.current === fitViewKey) return
+    lastFitViewKey.current = fitViewKey
     window.requestAnimationFrame(() => {
       fitView({ padding: 0.08, duration: 180 })
     })
-  }, [fitView, graph])
+  }, [fitView, fitViewKey, graph])
 
   const handleNodeClick: NodeMouseHandler = (_event, node) => {
     onSelectNode(node.data as WorkflowGraphNodeData)
@@ -65,8 +72,6 @@ function FlowBody({ graph, loading, onSelectNode }: Props) {
       nodesDraggable={false}
       nodesConnectable={false}
       elementsSelectable
-      fitView
-      fitViewOptions={{ padding: 0.08 }}
       onNodeClick={handleNodeClick}
       onPaneClick={() => onSelectNode(null)}
       defaultEdgeOptions={{
@@ -85,6 +90,17 @@ function FlowBody({ graph, loading, onSelectNode }: Props) {
 }
 
 export function WorkflowCanvas(props: Props) {
+  const fitViewKey = useMemo(() => {
+    if (!props.graph) return ''
+    const nodeKey = props.graph.nodes
+      .map((node) => `${node.id}:${node.position.x},${node.position.y}`)
+      .join('|')
+    const edgeKey = props.graph.edges
+      .map((edge) => `${edge.id}:${edge.source}->${edge.target}`)
+      .join('|')
+    return `${props.graph.metadata.flowId}:${nodeKey}:${edgeKey}`
+  }, [props.graph])
+
   const nodesGraph = useMemo(() => {
     if (!props.graph) return null
     return {
@@ -104,7 +120,7 @@ export function WorkflowCanvas(props: Props) {
 
   return (
     <Box component="section" className="canvas-shell" aria-label="Workflow graph">
-      <FlowBody {...props} graph={nodesGraph} />
+      <FlowBody {...props} graph={nodesGraph} fitViewKey={fitViewKey} />
     </Box>
   )
 }

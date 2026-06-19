@@ -35,8 +35,9 @@ function AgentIcon({ agent }: { agent: string }) {
 export const WorkflowNode = memo(function WorkflowNode({ data, selected }: NodeProps) {
   const node = data as WorkflowGraphNodeData
   const selectedAgents = new Set(node.selectedAgents || node.agents)
+  const statusClass = node.status ? ` status-${node.status}` : ''
   return (
-    <div className={`workflow-node${selected ? ' selected' : ''}`}>
+    <div className={`workflow-node${statusClass}${selected ? ' selected' : ''}`}>
       <Handle className="hidden-handle" type="target" position={Position.Top} />
       <div className="node-header">
         <div>

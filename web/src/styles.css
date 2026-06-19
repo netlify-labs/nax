@@ -416,6 +416,25 @@ body {
   box-shadow: 0 0 0 2px color-mix(in srgb, var(--mantine-primary-color-6), transparent 70%), 0 12px 28px rgba(0, 0, 0, 0.24);
 }
 
+.workflow-node.status-running,
+.workflow-node.status-submitted {
+  border-color: var(--mantine-color-green-4);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--mantine-color-green-4), transparent 72%), 0 16px 34px rgba(0, 0, 0, 0.3);
+}
+
+.workflow-node.status-completed,
+.workflow-node.status-dry-run {
+  border-color: color-mix(in srgb, var(--mantine-color-green-4), transparent 20%);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--mantine-color-green-4), transparent 70%), 0 12px 28px rgba(0, 0, 0, 0.24);
+}
+
+.workflow-node.status-failed,
+.workflow-node.status-timeout,
+.workflow-node.status-cancelled {
+  border-color: var(--mantine-color-red-5);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--mantine-color-red-5), transparent 72%), 0 16px 34px rgba(0, 0, 0, 0.3);
+}
+
 .node-header {
   display: flex;
   align-items: flex-start;

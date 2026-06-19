@@ -340,6 +340,18 @@ function publicRunOptions(runState = {}) {
   }
 }
 
+function stepStatusSnapshot(runState = {}) {
+  return (Array.isArray(runState.steps) ? runState.steps : [])
+    .map((step) => ({
+      stepId: step.id || '',
+      title: step.title || step.id || '',
+      status: step.status || '',
+      agents: Array.isArray(step.agents) ? step.agents : [],
+      runCount: Array.isArray(step.runs) ? step.runs.length : 0,
+    }))
+    .filter((step) => step.stepId)
+}
+
 function eventText(event) {
   return `event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`
 }
@@ -402,6 +414,18 @@ function createRequestHandler(options = {}) {
     return event
   }
 
+  function recordStepStatusEvents(run) {
+    const durable = durableRunStateForId(run.runId || run.id)
+    if (!durable) return
+    run.stepStatuses ||= {}
+    for (const step of stepStatusSnapshot(durable)) {
+      const previous = run.stepStatuses[step.stepId]
+      if (previous === step.status) continue
+      run.stepStatuses[step.stepId] = step.status
+      recordEvent(run, 'step_status', step)
+    }
+  }
+
   function startRun({ flowId, runOptions }) {
     const existingRunId = activeByWorkflow.get(flowId)
     if (existingRunId) {
@@ -431,9 +455,15 @@ function createRequestHandler(options = {}) {
       cancellable: true,
       cancelRequested: false,
       cancel: null,
+      stepStatuses: {},
+      stepStatusTimer: null,
     }
     runs.set(id, run)
     activeByWorkflow.set(flowId, id)
+    run.stepStatusTimer = setInterval(() => {
+      if (run.status === 'running') recordStepStatusEvents(run)
+    }, 1000)
+    run.stepStatusTimer.unref?.()
     const childRun = runWorkflowChild({
       flowId,
       projectRoot,
@@ -442,6 +472,7 @@ function createRequestHandler(options = {}) {
         if (event.type === 'stdout') {
           run.stdout += event.text || ''
           if (!run.runId) run.runId = extractDurableRunId(run.stdout)
+          if (run.runId) recordStepStatusEvents(run)
         }
         if (event.type === 'stderr') run.stderr += event.text || ''
         if (event.type === 'started') recordEvent(run, 'started', { command: event.command || run.command, flowId })
@@ -463,7 +494,10 @@ function createRequestHandler(options = {}) {
       run.runId = run.runId || extractDurableRunId(`${result.stdout || ''}\n${result.stderr || ''}`)
       run.cancellable = false
       run.cancel = null
+      if (run.stepStatusTimer) clearInterval(run.stepStatusTimer)
+      run.stepStatusTimer = null
       activeByWorkflow.delete(flowId)
+      recordStepStatusEvents(run)
       recordEvent(run, 'exited', { status: run.status, exitCode: run.exitCode, signal: run.signal, durationMs: run.durationMs })
       for (const client of run.clients) client.end()
       run.clients.clear()
@@ -476,7 +510,10 @@ function createRequestHandler(options = {}) {
       run.runId = run.runId || extractDurableRunId(`${run.stdout || ''}\n${run.stderr || ''}`)
       run.cancellable = false
       run.cancel = null
+      if (run.stepStatusTimer) clearInterval(run.stepStatusTimer)
+      run.stepStatusTimer = null
       activeByWorkflow.delete(flowId)
+      recordStepStatusEvents(run)
       recordEvent(run, 'error', { message })
       recordEvent(run, 'exited', { status: run.status, exitCode: run.exitCode, signal: run.signal })
       for (const client of run.clients) client.end()
@@ -828,6 +865,7 @@ function startVisualizeServer(options = {}) {
 module.exports = {
   _private: {
     extractDurableRunId,
+    stepStatusSnapshot,
   },
   createRequestHandler,
   publicFlow,

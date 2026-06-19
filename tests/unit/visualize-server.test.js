@@ -92,6 +92,33 @@ test('visualize extracts durable workflow run id from runner output', () => {
   assert.equal(_private.extractDurableRunId(output), '2026-06-19T04-40-05-602Z-do-next')
 })
 
+test('visualize builds compact step status snapshots from workflow state', () => {
+  const snapshot = _private.stepStatusSnapshot({
+    steps: [
+      { id: 'review', title: 'Review', status: 'running', agents: ['claude', 'codex'], runs: [{}, {}] },
+      { id: 'synthesize', title: 'Synthesize', status: 'completed', agents: ['codex'], runs: [{}] },
+      { title: 'Missing id', status: 'running' },
+    ],
+  })
+
+  assert.deepEqual(snapshot, [
+    {
+      stepId: 'review',
+      title: 'Review',
+      status: 'running',
+      agents: ['claude', 'codex'],
+      runCount: 2,
+    },
+    {
+      stepId: 'synthesize',
+      title: 'Synthesize',
+      status: 'completed',
+      agents: ['codex'],
+      runCount: 1,
+    },
+  ])
+})
+
 test('visualize server exposes health, workflow list, and graph routes', async () => {
   const server = await startVisualizeServer({ projectRoot: process.cwd(), initialWorkflow: 'review' })
   try {

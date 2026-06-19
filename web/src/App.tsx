@@ -126,6 +126,7 @@ export default function App() {
   const [runRunning, setRunRunning] = useState(false)
   const [cancelRunning, setCancelRunning] = useState(false)
   const [runError, setRunError] = useState('')
+  const [liveStepStatuses, setLiveStepStatuses] = useState<Record<string, string>>({})
   const [error, setError] = useState('')
   const [refreshKey, setRefreshKey] = useState(0)
   const [contextModalAction, setContextModalAction] = useState<ContextModalAction>('')
@@ -175,8 +176,10 @@ export default function App() {
   useEffect(() => {
     if (!selectedWorkflowId) {
       setGraph(null)
+      setLiveStepStatuses({})
       return
     }
+    setLiveStepStatuses({})
     setDryRunOptions((options) => ({
       ...options,
       models: [],
@@ -292,6 +295,7 @@ export default function App() {
     setRunRunning(true)
     setRunError('')
     setRunOutput('')
+    setLiveStepStatuses({})
     try {
       const response = await startWorkflowRun(workflow.id, optionsOverride)
       setActiveRun(response.run)
@@ -313,6 +317,16 @@ export default function App() {
       events.addEventListener('stderr', (event) => {
         const data = parseRunEvent(event)
         setRunOutput((value) => `${value}${typeof data.text === 'string' ? data.text : ''}`)
+      })
+      events.addEventListener('step_status', (event) => {
+        const data = parseRunEvent(event)
+        const stepId = typeof data.stepId === 'string' ? data.stepId : ''
+        const status = typeof data.status === 'string' ? data.status : ''
+        if (!stepId || !status) return
+        setLiveStepStatuses((value) => ({
+          ...value,
+          [stepId]: status,
+        }))
       })
       events.addEventListener('exited', (event) => {
         const data = parseRunEvent(event)
@@ -366,6 +380,7 @@ export default function App() {
       const runOptions = response.run.options || {}
       setSelectedWorkflowId(response.workflow.id)
       setGraph(response.graph)
+      setLiveStepStatuses({})
       setDryRunOptions((options) => ({
         ...options,
         branch: typeof runOptions.branch === 'string' ? runOptions.branch : response.run.branch || options.branch,
@@ -521,6 +536,7 @@ export default function App() {
                         graph={graph}
                         loading={loadingGraph}
                         stepModels={dryRunOptions.stepModels}
+                        stepStatuses={liveStepStatuses}
                         onToggleStepAgent={toggleStepAgent}
                         onSelectNode={setSelectedNode}
                         onViewPrompt={setPromptNode}

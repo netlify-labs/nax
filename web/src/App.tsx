@@ -93,6 +93,20 @@ function completedRunForAgent(node: WorkflowGraphNodeData, agent: string): Recor
   ))
 }
 
+function latestAgentEvent(events: RunnerEvent[], node: WorkflowGraphNodeData, agent: string): RunnerEvent | null {
+  for (let index = events.length - 1; index >= 0; index -= 1) {
+    const event = events[index]
+    if (event.type === 'agent_status' && event.stepId === node.stepId && event.agent === agent) return event
+  }
+  return null
+}
+
+function liveAgentUrl(event: RunnerEvent | null): string {
+  if (!event) return ''
+  const links = event.links || {}
+  return links.sessionUrl || links.agentRunUrl || links.issueUrl || event.issueUrl || ''
+}
+
 function NetlifyLogo() {
   return (
     <svg
@@ -668,6 +682,16 @@ export default function App() {
     stdout: liveRunState.output || runOutput,
     stderr: '',
   } : null
+  const agentResultLiveEvent = agentResultContext
+    ? latestAgentEvent(liveRunState.rawEvents, agentResultContext.node, agentResultContext.agent)
+    : null
+  const agentResultLiveStatus = agentResultContext
+    ? agentResultContext.node.agentStatuses?.[agentResultContext.agent] || agentResultLiveEvent?.status || ''
+    : ''
+  const agentResultLiveUrl = liveAgentUrl(agentResultLiveEvent)
+  const agentResultSubmittedAfter = typeof agentResultLiveEvent?.submittedAfterSeconds === 'number'
+    ? agentResultLiveEvent.submittedAfterSeconds
+    : null
 
   return (
     <ReactFlowProvider>
@@ -960,14 +984,47 @@ export default function App() {
           </Stack>
         ) : agentResultContext ? (
           <Stack gap="sm">
-            {agentResultContext.node.agentStatuses?.[agentResultContext.agent] ? (
-              <Badge variant="light" color="yellow" w="fit-content">{agentResultContext.node.agentStatuses[agentResultContext.agent]}</Badge>
+            {agentResultLiveStatus ? (
+              <Badge className={`run-status ${agentResultLiveStatus}`} variant="light" w="fit-content">
+                {agentResultLiveStatus}
+              </Badge>
             ) : null}
-            <Text c="dimmed">
-              {['running', 'submitted', 'waiting', 'retrying', 'queued'].includes(agentResultContext.node.agentStatuses?.[agentResultContext.agent] || '')
-                ? 'No result yet.'
-                : 'No results from dry runs.'}
-            </Text>
+            {['running', 'submitted', 'waiting', 'retrying', 'queued'].includes(agentResultLiveStatus) ? (
+              <Stack gap={6}>
+                <Text c="dimmed">No result yet. This remote agent run is still in progress.</Text>
+                {agentResultLiveEvent?.runnerId ? (
+                  <Group gap="xs" wrap="nowrap">
+                    <Text size="sm" c="dimmed" w={92}>Runner ID</Text>
+                    <Code>{agentResultLiveEvent.runnerId}</Code>
+                  </Group>
+                ) : null}
+                {agentResultLiveEvent?.sessionId ? (
+                  <Group gap="xs" wrap="nowrap">
+                    <Text size="sm" c="dimmed" w={92}>Session ID</Text>
+                    <Code>{agentResultLiveEvent.sessionId}</Code>
+                  </Group>
+                ) : null}
+                {agentResultSubmittedAfter !== null ? (
+                  <Group gap="xs" wrap="nowrap">
+                    <Text size="sm" c="dimmed" w={92}>Submitted</Text>
+                    <Text size="sm">after {agentResultSubmittedAfter}s</Text>
+                  </Group>
+                ) : null}
+                {agentResultLiveEvent?.at ? (
+                  <Group gap="xs" wrap="nowrap">
+                    <Text size="sm" c="dimmed" w={92}>Last event</Text>
+                    <Text size="sm">{new Date(agentResultLiveEvent.at).toLocaleTimeString()}</Text>
+                  </Group>
+                ) : null}
+                {agentResultLiveUrl ? (
+                  <Anchor href={agentResultLiveUrl} target="_blank" rel="noreferrer" size="sm">
+                    Open in Netlify
+                  </Anchor>
+                ) : null}
+              </Stack>
+            ) : (
+              <Text c="dimmed">No results from dry runs.</Text>
+            )}
           </Stack>
         ) : null}
       </Modal>

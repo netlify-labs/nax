@@ -396,6 +396,17 @@ body {
   color: var(--mantine-color-text);
 }
 
+.run-details-timeline-button:hover,
+.run-details-timeline-child-button:hover {
+  background: light-dark(var(--mantine-color-gray-0), color-mix(in srgb, var(--mantine-color-dark-4), transparent 24%));
+}
+
+.run-details-timeline-button:focus-visible,
+.run-details-timeline-child-button:focus-visible {
+  outline: 2px solid var(--mantine-primary-color-5);
+  outline-offset: 1px;
+}
+
 .run-details-timeline-title {
   min-width: 0;
 }

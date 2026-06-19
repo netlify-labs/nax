@@ -31,6 +31,106 @@ point where the runner knows what is happening:
 The durable `.nax` state should remain the recovery and history source. It
 should not be the primary live transport.
 
+## Implementation Notes
+
+Implemented on 2026-06-19.
+
+The shipped local visualizer now uses a structured child-process event channel
+for live workflow state:
+
+- The visualize server still starts a child `node bin/nax.js run ...` process
+  for real runs.
+- stdout and stderr remain human terminal output and continue to stream to the
+  Output panel.
+- The child process receives `NAX_EVENT_STREAM=jsonl` and `NAX_EVENT_FD=3`.
+- The runner writes JSONL lifecycle events to file descriptor 3.
+- The visualize server parses fd 3 incrementally, stores valid events in memory,
+  relays them to the browser as SSE, and records malformed chunks as diagnostic
+  events instead of crashing the run.
+- The browser reducer consumes structured events directly. It does not parse
+  terminal output for workflow semantics.
+
+Each event uses the common envelope:
+
+```json
+{
+  "schemaVersion": 1,
+  "seq": 12,
+  "eventId": "2026-06-19T04-15-02-648Z-do-next:12",
+  "type": "agent_status",
+  "at": "2026-06-19T04:15:02.660Z",
+  "runId": "2026-06-19T04-15-02-648Z-do-next",
+  "flowId": "do-next"
+}
+```
+
+The important event types are:
+
+- `workflow_started`
+- `workflow_status`
+- `workflow_cancelled`
+- `step_status`
+- `agent_status`
+- `artifact_written`
+- `diagnostic`
+- `stdout`
+- `stderr`
+- `exit`
+
+The runner writes the same structured events to:
+
+```text
+.nax/workflows/<run-id>/events.jsonl
+```
+
+That append-only log is now the recovery, replay, and future polling substrate.
+The local SSE endpoint supports cursor replay:
+
+```text
+GET /api/runs/<run-id>/events?since=<seq>
+```
+
+The diagnostic JSON endpoint exposes the same data without opening an SSE
+stream:
+
+```text
+GET /api/runs/<run-id>/events.json?since=<seq>
+```
+
+`workflow.json` remains the durable milestone and artifact index for completed
+and resumed runs. During an active run, live structured events win in the UI.
+After process exit or page reload, durable state and `events.jsonl` replay
+reconstruct the graph.
+
+Remote model status is intentionally conservative. Netlify API and GitHub
+Actions integrations emit every transition the runner can prove. When the remote
+service cannot prove actual live execution, the UI should show states such as
+`submitted` or `waiting` rather than inventing `running`. Dry-run simulation is
+more granular because the simulator controls every model completion.
+
+Cancellation means local orchestration cancellation in this implementation. The
+runner marks known submitted remote work as `abandoned` so the UI does not imply
+that local cancellation stopped an already-submitted remote Agent Runner job.
+Remote cancellation/archive remains separate transport work.
+
+Validation commands used for this implementation:
+
+```bash
+npm run check
+npm test
+node --import tsx --test tests/unit/live-run-reducer.test.ts
+npm run visualize:build
+npm run visualize:smoke
+```
+
+Developer debugging workflow:
+
+1. Open the Output diagnostics button for the active run.
+2. Inspect `.nax/workflows/<run-id>/events.jsonl`.
+3. Use `/api/runs/<run-id>/events.json?since=<seq>` to verify replay behavior.
+4. Treat stdout/stderr as human output only; semantic status bugs belong in the
+   event emitter, server parser, or frontend reducer.
+
 ## Goals
 
 - Make React Flow cards and model pills reflect real run state in near realtime.

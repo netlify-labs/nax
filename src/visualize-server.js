@@ -11,6 +11,7 @@ const { flowToGraph } = require('./visualize-graph')
 const { runWorkflow, workflowCommand } = require('./workflow-runner')
 const { normalizeAgentList, normalizeStepModels, selectionValidationErrors } = require('./agent-selection')
 const { buildRunDetails } = require('./visualize-run-details')
+const { eventLogPathForRunState, readEventLog } = require('./runner-event-log')
 
 function jsonResponse(res, statusCode, payload) {
   const body = `${JSON.stringify(payload, null, 2)}\n`
@@ -231,6 +232,14 @@ function runDryRunCommand({ flowId, projectRoot, options }) {
   })
 }
 
+/**
+ * @typedef {(event: Record<string, unknown>) => void} VisualizeEventSink
+ * @typedef {{ code?: string, message: string, line?: number, text?: string }} RunnerEventParseError
+ */
+
+/**
+ * @param {{ flowId: string, projectRoot: string, options?: Record<string, unknown>, eventSink?: VisualizeEventSink }} input
+ */
 function runWorkflowChild({ flowId, projectRoot, options = {}, eventSink = () => {} }) {
   const command = workflowCommand({ flowId, projectRoot, options })
   const args = [path.resolve(__dirname, '..', 'bin', 'nax.js'), ...command.slice(1)]
@@ -241,9 +250,12 @@ function runWorkflowChild({ flowId, projectRoot, options = {}, eventSink = () =>
   let cancelRequested = false
   let settled = false
   let forceKillTimer = null
+  /** @type {NodeJS.ProcessEnv} */
   const childEnv = {
     ...process.env,
     FORCE_COLOR: process.env.FORCE_COLOR || '1',
+    NAX_EVENT_FD: '3',
+    NAX_EVENT_STREAM: 'jsonl',
   }
   delete childEnv.NO_COLOR
 
@@ -251,11 +263,11 @@ function runWorkflowChild({ flowId, projectRoot, options = {}, eventSink = () =>
   const child = spawn(process.execPath, args, {
     cwd: projectRoot,
     env: childEnv,
-    stdio: ['ignore', 'pipe', 'pipe'],
+    stdio: ['ignore', 'pipe', 'pipe', 'pipe'],
   })
 
-  child.stdout.setEncoding('utf8')
-  child.stderr.setEncoding('utf8')
+  if (child.stdout) child.stdout.setEncoding('utf8')
+  if (child.stderr) child.stderr.setEncoding('utf8')
   child.stdout.on('data', (text) => {
     stdout += text
     eventSink({ type: 'stdout', text })
@@ -264,6 +276,32 @@ function runWorkflowChild({ flowId, projectRoot, options = {}, eventSink = () =>
     stderr += text
     eventSink({ type: 'stderr', text })
   })
+  const eventParser = createRunnerEventParser({
+    onEvent: (event) => eventSink({ type: 'runner_event', event }),
+    onError: (error) => eventSink({
+      type: 'runner_event_error',
+      message: error.message,
+      line: error.line || '',
+      code: error.code || 'runner_event_error',
+      text: error.text || '',
+    }),
+  })
+  /** @type {import('node:stream').Readable | undefined} */
+  const eventStream = child.stdio?.[3] && 'setEncoding' in child.stdio[3]
+    ? /** @type {import('node:stream').Readable} */ (child.stdio[3])
+    : undefined
+  if (eventStream) {
+    eventStream.setEncoding('utf8')
+    eventStream.on('data', (chunk) => eventParser.push(chunk))
+    eventStream.on('end', () => eventParser.end())
+    eventStream.on('error', (error) => {
+      eventSink({
+        type: 'runner_event_error',
+        message: error?.message || String(error),
+        code: 'runner_event_stream_error',
+      })
+    })
+  }
 
   const promise = new Promise((resolve) => {
     child.on('error', (error) => {
@@ -308,6 +346,7 @@ function runWorkflowChild({ flowId, projectRoot, options = {}, eventSink = () =>
         const message = stderr.trim().split('\n').filter(Boolean).pop() || `Workflow "${flowId}" failed.`
         eventSink({ type: 'error', message })
       }
+      eventParser.end()
       eventSink({ type: 'exited', status: result.status, exitCode: result.exitCode, signal: result.signal, durationMs: result.durationMs })
       resolve(result)
     })
@@ -324,6 +363,71 @@ function runWorkflowChild({ flowId, projectRoot, options = {}, eventSink = () =>
         if (!settled) child.kill('SIGKILL')
       }, 3000)
       return true
+    },
+  }
+}
+
+/**
+ * @param {{ onEvent?: (event: Record<string, unknown>) => void, onError?: (error: RunnerEventParseError) => void }} [handlers]
+ */
+function createRunnerEventParser({ onEvent = () => {}, onError = () => {} } = {}) {
+  let buffer = ''
+  let lineNumber = 0
+  let ended = false
+
+  function parseLine(line) {
+    lineNumber += 1
+    if (!line.trim()) return
+    try {
+      const event = JSON.parse(line)
+      if (!event || typeof event !== 'object' || Array.isArray(event)) {
+        onError({
+          code: 'invalid_runner_event',
+          message: 'Runner event line is not a JSON object.',
+          line: lineNumber,
+          text: line,
+        })
+        return
+      }
+      if (!event.type) {
+        onError({
+          code: 'missing_runner_event_type',
+          message: 'Runner event is missing a type.',
+          line: lineNumber,
+          text: line,
+        })
+        return
+      }
+      onEvent(event)
+    } catch (error) {
+      onError({
+        code: 'parse_runner_event',
+        message: error?.message || String(error),
+        line: lineNumber,
+        text: line,
+      })
+    }
+  }
+
+  return {
+    push(chunk) {
+      if (ended) return
+      buffer += String(chunk || '')
+      let index = buffer.indexOf('\n')
+      while (index !== -1) {
+        const line = buffer.slice(0, index).replace(/\r$/, '')
+        buffer = buffer.slice(index + 1)
+        parseLine(line)
+        index = buffer.indexOf('\n')
+      }
+    },
+    end() {
+      if (ended) return
+      ended = true
+      if (!buffer) return
+      const line = buffer.replace(/\r$/, '')
+      buffer = ''
+      parseLine(line)
     },
   }
 }
@@ -373,6 +477,12 @@ function stepStatusSnapshot(runState = {}) {
 
 function eventText(event) {
   return `event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`
+}
+
+function eventAfter(event, since = 0) {
+  const minimum = Number.isFinite(Number(since)) ? Number(since) : 0
+  const seq = Number(event?.seq ?? event?.id ?? 0)
+  return seq > minimum
 }
 
 function extractDurableRunId(output = '') {
@@ -433,6 +543,12 @@ function createRequestHandler(options = {}) {
     return event
   }
 
+  function recordRunnerEvent(run, event = {}) {
+    if (event.type === 'workflow_started' && event.runId) run.runId = event.runId
+    if (event.runId && !run.runId) run.runId = event.runId
+    return recordEvent(run, event.type || 'runner_event', event)
+  }
+
   function recordStepStatusEvents(run) {
     const durable = durableRunStateForId(run.runId || run.id)
     if (!durable) return
@@ -442,6 +558,40 @@ function createRequestHandler(options = {}) {
       if (previous === step.status) continue
       run.stepStatuses[step.stepId] = step.status
       recordEvent(run, 'step_status', step)
+    }
+  }
+
+  function recordCancelSemantics(run) {
+    const durable = durableRunStateForId(run.runId || run.id)
+    recordEvent(run, 'workflow_cancelled', {
+      status: 'cancelled',
+      flowId: run.flowId,
+      runId: run.runId || run.id,
+    })
+    if (!durable) return
+    for (const step of Array.isArray(durable.steps) ? durable.steps : []) {
+      if (!['running', 'submitted'].includes(step.status)) continue
+      recordEvent(run, 'step_status', {
+        stepId: step.id || '',
+        title: step.title || step.id || '',
+        status: 'cancelled',
+        agents: Array.isArray(step.agents) ? step.agents : [],
+        runCount: Array.isArray(step.runs) ? step.runs.length : 0,
+      })
+      for (const agentRun of Array.isArray(step.runs) ? step.runs : []) {
+        const remoteSubmitted = Boolean(agentRun.runnerId || agentRun.issueNumber)
+        recordEvent(run, 'agent_status', {
+          stepId: step.id || '',
+          stepTitle: step.title || step.id || '',
+          agent: agentRun.agent || '',
+          status: remoteSubmitted ? 'abandoned' : 'cancelled',
+          runnerId: agentRun.runnerId || '',
+          sessionId: agentRun.sessionId || '',
+          issueNumber: agentRun.issueNumber || null,
+          issueUrl: agentRun.issueUrl || '',
+          links: agentRun.links || {},
+        })
+      }
     }
   }
 
@@ -498,6 +648,17 @@ function createRequestHandler(options = {}) {
         else if (event.type === 'stdout') recordEvent(run, 'stdout', { text: event.text || '' })
         else if (event.type === 'stderr') recordEvent(run, 'stderr', { text: event.text || '' })
         else if (event.type === 'error') recordEvent(run, 'error', { message: event.message || '' })
+        else if (event.type === 'runner_event') {
+          recordRunnerEvent(run, event.event || {})
+          if (run.runId) recordStepStatusEvents(run)
+        } else if (event.type === 'runner_event_error') {
+          recordEvent(run, 'runner_event_error', {
+            message: event.message || '',
+            line: event.line || '',
+            code: event.code || 'runner_event_error',
+            text: event.text || '',
+          })
+        }
       },
     })
     run.command = childRun.command
@@ -634,24 +795,74 @@ function createRequestHandler(options = {}) {
           return
         }
 
+        const runEventsJsonMatch = pathname.match(/^\/api\/runs\/([^/]+)\/events\.json$/)
+        if (runEventsJsonMatch) {
+          if (req.method !== 'GET') {
+            methodNotAllowed(res, req.method || 'UNKNOWN')
+            return
+          }
+          const runId = safeDecode(runEventsJsonMatch[1])
+          const run = runs.get(runId)
+          const durable = run ? null : durableRunStateForId(runId)
+          if (!run && !durable) {
+            notFound(res, 'Unknown visualize run.')
+            return
+          }
+          const since = Number(requestUrl.searchParams.get('since') || 0)
+          if (run) {
+            jsonResponse(res, 200, {
+              run: publicRun(run),
+              events: run.events.filter((candidate) => eventAfter(candidate, since)),
+              errors: [],
+            })
+            return
+          }
+          const replay = readEventLog(eventLogPathForRunState(durable), { since })
+          jsonResponse(res, 200, {
+            run: publicRunState(durable),
+            events: replay.events,
+            errors: replay.errors,
+          })
+          return
+        }
+
         const runEventsMatch = pathname.match(/^\/api\/runs\/([^/]+)\/events$/)
         if (runEventsMatch) {
           if (req.method !== 'GET') {
             methodNotAllowed(res, req.method || 'UNKNOWN')
             return
           }
-          const run = runs.get(safeDecode(runEventsMatch[1]))
-          if (!run) {
+          const runId = safeDecode(runEventsMatch[1])
+          const run = runs.get(runId)
+          const durable = run ? null : durableRunStateForId(runId)
+          if (!run && !durable) {
             notFound(res, 'Unknown visualize run.')
             return
           }
+          const since = Number(requestUrl.searchParams.get('since') || 0)
           res.writeHead(200, {
             'content-type': 'text/event-stream',
             'cache-control': 'no-cache',
             connection: 'keep-alive',
           })
-          for (const event of run.events) res.write(eventText(event))
-          if (run.status === 'running') {
+          if (run) {
+            for (const event of run.events.filter((candidate) => eventAfter(candidate, since))) {
+              res.write(eventText(event))
+            }
+          } else if (durable) {
+            const replay = readEventLog(eventLogPathForRunState(durable), { since })
+            for (const event of replay.events) res.write(eventText(event))
+            for (const error of replay.errors) {
+              res.write(eventText({
+                id: 0,
+                type: 'runner_event_error',
+                at: new Date().toISOString(),
+                runId: durable.runId,
+                ...error,
+              }))
+            }
+          }
+          if (run && run.status === 'running') {
             run.clients.add(res)
             req.on('close', () => run.clients.delete(res))
           } else {
@@ -730,6 +941,7 @@ function createRequestHandler(options = {}) {
           run.cancelRequested = cancelled
           run.cancellable = !cancelled
           recordEvent(run, 'cancel_requested')
+          if (cancelled) recordCancelSemantics(run)
           jsonResponse(res, 200, { run: publicRun(run), cancelled })
           return
         }
@@ -895,6 +1107,7 @@ function startVisualizeServer(options = {}) {
 
 module.exports = {
   _private: {
+    createRunnerEventParser,
     extractDurableRunId,
     stepStatusSnapshot,
   },

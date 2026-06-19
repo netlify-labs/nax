@@ -120,6 +120,7 @@ function selectionValidationErrors(flow = {}, selection = {}) {
 function assertValidAgentSelection(flow, selection = {}) {
   const errors = selectionValidationErrors(flow, selection)
   if (errors.length > 0) {
+    /** @type {Error & { code?: string }} */
     const error = new Error(errors[0].message)
     error.code = errors[0].code
     throw error

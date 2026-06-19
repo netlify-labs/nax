@@ -6,6 +6,7 @@ const os = require('os')
 const path = require('path')
 
 const { _private, startVisualizeServer } = require('../../src/visualize-server')
+const { appendEventLog } = require('../../src/runner-event-log')
 
 function requestJson(url) {
   return new Promise((resolve, reject) => {
@@ -117,6 +118,25 @@ test('visualize builds compact step status snapshots from workflow state', () =>
       runCount: 1,
     },
   ])
+})
+
+test('visualize parses runner event JSONL across chunks and reports malformed lines', () => {
+  const events = []
+  const errors = []
+  const parser = _private.createRunnerEventParser({
+    onEvent: (event) => events.push(event),
+    onError: (error) => errors.push(error),
+  })
+
+  parser.push('{"type":"workflow_started","seq":1')
+  parser.push(',"runId":"run-1"}\nnot-json\n{"type":"unknown_future_event","seq":2}\n')
+  parser.push('{"seq":3}\n{"type":"tail","seq":4}')
+  parser.end()
+
+  assert.deepEqual(events.map((event) => event.type), ['workflow_started', 'unknown_future_event', 'tail'])
+  assert.equal(errors.length, 2)
+  assert.equal(errors[0].code, 'parse_runner_event')
+  assert.equal(errors[1].code, 'missing_runner_event_type')
 })
 
 test('visualize server exposes health, workflow list, and graph routes', async () => {
@@ -388,6 +408,49 @@ test('visualize runs API reads durable workflow state from .nax', async () => {
     assert.equal(graph.payload.graph.metadata.hasRunState, true)
     assert.deepEqual(graph.payload.graph.nodes[0].data.agents, ['claude', 'gemini', 'codex'])
     assert.deepEqual(graph.payload.graph.nodes[0].data.selectedAgents, ['codex'])
+  } finally {
+    await server.close()
+  }
+})
+
+test('visualize events API replays durable event log with since filter', async () => {
+  const projectRoot = tmpRoot()
+  const runId = 'fixture-events-run'
+  const dir = path.join(projectRoot, '.nax', 'workflows', runId)
+  fs.mkdirSync(dir, { recursive: true })
+  fs.writeFileSync(path.join(dir, 'workflow.json'), JSON.stringify({
+    schemaVersion: 1,
+    runId,
+    flowId: 'review',
+    flowTitle: 'Review',
+    status: 'completed',
+    transport: 'netlify-api',
+    createdAt: '2026-06-19T00:00:00.000Z',
+    updatedAt: '2026-06-19T00:01:00.000Z',
+    dir,
+    flow: { id: 'review', title: 'Review', steps: [] },
+    steps: [],
+  }, null, 2))
+  const logPath = path.join(dir, 'events.jsonl')
+  appendEventLog(logPath, { schemaVersion: 1, seq: 1, type: 'workflow_started', runId, flowId: 'review' })
+  fs.appendFileSync(logPath, 'not-json\n')
+  appendEventLog(logPath, { schemaVersion: 1, seq: 2, type: 'step_started', runId, flowId: 'review', stepId: 'review' })
+  appendEventLog(logPath, { schemaVersion: 1, seq: 3, type: 'workflow_completed', runId, flowId: 'review' })
+
+  const server = await startVisualizeServer({ projectRoot })
+  try {
+    const events = await requestText(`http://127.0.0.1:${server.port}/api/runs/${runId}/events?since=1`)
+    assert.equal(events.statusCode, 200)
+    assert.doesNotMatch(events.body, /workflow_started/)
+    assert.match(events.body, /event: step_started/)
+    assert.match(events.body, /event: workflow_completed/)
+    assert.match(events.body, /event: runner_event_error/)
+
+    const json = await requestJson(`http://127.0.0.1:${server.port}/api/runs/${runId}/events.json?since=1`)
+    assert.equal(json.statusCode, 200)
+    assert.deepEqual(json.payload.events.map((event) => event.seq), [2, 3])
+    assert.equal(json.payload.errors.length, 1)
+    assert.equal(json.payload.errors[0].code, 'parse_error')
   } finally {
     await server.close()
   }

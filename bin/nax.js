@@ -67,6 +67,7 @@ const { classifyNetlifyRuntime } = require('../src/netlify-runtime')
 const { enableGitHubActionsSetup, findExistingAgentRunnerWorkflow, initSite, readNetlifyProject } = require('../src/init')
 const { startVisualizeServer } = require('../src/visualize-server')
 const { runWorkflow } = require('../src/workflow-runner')
+const { createWorkflowEventContext } = require('../src/workflow-events')
 const {
   applyAgentSelection,
   assertValidAgentSelection,
@@ -3423,6 +3424,67 @@ function localStepStatus(stepState) {
     : 'failed'
 }
 
+function visualAgentStatusFromPoll(event = {}) {
+  if (event.terminalSuccess) return 'completed'
+  if (event.terminalFailure) return event.state === 'timeout' ? 'timeout' : 'failed'
+  if (event.state === 'running' || event.state === 'processing' || event.state === 'executing') return 'running'
+  if (event.state === 'retrying') return 'retrying'
+  return 'waiting'
+}
+
+function emitStepArtifacts(runtimeEvents, runState, stepState) {
+  if (!runtimeEvents?.enabled || !runState.dir || !stepState?.id) return
+  const stepDir = stepArtifactsDir(runState, stepState)
+  const relativeBase = path.relative(runState.dir, stepDir)
+  runtimeEvents.artifactWritten('step_metadata', path.join(stepDir, 'step.json'), {
+    stepId: stepState.id,
+    stepTitle: stepState.title || stepState.id,
+    relativePath: path.join(relativeBase, 'step.json'),
+  })
+  runtimeEvents.artifactWritten('step_usage', path.join(stepDir, 'usage.json'), {
+    stepId: stepState.id,
+    stepTitle: stepState.title || stepState.id,
+    relativePath: path.join(relativeBase, 'usage.json'),
+  })
+  runtimeEvents.artifactWritten('step_summary', path.join(stepDir, 'summary.md'), {
+    stepId: stepState.id,
+    stepTitle: stepState.title || stepState.id,
+    relativePath: path.join(relativeBase, 'summary.md'),
+  })
+}
+
+function emitRunArtifact(runtimeEvents, runState, stepState, run, artifactResult) {
+  if (!runtimeEvents?.enabled || !artifactResult || !runState.dir) return
+  for (const [artifactType, filePath] of [
+    ['agent_metadata', artifactResult.jsonPath],
+    ['agent_result', artifactResult.markdownPath],
+  ]) {
+    if (!filePath) continue
+    runtimeEvents.artifactWritten(artifactType, filePath, {
+      stepId: stepState.id,
+      stepTitle: stepState.title || stepState.id,
+      agent: run.agent || '',
+      runnerId: run.runnerId || '',
+      sessionId: run.sessionId || '',
+      relativePath: path.relative(runState.dir, filePath),
+      attemptNumber: artifactResult.attemptNumber || null,
+    })
+  }
+}
+
+function emitWorkflowArtifacts(runtimeEvents, runState) {
+  if (!runtimeEvents?.enabled || !runState.dir) return
+  const artifactsDir = artifactsRootForRunState(runState)
+  for (const [artifactType, fileName] of [
+    ['workflow_usage', 'usage.json'],
+    ['workflow_summary', 'summary.md'],
+  ]) {
+    runtimeEvents.artifactWritten(artifactType, path.join(artifactsDir, fileName), {
+      relativePath: path.relative(runState.dir, path.join(artifactsDir, fileName)),
+    })
+  }
+}
+
 function futureFollowUpReferencesStep(flowSteps = [], currentStepIndex, stepId) {
   return flowSteps.slice(currentStepIndex + 1).some((step) => (
     step.submit === 'follow-up' &&
@@ -4656,11 +4718,13 @@ function githubStepStatus(stepState) {
 }
 
 /** @param {Record<string, any>} param0 */
-async function completeGithubStep({ runState, repo, stepState, step, options }) {
+async function completeGithubStep({ runState, repo, stepState, step, options, runtimeEvents }) {
   const timeoutMinutes = Number.parseInt(options.timeoutMinutes || '25', 10)
   if (step.waitFor !== WAIT_FOR_AGENT_RESULTS) {
     stepState.status = 'completed'
     persistStepArtifacts(runState, stepState)
+    emitStepArtifacts(runtimeEvents, runState, stepState)
+    runtimeEvents?.stepStatus('completed', stepState, step)
     return stepState
   }
 
@@ -4684,7 +4748,13 @@ async function completeGithubStep({ runState, repo, stepState, step, options }) 
           const index = stepState.runs.findIndex((candidate) => candidate.issueNumber === normalized.issueNumber)
           if (index !== -1) {
             Object.assign(stepState.runs[index], normalized)
-            persistRunArtifact(runState, stepState, stepState.runs[index])
+            const artifactResult = persistRunArtifact(runState, stepState, stepState.runs[index])
+            emitRunArtifact(runtimeEvents, runState, stepState, stepState.runs[index], artifactResult)
+            runtimeEvents?.agentStatus(normalized.status || 'completed', stepState.runs[index], stepState, step, {
+              terminal: normalized.status === 'completed' || normalized.status === 'failed' || normalized.status === 'timeout',
+              usage: normalized.usage || null,
+              hasResult: Boolean(normalized.resultText),
+            })
             saveRunState(runState)
           }
         },
@@ -4702,6 +4772,11 @@ async function completeGithubStep({ runState, repo, stepState, step, options }) 
           marker: parseRunnerResultMarker(latest?.body || ''),
         })
         Object.assign(run, normalized)
+        runtimeEvents?.agentStatus(normalized.status || 'completed', run, stepState, step, {
+          terminal: true,
+          usage: normalized.usage || null,
+          hasResult: Boolean(normalized.resultText),
+        })
       }
     }
     stepState.status = githubStepStatus(stepState)
@@ -4709,12 +4784,14 @@ async function completeGithubStep({ runState, repo, stepState, step, options }) 
   } finally {
     stepState.status = githubStepStatus(stepState)
     persistStepArtifacts(runState, stepState)
+    emitStepArtifacts(runtimeEvents, runState, stepState)
+    runtimeEvents?.stepStatus(stepState.status, stepState, step)
   }
   return stepState
 }
 
 /** @param {Record<string, any>} param0 */
-async function executeGithubFlow({ flow, steps, options, runState, completedStepStates = new Map() }) {
+async function executeGithubFlow({ flow, steps, options, runState, completedStepStates = new Map(), runtimeEvents }) {
   const repo = resolveRepo(options.repo)
   const date = options.date || getLocalDate()
   const baseContext = contextForRunState(runState, options)
@@ -4732,6 +4809,8 @@ async function executeGithubFlow({ flow, steps, options, runState, completedStep
     }
     runState.steps.push(stepState)
     saveRunState(runState)
+    runtimeEvents?.stepStatus('running', stepState, step)
+    runtimeEvents?.stepStatus('running', stepState, step)
 
     const sourceIssues = sourceIssueNumbersForStep(step, completedStepStates).join(',')
     const recoveryIssues = step.action === 'comment' ? (options.fromIssues || options.fromIssue || options.issues || options.issue || '') : ''
@@ -4784,17 +4863,37 @@ async function executeGithubFlow({ flow, steps, options, runState, completedStep
       }))
       completedStepStates.set(step.id, stepState)
       saveRunState(runState)
+      for (const run of stepState.runs) runtimeEvents?.agentStatus('dry-run', run, stepState, step)
+      runtimeEvents?.stepStatus('dry-run', stepState, step)
       continue
     }
 
     if (step.action === 'comment') {
       for (const issue of plan.issues) {
-        const url = createDiscussionComment({
-          repo: issue.targetRepo,
-          targetKind: issue.targetKind,
-          targetNumber: issue.targetNumber,
-          body: issue.body,
-        })
+        const pendingRun = {
+          transport: 'github',
+          agent: issue.model,
+          issueNumber: Number(issue.issueNumber),
+          issueUrl: issue.issueUrl,
+          raw: issue,
+        }
+        runtimeEvents?.agentStatus('submitting', pendingRun, stepState, step, { action: 'comment' })
+        let url
+        try {
+          url = createDiscussionComment({
+            repo: issue.targetRepo,
+            targetKind: issue.targetKind,
+            targetNumber: issue.targetNumber,
+            body: issue.body,
+          })
+        } catch (error) {
+          runtimeEvents?.agentStatus('failed', pendingRun, stepState, step, {
+            phase: 'submit',
+            action: 'comment',
+            message: error?.message || String(error),
+          })
+          throw error
+        }
         const issueNumber = Number(issue.issueNumber)
         stepState.runs.push({
           transport: 'github',
@@ -4809,16 +4908,35 @@ async function executeGithubFlow({ flow, steps, options, runState, completedStep
           raw: issue,
         })
         saveRunState(runState)
+        runtimeEvents?.agentStatus('submitted', stepState.runs[stepState.runs.length - 1], stepState, step, {
+          commentUrl: url,
+        })
         console.log(`#${issue.issueNumber} ${issue.issueTitle}: ${url}`)
       }
     } else {
       for (const issue of plan.issues) {
-        const url = createIssue({
-          repo: plan.repo,
-          title: issue.title,
-          body: issue.body,
-          labels: plan.labels,
-        })
+        const pendingRun = {
+          transport: 'github',
+          agent: issue.model,
+          raw: issue,
+        }
+        runtimeEvents?.agentStatus('submitting', pendingRun, stepState, step, { action: 'issue' })
+        let url
+        try {
+          url = createIssue({
+            repo: plan.repo,
+            title: issue.title,
+            body: issue.body,
+            labels: plan.labels,
+          })
+        } catch (error) {
+          runtimeEvents?.agentStatus('failed', pendingRun, stepState, step, {
+            phase: 'submit',
+            action: 'issue',
+            message: error?.message || String(error),
+          })
+          throw error
+        }
         const issueNumber = parseIssueNumberFromUrl(url)
         stepState.runs.push({
           transport: 'github',
@@ -4833,11 +4951,16 @@ async function executeGithubFlow({ flow, steps, options, runState, completedStep
           raw: issue,
         })
         saveRunState(runState)
+        runtimeEvents?.agentStatus('submitted', stepState.runs[stepState.runs.length - 1], stepState, step)
         console.log(`${issue.title}: ${url}`)
       }
     }
 
-    await completeGithubStep({ runState, repo, stepState, step, options })
+    for (const run of stepState.runs.filter(shouldPollGithubRun)) {
+      runtimeEvents?.agentStatus('waiting', run, stepState, step)
+    }
+
+    await completeGithubStep({ runState, repo, stepState, step, options, runtimeEvents })
     completedStepStates.set(step.id, stepState)
     saveRunState(runState)
   }
@@ -4866,7 +4989,7 @@ function reportTerminalLocalRun(reporter, run, projectRoot) {
 }
 
 /** @param {Record<string, any>} param0 */
-async function completeLocalStep({ runState, stepState, step, options, projectRoot, netlify, netlifyFilter, initialDelayMs }) {
+async function completeLocalStep({ runState, stepState, step, options, projectRoot, netlify, netlifyFilter, initialDelayMs, runtimeEvents }) {
   const timeoutMinutes = Number.parseInt(options.timeoutMinutes || '25', 10)
   const resolvedNetlifyFilter = netlifyFilter !== undefined
     ? netlifyFilter
@@ -4889,14 +5012,29 @@ async function completeLocalStep({ runState, stepState, step, options, projectRo
         initialDelayMs,
         onProgress: (event) => {
           if (!event.run?.runnerId) return
+          runtimeEvents?.agentStatus(visualAgentStatusFromPoll(event), event.run, stepState, step, {
+            message: event.message || '',
+            remoteState: event.state || '',
+            currentTask: event.currentTask || '',
+            retry: event.retry === true,
+            retryReason: event.retryReason || '',
+            error: event.error || '',
+          })
           reporter.updateRun(event)
         },
         onTerminalRun: (run) => {
           addLocalRunLinks(run, projectRoot)
           const index = stepState.runs.findIndex((candidate) => candidate.runnerId === run.runnerId)
           if (index !== -1) stepState.runs[index] = run
-          persistRunArtifact(runState, stepState, run)
+          const artifactResult = persistRunArtifact(runState, stepState, run)
+          emitRunArtifact(runtimeEvents, runState, stepState, run, artifactResult)
           reportTerminalLocalRun(reporter, run, projectRoot)
+          runtimeEvents?.agentStatus(run.status || 'completed', run, stepState, step, {
+            terminal: true,
+            usage: run.usage || null,
+            hasResult: Boolean(run.resultText),
+            error: run.status === 'failed' || run.status === 'timeout' ? conciseErrorMessage(run.resultText || run.raw?.submissionError || '') : '',
+          })
         },
       })
       for (const run of completedRuns) {
@@ -4932,11 +5070,13 @@ async function completeLocalStep({ runState, stepState, step, options, projectRo
   }
   stepState.status = localStepStatus(stepState)
   persistStepArtifacts(runState, stepState)
+  emitStepArtifacts(runtimeEvents, runState, stepState)
+  runtimeEvents?.stepStatus(stepState.status, stepState, step)
   return stepState
 }
 
 /** @param {Record<string, any>} param0 */
-async function executeLocalFlow({ flow, steps, options, runState, projectRoot, completedStepStates = new Map() }) {
+async function executeLocalFlow({ flow, steps, options, runState, projectRoot, completedStepStates = new Map(), runtimeEvents }) {
   const date = options.date || getLocalDate()
   const baseContext = contextForRunState(runState, options)
   const branch = options.branch || currentGitBranch(projectRoot)
@@ -5016,11 +5156,14 @@ async function executeLocalFlow({ flow, steps, options, runState, projectRoot, c
       stepState.runs = runs
       completedStepStates.set(step.id, stepState)
       saveRunState(runState)
+      for (const run of runs) runtimeEvents?.agentStatus('dry-run', run, stepState, step)
+      runtimeEvents?.stepStatus('dry-run', stepState, step)
       continue
     }
 
     stepState.runs = runs
     saveRunState(runState)
+    for (const run of runs) runtimeEvents?.agentStatus('pending', run, stepState, step)
 
     console.log(`\nSubmitting ${runs.length} Netlify agent ${runs.length === 1 ? 'run' : 'runs'} in parallel...`)
     const startedAt = Date.now()
@@ -5035,6 +5178,10 @@ async function executeLocalFlow({ flow, steps, options, runState, projectRoot, c
         const label = `${titleCase(run.agent)} ${prompt.title}`
         pendingSubmissionLabels.add(label)
         console.log(`- ${label}: submitting${run.existingRunnerId ? ' follow-up' : ''}...`)
+        runtimeEvents?.agentStatus('submitting', run, stepState, step, {
+          submit: step.submit || '',
+          existingRunnerId: run.existingRunnerId || '',
+        })
         try {
           const submitted = await submitLocalAgentRun({
             run,
@@ -5045,13 +5192,23 @@ async function executeLocalFlow({ flow, steps, options, runState, projectRoot, c
             env: netlify.env,
             onRetry: ({ error, nextAttempt, attempts, delayMs }) => {
               const delaySeconds = Math.round(delayMs / 1000)
+              runtimeEvents?.agentStatus('retrying', run, stepState, step, {
+                attempt: nextAttempt,
+                attempts,
+                retryReason: error?.message || '',
+                delayMs,
+              })
               console.log(`  ${label}: submission failed, retrying ${nextAttempt}/${attempts} in ${delaySeconds}s — ${error.message}`)
             },
           })
           const elapsedSeconds = Math.round((Date.now() - startedAt) / 1000)
           submitted.submittedAfterSeconds = elapsedSeconds
+          addLocalRunLinks(submitted, projectRoot)
           stepState.runs[index] = submitted
           saveRunState(runState)
+          runtimeEvents?.agentStatus('submitted', submitted, stepState, step, {
+            submittedAfterSeconds: elapsedSeconds,
+          })
           console.log(`  ${label}: submitted after ${elapsedSeconds}s`)
           return submitted
         } catch (error) {
@@ -5066,6 +5223,10 @@ async function executeLocalFlow({ flow, steps, options, runState, projectRoot, c
           }
           stepState.runs[index] = failedRun
           saveRunState(runState)
+          runtimeEvents?.agentStatus('failed', failedRun, stepState, step, {
+            message: error?.message || String(error || 'Submission failed'),
+            phase: 'submit',
+          })
           console.log(`  ${label}: submission failed — ${conciseErrorMessage(error)}`)
           throw error
         } finally {
@@ -5095,7 +5256,7 @@ async function executeLocalFlow({ flow, steps, options, runState, projectRoot, c
       console.log(submissionBoxes)
     }
 
-    await completeLocalStep({ runState, stepState, step, options, projectRoot, netlify, netlifyFilter: netlifyFilter.filter })
+    await completeLocalStep({ runState, stepState, step, options, projectRoot, netlify, netlifyFilter: netlifyFilter.filter, runtimeEvents })
     archiveEligibleCompletedLocalRuns({
       runState,
       flowSteps: steps,
@@ -5535,6 +5696,9 @@ async function maybeResumeUnfinishedRun({ projectRoot, options = {}, flow = null
 async function handleRunEngine(flowId, options) {
   const invocationDir = path.resolve(process.cwd())
   const projectRoot = resolveProjectRoot(options.projectRoot, { cwd: invocationDir })
+  const runtimeEvents = createWorkflowEventContext({
+    sink: options.runnerEventSink,
+  })
   if (flowId === 'ls' || flowId === 'list') {
     await handleList({ ...options, projectRoot })
     return
@@ -5621,6 +5785,14 @@ async function handleRunEngine(flowId, options) {
   runState.branch = configuredOptions.branch
   runState.branchSource = configuredOptions.branchSource
   saveRunState(runState)
+  runtimeEvents.setRunState(runState)
+  runtimeEvents.workflowStarted({
+    command: ['nax', 'run', configuredFlow.id],
+    options: {
+      ...configuredOptions,
+      transport,
+    },
+  })
   console.log(`Run ${runState.runId}`)
   console.log(`Flow: ${configuredFlow.title}`)
   console.log(`Transport: ${transport}`)
@@ -5629,23 +5801,29 @@ async function handleRunEngine(flowId, options) {
 
   try {
     if (isNetlifyApiTransport(transport)) {
-      await executeLocalFlow({ flow: configuredFlow, steps, options: configuredOptions, runState, projectRoot })
+      await executeLocalFlow({ flow: configuredFlow, steps, options: configuredOptions, runState, projectRoot, runtimeEvents })
     } else {
-      await executeGithubFlow({ flow: configuredFlow, steps, options: configuredOptions, runState })
+      await executeGithubFlow({ flow: configuredFlow, steps, options: configuredOptions, runState, runtimeEvents })
     }
 
     clearTrackedRunState(runState, { completed: true })
     persistWorkflowArtifacts(runState, { summaryOnly: true })
+    emitWorkflowArtifacts(runtimeEvents, runState)
     writeGithubStepSummary(runState)
+    runtimeEvents.workflowStatus('completed')
     printSuccessBox({ flow: configuredFlow, runState, transport, projectRoot })
     printPostSuccessHandoffHint(runState, projectRoot)
   } catch (error) {
     runState.status = 'failed'
     saveRunState(runState)
     persistWorkflowArtifacts(runState, { summaryOnly: true })
+    emitWorkflowArtifacts(runtimeEvents, runState)
     writeGithubStepSummary(runState)
+    runtimeEvents.workflowStatus('failed', { message: error?.message || String(error) })
     printPartialArtifactHint(runState)
     throw error
+  } finally {
+    runtimeEvents.close()
   }
 
   if (configuredOptions.notify) {

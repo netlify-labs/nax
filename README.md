@@ -337,10 +337,26 @@ The workbench includes:
 | Workflow list | Reads the same project and bundled flow definitions as `nax list`. |
 | Graph canvas | Renders workflow steps as React Flow nodes with agents, inputs, submit mode, and run status. |
 | Dry Run | Calls the local API to run `nax run <flow> --dry --force`; it previews the command and output without writing `.nax` artifacts. |
-| Run | Requires a browser confirmation, then starts the workflow through the local `nax` command and streams stdout/stderr into the UI. |
+| Run | Requires a browser confirmation, then starts the workflow through the local `nax` command and streams stdout/stderr plus structured run events into the UI. |
 | Recent runs | Reads durable `.nax/workflows` state, highlights resumable runs, and overlays run status on the graph. |
 
 The browser talks only to the local visualize server. Mutating endpoints require a per-process token embedded in the opened URL, and the server binds to `127.0.0.1` by default. Real runs still use the same transport setup as the CLI, so GitHub Actions and Netlify API prerequisites are unchanged.
+
+Live graph status is event-driven. When the visualizer starts a real run, the child `nax run` process writes JSONL lifecycle events on file descriptor 3 while stdout/stderr stay human-readable terminal streams. The visualize server relays those structured events to the browser with Server-Sent Events at `/api/runs/<id>/events`, and the UI reducer updates step cards, model pills, edges, output, and diagnostics from those events.
+
+Each durable run also stores the same structured stream at:
+
+```text
+.nax/workflows/<run-id>/events.jsonl
+```
+
+Browser reconnects replay from that log with `since=<seq>`, and developers can inspect the raw stream as JSON at:
+
+```text
+/api/runs/<run-id>/events.json?since=<seq>
+```
+
+The Output panel diagnostics button shows the latest raw events and parser errors. Remote model status is best effort: `nax` emits every Netlify API or GitHub Actions transition it can prove, but it may show `submitted` or `waiting` when the remote service does not expose a more precise live state yet. Cancellation stops local orchestration and marks submitted remote work as abandoned; cancelling remote Agent Runner jobs is a separate transport feature.
 
 The published command serves built UI assets from the package. Developing or rebuilding the UI uses Vite 8, which requires Node 20.19+ or 22.12+:
 
@@ -694,6 +710,8 @@ nax run review --step <step-id>      # re-run one step from scratch
 | Visualize API returns `unauthorized` | Reopen the full URL printed by `nax visualize`; mutating API calls require that session's `token` query value or `x-nax-token` header. |
 | Visualize reports an unknown workflow | Run `nax list` and use the displayed flow id. For project flows, also verify `--project-root` and `--flows-dir`. |
 | Visualize Run fails before submission | Fix the same GitHub/Netlify transport prerequisites you would fix for `nax run`: authenticated CLIs, linked Netlify site, or initialized GitHub Actions workflow. |
+| Visualize model pills stay on `submitted` or `waiting` | The UI only shows states `nax` can prove from the active transport. Open Output diagnostics or inspect `.nax/workflows/<run-id>/events.jsonl` to see the raw event stream. |
+| Visualize diagnostics show malformed runner events | stdout/stderr are still valid, but the structured status stream had invalid JSON or a bad envelope. Save the raw diagnostic event and rerun with the same workflow if you need to report it. |
 
 ---
 

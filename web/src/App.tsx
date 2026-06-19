@@ -1,4 +1,4 @@
-import { type CSSProperties, useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { type CSSProperties, useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react'
 import {
   ActionIcon,
   Alert,
@@ -9,6 +9,7 @@ import {
   Burger,
   Button,
   Code,
+  CopyButton,
   Group,
   Modal,
   ScrollArea,
@@ -22,7 +23,7 @@ import {
   useMantineColorScheme,
 } from '@mantine/core'
 import { useDisclosure } from '@mantine/hooks'
-import { FolderGit2, GitBranch, Moon, RefreshCw, Sun } from 'lucide-react'
+import { Check, Copy, FolderGit2, GitBranch, Moon, RefreshCw, Sun } from 'lucide-react'
 import { ReactFlowProvider } from '@xyflow/react'
 import { cancelWorkflowRun, getHealth, getRunDetails, getRunGraph, getWorkflowGraph, listRuns, listWorkflows, runEventsUrl, runWorkflowDryRun, startWorkflowRun } from './api'
 import { WorkflowOutputTabs } from './components/DryRunPanel'
@@ -32,7 +33,8 @@ import { RecentRuns } from './components/RecentRuns'
 import { WorkflowCanvas } from './components/WorkflowCanvas'
 import { WorkflowControls } from './components/WorkflowControls'
 import { WorkflowList } from './components/WorkflowList'
-import type { DryRunOptions, DryRunResult, RunDetailsSection, VisualizeRun, Workflow, WorkflowGraph, WorkflowGraphNodeData } from './types'
+import { initialLiveRunState, liveRunReducer } from './liveRunReducer'
+import type { DryRunOptions, DryRunResult, RunDetailsSection, RunnerEvent, VisualizeRun, Workflow, WorkflowGraph, WorkflowGraphNodeData } from './types'
 
 type ContextModalAction = '' | 'dry-run' | 'run'
 type AgentResultContext = {
@@ -40,11 +42,11 @@ type AgentResultContext = {
   agent: string
 }
 
-function parseRunEvent(event: Event): Record<string, unknown> {
+function parseRunEvent(event: Event): RunnerEvent {
   try {
-    return JSON.parse((event as MessageEvent).data) as Record<string, unknown>
+    return JSON.parse((event as MessageEvent).data) as RunnerEvent
   } catch {
-    return {}
+    return { type: 'runner_event_error', message: 'Could not parse run event.' }
   }
 }
 
@@ -121,6 +123,7 @@ function NetlifyLogo() {
 
 export default function App() {
   const [navbarOpened, { toggle: toggleNavbar }] = useDisclosure(false)
+  const [eventDiagnosticsOpened, { open: openEventDiagnostics, close: closeEventDiagnostics }] = useDisclosure(false)
   const { colorScheme, toggleColorScheme } = useMantineColorScheme()
   const [workflows, setWorkflows] = useState<Workflow[]>([])
   const [projectRoot, setProjectRoot] = useState('')
@@ -148,8 +151,15 @@ export default function App() {
   const [runRunning, setRunRunning] = useState(false)
   const [cancelRunning, setCancelRunning] = useState(false)
   const [runError, setRunError] = useState('')
-  const [liveStepStatuses, setLiveStepStatuses] = useState<Record<string, string>>({})
-  const [liveAgentStatuses, setLiveAgentStatuses] = useState<Record<string, Record<string, string>>>({})
+  const [liveRunState, dispatchLiveRun] = useReducer(liveRunReducer, initialLiveRunState())
+  const liveStepStatuses = liveRunState.stepStatuses
+  const liveAgentStatuses = liveRunState.agentStatuses
+  const setLiveStepStatuses = useCallback((update: Record<string, string> | ((value: Record<string, string>) => Record<string, string>)) => {
+    dispatchLiveRun({ type: 'patch_step_statuses', update })
+  }, [])
+  const setLiveAgentStatuses = useCallback((update: Record<string, Record<string, string>> | ((value: Record<string, Record<string, string>>) => Record<string, Record<string, string>>)) => {
+    dispatchLiveRun({ type: 'patch_agent_statuses', update })
+  }, [])
   const [error, setError] = useState('')
   const [refreshKey, setRefreshKey] = useState(0)
   const [contextModalAction, setContextModalAction] = useState<ContextModalAction>('')
@@ -160,16 +170,40 @@ export default function App() {
   const [agentResultLoading, setAgentResultLoading] = useState(false)
   const [agentResultError, setAgentResultError] = useState('')
   const dryRunSimulationTimers = useRef<number[]>([])
+  const runEventsRef = useRef<EventSource | null>(null)
+  const runReconnectTimerRef = useRef<number | null>(null)
+  const selectedWorkflow = useMemo(
+    () => workflows.find((workflow) => workflow.id === selectedWorkflowId) || null,
+    [workflows, selectedWorkflowId],
+  )
 
   const clearDryRunSimulation = useCallback(() => {
     for (const timer of dryRunSimulationTimers.current) window.clearTimeout(timer)
     dryRunSimulationTimers.current = []
   }, [])
 
+  const closeRunEvents = useCallback(() => {
+    if (runReconnectTimerRef.current) {
+      window.clearTimeout(runReconnectTimerRef.current)
+      runReconnectTimerRef.current = null
+    }
+    runEventsRef.current?.close()
+    runEventsRef.current = null
+  }, [])
+
   const simulateDryRunStepStatuses = useCallback((options: DryRunOptions) => {
     clearDryRunSimulation()
-    const nodes = [...(graph?.nodes || [])]
-      .filter((node) => node.data.kind === 'workflow-step')
+    const graphNodes = graph?.nodes || []
+    const fallbackNodes = (selectedWorkflow?.steps || []).map((step, index) => ({
+      data: {
+        stepId: step.id,
+        agents: step.agents,
+        selectedAgents: step.agents,
+        graphIndex: index,
+      },
+    }))
+    const nodes = [...(graphNodes.length > 0 ? graphNodes : fallbackNodes)]
+      .filter((node) => node.data.stepId && Array.isArray(node.data.agents))
       .sort((a, b) => a.data.graphIndex - b.data.graphIndex)
     const startIndex = options.fromStep ? nodes.findIndex((node) => node.data.stepId === options.fromStep) : 0
     const selectedNodes = options.step
@@ -240,7 +274,7 @@ export default function App() {
       dryRunSimulationTimers.current.push(completeTimer)
       elapsedMs = stepStartMs + stepDurationMs + nextStepDelayMs
     })
-  }, [clearDryRunSimulation, graph])
+  }, [clearDryRunSimulation, graph, selectedWorkflow])
 
   useEffect(() => {
     let cancelled = false
@@ -257,6 +291,7 @@ export default function App() {
   }, [refreshKey])
 
   useEffect(() => () => clearDryRunSimulation(), [clearDryRunSimulation])
+  useEffect(() => () => closeRunEvents(), [closeRunEvents])
 
   useEffect(() => {
     let cancelled = false
@@ -288,13 +323,11 @@ export default function App() {
     if (!selectedWorkflowId) {
       setGraph(null)
       clearDryRunSimulation()
-      setLiveStepStatuses({})
-      setLiveAgentStatuses({})
+      dispatchLiveRun({ type: 'reset' })
       return
     }
     clearDryRunSimulation()
-    setLiveStepStatuses({})
-    setLiveAgentStatuses({})
+    dispatchLiveRun({ type: 'reset' })
     setDryRunOptions((options) => ({
       ...options,
       models: [],
@@ -344,11 +377,6 @@ export default function App() {
       cancelled = true
     }
   }, [refreshKey, activeRun?.status])
-
-  const selectedWorkflow = useMemo(
-    () => workflows.find((workflow) => workflow.id === selectedWorkflowId) || null,
-    [workflows, selectedWorkflowId],
-  )
 
   const toggleStepAgent = useCallback((stepId: string, agent: string, allAgents: string[]) => {
     setDryRunOptions((options) => {
@@ -403,7 +431,11 @@ export default function App() {
     setAgentResultSection(null)
     setAgentResultError('')
     setAgentResultLoading(true)
-    if (!run && ['running', 'submitted', 'completed', 'dry-run'].includes(agentStatus)) {
+    if (!run && ['running', 'submitted', 'waiting', 'retrying', 'queued'].includes(agentStatus)) {
+      setAgentResultLoading(false)
+      return
+    }
+    if (!run && agentStatus === 'dry-run') {
       setAgentResultLoading(false)
       return
     }
@@ -456,60 +488,89 @@ export default function App() {
     setRunError('')
     setRunOutput('')
     clearDryRunSimulation()
-    setLiveStepStatuses({})
-    setLiveAgentStatuses({})
+    closeRunEvents()
+    dispatchLiveRun({ type: 'reset' })
     try {
       const response = await startWorkflowRun(workflow.id, optionsOverride)
       setActiveRun(response.run)
+      dispatchLiveRun({ type: 'reset', run: response.run })
       setSelectedRunId(response.run.runId || response.run.id)
-      const events = new EventSource(runEventsUrl(response.run.id))
-      events.addEventListener('started', (event) => {
+      let eventCursor = 0
+      let terminal = false
+      const dispatchEvent = (event: Event) => {
         const data = parseRunEvent(event)
-        setActiveRun((value) => value ? {
-          ...value,
-          status: 'running',
-          command: Array.isArray(data.command) ? data.command as string[] : value.command,
-          startedAt: typeof data.at === 'string' ? data.at : value.startedAt,
-        } : value)
-      })
-      events.addEventListener('stdout', (event) => {
-        const data = parseRunEvent(event)
-        setRunOutput((value) => `${value}${typeof data.text === 'string' ? data.text : ''}`)
-      })
-      events.addEventListener('stderr', (event) => {
-        const data = parseRunEvent(event)
-        setRunOutput((value) => `${value}${typeof data.text === 'string' ? data.text : ''}`)
-      })
-      events.addEventListener('step_status', (event) => {
-        const data = parseRunEvent(event)
-        const stepId = typeof data.stepId === 'string' ? data.stepId : ''
-        const status = typeof data.status === 'string' ? data.status : ''
-        if (!stepId || !status) return
-        setLiveStepStatuses((value) => ({
-          ...value,
-          [stepId]: status,
-        }))
-      })
-      events.addEventListener('exited', (event) => {
-        const data = parseRunEvent(event)
-        setActiveRun((value) => value ? {
-          ...value,
-          status: typeof data.status === 'string' ? data.status : value.status,
-          exitCode: typeof data.exitCode === 'number' ? data.exitCode : value.exitCode,
-          signal: typeof data.signal === 'string' ? data.signal : value.signal,
-          exitedAt: typeof data.at === 'string' ? data.at : value.exitedAt,
-        } : value)
-        setRunRunning(false)
-        events.close()
-      })
-      events.addEventListener('error', (event) => {
-        const data = parseRunEvent(event)
-        if (typeof data.message === 'string') setRunError(data.message)
-      })
-      events.onerror = () => {
-        events.close()
-        setRunRunning(false)
+        const cursor = Number(data.seq ?? data.id ?? 0)
+        if (Number.isFinite(cursor) && cursor > eventCursor) eventCursor = cursor
+        dispatchLiveRun({ type: 'event', event: data })
+        if (typeof data.text === 'string' && (data.type === 'stdout' || data.type === 'stderr')) {
+          setRunOutput((value) => `${value}${data.text}`)
+        }
+        if (data.type === 'workflow_started' && data.runId) {
+          setSelectedRunId(data.runId)
+          setActiveRun((value) => value ? {
+            ...value,
+            runId: data.runId,
+            flowId: data.flowId || value.flowId,
+            flowTitle: data.flowTitle || value.flowTitle,
+            status: typeof data.status === 'string' ? data.status : 'running',
+            command: Array.isArray(data.command) ? data.command : value.command,
+            startedAt: typeof data.at === 'string' ? data.at : value.startedAt,
+          } : value)
+        }
+        if (typeof data.message === 'string' && (data.type === 'error' || data.type === 'runner_event_error')) {
+          setRunError(data.message)
+        }
       }
+      const connectEvents = (since = 0) => {
+        runReconnectTimerRef.current = null
+        if (terminal) return
+        runEventsRef.current?.close()
+        const events = new EventSource(runEventsUrl(response.run.id, since))
+        runEventsRef.current = events
+        for (const type of [
+          'started',
+          'stdout',
+          'stderr',
+          'workflow_started',
+          'workflow_completed',
+          'workflow_failed',
+          'workflow_cancelled',
+          'step_status',
+          'agent_status',
+          'artifact_written',
+          'runner_event_error',
+          'cancel_requested',
+        ]) {
+          events.addEventListener(type, dispatchEvent)
+        }
+        events.addEventListener('exited', (event) => {
+          terminal = true
+          const data = parseRunEvent(event)
+          const cursor = Number(data.seq ?? data.id ?? 0)
+          if (Number.isFinite(cursor) && cursor > eventCursor) eventCursor = cursor
+          dispatchLiveRun({ type: 'event', event: data })
+          setActiveRun((value) => value ? {
+            ...value,
+            status: typeof data.status === 'string' ? data.status : value.status,
+            exitCode: typeof data.exitCode === 'number' ? data.exitCode : value.exitCode,
+            signal: typeof data.signal === 'string' ? data.signal : value.signal,
+            exitedAt: typeof data.at === 'string' ? data.at : value.exitedAt,
+          } : value)
+          setRunRunning(false)
+          events.close()
+          if (runEventsRef.current === events) runEventsRef.current = null
+        })
+        events.addEventListener('error', dispatchEvent)
+        events.onerror = () => {
+          events.close()
+          if (terminal) return
+          if (runEventsRef.current === events) runEventsRef.current = null
+          if (!runReconnectTimerRef.current) {
+            runReconnectTimerRef.current = window.setTimeout(() => connectEvents(eventCursor), 1200)
+          }
+        }
+      }
+      connectEvents()
     } catch (err) {
       setRunError(err instanceof Error ? err.message : String(err))
       setRunRunning(false)
@@ -542,8 +603,7 @@ export default function App() {
       const runOptions = response.run.options || {}
       setSelectedWorkflowId(response.workflow.id)
       setGraph(response.graph)
-      setLiveStepStatuses({})
-      setLiveAgentStatuses({})
+      dispatchLiveRun({ type: 'reset' })
       setDryRunOptions((options) => ({
         ...options,
         branch: typeof runOptions.branch === 'string' ? runOptions.branch : response.run.branch || options.branch,
@@ -598,14 +658,14 @@ export default function App() {
   const repoName = repoNameFromPath(projectRoot)
 
   const activeRunResult = activeRun ? {
-    status: activeRun.status,
+    status: liveRunState.run?.status || activeRun.status,
     command: activeRun.command || [],
     startedAt: activeRun.startedAt || '',
-    exitedAt: activeRun.exitedAt || '',
-    durationMs: activeRun.durationMs || 0,
-    exitCode: activeRun.exitCode ?? null,
-    signal: activeRun.signal || null,
-    stdout: runOutput,
+    exitedAt: liveRunState.run?.exitedAt || activeRun.exitedAt || '',
+    durationMs: liveRunState.run?.durationMs || activeRun.durationMs || 0,
+    exitCode: liveRunState.run?.exitCode ?? activeRun.exitCode ?? null,
+    signal: liveRunState.run?.signal || activeRun.signal || null,
+    stdout: liveRunState.output || runOutput,
     stderr: '',
   } : null
 
@@ -711,6 +771,9 @@ export default function App() {
                       <WorkflowOutputTabs
                         dryRun={{ result: dryRunResult, running: dryRunRunning, error: dryRunError }}
                         run={{ result: activeRunResult, running: runRunning, error: runError }}
+                        events={liveRunState.rawEvents}
+                        eventErrors={liveRunState.errors}
+                        onViewEvents={openEventDiagnostics}
                       />
                     </Splitter.Pane>
                   </Splitter>
@@ -782,6 +845,54 @@ export default function App() {
         </Stack>
       </Modal>
       <Modal
+        opened={eventDiagnosticsOpened}
+        onClose={closeEventDiagnostics}
+        title="Workflow event diagnostics"
+        size="52rem"
+        centered
+        scrollAreaComponent={ScrollArea.Autosize}
+      >
+        <Stack gap="sm">
+          {liveRunState.errors.length > 0 ? (
+            <Alert color="red" variant="light">
+              <Stack gap={4}>
+                {liveRunState.errors.map((message, index) => (
+                  <Text key={`${index}-${message}`} size="sm">{message}</Text>
+                ))}
+              </Stack>
+            </Alert>
+          ) : (
+            <Text size="sm" c="dimmed">No event parser diagnostics.</Text>
+          )}
+          <Group justify="space-between" wrap="nowrap">
+            <Text size="xs" c="dimmed">{liveRunState.rawEvents.length} recent structured events</Text>
+            <CopyButton value={JSON.stringify(liveRunState.rawEvents, null, 2)} timeout={1500}>
+              {({ copied, copy }) => (
+                <Button
+                  size="xs"
+                  variant="subtle"
+                  color={copied ? 'green' : 'gray'}
+                  leftSection={copied ? <Check size={14} /> : <Copy size={14} />}
+                  disabled={liveRunState.rawEvents.length === 0}
+                  onClick={copy}
+                >
+                  {copied ? 'Copied' : 'Copy events'}
+                </Button>
+              )}
+            </CopyButton>
+          </Group>
+          <Textarea
+            aria-label="Raw workflow events"
+            value={JSON.stringify(liveRunState.rawEvents, null, 2)}
+            readOnly
+            autosize
+            minRows={16}
+            maxRows={24}
+            styles={{ input: { fontFamily: 'var(--mantine-font-family-monospace)', fontSize: 12 } }}
+          />
+        </Stack>
+      </Modal>
+      <Modal
         opened={Boolean(promptNode)}
         onClose={() => setPromptNode(null)}
         title={promptNode ? `${promptNode.promptTitle || promptNode.title} prompt` : 'Prompt'}
@@ -849,11 +960,11 @@ export default function App() {
           </Stack>
         ) : agentResultContext ? (
           <Stack gap="sm">
-            {agentResultContext.node.agentStatuses?.[agentResultContext.agent] === 'running' ? (
-              <Badge variant="light" color="yellow" w="fit-content">running</Badge>
+            {agentResultContext.node.agentStatuses?.[agentResultContext.agent] ? (
+              <Badge variant="light" color="yellow" w="fit-content">{agentResultContext.node.agentStatuses[agentResultContext.agent]}</Badge>
             ) : null}
             <Text c="dimmed">
-              {agentResultContext.node.agentStatuses?.[agentResultContext.agent] === 'running'
+              {['running', 'submitted', 'waiting', 'retrying', 'queued'].includes(agentResultContext.node.agentStatuses?.[agentResultContext.agent] || '')
                 ? 'No result yet.'
                 : 'No results from dry runs.'}
             </Text>

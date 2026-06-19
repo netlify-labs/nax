@@ -40,3 +40,26 @@ test('visualize renders Review graph on narrow viewport', async ({ page }, testI
     contentType: 'image/png',
   })
 })
+
+test('visualize dry-run simulation updates step, model pill, and output without credits', async ({ page }, testInfo) => {
+  await page.setViewportSize({ width: 1360, height: 860 })
+  await page.goto(instance.url, { waitUntil: 'networkidle' })
+
+  await page.getByRole('button', { name: /Local Smoke Test/ }).click()
+  await expect(page.locator('.workflow-node')).toHaveCount(1)
+
+  await page.getByRole('button', { name: 'Run options' }).click()
+  await page.getByRole('menuitem', { name: 'Dry run' }).click()
+  await expect(page.getByRole('dialog', { name: 'Dry run workflow' })).toBeVisible()
+  await page.getByRole('button', { name: 'Dry Run' }).click()
+
+  await expect(page.locator('.workflow-node.status-running')).toHaveCount(1, { timeout: 2000 })
+  await expect(page.locator('.agent-chip.agent-completed')).toHaveCount(1, { timeout: 7000 })
+  await expect(page.locator('.workflow-node.status-dry-run')).toHaveCount(1, { timeout: 2000 })
+  await expect(page.getByText(/Dry run only/)).toBeVisible()
+
+  await testInfo.attach('dry-run-event-state', {
+    body: await page.screenshot({ fullPage: true }),
+    contentType: 'image/png',
+  })
+})

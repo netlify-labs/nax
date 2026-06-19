@@ -92,8 +92,11 @@ export async function cancelWorkflowRun(id: string): Promise<{ run: VisualizeRun
   return payload as { run: VisualizeRun; cancelled: boolean }
 }
 
-export function runEventsUrl(id: string): string {
-  return withSessionToken(`/api/runs/${encodeURIComponent(id)}/events`)
+export function runEventsUrl(id: string, since = 0): string {
+  const path = since > 0
+    ? `/api/runs/${encodeURIComponent(id)}/events?since=${encodeURIComponent(String(since))}`
+    : `/api/runs/${encodeURIComponent(id)}/events`
+  return withSessionToken(path)
 }
 
 export function listRuns(): Promise<RunsResponse> {

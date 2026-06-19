@@ -93,6 +93,7 @@ function patchConsole({ onStdout = noop, onStderr = noop, passthrough = false })
  *   forceNonInteractive?: boolean,
  *   engine?: (flowId: string, options: Record<string, any>) => Promise<any>,
  *   eventSink?: (event: Record<string, any>) => void,
+ *   runnerEventSink?: (event: Record<string, any>) => void,
  * }} input
  */
 async function runWorkflow(input) {
@@ -112,6 +113,7 @@ async function runWorkflow(input) {
     stepModels: normalizeStepModels(input.options?.stepModels),
     ...(projectRoot ? { projectRoot } : {}),
     ...(forceNonInteractive ? { force: true, yes: true } : {}),
+    ...(input.runnerEventSink ? { runnerEventSink: input.runnerEventSink } : {}),
   }
   const command = workflowCommand({ flowId, projectRoot: runProjectRoot, options, dryRun: resolvedDryRun })
   const startedAt = new Date().toISOString()

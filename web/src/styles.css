@@ -529,7 +529,10 @@ body {
 }
 
 .workflow-node.status-running,
-.workflow-node.status-submitted {
+.workflow-node.status-submitted,
+.workflow-node.status-waiting,
+.workflow-node.status-retrying,
+.workflow-node.status-queued {
   border-color: var(--mantine-color-yellow-4);
   box-shadow: 0 0 0 2px color-mix(in srgb, var(--mantine-color-yellow-4), transparent 72%), 0 16px 34px rgba(0, 0, 0, 0.3);
 }
@@ -542,7 +545,8 @@ body {
 
 .workflow-node.status-failed,
 .workflow-node.status-timeout,
-.workflow-node.status-cancelled {
+.workflow-node.status-cancelled,
+.workflow-node.status-abandoned {
   border-color: var(--mantine-color-red-5);
   box-shadow: 0 0 0 2px color-mix(in srgb, var(--mantine-color-red-5), transparent 72%), 0 16px 34px rgba(0, 0, 0, 0.3);
 }
@@ -661,7 +665,11 @@ body {
   border-color: color-mix(in srgb, var(--mantine-color-teal-3), transparent 10%);
 }
 
-.agent-chip.agent-running {
+.agent-chip.agent-running,
+.agent-chip.agent-submitted,
+.agent-chip.agent-waiting,
+.agent-chip.agent-retrying,
+.agent-chip.agent-queued {
   border-color: var(--mantine-color-yellow-4);
   background:
     linear-gradient(
@@ -686,6 +694,15 @@ body {
   box-shadow: 0 0 0 1px color-mix(in srgb, var(--mantine-color-green-4), transparent 72%), 0 0 18px color-mix(in srgb, var(--mantine-color-green-4), transparent 86%);
 }
 
+.agent-chip.agent-failed,
+.agent-chip.agent-cancelled,
+.agent-chip.agent-abandoned {
+  border-color: var(--mantine-color-red-5);
+  background: color-mix(in srgb, var(--mantine-color-red-5), transparent 88%);
+  color: light-dark(var(--mantine-color-red-9), var(--mantine-color-red-1));
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--mantine-color-red-5), transparent 74%), 0 0 18px color-mix(in srgb, var(--mantine-color-red-5), transparent 86%);
+}
+
 .agent-chip:hover {
   border-color: light-dark(var(--mantine-primary-color-5), var(--mantine-color-teal-2));
   background: color-mix(in srgb, var(--mantine-primary-color-5), transparent 78%);
@@ -693,7 +710,11 @@ body {
   transform: translateY(-1px);
 }
 
-.agent-chip.agent-running:hover {
+.agent-chip.agent-running:hover,
+.agent-chip.agent-submitted:hover,
+.agent-chip.agent-waiting:hover,
+.agent-chip.agent-retrying:hover,
+.agent-chip.agent-queued:hover {
   border-color: var(--mantine-color-yellow-4);
   color: light-dark(var(--mantine-color-yellow-9), var(--mantine-color-yellow-1));
   box-shadow: 0 0 0 1px color-mix(in srgb, var(--mantine-color-yellow-4), transparent 76%), 0 0 20px color-mix(in srgb, var(--mantine-color-yellow-4), transparent 84%);
@@ -705,6 +726,15 @@ body {
   background: color-mix(in srgb, var(--mantine-color-green-4), transparent 88%);
   color: light-dark(var(--mantine-color-green-9), var(--mantine-color-green-1));
   box-shadow: 0 0 0 1px color-mix(in srgb, var(--mantine-color-green-4), transparent 72%), 0 0 18px color-mix(in srgb, var(--mantine-color-green-4), transparent 86%);
+}
+
+.agent-chip.agent-failed:hover,
+.agent-chip.agent-cancelled:hover,
+.agent-chip.agent-abandoned:hover {
+  border-color: var(--mantine-color-red-5);
+  background: color-mix(in srgb, var(--mantine-color-red-5), transparent 88%);
+  color: light-dark(var(--mantine-color-red-9), var(--mantine-color-red-1));
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--mantine-color-red-5), transparent 74%), 0 0 18px color-mix(in srgb, var(--mantine-color-red-5), transparent 86%);
 }
 
 .agent-chip:focus-visible {

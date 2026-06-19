@@ -15,6 +15,15 @@ function hasCompletedRun(node: WorkflowGraphNodeData, agent: string): boolean {
   ))
 }
 
+function agentStatusTitle(node: WorkflowGraphNodeData, agent: string, active: boolean, status: string, hasResult: boolean): string {
+  const label = titleCase(agent)
+  if (hasResult) return `View ${label} result for ${node.title}`
+  if (['running', 'submitted', 'waiting', 'retrying', 'queued'].includes(status)) return `${label} is ${status}; view available run details`
+  if (status === 'abandoned') return `${label} was abandoned after cancellation; view available run details`
+  if (['failed', 'cancelled'].includes(status)) return `${label} ${status}; view available run details`
+  return `${active ? 'Disable' : 'Enable'} ${label} for ${node.title}`
+}
+
 export const WorkflowNode = memo(function WorkflowNode({ data, selected }: NodeProps) {
   const node = data as WorkflowGraphNodeData
   const selectedAgents = new Set(node.selectedAgents || node.agents)
@@ -52,14 +61,15 @@ export const WorkflowNode = memo(function WorkflowNode({ data, selected }: NodeP
         {node.agents.map((agent) => {
           const active = selectedAgents.has(agent)
           const agentStatus = active ? node.agentStatuses?.[agent] || '' : ''
-          const canViewResult = active && (hasCompletedRun(node, agent) || Boolean(agentStatus))
+          const hasResult = hasCompletedRun(node, agent)
+          const canViewResult = active && (hasResult || Boolean(agentStatus))
           return (
             <button
               className={`agent-chip ${agent}${active ? '' : ' inactive'}${agentStatus ? ` agent-${agentStatus}` : ''}`}
               key={agent}
               type="button"
               aria-pressed={active}
-              title={canViewResult ? `View ${titleCase(agent)} result for ${node.title}` : `${active ? 'Disable' : 'Enable'} ${titleCase(agent)} for ${node.title}`}
+              title={agentStatusTitle(node, agent, active, agentStatus, hasResult)}
               onClick={(event) => {
                 event.stopPropagation()
                 if (canViewResult) {

@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef } from 'react'
 import { ActionIcon, Alert, Badge, Box, Code, CopyButton, Group, Paper, ScrollArea, Stack, Text, Tooltip } from '@mantine/core'
-import { Check, Copy, Terminal } from 'lucide-react'
-import type { DryRunResult } from '../types'
+import { Check, Copy, ListTree, Terminal } from 'lucide-react'
+import type { DryRunResult, RunnerEvent } from '../types'
 
 type OutputPanel = {
   title: string
@@ -13,6 +13,9 @@ type OutputPanel = {
 type Props = {
   dryRun: Omit<OutputPanel, 'value' | 'title'>
   run: Omit<OutputPanel, 'value' | 'title'>
+  events?: RunnerEvent[]
+  eventErrors?: string[]
+  onViewEvents?: () => void
 }
 
 function statusColor(panel: OutputPanel): string {
@@ -75,7 +78,7 @@ function OutputSection({ panel }: { panel: OutputPanel }) {
   )
 }
 
-export function WorkflowOutputTabs({ dryRun, run }: Props) {
+export function WorkflowOutputTabs({ dryRun, run, events = [], eventErrors = [], onViewEvents }: Props) {
   const viewportRef = useRef<HTMLDivElement>(null)
   const panels: OutputPanel[] = [
     { title: 'Dry Run', ...dryRun },
@@ -111,6 +114,20 @@ export function WorkflowOutputTabs({ dryRun, run }: Props) {
         </Group>
         <Group gap={6} wrap="nowrap">
           {visiblePanels.map((panel) => <OutputBadge key={panel.title} panel={panel} />)}
+          {onViewEvents ? (
+            <Tooltip label={eventErrors.length > 0 ? 'View event diagnostics' : 'View raw events'} withArrow>
+              <ActionIcon
+                variant="subtle"
+                color={eventErrors.length > 0 ? 'red' : 'gray'}
+                size="sm"
+                aria-label="View workflow event diagnostics"
+                disabled={events.length === 0 && eventErrors.length === 0}
+                onClick={onViewEvents}
+              >
+                <ListTree size={14} />
+              </ActionIcon>
+            </Tooltip>
+          ) : null}
           <CopyButton value={copyText} timeout={1500}>
             {({ copied, copy }) => (
               <Tooltip label={copied ? 'Copied' : 'Copy output'} withArrow>

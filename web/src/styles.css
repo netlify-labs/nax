@@ -477,19 +477,27 @@ body {
 }
 
 .agent-chip {
-  border: 0;
-  padding: 4px 8px;
-  background: transparent;
-  color: var(--mantine-color-text);
+  border: 1px solid color-mix(in srgb, var(--mantine-primary-color-4), transparent 16%);
+  padding: 4px 10px;
+  background: color-mix(in srgb, var(--mantine-primary-color-5), transparent 86%);
+  color: light-dark(var(--mantine-primary-color-9), var(--mantine-color-white));
   cursor: pointer;
   font-size: 13px;
   font-weight: 700;
   gap: 6px;
-  transition: background-color 120ms ease, color 120ms ease, opacity 120ms ease, transform 120ms ease;
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--mantine-primary-color-4), transparent 84%), 0 0 18px color-mix(in srgb, var(--mantine-primary-color-5), transparent 88%);
+  transition: border-color 120ms ease, background-color 120ms ease, box-shadow 120ms ease, color 120ms ease, opacity 120ms ease, transform 120ms ease;
+}
+
+[data-mantine-color-scheme='dark'] .agent-chip {
+  background: color-mix(in srgb, var(--mantine-primary-color-6), transparent 80%);
+  border-color: color-mix(in srgb, var(--mantine-color-teal-3), transparent 10%);
 }
 
 .agent-chip:hover {
-  background: light-dark(var(--mantine-color-gray-1), var(--mantine-color-dark-5));
+  border-color: light-dark(var(--mantine-primary-color-5), var(--mantine-color-teal-2));
+  background: color-mix(in srgb, var(--mantine-primary-color-5), transparent 78%);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--mantine-primary-color-4), transparent 70%), 0 0 22px color-mix(in srgb, var(--mantine-primary-color-4), transparent 82%);
   transform: translateY(-1px);
 }
 
@@ -499,9 +507,18 @@ body {
 }
 
 .agent-chip.inactive {
+  border-color: transparent;
   background: transparent;
   color: var(--mantine-color-dimmed);
   opacity: 0.52;
+  box-shadow: none;
+}
+
+.agent-chip.inactive:hover {
+  border-color: light-dark(var(--mantine-color-gray-3), var(--mantine-color-dark-3));
+  background: light-dark(var(--mantine-color-gray-1), var(--mantine-color-dark-5));
+  box-shadow: none;
+  opacity: 0.8;
 }
 
 .agent-icon {

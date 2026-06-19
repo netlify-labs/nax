@@ -385,7 +385,7 @@ export function RecentRuns({ runs, selectedRunId, onSelect, onResume }: Props) {
                   <Text c="dimmed">No run details were found.</Text>
                 )}
               </Box>
-              <RunDetailsMetadata run={detailRun} workflowName={detailWorkflowName} />
+              <RunDetailsMetadata run={detailRun} workflowName={detailWorkflowName} section={activeEntry?.section} />
             </Box>
           </Stack>
         ) : null}
@@ -394,7 +394,7 @@ export function RecentRuns({ runs, selectedRunId, onSelect, onResume }: Props) {
   )
 }
 
-function RunDetailsMetadata({ run, workflowName }: { run: VisualizeRun | undefined; workflowName: string }) {
+function RunDetailsMetadata({ run, workflowName, section }: { run: VisualizeRun | undefined; workflowName: string; section?: RunDetailsSection }) {
   return (
     <Paper className="run-details-meta" withBorder>
       <Text size="xs" fw={800} c="dimmed" className="run-details-meta-heading">Metadata</Text>
@@ -404,6 +404,8 @@ function RunDetailsMetadata({ run, workflowName }: { run: VisualizeRun | undefin
         <MetadataRow label="Transport" value={run?.transport || ''} />
         <MetadataRow label="Branch" value={run?.branch || ''} />
         <MetadataRow label="Run ID" value={runId(run || {})} />
+        <MetadataRow label="Runner ID" value={section?.runnerId || ''} />
+        <MetadataRow label="Session ID" value={section?.sessionId || ''} />
       </Stack>
     </Paper>
   )
@@ -424,8 +426,6 @@ function RunSectionMeta({ section }: { section: RunDetailsSection }) {
   return (
     <Stack gap={6} mb="sm">
       <Group gap="xs" wrap="wrap">
-        {section.runnerId ? <Badge variant="light" color="gray">runner {section.runnerId}</Badge> : null}
-        {section.sessionId ? <Badge variant="light" color="gray">session {section.sessionId}</Badge> : null}
         {sessionUrl ? <Anchor href={sessionUrl} target="_blank" rel="noreferrer" size="xs">Open in Netlify</Anchor> : null}
         {section.absolutePath ? <ArtifactActions filePath={section.absolutePath} /> : null}
       </Group>

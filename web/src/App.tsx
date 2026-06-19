@@ -1,4 +1,4 @@
-import { type CSSProperties, useCallback, useEffect, useMemo, useState } from 'react'
+import { type CSSProperties, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   ActionIcon,
   AppShell,
@@ -132,6 +132,40 @@ export default function App() {
   const [contextModalAction, setContextModalAction] = useState<ContextModalAction>('')
   const [contextDraft, setContextDraft] = useState('')
   const [promptNode, setPromptNode] = useState<WorkflowGraphNodeData | null>(null)
+  const dryRunSimulationTimers = useRef<number[]>([])
+
+  const clearDryRunSimulation = useCallback(() => {
+    for (const timer of dryRunSimulationTimers.current) window.clearTimeout(timer)
+    dryRunSimulationTimers.current = []
+  }, [])
+
+  const simulateDryRunStepStatuses = useCallback((options: DryRunOptions) => {
+    clearDryRunSimulation()
+    const nodes = [...(graph?.nodes || [])]
+      .filter((node) => node.data.kind === 'workflow-step')
+      .sort((a, b) => a.data.graphIndex - b.data.graphIndex)
+    const startIndex = options.fromStep ? nodes.findIndex((node) => node.data.stepId === options.fromStep) : 0
+    const selectedNodes = options.step
+      ? nodes.filter((node) => node.data.stepId === options.step)
+      : nodes.slice(Math.max(startIndex, 0))
+
+    setLiveStepStatuses({})
+    selectedNodes.forEach((node, index) => {
+      const runningTimer = window.setTimeout(() => {
+        setLiveStepStatuses((value) => ({
+          ...value,
+          [node.data.stepId]: 'running',
+        }))
+      }, index * 450)
+      const dryRunTimer = window.setTimeout(() => {
+        setLiveStepStatuses((value) => ({
+          ...value,
+          [node.data.stepId]: 'dry-run',
+        }))
+      }, index * 450 + 320)
+      dryRunSimulationTimers.current.push(runningTimer, dryRunTimer)
+    })
+  }, [clearDryRunSimulation, graph])
 
   useEffect(() => {
     let cancelled = false
@@ -146,6 +180,8 @@ export default function App() {
       cancelled = true
     }
   }, [refreshKey])
+
+  useEffect(() => () => clearDryRunSimulation(), [clearDryRunSimulation])
 
   useEffect(() => {
     let cancelled = false
@@ -176,9 +212,11 @@ export default function App() {
   useEffect(() => {
     if (!selectedWorkflowId) {
       setGraph(null)
+      clearDryRunSimulation()
       setLiveStepStatuses({})
       return
     }
+    clearDryRunSimulation()
     setLiveStepStatuses({})
     setDryRunOptions((options) => ({
       ...options,
@@ -206,7 +244,7 @@ export default function App() {
     return () => {
       cancelled = true
     }
-  }, [selectedWorkflowId, refreshKey])
+  }, [clearDryRunSimulation, selectedWorkflowId, refreshKey])
 
   useEffect(() => {
     let cancelled = false
@@ -267,11 +305,13 @@ export default function App() {
     setDryRunRunning(true)
     setDryRunError('')
     setDryRunResult(null)
+    simulateDryRunStepStatuses(optionsOverride)
     try {
       const response = await runWorkflowDryRun(selectedWorkflow.id, optionsOverride)
       setDryRunResult(response.dryRun)
     } catch (err) {
       setDryRunError(err instanceof Error ? err.message : String(err))
+      clearDryRunSimulation()
     } finally {
       setDryRunRunning(false)
     }
@@ -295,6 +335,7 @@ export default function App() {
     setRunRunning(true)
     setRunError('')
     setRunOutput('')
+    clearDryRunSimulation()
     setLiveStepStatuses({})
     try {
       const response = await startWorkflowRun(workflow.id, optionsOverride)

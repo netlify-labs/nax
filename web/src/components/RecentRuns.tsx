@@ -105,6 +105,7 @@ export function RecentRuns({ runs, selectedRunId, onSelect, onResume }: Props) {
         title={detailRun ? `${detailRun.flowTitle || detailRun.flowId || runId(detailRun)} results` : 'Run results'}
         size="90rem"
         centered
+        classNames={{ content: 'run-details-modal-content', body: 'run-details-modal-body' }}
         scrollAreaComponent={ScrollArea.Autosize}
       >
         {detailsLoading ? (

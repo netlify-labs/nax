@@ -342,6 +342,14 @@ body {
   max-height: min(64vh, 820px);
 }
 
+.run-details-modal-content {
+  min-height: 80vh;
+}
+
+.run-details-modal-body {
+  min-height: calc(80vh - 64px);
+}
+
 .run-item {
   border-color: var(--mantine-color-default-border);
 }

@@ -288,6 +288,19 @@ body {
   background: light-dark(var(--mantine-color-gray-1), var(--mantine-color-dark-6));
 }
 
+.prompt-markdown a[data-streamdown='link'] {
+  color: var(--mantine-primary-color-4);
+  font-weight: 500;
+  overflow-wrap: anywhere;
+  text-decoration: underline;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 2px;
+}
+
+.prompt-markdown a[data-streamdown='link']:hover {
+  color: var(--mantine-primary-color-3);
+}
+
 .prompt-markdown [data-streamdown='code-block'] {
   margin: var(--mantine-spacing-md) 0;
   gap: 0;

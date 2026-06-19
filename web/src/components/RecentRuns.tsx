@@ -308,6 +308,7 @@ export function RecentRuns({ runs, selectedRunId, onSelect, onResume }: Props) {
             <Box className="run-details-layout">
               {timelineEntries.length > 0 ? (
                 <Box className="run-details-timeline" component="nav" aria-label="Workflow timeline">
+                  <Text className="run-details-timeline-heading" size="xs" fw={800} c="dimmed">Timeline</Text>
                   <Timeline active={timelineProgressIndex} bulletSize={18} lineWidth={2}>
                     {parentTimelineEntries.map((entry) => {
                       const childEntries = entry.kind === 'step'

@@ -368,6 +368,11 @@ body {
   padding-top: 8px;
 }
 
+.run-details-timeline-heading {
+  margin: 0 0 10px 34px;
+  text-transform: uppercase;
+}
+
 .run-details-timeline-card {
   width: 100%;
   border-color: color-mix(in srgb, var(--mantine-color-default-border), transparent 28%);

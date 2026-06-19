@@ -418,8 +418,8 @@ body {
 
 .workflow-node.status-running,
 .workflow-node.status-submitted {
-  border-color: var(--mantine-color-green-4);
-  box-shadow: 0 0 0 2px color-mix(in srgb, var(--mantine-color-green-4), transparent 72%), 0 16px 34px rgba(0, 0, 0, 0.3);
+  border-color: var(--mantine-color-yellow-4);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--mantine-color-yellow-4), transparent 72%), 0 16px 34px rgba(0, 0, 0, 0.3);
 }
 
 .workflow-node.status-completed,
@@ -547,6 +547,21 @@ body {
 [data-mantine-color-scheme='dark'] .agent-chip {
   background: color-mix(in srgb, var(--mantine-primary-color-6), transparent 80%);
   border-color: color-mix(in srgb, var(--mantine-color-teal-3), transparent 10%);
+}
+
+.agent-chip.agent-running {
+  border-color: var(--mantine-color-yellow-4);
+  background: color-mix(in srgb, var(--mantine-color-yellow-4), transparent 84%);
+  color: light-dark(var(--mantine-color-yellow-9), var(--mantine-color-yellow-1));
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--mantine-color-yellow-4), transparent 76%), 0 0 20px color-mix(in srgb, var(--mantine-color-yellow-4), transparent 84%);
+}
+
+.agent-chip.agent-completed,
+.agent-chip.agent-dry-run {
+  border-color: var(--mantine-color-green-4);
+  background: color-mix(in srgb, var(--mantine-color-green-4), transparent 88%);
+  color: light-dark(var(--mantine-color-green-9), var(--mantine-color-green-1));
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--mantine-color-green-4), transparent 72%), 0 0 18px color-mix(in srgb, var(--mantine-color-green-4), transparent 86%);
 }
 
 .agent-chip:hover {

@@ -127,6 +127,7 @@ export default function App() {
   const [cancelRunning, setCancelRunning] = useState(false)
   const [runError, setRunError] = useState('')
   const [liveStepStatuses, setLiveStepStatuses] = useState<Record<string, string>>({})
+  const [liveAgentStatuses, setLiveAgentStatuses] = useState<Record<string, Record<string, string>>>({})
   const [error, setError] = useState('')
   const [refreshKey, setRefreshKey] = useState(0)
   const [contextModalAction, setContextModalAction] = useState<ContextModalAction>('')
@@ -150,21 +151,68 @@ export default function App() {
       : nodes.slice(Math.max(startIndex, 0))
 
     setLiveStepStatuses({})
-    const stepDelayMs = 5000
-    selectedNodes.forEach((node, index) => {
-      const runningTimer = window.setTimeout(() => {
+    setLiveAgentStatuses({})
+    let elapsedMs = 0
+    const firstAgentDelayMs = 5000
+    const nextAgentDelayPatternMs = [5000, 4000]
+    const nextStepDelayMs = 700
+
+    selectedNodes.forEach((node) => {
+      const selectedAgents = Object.prototype.hasOwnProperty.call(options.stepModels, node.data.stepId)
+        ? options.stepModels[node.data.stepId]
+        : node.data.selectedAgents || node.data.agents
+      const completionOrder = ['claude', 'codex', 'gemini']
+      const activeAgents = node.data.agents
+        .filter((agent) => selectedAgents.includes(agent))
+        .sort((left, right) => {
+          const leftIndex = completionOrder.indexOf(left)
+          const rightIndex = completionOrder.indexOf(right)
+          if (leftIndex === -1 && rightIndex === -1) return node.data.agents.indexOf(left) - node.data.agents.indexOf(right)
+          if (leftIndex === -1) return 1
+          if (rightIndex === -1) return -1
+          return leftIndex - rightIndex
+        })
+      if (activeAgents.length === 0) return
+
+      const stepId = node.data.stepId
+      const stepStartMs = elapsedMs
+      const startTimer = window.setTimeout(() => {
         setLiveStepStatuses((value) => ({
           ...value,
-          [node.data.stepId]: 'running',
+          [stepId]: 'running',
         }))
-      }, index * stepDelayMs)
-      const dryRunTimer = window.setTimeout(() => {
+        setLiveAgentStatuses((value) => ({
+          ...value,
+          [stepId]: Object.fromEntries(activeAgents.map((agent) => [agent, 'running'])),
+        }))
+      }, stepStartMs)
+      dryRunSimulationTimers.current.push(startTimer)
+
+      let stepDurationMs = firstAgentDelayMs
+      activeAgents.forEach((agent, agentIndex) => {
+        if (agentIndex > 0) {
+          stepDurationMs += nextAgentDelayPatternMs[(agentIndex - 1) % nextAgentDelayPatternMs.length]
+        }
+        const agentTimer = window.setTimeout(() => {
+          setLiveAgentStatuses((value) => ({
+            ...value,
+            [stepId]: {
+              ...(value[stepId] || {}),
+              [agent]: 'completed',
+            },
+          }))
+        }, stepStartMs + stepDurationMs)
+        dryRunSimulationTimers.current.push(agentTimer)
+      })
+
+      const completeTimer = window.setTimeout(() => {
         setLiveStepStatuses((value) => ({
           ...value,
-          [node.data.stepId]: 'dry-run',
+          [stepId]: 'dry-run',
         }))
-      }, (index + 1) * stepDelayMs)
-      dryRunSimulationTimers.current.push(runningTimer, dryRunTimer)
+      }, stepStartMs + stepDurationMs + 180)
+      dryRunSimulationTimers.current.push(completeTimer)
+      elapsedMs = stepStartMs + stepDurationMs + nextStepDelayMs
     })
   }, [clearDryRunSimulation, graph])
 
@@ -215,10 +263,12 @@ export default function App() {
       setGraph(null)
       clearDryRunSimulation()
       setLiveStepStatuses({})
+      setLiveAgentStatuses({})
       return
     }
     clearDryRunSimulation()
     setLiveStepStatuses({})
+    setLiveAgentStatuses({})
     setDryRunOptions((options) => ({
       ...options,
       models: [],
@@ -313,6 +363,7 @@ export default function App() {
     } catch (err) {
       setDryRunError(err instanceof Error ? err.message : String(err))
       clearDryRunSimulation()
+      setLiveAgentStatuses({})
     } finally {
       setDryRunRunning(false)
     }
@@ -338,6 +389,7 @@ export default function App() {
     setRunOutput('')
     clearDryRunSimulation()
     setLiveStepStatuses({})
+    setLiveAgentStatuses({})
     try {
       const response = await startWorkflowRun(workflow.id, optionsOverride)
       setActiveRun(response.run)
@@ -423,6 +475,7 @@ export default function App() {
       setSelectedWorkflowId(response.workflow.id)
       setGraph(response.graph)
       setLiveStepStatuses({})
+      setLiveAgentStatuses({})
       setDryRunOptions((options) => ({
         ...options,
         branch: typeof runOptions.branch === 'string' ? runOptions.branch : response.run.branch || options.branch,
@@ -579,6 +632,7 @@ export default function App() {
                         loading={loadingGraph}
                         stepModels={dryRunOptions.stepModels}
                         stepStatuses={liveStepStatuses}
+                        stepAgentStatuses={liveAgentStatuses}
                         onToggleStepAgent={toggleStepAgent}
                         onSelectNode={setSelectedNode}
                         onViewPrompt={setPromptNode}

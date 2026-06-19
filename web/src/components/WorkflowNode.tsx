@@ -68,9 +68,10 @@ export const WorkflowNode = memo(function WorkflowNode({ data, selected }: NodeP
       <div className="agent-row">
         {node.agents.map((agent) => {
           const active = selectedAgents.has(agent)
+          const agentStatus = active ? node.agentStatuses?.[agent] || '' : ''
           return (
             <button
-              className={`agent-chip ${agent}${active ? '' : ' inactive'}`}
+              className={`agent-chip ${agent}${active ? '' : ' inactive'}${agentStatus ? ` agent-${agentStatus}` : ''}`}
               key={agent}
               type="button"
               aria-pressed={active}

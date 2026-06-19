@@ -381,6 +381,15 @@ body {
   color: var(--mantine-color-text);
 }
 
+.run-details-timeline-title {
+  min-width: 0;
+}
+
+.run-details-timeline-title.session .agent-icon {
+  width: 13px;
+  height: 13px;
+}
+
 .run-details-timeline-item.child {
   padding-left: 14px;
 }

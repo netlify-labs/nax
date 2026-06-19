@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { ActionIcon, Alert, Anchor, Badge, Box, Code, Group, Modal, Paper, ScrollArea, Stack, Text, Timeline, Title, Tooltip, UnstyledButton } from '@mantine/core'
 import { GitBranch, History, RotateCcw } from 'lucide-react'
 import { getRunDetails } from '../api'
+import { AgentIcon } from './AgentIcon'
 import { MarkdownRenderer } from './MarkdownRenderer'
 import type { RunDetailsResponse, RunDetailsSection, VisualizeRun } from '../types'
 
@@ -294,7 +295,10 @@ export function RecentRuns({ runs, selectedRunId, onSelect, onResume }: Props) {
                             className={`run-details-timeline-button${entry.id === activeTimelineId ? ' active' : ''}`}
                             onClick={() => setActiveTimelineId(entry.id)}
                           >
-                            <Text size="sm" fw={entry.kind === 'session' ? 600 : 700} truncate>{entry.title}</Text>
+                            <Group gap={6} wrap="nowrap" className={entry.kind === 'session' ? 'run-details-timeline-title session' : 'run-details-timeline-title'}>
+                              {entry.kind === 'session' && entry.section?.agent ? <AgentIcon agent={entry.section.agent} /> : null}
+                              <Text size="sm" fw={entry.kind === 'session' ? 600 : 700} truncate>{entry.title}</Text>
+                            </Group>
                             {entry.subtitle ? <Text size="xs" c="dimmed" truncate>{entry.subtitle}</Text> : null}
                           </UnstyledButton>
                         )}

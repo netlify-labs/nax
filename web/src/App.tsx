@@ -604,7 +604,7 @@ export default function App() {
         opened={Boolean(promptNode)}
         onClose={() => setPromptNode(null)}
         title={promptNode ? `${promptNode.promptTitle || promptNode.title} prompt` : 'Prompt'}
-        size="80rem"
+        size="48rem"
         centered
         scrollAreaComponent={ScrollArea.Autosize}
       >

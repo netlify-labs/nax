@@ -172,6 +172,7 @@ export function RecentRuns({ runs, selectedRunId, onSelect, onResume }: Props) {
   const timelineEntries = useMemo(() => buildTimelineEntries(details, detailRun, stepItems), [details, detailRun, stepItems])
   const [activeTimelineId, setActiveTimelineId] = useState('summary')
   const activeTimelineIndex = Math.max(0, timelineEntries.findIndex((entry) => entry.id === activeTimelineId))
+  const timelineProgressIndex = Math.max(0, timelineEntries.length - 1)
   const activeEntry = timelineEntries[activeTimelineIndex] || null
 
   useEffect(() => {
@@ -284,7 +285,7 @@ export function RecentRuns({ runs, selectedRunId, onSelect, onResume }: Props) {
             <Box className="run-details-layout">
               {timelineEntries.length > 0 ? (
                 <Box className="run-details-timeline" component="nav" aria-label="Workflow timeline">
-                  <Timeline active={activeTimelineIndex} bulletSize={18} lineWidth={2}>
+                  <Timeline active={timelineProgressIndex} bulletSize={18} lineWidth={2}>
                     {timelineEntries.map((entry) => (
                       <Timeline.Item
                         key={entry.id}

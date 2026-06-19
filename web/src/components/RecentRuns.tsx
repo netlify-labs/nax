@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { Accordion, ActionIcon, Alert, Anchor, Badge, Box, Code, Divider, Group, Modal, Paper, ScrollArea, Stack, Stepper, Tabs, Text, Title, Tooltip, UnstyledButton } from '@mantine/core'
+import { ActionIcon, Alert, Anchor, Badge, Box, Code, Group, Modal, Paper, ScrollArea, Stack, Text, Timeline, Title, Tooltip, UnstyledButton } from '@mantine/core'
 import { GitBranch, History, RotateCcw } from 'lucide-react'
 import { getRunDetails } from '../api'
 import { MarkdownRenderer } from './MarkdownRenderer'
@@ -17,6 +17,18 @@ type StepItem = {
   title: string
   status: string
   agents: string[]
+  section?: RunDetailsSection
+}
+
+type TimelineEntry = {
+  id: string
+  kind: 'summary' | 'step' | 'session' | 'final'
+  title: string
+  subtitle: string
+  status: string
+  path: string
+  markdown: string
+  section?: RunDetailsSection
 }
 
 function runId(run: Partial<VisualizeRun>): string {
@@ -37,6 +49,17 @@ function isDoneStatus(status: string): boolean {
   return ['complete', 'completed', 'dry-run'].includes(status.toLowerCase())
 }
 
+function agentLabel(agent: string): string {
+  return agent.replace(/(^|-)([a-z])/g, (_match, prefix, char) => `${prefix}${char.toUpperCase()}`)
+}
+
+function statusColor(status: string): string {
+  if (isDoneStatus(status)) return 'green'
+  if (['running', 'submitted'].includes(status.toLowerCase())) return 'yellow'
+  if (['failed', 'timeout', 'cancelled', 'dismissed'].includes(status.toLowerCase())) return 'red'
+  return 'gray'
+}
+
 function buildStepItems(details: RunDetailsResponse['details'] | undefined, run: VisualizeRun | undefined): StepItem[] {
   const stepSections = details?.sections.filter((section) => section.kind === 'step') || []
   if (stepSections.length > 0) {
@@ -45,6 +68,7 @@ function buildStepItems(details: RunDetailsResponse['details'] | undefined, run:
       title: section.stepTitle || section.title,
       status: section.status || 'unknown',
       agents: [],
+      section,
     }))
   }
 
@@ -56,10 +80,67 @@ function buildStepItems(details: RunDetailsResponse['details'] | undefined, run:
   }))
 }
 
-function stepDescription(step: StepItem): string {
+function stepDescription(step: StepItem, sessions: RunDetailsSection[]): string {
   const parts = [step.status]
+  if (sessions.length > 0) parts.push(`${sessions.length} result${sessions.length === 1 ? '' : 's'}`)
   if (step.agents.length > 0) parts.push(step.agents.join(', '))
   return parts.filter(Boolean).join(' · ')
+}
+
+function buildTimelineEntries(
+  details: RunDetailsResponse['details'] | undefined,
+  run: VisualizeRun | undefined,
+  steps: StepItem[],
+): TimelineEntry[] {
+  if (!details) return []
+  const sessionSections = details.sections.filter((section) => section.kind === 'session')
+  const entries: TimelineEntry[] = [{
+    id: 'summary',
+    kind: 'summary',
+    title: 'Workflow summary',
+    subtitle: run?.status || 'summary',
+    status: run?.status || '',
+    path: details.summaryPath || run?.summaryPath || runId(run || {}),
+    markdown: details.summaryMarkdown,
+  }]
+
+  steps.forEach((step, index) => {
+    const sessions = sessionSections.filter((section) => section.stepId === step.id)
+    entries.push({
+      id: `step:${step.id}`,
+      kind: 'step',
+      title: `${index + 1}. ${step.title}`,
+      subtitle: stepDescription(step, sessions),
+      status: step.status,
+      path: step.section?.path || '',
+      markdown: step.section?.markdown || '',
+      section: step.section,
+    })
+    sessions.forEach((section) => {
+      entries.push({
+        id: `session:${section.id}`,
+        kind: 'session',
+        title: `${agentLabel(section.agent)} · ${section.stepTitle || step.title}`,
+        subtitle: section.status || section.runnerId || section.sessionId,
+        status: section.status,
+        path: section.path,
+        markdown: section.markdown,
+        section,
+      })
+    })
+  })
+
+  entries.push({
+    id: 'final',
+    kind: 'final',
+    title: details.finalTitle || 'Final result',
+    subtitle: run?.status || 'final',
+    status: run?.status || '',
+    path: '',
+    markdown: details.finalMarkdown,
+  })
+
+  return entries
 }
 
 export function RecentRuns({ runs, selectedRunId, onSelect, onResume }: Props) {
@@ -87,20 +168,14 @@ export function RecentRuns({ runs, selectedRunId, onSelect, onResume }: Props) {
   const details = detailsResponse?.details
   const detailRun = detailsResponse?.run
   const stepItems = useMemo(() => buildStepItems(details, detailRun), [details, detailRun])
-  const firstUnfinishedStepIndex = stepItems.findIndex((step) => !isDoneStatus(step.status))
-  const defaultStepIndex = firstUnfinishedStepIndex >= 0
-    ? firstUnfinishedStepIndex
-    : Math.max(0, stepItems.length - 1)
-  const [activeStepIndex, setActiveStepIndex] = useState(0)
-  const activeStep = stepItems[Math.min(activeStepIndex, Math.max(stepItems.length - 1, 0))]
-  const sessionSections = details?.sections.filter((section) => section.kind === 'session') || []
-  const visibleSessionSections = activeStep
-    ? sessionSections.filter((section) => !section.stepId || section.stepId === activeStep.id)
-    : sessionSections
+  const timelineEntries = useMemo(() => buildTimelineEntries(details, detailRun, stepItems), [details, detailRun, stepItems])
+  const [activeTimelineId, setActiveTimelineId] = useState('summary')
+  const activeTimelineIndex = Math.max(0, timelineEntries.findIndex((entry) => entry.id === activeTimelineId))
+  const activeEntry = timelineEntries[activeTimelineIndex] || null
 
   useEffect(() => {
-    setActiveStepIndex(defaultStepIndex)
-  }, [defaultStepIndex, detailsResponse?.run.runId, detailsResponse?.run.id])
+    setActiveTimelineId('summary')
+  }, [detailsResponse?.run.runId, detailsResponse?.run.id])
 
   return (
     <>
@@ -206,88 +281,59 @@ export function RecentRuns({ runs, selectedRunId, onSelect, onResume }: Props) {
             </Group>
             <Code block className="path-code">{details.summaryPath || detailRun?.summaryPath || runId(detailRun || {})}</Code>
             <Box className="run-details-layout">
-              <Box className="run-details-content">
-                <Tabs defaultValue="summary" keepMounted={false}>
-                  <Tabs.List>
-                    <Tabs.Tab value="summary">Summary</Tabs.Tab>
-                    <Tabs.Tab value="sessions">Sessions</Tabs.Tab>
-                    <Tabs.Tab value="final">Final</Tabs.Tab>
-                  </Tabs.List>
-
-                  <Tabs.Panel value="summary" pt="md">
-                    <Box className="prompt-markdown run-details-markdown">
-                      {details.summaryMarkdown ? (
-                        <MarkdownRenderer>{details.summaryMarkdown}</MarkdownRenderer>
-                      ) : (
-                        <Text c="dimmed">No workflow summary artifact was found.</Text>
-                      )}
-                    </Box>
-                  </Tabs.Panel>
-
-                  <Tabs.Panel value="sessions" pt="md">
-                    {visibleSessionSections.length > 0 ? (
-                      <Accordion variant="separated" chevronPosition="left">
-                        {visibleSessionSections.map((section) => (
-                          <Accordion.Item value={section.id} key={section.id}>
-                            <Accordion.Control>
-                              <RunSectionHeader section={section} />
-                            </Accordion.Control>
-                            <Accordion.Panel>
-                              <RunSectionMeta section={section} />
-                              <Box className="prompt-markdown run-details-markdown">
-                                <MarkdownRenderer>{section.markdown}</MarkdownRenderer>
-                              </Box>
-                            </Accordion.Panel>
-                          </Accordion.Item>
-                        ))}
-                      </Accordion>
-                    ) : (
-                      <Text c="dimmed">No session result artifacts were found for this step.</Text>
-                    )}
-                  </Tabs.Panel>
-
-                  <Tabs.Panel value="final" pt="md">
-                    <Stack gap="sm">
-                      <Divider label={details.finalTitle || 'Final result'} labelPosition="left" />
-                      <Box className="prompt-markdown run-details-markdown">
-                        {details.finalMarkdown ? (
-                          <MarkdownRenderer>{details.finalMarkdown}</MarkdownRenderer>
-                        ) : (
-                          <Text c="dimmed">No final result artifact was found.</Text>
+              {timelineEntries.length > 0 ? (
+                <Box className="run-details-timeline" component="nav" aria-label="Workflow timeline">
+                  <Timeline active={activeTimelineIndex} bulletSize={18} lineWidth={2}>
+                    {timelineEntries.map((entry) => (
+                      <Timeline.Item
+                        key={entry.id}
+                        className={`run-details-timeline-item ${entry.kind === 'session' ? 'child' : ''}`}
+                        color={statusColor(entry.status)}
+                        lineVariant={entry.kind === 'session' ? 'dashed' : 'solid'}
+                        title={(
+                          <UnstyledButton
+                            className={`run-details-timeline-button${entry.id === activeTimelineId ? ' active' : ''}`}
+                            onClick={() => setActiveTimelineId(entry.id)}
+                          >
+                            <Text size="sm" fw={entry.kind === 'session' ? 600 : 700} truncate>{entry.title}</Text>
+                            {entry.subtitle ? <Text size="xs" c="dimmed" truncate>{entry.subtitle}</Text> : null}
+                          </UnstyledButton>
                         )}
-                      </Box>
-                    </Stack>
-                  </Tabs.Panel>
-                </Tabs>
-              </Box>
-              {stepItems.length > 0 ? (
-                <Box className="run-details-stepper" component="aside" aria-label="Workflow steps">
-                  <Stepper active={activeStepIndex} onStepClick={setActiveStepIndex} orientation="vertical" size="xs">
-                    {stepItems.map((step) => (
-                      <Stepper.Step
-                        key={step.id}
-                        label={step.title}
-                        description={stepDescription(step)}
-                        color={isDoneStatus(step.status) ? 'green' : 'yellow'}
                       />
                     ))}
-                  </Stepper>
+                  </Timeline>
                 </Box>
               ) : null}
+              <Box className="run-details-content">
+                {activeEntry ? (
+                  <Stack gap="sm">
+                    <Group gap="xs" wrap="wrap">
+                      <Title order={2} size="h3">{activeEntry.title}</Title>
+                      {activeEntry.status ? (
+                        <Badge className={`run-status ${activeEntry.status}`} variant="light" size="xs">
+                          {activeEntry.status}
+                        </Badge>
+                      ) : null}
+                    </Group>
+                    {activeEntry.section ? <RunSectionMeta section={activeEntry.section} /> : null}
+                    {activeEntry.path ? <Code block className="path-code">{activeEntry.path}</Code> : null}
+                    <Box className="prompt-markdown run-details-markdown">
+                      {activeEntry.markdown ? (
+                        <MarkdownRenderer>{activeEntry.markdown}</MarkdownRenderer>
+                      ) : (
+                        <Text c="dimmed">No result text.</Text>
+                      )}
+                    </Box>
+                  </Stack>
+                ) : (
+                  <Text c="dimmed">No run details were found.</Text>
+                )}
+              </Box>
             </Box>
           </Stack>
         ) : null}
       </Modal>
     </>
-  )
-}
-
-function RunSectionHeader({ section }: { section: RunDetailsSection }) {
-  return (
-    <Group gap="xs" wrap="nowrap">
-      <Text size="sm" fw={700} truncate>{section.title}</Text>
-      {section.status ? <Badge className={`run-status ${section.status}`} variant="light" size="xs">{section.status}</Badge> : null}
-    </Group>
   )
 }
 

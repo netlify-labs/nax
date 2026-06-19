@@ -50,6 +50,42 @@ should not be the primary live transport.
 - Do not remove the existing `.nax` polling fallback until event coverage is
   proven.
 - Do not infer agent state from human terminal text.
+- Do not design hosted Netlify Functions orchestration in this plan. That is a
+  related but separate architecture. This plan should, however, make event logs
+  reusable by a future polling UI.
+
+## Resolved Design Decisions
+
+The following decisions are locked for this spec:
+
+- The runner emits an immediate `workflow_started` handshake with the durable
+  `.nax/workflows/<run-id>` id. The visualize server may still keep an internal
+  temporary id for the `POST /runs` response, but the durable run id becomes the
+  canonical id for graph state, event logs, artifact lookup, and historical UI
+  links as soon as the handshake arrives.
+- Structured events are persisted as append-only JSONL at
+  `.nax/workflows/<run-id>/events.jsonl`. The local UI receives events over SSE,
+  but the event log is the recovery/debug/polling substrate.
+- Remote agent status is best effort. Nax emits every transition it can prove,
+  and may show `submitted`/`waiting` when a remote API cannot prove actual live
+  execution. The UI must not pretend to know more than the runner knows.
+- Runner instrumentation uses an explicit runtime/event context threaded through
+  execution functions. Avoid module-level singletons so tests, future functions,
+  and concurrent in-process runs can remain sane.
+- Retries and compact-prompt retries appear as the same model pill in the live
+  graph, with attempt metadata on the events and in artifacts. The graph stays
+  readable; details preserve the attempt history.
+- The runner emits fine-grained raw statuses. The UI maps them into a smaller
+  visual vocabulary.
+- Cancellation in this plan means local orchestration cancellation. Remote job
+  cancellation/archive is a separate feature because it has API and product
+  consequences.
+- `events.jsonl` captures full fidelity. `workflow.json` stores durable
+  milestone state for recovery and history, not every animation detail.
+- During an active run, live events win over durable polling. Durable state wins
+  on initial load, reconnect bootstrap, and after a run exits.
+- Every structured event has monotonic sequencing so a future hosted UI can poll
+  `events.jsonl` with `since=<seq>` instead of using SSE.
 
 ## Current Behavior
 
@@ -252,9 +288,12 @@ Every event should share a common envelope.
 ```ts
 type NaxRunnerEvent = {
   schemaVersion: 1
+  seq: number
+  eventId: string
   type: string
   at: string
   runId: string
+  visualizeRunId?: string
   flowId: string
   stepId?: string
   stepTitle?: string
@@ -268,14 +307,21 @@ type NaxRunnerEvent = {
 Rules:
 
 - `schemaVersion` is required.
+- `seq` is required and strictly increases within one `runId`.
+- `eventId` is required and stable enough for dedupe. A simple
+  `<runId>:<seq>` value is fine for v1.
 - `type` is required.
 - `at` is ISO 8601.
 - `runId` is the durable workflow run id when known.
+- `visualizeRunId` is optional and only exists when a local visualize server
+  started the process with a temporary id.
 - `flowId` is the workflow id.
 - `stepId` is required for step and agent events.
 - `agent` is required for agent events.
 - Event names are stable API, not display copy.
 - Display copy belongs in the UI.
+- Payloads must not include prompt bodies, secrets, or large result markdown.
+  Events point to artifacts; artifacts contain bulky content.
 
 ## Event Types
 
@@ -293,6 +339,11 @@ type WorkflowStartedEvent = {
   transport?: string
 }
 ```
+
+`workflow_started` is the durable id handshake. It must be emitted immediately
+after `createRunState()` and the first `saveRunState()`, before the first step
+is submitted. The visualize server uses this event to bind any temporary
+visualize id to the durable run id without scraping stdout.
 
 ```ts
 type WorkflowCompletedEvent = {
@@ -348,8 +399,13 @@ type AgentStatusEvent = {
     | 'failed'
     | 'cancelled'
     | 'skipped'
+    | 'waiting'
+    | 'abandoned'
   runnerId?: string
   sessionId?: string
+  attempt?: number
+  attemptId?: string
+  previousRunnerId?: string
   url?: string
   durationMs?: number
   usage?: Record<string, unknown>
@@ -359,6 +415,28 @@ type AgentStatusEvent = {
 
 This is the key missing event. The React Flow model pill states should be driven
 by this event, not by step-level status.
+
+Status meaning:
+
+- `pending`: the step has a selected agent, but no work has started.
+- `submitting`: Nax is calling the remote submit path.
+- `submitted`: the remote system accepted the run and returned an id.
+- `waiting`: Nax is waiting for a remote result, but cannot prove active model
+  execution.
+- `running`: Nax has a positive signal that the remote/local agent is actively
+  running.
+- `completed`: terminal success.
+- `failed`: terminal failure.
+- `timeout`: terminal timeout, represented as `failed` visually but preserved in
+  raw event data if needed.
+- `cancelled`: Nax cancelled local orchestration before or during this agent.
+- `abandoned`: Nax stopped watching local orchestration after cancellation, but
+  the remote job may still continue.
+- `skipped`: the agent was selected out or skipped by step logic.
+
+For retries, the model pill remains the same visual entity. The event carries
+`attempt`, `attemptId`, and `previousRunnerId` so details can show the attempt
+history without exploding the React Flow graph into multiple nodes.
 
 ### Artifact Events
 
@@ -380,6 +458,11 @@ type ArtifactEvent = {
 ```
 
 Artifact events let the UI know when result modals can be loaded or refreshed.
+
+Event log persistence itself is not represented as `artifact_written`; it is the
+transport ledger. `artifact_written` is for user-visible files such as workflow
+summary, step summary, agent result markdown, agent metadata, usage, and final
+result artifacts.
 
 ### Log Events
 
@@ -725,16 +808,18 @@ Normal path:
 
 ### Browser Refreshes During Run
 
-Current in-memory events are only available while the visualize server process
-is alive.
-
 On refresh:
 
 - UI loads `/api/runs`
-- active run is listed from server memory
+- active run is listed from server memory when the local visualize server still
+  owns the child process
 - UI opens `/api/runs/:id/events`
-- server replays `run.events`
+- server replays in-memory events first when available
+- server also replays durable `.nax/workflows/<run-id>/events.jsonl` when a
+  durable run id is known
 - durable `.nax` graph fills in any missing historical state
+- live events continue winning over durable snapshots while the run remains
+  active
 
 ### Browser Opens After Process Completes
 
@@ -743,19 +828,54 @@ Use durable state:
 - `/api/runs` lists durable runs
 - `/api/runs/:runId/graph` builds graph from durable workflow state
 - `/api/runs/:runId/details` loads artifacts
+- `/api/runs/:runId/events?since=<seq>` can replay the persisted event log for
+  debugging and future polling clients
 
 ### Visualize Server Restarts
 
-In-memory events are gone. Durable state remains.
+In-memory events are gone. Durable state and `events.jsonl` remain.
 
-The UI should show final historical state, not live event history.
+The UI should show final historical state by default. A debug view can replay
+`events.jsonl` for event-level diagnostics.
+
+### Future Netlify Functions UI
+
+Running the actual orchestration inside Netlify Functions is a separate plan.
+That environment will probably not hold a long-lived local SSE connection to the
+child process. This plan still prepares for that future by making the event log:
+
+- append-only
+- monotonic by `seq`
+- small enough to poll
+- independent from terminal stdout
+- reconstructable into the same live-state reducer the local UI uses
+
+A future functions-backed UI should be able to poll:
+
+```text
+GET /api/runs/:runId/events?since=123
+```
+
+and feed the returned events into the same reducer used by local SSE.
 
 ## Durable State Relationship
 
 The event stream should not replace durable writes.
 
-For every semantic status event, the runner should still write durable state at
-reasonable checkpoints.
+For every semantic status event, the runner should append to `events.jsonl`.
+For durable recovery, the runner should still write `workflow.json` at
+reasonable checkpoints:
+
+- after run creation
+- after a step starts
+- after selected runs are initialized
+- after submission returns ids
+- after terminal agent results arrive
+- after a step completes/fails/cancels
+- after workflow completion/failure/cancellation
+
+Do not write `workflow.json` for every transient animation detail. The event log
+is the high-fidelity ledger; `workflow.json` is the recovery snapshot.
 
 Durable state should eventually include enough per-agent state for completed
 runs:
@@ -821,13 +941,15 @@ Cancellation should emit:
 
 ```text
 workflow_status: cancelling
-agent_status: cancelled
+agent_status: abandoned
 step_status: cancelled
 workflow_completed: cancelled
 ```
 
-Use best-effort cancellation. If remote agents cannot be cancelled, the UI
-should distinguish local workflow cancellation from remote agent continuation.
+Use local orchestration cancellation in this plan. If remote agents cannot be
+cancelled, mark unobserved/in-flight remote pills as `abandoned`, not
+`cancelled`, so the UI does not imply that Netlify or GitHub actually stopped
+them. A future remote cancellation/archive feature can upgrade those semantics.
 
 ## Security Considerations
 
@@ -912,8 +1034,11 @@ Extend `tests/e2e/visualize.spec.js`:
 Deliverables:
 
 - `src/runner-events.js`
+- append-only `events.jsonl` writer
 - fd 3 JSONL parser in visualize server
 - server relays parsed runner events over SSE
+- `/api/runs/:runId/events?since=<seq>` can replay persisted events for durable
+  runs
 - unit tests for parser/emitter
 
 Acceptance:
@@ -921,6 +1046,7 @@ Acceptance:
 - Existing stdout/stderr SSE still works.
 - Invalid JSONL cannot crash the server.
 - Valid synthetic runner events appear as SSE events.
+- Persisted synthetic events can be replayed with `since`.
 
 ### Phase 2: Runner Lifecycle Instrumentation
 
@@ -937,6 +1063,8 @@ Acceptance:
 - Real Netlify API run emits per-agent status events.
 - Runner works normally without `NAX_EVENT_FD`.
 - Durable artifacts remain unchanged or strictly improved.
+- `workflow_started` appears before the first step submission and contains the
+  durable run id.
 
 ### Phase 3: Frontend Live State Reducer
 
@@ -962,12 +1090,14 @@ Deliverables:
 - dedupe and precedence rules between event state and durable polling
 - reconnect replay tests
 - browser refresh behavior verified
+- active-run merge policy: live events win while active, durable wins after exit
 
 Acceptance:
 
 - Refresh during active run reconstructs current state from replay plus durable
   graph.
 - Visualize server restart still shows completed durable run state.
+- Persisted event replay never regresses a newer in-memory event.
 
 ### Phase 5: Polish and Observability
 
@@ -987,6 +1117,7 @@ Acceptance:
 
 ```text
 src/runner-events.js                new
+src/runner-event-log.js             new append-only events.jsonl helpers
 src/visualize-server.js             fd 3 parsing and SSE relay
 src/workflow-runner.js              optional event plumbing for dry-run/run helpers
 bin/nax.js                          create/pass runner event emitter into run execution
@@ -995,23 +1126,12 @@ web/src/App.tsx                     EventSource handlers and reducer integration
 web/src/types.ts                    event and live state types
 web/src/components/WorkflowNode.tsx pill status rendering
 tests/unit/runner-events.test.js    new
+tests/unit/runner-event-log.test.js new
 tests/unit/visualize-server.test.js parser/SSE coverage
 tests/e2e/visualize.spec.js         realtime status coverage
 ```
 
-## Open Questions
-
-- Should `nax run` emit `agent_status: running` after `submitted`, or is
-  `submitted` the best representation until completion for Netlify API runs?
-- Should GitHub Actions transport emit the same agent lifecycle, or a reduced
-  step-only lifecycle until better remote observation exists?
-- Should failed optional agents fail the whole step, or can a step be
-  `completed_with_warnings`?
-- Should artifact paths in events be absolute, relative to run dir, or both?
-- Should live event history be persisted to `.nax/workflows/<run-id>/events.jsonl`
-  for post-server-restart replay?
-
-## Recommended Decisions
+## Implementation Decisions
 
 - Use fd 3 JSONL for structured child-to-server events.
 - Keep stdout/stderr as human output only.
@@ -1019,7 +1139,17 @@ tests/e2e/visualize.spec.js         realtime status coverage
 - Keep durable polling as fallback during the transition.
 - Persist final per-agent status into existing workflow state so completed run
   graphs match live run graphs.
-- Do not block initial implementation on persisted event logs.
+- Persist live event history to `.nax/workflows/<run-id>/events.jsonl` from the
+  first implementation.
+- Use `submitted` or `waiting` rather than fake `running` when a remote API
+  cannot prove live execution.
+- Give GitHub Actions the same event shape as Netlify API, but allow fewer
+  statuses when GitHub cannot expose equivalent lifecycle detail.
+- Failed agent handling follows existing runner semantics first. Do not invent
+  `completed_with_warnings` in this plan unless runtime failure policy work adds
+  that state later.
+- Artifact events should include both a run-relative path for portability and an
+  absolute path for the local visualizer open/copy actions.
 
 ## Definition of Done
 
@@ -1028,6 +1158,7 @@ tests/e2e/visualize.spec.js         realtime status coverage
 - Model pills update independently from structured `agent_status` events.
 - Terminal output still streams live.
 - Completed runs still load from `.nax` artifacts after refresh.
+- `events.jsonl` exists for real runs and can be replayed with `since`.
 - No UI state depends on parsing stdout.
 - Tests cover event emitter, server parsing, frontend reducer, and at least one
   realtime UI flow.

@@ -1,6 +1,8 @@
 import { type CSSProperties, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   ActionIcon,
+  Alert,
+  Anchor,
   AppShell,
   Badge,
   Box,
@@ -22,7 +24,7 @@ import {
 import { useDisclosure } from '@mantine/hooks'
 import { FolderGit2, GitBranch, Moon, RefreshCw, Sun } from 'lucide-react'
 import { ReactFlowProvider } from '@xyflow/react'
-import { cancelWorkflowRun, getHealth, getRunGraph, getWorkflowGraph, listRuns, listWorkflows, runEventsUrl, runWorkflowDryRun, startWorkflowRun } from './api'
+import { cancelWorkflowRun, getHealth, getRunDetails, getRunGraph, getWorkflowGraph, listRuns, listWorkflows, runEventsUrl, runWorkflowDryRun, startWorkflowRun } from './api'
 import { WorkflowOutputTabs } from './components/DryRunPanel'
 import { Inspector } from './components/Inspector'
 import { MarkdownRenderer } from './components/MarkdownRenderer'
@@ -30,9 +32,13 @@ import { RecentRuns } from './components/RecentRuns'
 import { WorkflowCanvas } from './components/WorkflowCanvas'
 import { WorkflowControls } from './components/WorkflowControls'
 import { WorkflowList } from './components/WorkflowList'
-import type { DryRunOptions, DryRunResult, VisualizeRun, Workflow, WorkflowGraph, WorkflowGraphNodeData } from './types'
+import type { DryRunOptions, DryRunResult, RunDetailsSection, VisualizeRun, Workflow, WorkflowGraph, WorkflowGraphNodeData } from './types'
 
 type ContextModalAction = '' | 'dry-run' | 'run'
+type AgentResultContext = {
+  node: WorkflowGraphNodeData
+  agent: string
+}
 
 function parseRunEvent(event: Event): Record<string, unknown> {
   try {
@@ -67,6 +73,22 @@ function setWorkflowUrl(id: string) {
 
 function repoNameFromPath(projectRoot: string): string {
   return projectRoot.split('/').filter(Boolean).pop() || projectRoot || 'Repository'
+}
+
+function agentLabel(agent: string): string {
+  return agent.replace(/(^|-)([a-z])/g, (_match, prefix, char) => `${prefix}${char.toUpperCase()}`)
+}
+
+function runValue(run: Record<string, unknown> | undefined, key: string): string {
+  const value = run?.[key]
+  return typeof value === 'string' || typeof value === 'number' ? String(value) : ''
+}
+
+function completedRunForAgent(node: WorkflowGraphNodeData, agent: string): Record<string, unknown> | undefined {
+  return node.runs.find((run) => (
+    runValue(run, 'agent') === agent &&
+    ['complete', 'completed'].includes(runValue(run, 'status').toLowerCase())
+  ))
 }
 
 function NetlifyLogo() {
@@ -133,6 +155,10 @@ export default function App() {
   const [contextModalAction, setContextModalAction] = useState<ContextModalAction>('')
   const [contextDraft, setContextDraft] = useState('')
   const [promptNode, setPromptNode] = useState<WorkflowGraphNodeData | null>(null)
+  const [agentResultContext, setAgentResultContext] = useState<AgentResultContext | null>(null)
+  const [agentResultSection, setAgentResultSection] = useState<RunDetailsSection | null>(null)
+  const [agentResultLoading, setAgentResultLoading] = useState(false)
+  const [agentResultError, setAgentResultError] = useState('')
   const dryRunSimulationTimers = useRef<number[]>([])
 
   const clearDryRunSimulation = useCallback(() => {
@@ -368,6 +394,43 @@ export default function App() {
       setDryRunRunning(false)
     }
   }
+
+  const openAgentResult = useCallback(async (node: WorkflowGraphNodeData, agent: string) => {
+    const run = completedRunForAgent(node, agent)
+    const runId = selectedRunId || activeRun?.runId || ''
+    setAgentResultContext({ node, agent })
+    setAgentResultSection(null)
+    setAgentResultError('')
+    setAgentResultLoading(true)
+    if (!runId) {
+      setAgentResultError('Load a completed workflow run before opening agent results.')
+      setAgentResultLoading(false)
+      return
+    }
+    try {
+      const response = await getRunDetails(runId)
+      const runnerId = runValue(run, 'runnerId')
+      const sessionId = runValue(run, 'sessionId')
+      const sections = response.details.sections.filter((section) => (
+        section.kind === 'session' &&
+        section.stepId === node.stepId &&
+        section.agent === agent
+      ))
+      const exact = sections.find((section) => (
+        (runnerId && section.runnerId === runnerId) ||
+        (sessionId && section.sessionId === sessionId)
+      ))
+      const section = exact || sections[0] || null
+      if (!section) {
+        setAgentResultError(`No saved ${agentLabel(agent)} result was found for ${node.title}.`)
+      }
+      setAgentResultSection(section)
+    } catch (err) {
+      setAgentResultError(err instanceof Error ? err.message : String(err))
+    } finally {
+      setAgentResultLoading(false)
+    }
+  }, [activeRun?.runId, selectedRunId])
 
   const runWorkflow = async (workflowOverride?: Workflow, optionsOverride: DryRunOptions = dryRunOptions, confirmed = false) => {
     const workflow = workflowOverride || selectedWorkflow
@@ -636,6 +699,7 @@ export default function App() {
                         onToggleStepAgent={toggleStepAgent}
                         onSelectNode={setSelectedNode}
                         onViewPrompt={setPromptNode}
+                        onViewAgentResult={openAgentResult}
                       />
                     </Splitter.Pane>
                     <Splitter.Pane defaultSize={28} min={18}>
@@ -730,6 +794,55 @@ export default function App() {
             )}
           </Box>
         </Stack>
+      </Modal>
+      <Modal
+        opened={Boolean(agentResultContext)}
+        onClose={() => {
+          setAgentResultContext(null)
+          setAgentResultSection(null)
+          setAgentResultError('')
+        }}
+        title={agentResultContext ? `${agentLabel(agentResultContext.agent)} result · ${agentResultContext.node.title}` : 'Agent result'}
+        size="72rem"
+        centered
+        classNames={{ content: 'run-details-modal-content', body: 'run-details-modal-body' }}
+        scrollAreaComponent={ScrollArea.Autosize}
+      >
+        {agentResultLoading ? (
+          <Text c="dimmed">Loading agent result...</Text>
+        ) : agentResultError ? (
+          <Alert color="red" variant="light">{agentResultError}</Alert>
+        ) : agentResultSection ? (
+          <Stack gap="sm">
+            <Group gap="xs" wrap="wrap">
+              {agentResultSection.status ? (
+                <Badge className={`run-status ${agentResultSection.status}`} variant="light" size="xs">
+                  {agentResultSection.status}
+                </Badge>
+              ) : null}
+              {agentResultSection.runnerId ? <Badge variant="light" color="gray">runner {agentResultSection.runnerId}</Badge> : null}
+              {agentResultSection.sessionId ? <Badge variant="light" color="gray">session {agentResultSection.sessionId}</Badge> : null}
+              {agentResultSection.links.sessionUrl || agentResultSection.links.agentRunUrl ? (
+                <Anchor
+                  href={agentResultSection.links.sessionUrl || agentResultSection.links.agentRunUrl}
+                  target="_blank"
+                  rel="noreferrer"
+                  size="xs"
+                >
+                  Open in Netlify
+                </Anchor>
+              ) : null}
+            </Group>
+            {agentResultSection.path ? <Code block className="path-code">{agentResultSection.path}</Code> : null}
+            <Box className="prompt-markdown run-details-markdown">
+              {agentResultSection.markdown ? (
+                <MarkdownRenderer>{agentResultSection.markdown}</MarkdownRenderer>
+              ) : (
+                <Text c="dimmed">No markdown result was found for this agent run.</Text>
+              )}
+            </Box>
+          </Stack>
+        ) : null}
       </Modal>
     </ReactFlowProvider>
   )

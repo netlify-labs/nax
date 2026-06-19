@@ -7,6 +7,13 @@ function titleCase(value: string): string {
   return value.replace(/(^|-)([a-z])/g, (_match, prefix, char) => `${prefix}${char.toUpperCase()}`)
 }
 
+function hasCompletedRun(node: WorkflowGraphNodeData, agent: string): boolean {
+  return node.runs.some((run) => (
+    String(run.agent || '') === agent &&
+    ['complete', 'completed'].includes(String(run.status || '').toLowerCase())
+  ))
+}
+
 function AgentIcon({ agent }: { agent: string }) {
   if (agent === 'claude') {
     return (
@@ -69,15 +76,20 @@ export const WorkflowNode = memo(function WorkflowNode({ data, selected }: NodeP
         {node.agents.map((agent) => {
           const active = selectedAgents.has(agent)
           const agentStatus = active ? node.agentStatuses?.[agent] || '' : ''
+          const canViewResult = active && hasCompletedRun(node, agent)
           return (
             <button
               className={`agent-chip ${agent}${active ? '' : ' inactive'}${agentStatus ? ` agent-${agentStatus}` : ''}`}
               key={agent}
               type="button"
               aria-pressed={active}
-              title={`${active ? 'Disable' : 'Enable'} ${titleCase(agent)} for ${node.title}`}
+              title={canViewResult ? `View ${titleCase(agent)} result for ${node.title}` : `${active ? 'Disable' : 'Enable'} ${titleCase(agent)} for ${node.title}`}
               onClick={(event) => {
                 event.stopPropagation()
+                if (canViewResult) {
+                  node.onViewAgentResult?.(node, agent)
+                  return
+                }
                 node.onToggleAgent?.(node.stepId, agent, node.agents)
               }}
             >

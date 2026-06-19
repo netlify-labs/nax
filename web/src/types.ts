@@ -52,6 +52,7 @@ export type WorkflowGraphNodeData = {
   agentStatuses?: Record<string, string>
   onToggleAgent?: (stepId: string, agent: string, allAgents: string[]) => void
   onViewPrompt?: (node: WorkflowGraphNodeData) => void
+  onViewAgentResult?: (node: WorkflowGraphNodeData, agent: string) => void
 }
 
 export type WorkflowGraph = {

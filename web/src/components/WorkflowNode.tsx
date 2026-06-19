@@ -76,7 +76,7 @@ export const WorkflowNode = memo(function WorkflowNode({ data, selected }: NodeP
         {node.agents.map((agent) => {
           const active = selectedAgents.has(agent)
           const agentStatus = active ? node.agentStatuses?.[agent] || '' : ''
-          const canViewResult = active && hasCompletedRun(node, agent)
+          const canViewResult = active && (hasCompletedRun(node, agent) || ['completed', 'dry-run'].includes(agentStatus))
           return (
             <button
               className={`agent-chip ${agent}${active ? '' : ' inactive'}${agentStatus ? ` agent-${agentStatus}` : ''}`}

@@ -397,11 +397,16 @@ export default function App() {
 
   const openAgentResult = useCallback(async (node: WorkflowGraphNodeData, agent: string) => {
     const run = completedRunForAgent(node, agent)
+    const agentStatus = node.agentStatuses?.[agent] || ''
     const runId = selectedRunId || activeRun?.runId || ''
     setAgentResultContext({ node, agent })
     setAgentResultSection(null)
     setAgentResultError('')
     setAgentResultLoading(true)
+    if (!run && ['completed', 'dry-run'].includes(agentStatus)) {
+      setAgentResultLoading(false)
+      return
+    }
     if (!runId) {
       setAgentResultError('Load a completed workflow run before opening agent results.')
       setAgentResultLoading(false)
@@ -842,6 +847,8 @@ export default function App() {
               )}
             </Box>
           </Stack>
+        ) : agentResultContext ? (
+          <Text c="dimmed">No results from dry runs.</Text>
         ) : null}
       </Modal>
     </ReactFlowProvider>

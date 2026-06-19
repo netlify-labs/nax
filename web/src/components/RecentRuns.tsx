@@ -298,9 +298,9 @@ export function RecentRuns({ runs, selectedRunId, onSelect, onResume }: Props) {
                           >
                             <Group gap={6} wrap="nowrap" className={entry.kind === 'session' ? 'run-details-timeline-title session' : 'run-details-timeline-title'}>
                               {entry.kind === 'session' && entry.section?.agent ? <AgentIcon agent={entry.section.agent} /> : null}
-                              <Text size="sm" fw={entry.kind === 'session' ? 600 : 700} truncate>{entry.title}</Text>
+                              <Text size={entry.kind === 'session' ? 'xs' : 'sm'} fw={entry.kind === 'session' ? 600 : 700} truncate>{entry.title}</Text>
                             </Group>
-                            {entry.subtitle ? <Text size="xs" c="dimmed" truncate>{entry.subtitle}</Text> : null}
+                            {entry.subtitle ? <Text size={entry.kind === 'session' ? '10px' : 'xs'} c="dimmed" truncate>{entry.subtitle}</Text> : null}
                           </UnstyledButton>
                         )}
                       />

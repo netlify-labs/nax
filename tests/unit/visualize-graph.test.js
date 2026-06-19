@@ -91,4 +91,28 @@ test('flowToGraph overlays run state status and runs', () => {
   assert.equal(graph.metadata.hasRunState, true)
   assert.equal(graph.nodes[0].data.status, 'completed')
   assert.deepEqual(graph.nodes[0].data.runs, [{ agent: 'codex', status: 'completed', runnerId: 'runner-1' }])
+  assert.deepEqual(graph.nodes[0].data.selectedAgents, ['codex'])
+})
+
+test('flowToGraph keeps available agents visible when overlaying filtered run state', () => {
+  const flow = {
+    id: 'stateful',
+    title: 'Stateful',
+    steps: [
+      { id: 'one', title: 'One', agents: ['claude', 'gemini', 'codex'], submit: 'new-run' },
+    ],
+  }
+  const runState = {
+    steps: [{
+      id: 'one',
+      status: 'completed',
+      agents: ['claude'],
+      runs: [{ agent: 'claude', status: 'completed', runnerId: 'runner-1' }],
+    }],
+  }
+
+  const graph = flowToGraph({ flow, runState })
+
+  assert.deepEqual(graph.nodes[0].data.agents, ['claude', 'gemini', 'codex'])
+  assert.deepEqual(graph.nodes[0].data.selectedAgents, ['claude'])
 })

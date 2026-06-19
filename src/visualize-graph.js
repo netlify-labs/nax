@@ -24,6 +24,26 @@ function stepRuns(step = {}, runState = null) {
   return Array.isArray(saved?.runs) ? saved.runs : []
 }
 
+function stepSelectedAgents(step = {}, runState = null) {
+  if (!runState) return null
+  const savedSteps = Array.isArray(runState?.steps) ? runState.steps : []
+  const saved = savedSteps.find((candidate) => candidate.id === step.id)
+  if (!saved) return null
+
+  const seen = new Set()
+  const selected = []
+  for (const run of Array.isArray(saved.runs) ? saved.runs : []) {
+    const agent = String(run?.agent || '').trim()
+    if (!agent || seen.has(agent)) continue
+    seen.add(agent)
+    selected.push(agent)
+  }
+  if (selected.length > 0) return selected
+
+  const savedAgents = filteredAgents(saved.agents)
+  return savedAgents.length > 0 ? savedAgents : null
+}
+
 function stepPrompt(step = {}, flow = {}) {
   try {
     const prompt = loadStepPrompt(flow, step)
@@ -157,6 +177,7 @@ function flowToGraph(options = {}) {
         status: stepStatus(step, runState),
         runs: stepRuns(step, runState).map((run) => ({ ...run })),
         sourceLabel: flow.sourceLabel || flow.source || '',
+        selectedAgents: stepSelectedAgents(step, runState) || undefined,
         ...prompt,
       },
     }

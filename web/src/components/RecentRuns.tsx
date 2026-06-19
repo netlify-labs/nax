@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { Accordion, ActionIcon, Alert, Anchor, Badge, Box, Code, Divider, Group, Modal, Paper, ScrollArea, Stack, Tabs, Text, Title, Tooltip, UnstyledButton } from '@mantine/core'
-import { History, RotateCcw } from 'lucide-react'
+import { GitBranch, History, RotateCcw } from 'lucide-react'
 import { getRunDetails } from '../api'
 import { MarkdownRenderer } from './MarkdownRenderer'
 import type { RunDetailsResponse, RunDetailsSection, VisualizeRun } from '../types'
@@ -60,39 +60,64 @@ export function RecentRuns({ runs, selectedRunId, onSelect, onResume }: Props) {
                 p="xs"
                 radius="sm"
               >
-                <Group gap="xs" align="flex-start" wrap="nowrap">
+                <Box className="run-item-main">
+                  <Group className="run-item-title-row" gap={6} justify="space-between" wrap="nowrap">
+                    <UnstyledButton
+                      className="run-item-details-button"
+                      onClick={() => {
+                        void openRunDetails(run)
+                      }}
+                    >
+                      <Group gap={6} wrap="nowrap">
+                        <History size={14} />
+                        <Text fw={700} size="sm" truncate>{run.flowTitle || run.flowId || runId(run)}</Text>
+                      </Group>
+                    </UnstyledButton>
+                    <Group gap={4} wrap="nowrap">
+                      <Tooltip label="Load run graph">
+                        <ActionIcon
+                          type="button"
+                          variant={selectedRunId === runId(run) ? 'filled' : 'subtle'}
+                          color="teal"
+                          size="xs"
+                          aria-label="Load run graph"
+                          onClick={(event) => {
+                            event.stopPropagation()
+                            onSelect(run)
+                          }}
+                        >
+                          <GitBranch size={13} />
+                        </ActionIcon>
+                      </Tooltip>
+                      {run.resumable ? (
+                        <Tooltip label="Resume run">
+                          <ActionIcon
+                            type="button"
+                            variant="light"
+                            color="yellow"
+                            size="xs"
+                            aria-label="Resume run"
+                            onClick={(event) => {
+                              event.stopPropagation()
+                              onResume(run)
+                            }}
+                          >
+                            <RotateCcw size={13} />
+                          </ActionIcon>
+                        </Tooltip>
+                      ) : null}
+                    </Group>
+                  </Group>
                   <UnstyledButton
-                    className="run-item-main"
+                    className="run-item-details-button"
                     onClick={() => {
-                      onSelect(run)
                       void openRunDetails(run)
                     }}
                   >
-                    <Group gap={6} wrap="nowrap">
-                      <History size={14} />
-                      <Text fw={700} size="sm" truncate>{run.flowTitle || run.flowId || runId(run)}</Text>
-                    </Group>
                     <Badge className={`run-status ${run.status}`} variant="light" size="xs">{run.status || 'unknown'}</Badge>
                     <Text size="xs" c="dimmed" truncate>{runId(run)}</Text>
                   </UnstyledButton>
-                  {run.resumable ? (
-                    <Tooltip label="Resume run">
-                      <ActionIcon
-                        type="button"
-                        variant="light"
-                        color="yellow"
-                        size="sm"
-                        aria-label="Resume run"
-                        onClick={(event) => {
-                          event.stopPropagation()
-                          onResume(run)
-                        }}
-                      >
-                        <RotateCcw size={14} />
-                      </ActionIcon>
-                    </Tooltip>
-                  ) : null}
-                </Group>
+                </Box>
               </Paper>
             ))}
           </Stack>

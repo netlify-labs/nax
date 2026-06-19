@@ -327,6 +327,19 @@ function publicRunState(runState = {}) {
   }
 }
 
+function publicRunOptions(runState = {}) {
+  const options = runState.options || {}
+  return {
+    branch: options.branch || runState.branch || '',
+    transport: options.transport || runState.transport || '',
+    models: normalizeAgentList(options.models),
+    stepModels: normalizeStepModels(options.stepModels),
+    context: options.context || '',
+    step: options.step || '',
+    fromStep: options.fromStep || '',
+  }
+}
+
 function eventText(event) {
   return `event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`
 }
@@ -590,11 +603,21 @@ function createRequestHandler(options = {}) {
             notFound(res, 'Unknown visualize run.')
             return
           }
-          const flow = durable.flow && Array.isArray(durable.flow.steps)
-            ? durable.flow
-            : await loadFlow(durable.flowId, flowOptions)
+          let flow
+          try {
+            flow = await loadFlow(durable.flowId, flowOptions)
+          } catch (_err) {
+            flow = durable.flow && Array.isArray(durable.flow.steps) ? durable.flow : null
+          }
+          if (!flow) {
+            notFound(res, `Unknown flow "${durable.flowId}".`)
+            return
+          }
           jsonResponse(res, 200, {
-            run: publicRunState(durable),
+            run: {
+              ...publicRunState(durable),
+              options: publicRunOptions(durable),
+            },
             workflow: publicFlow(flow),
             graph: flowToGraph({ flow, runState: durable }),
           })

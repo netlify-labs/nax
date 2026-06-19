@@ -365,6 +365,20 @@ body {
   gap: 4px;
   min-width: 0;
   text-align: left;
+  width: 100%;
+}
+
+.run-item-title-row {
+  min-width: 0;
+}
+
+.run-item-details-button {
+  display: grid;
+  flex: 1 1 auto;
+  gap: 4px;
+  min-width: 0;
+  overflow: hidden;
+  text-align: left;
 }
 
 .run-status.completed {

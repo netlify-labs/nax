@@ -39,6 +39,17 @@ function parseRunEvent(event: Event): Record<string, unknown> {
   }
 }
 
+function stepModelsFromRunGraph(graph: WorkflowGraph): Record<string, string[]> {
+  const out: Record<string, string[]> = {}
+  for (const node of graph.nodes) {
+    const agents = node.data.agents || []
+    const selectedAgents = node.data.selectedAgents || []
+    if (selectedAgents.length === 0 || selectedAgents.length >= agents.length) continue
+    out[node.data.stepId] = selectedAgents
+  }
+  return out
+}
+
 function initialWorkflowFromUrl(): string {
   const params = new URLSearchParams(window.location.search)
   return params.get('workflow') || ''
@@ -348,8 +359,19 @@ export default function App() {
     setSelectedRunId(id)
     try {
       const response = await getRunGraph(id)
+      const runOptions = response.run.options || {}
       setSelectedWorkflowId(response.workflow.id)
       setGraph(response.graph)
+      setDryRunOptions((options) => ({
+        ...options,
+        branch: typeof runOptions.branch === 'string' ? runOptions.branch : response.run.branch || options.branch,
+        transport: typeof runOptions.transport === 'string' ? runOptions.transport : response.run.transport || options.transport,
+        context: typeof runOptions.context === 'string' ? runOptions.context : options.context,
+        step: typeof runOptions.step === 'string' ? runOptions.step : '',
+        fromStep: typeof runOptions.fromStep === 'string' ? runOptions.fromStep : '',
+        models: [],
+        stepModels: stepModelsFromRunGraph(response.graph),
+      }))
       setSelectedNode(null)
       setError('')
     } catch (err) {

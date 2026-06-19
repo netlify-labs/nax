@@ -149,6 +149,7 @@ export type VisualizeRun = {
   stderr?: string
   eventCount?: number
   cancellable?: boolean
+  options?: Partial<DryRunOptions>
 }
 
 export type StartRunResponse = {

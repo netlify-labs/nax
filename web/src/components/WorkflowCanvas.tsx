@@ -95,7 +95,7 @@ export function WorkflowCanvas(props: Props) {
           ...node.data,
           selectedAgents: Object.prototype.hasOwnProperty.call(props.stepModels, node.data.stepId)
             ? props.stepModels[node.data.stepId]
-            : node.data.agents,
+            : node.data.selectedAgents || node.data.agents,
           onToggleAgent: props.onToggleStepAgent,
         },
       })),

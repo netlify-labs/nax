@@ -282,10 +282,30 @@ test('visualize runs API reads durable workflow state from .nax', async () => {
     status: 'completed',
     transport: 'netlify-api',
     branch: 'main',
+    options: {
+      branch: 'main',
+      transport: 'netlify-api',
+      stepModels: {
+        review: ['codex'],
+      },
+    },
     createdAt: '2026-06-19T00:00:00.000Z',
     updatedAt: '2026-06-19T00:01:00.000Z',
     dir,
-    steps: [],
+    flow: {
+      id: 'review',
+      title: 'Review',
+      steps: [
+        { id: 'review', title: 'Review', agents: ['codex'], submit: 'new-run' },
+      ],
+    },
+    steps: [{
+      id: 'review',
+      title: 'Review',
+      status: 'completed',
+      agents: ['codex'],
+      runs: [{ agent: 'codex', status: 'completed', runnerId: 'runner-1', sessionId: 'session-1' }],
+    }],
   }, null, 2))
   const artifactsDir = path.join(dir, 'artifacts')
   const stepDir = path.join(artifactsDir, 'steps', '01-review')
@@ -331,8 +351,11 @@ test('visualize runs API reads durable workflow state from .nax', async () => {
     const graph = await requestJson(`${base}/api/runs/${runId}/graph`)
     assert.equal(graph.statusCode, 200)
     assert.equal(graph.payload.run.runId, runId)
+    assert.deepEqual(graph.payload.run.options.stepModels, { review: ['codex'] })
     assert.equal(graph.payload.workflow.id, 'review')
     assert.equal(graph.payload.graph.metadata.hasRunState, true)
+    assert.deepEqual(graph.payload.graph.nodes[0].data.agents, ['claude', 'gemini', 'codex'])
+    assert.deepEqual(graph.payload.graph.nodes[0].data.selectedAgents, ['codex'])
   } finally {
     await server.close()
   }

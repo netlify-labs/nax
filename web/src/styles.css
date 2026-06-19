@@ -394,6 +394,14 @@ body {
   padding-left: 14px;
 }
 
+.run-details-timeline-item.child .mantine-Timeline-itemContent {
+  padding-bottom: 8px;
+}
+
+.run-details-timeline-item.child .run-details-timeline-button {
+  padding-block: 1px;
+}
+
 .run-details-modal-content {
   min-height: 80vh;
 }

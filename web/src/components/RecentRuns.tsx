@@ -99,7 +99,7 @@ function buildTimelineEntries(
     kind: 'summary',
     title: 'Workflow summary',
     subtitle: run?.status || 'summary',
-    status: run?.status || '',
+    status: run?.status || 'completed',
     path: details.summaryPath || run?.summaryPath || runId(run || {}),
     markdown: details.summaryMarkdown,
   }]
@@ -135,7 +135,7 @@ function buildTimelineEntries(
     kind: 'final',
     title: details.finalTitle || 'Final result',
     subtitle: run?.status || 'final',
-    status: run?.status || '',
+    status: run?.status || 'completed',
     path: '',
     markdown: details.finalMarkdown,
   })
@@ -289,7 +289,6 @@ export function RecentRuns({ runs, selectedRunId, onSelect, onResume }: Props) {
                         key={entry.id}
                         className={`run-details-timeline-item ${entry.kind === 'session' ? 'child' : ''}`}
                         color={statusColor(entry.status)}
-                        lineVariant={entry.kind === 'session' ? 'dashed' : 'solid'}
                         title={(
                           <UnstyledButton
                             className={`run-details-timeline-button${entry.id === activeTimelineId ? ' active' : ''}`}

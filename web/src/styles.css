@@ -382,7 +382,7 @@ body {
 }
 
 .run-details-timeline-item.child {
-  margin-left: 18px;
+  padding-left: 14px;
 }
 
 .run-details-modal-content {

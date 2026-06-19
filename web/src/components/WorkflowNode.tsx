@@ -1,5 +1,6 @@
 import { memo } from 'react'
 import { Handle, Position, type NodeProps } from '@xyflow/react'
+import { Info } from 'lucide-react'
 import type { WorkflowGraphNodeData } from '../types'
 
 function titleCase(value: string): string {
@@ -39,7 +40,23 @@ export const WorkflowNode = memo(function WorkflowNode({ data, selected }: NodeP
       <Handle className="hidden-handle" type="target" position={Position.Top} />
       <div className="node-header">
         <div>
-          <span className="node-kicker">Step {node.number}</span>
+          <div className="node-kicker-row">
+            <span className="node-kicker">Step {node.number}</span>
+            {node.promptMarkdown ? (
+              <button
+                className="node-info-button"
+                type="button"
+                aria-label={`View ${node.title} prompt`}
+                title="View prompt"
+                onClick={(event) => {
+                  event.stopPropagation()
+                  node.onViewPrompt?.(node)
+                }}
+              >
+                <Info size={13} />
+              </button>
+            ) : null}
+          </div>
           <h3>{node.title}</h3>
         </div>
         <span className={`action-badge ${node.submit === 'follow-up' ? 'follow-up' : 'new-run'}`}>

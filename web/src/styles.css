@@ -431,6 +431,37 @@ body {
   text-transform: uppercase;
 }
 
+.node-kicker-row {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.node-info-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  appearance: none;
+  border: 0;
+  padding: 0;
+  background: transparent;
+  color: var(--mantine-color-dimmed);
+  cursor: pointer;
+  line-height: 0;
+}
+
+.node-info-button:hover {
+  color: var(--mantine-primary-color-4);
+}
+
+.node-info-button:focus-visible {
+  border-radius: 999px;
+  outline: 2px solid var(--mantine-primary-color-5);
+  outline-offset: 2px;
+}
+
 .node-header h3 {
   margin: 3px 0 0;
   color: var(--mantine-color-text);

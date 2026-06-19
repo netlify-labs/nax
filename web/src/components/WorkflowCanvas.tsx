@@ -24,6 +24,7 @@ type Props = {
   stepModels: Record<string, string[]>
   onToggleStepAgent: (stepId: string, agent: string, allAgents: string[]) => void
   onSelectNode: (node: WorkflowGraphNodeData | null) => void
+  onViewPrompt: (node: WorkflowGraphNodeData) => void
 }
 
 type FlowBodyProps = Props & {
@@ -113,10 +114,11 @@ export function WorkflowCanvas(props: Props) {
             ? props.stepModels[node.data.stepId]
             : node.data.selectedAgents || node.data.agents,
           onToggleAgent: props.onToggleStepAgent,
+          onViewPrompt: props.onViewPrompt,
         },
       })),
     }
-  }, [props.graph, props.onToggleStepAgent, props.stepModels])
+  }, [props.graph, props.onToggleStepAgent, props.onViewPrompt, props.stepModels])
 
   return (
     <Box component="section" className="canvas-shell" aria-label="Workflow graph">

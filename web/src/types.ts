@@ -50,6 +50,7 @@ export type WorkflowGraphNodeData = {
   promptTitle: string
   selectedAgents?: string[]
   onToggleAgent?: (stepId: string, agent: string, allAgents: string[]) => void
+  onViewPrompt?: (node: WorkflowGraphNodeData) => void
 }
 
 export type WorkflowGraph = {

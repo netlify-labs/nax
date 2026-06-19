@@ -6,8 +6,10 @@ import {
   Box,
   Burger,
   Button,
+  Code,
   Group,
   Modal,
+  ScrollArea,
   Splitter,
   Stack,
   Text,
@@ -23,6 +25,7 @@ import { ReactFlowProvider } from '@xyflow/react'
 import { cancelWorkflowRun, getHealth, getRunGraph, getWorkflowGraph, listRuns, listWorkflows, runEventsUrl, runWorkflowDryRun, startWorkflowRun } from './api'
 import { WorkflowOutputTabs } from './components/DryRunPanel'
 import { Inspector } from './components/Inspector'
+import { MarkdownRenderer } from './components/MarkdownRenderer'
 import { RecentRuns } from './components/RecentRuns'
 import { WorkflowCanvas } from './components/WorkflowCanvas'
 import { WorkflowControls } from './components/WorkflowControls'
@@ -127,6 +130,7 @@ export default function App() {
   const [refreshKey, setRefreshKey] = useState(0)
   const [contextModalAction, setContextModalAction] = useState<ContextModalAction>('')
   const [contextDraft, setContextDraft] = useState('')
+  const [promptNode, setPromptNode] = useState<WorkflowGraphNodeData | null>(null)
 
   useEffect(() => {
     let cancelled = false
@@ -519,6 +523,7 @@ export default function App() {
                         stepModels={dryRunOptions.stepModels}
                         onToggleStepAgent={toggleStepAgent}
                         onSelectNode={setSelectedNode}
+                        onViewPrompt={setPromptNode}
                       />
                     </Splitter.Pane>
                     <Splitter.Pane defaultSize={28} min={18}>
@@ -537,6 +542,7 @@ export default function App() {
                   workflow={selectedWorkflow}
                   selectedNode={selectedNode}
                   graph={graph}
+                  onViewPrompt={setPromptNode}
                 />
                 <RecentRuns
                   runs={runs}
@@ -592,6 +598,25 @@ export default function App() {
               {contextModalAction === 'run' ? 'Run' : 'Dry Run'}
             </Button>
           </Group>
+        </Stack>
+      </Modal>
+      <Modal
+        opened={Boolean(promptNode)}
+        onClose={() => setPromptNode(null)}
+        title={promptNode ? `${promptNode.promptTitle || promptNode.title} prompt` : 'Prompt'}
+        size="80rem"
+        centered
+        scrollAreaComponent={ScrollArea.Autosize}
+      >
+        <Stack gap="sm">
+          {promptNode?.promptPath ? <Code block className="path-code">{promptNode.promptPath}</Code> : null}
+          <Box className="prompt-markdown">
+            {promptNode?.promptMarkdown ? (
+              <MarkdownRenderer fallback="Rendering prompt...">{promptNode.promptMarkdown}</MarkdownRenderer>
+            ) : (
+              <Text c="dimmed">No prompt markdown available.</Text>
+            )}
+          </Box>
         </Stack>
       </Modal>
     </ReactFlowProvider>

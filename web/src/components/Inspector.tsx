@@ -1,13 +1,12 @@
-import { useState } from 'react'
-import { Badge, Box, Button, Code, Divider, Group, Modal, ScrollArea, Stack, Table, Text, ThemeIcon, Title } from '@mantine/core'
+import { Badge, Box, Button, Code, Divider, Group, ScrollArea, Stack, Table, Text, ThemeIcon, Title } from '@mantine/core'
 import { FileText, GitBranch, Layers, Route } from 'lucide-react'
-import { MarkdownRenderer } from './MarkdownRenderer'
 import type { Workflow, WorkflowGraph, WorkflowGraphNodeData } from '../types'
 
 type Props = {
   workflow: Workflow | null
   selectedNode: WorkflowGraphNodeData | null
   graph: WorkflowGraph | null
+  onViewPrompt: (node: WorkflowGraphNodeData) => void
 }
 
 function Field({ label, value }: { label: string; value: string | number }) {
@@ -19,8 +18,7 @@ function Field({ label, value }: { label: string; value: string | number }) {
   )
 }
 
-export function Inspector({ workflow, selectedNode, graph }: Props) {
-  const [promptOpen, setPromptOpen] = useState(false)
+export function Inspector({ workflow, selectedNode, graph, onViewPrompt }: Props) {
   const promptMarkdown = selectedNode?.promptMarkdown || ''
 
   return (
@@ -42,7 +40,9 @@ export function Inspector({ workflow, selectedNode, graph }: Props) {
               variant="light"
               size="xs"
               leftSection={<FileText size={14} />}
-              onClick={() => setPromptOpen(true)}
+              onClick={() => {
+                if (selectedNode) onViewPrompt(selectedNode)
+              }}
               disabled={!promptMarkdown}
             >
               View prompt
@@ -91,25 +91,6 @@ export function Inspector({ workflow, selectedNode, graph }: Props) {
       ) : (
         <Text className="empty-state" size="sm" c="dimmed">No selection</Text>
       )}
-      <Modal
-        opened={promptOpen && Boolean(selectedNode)}
-        onClose={() => setPromptOpen(false)}
-        title={selectedNode ? `${selectedNode.promptTitle || selectedNode.title} prompt` : 'Prompt'}
-        size="80rem"
-        centered
-        scrollAreaComponent={ScrollArea.Autosize}
-      >
-        <Stack gap="sm">
-          {selectedNode?.promptPath ? <Code block className="path-code">{selectedNode.promptPath}</Code> : null}
-          <Box className="prompt-markdown">
-            {promptMarkdown ? (
-              <MarkdownRenderer fallback="Rendering prompt...">{promptMarkdown}</MarkdownRenderer>
-            ) : (
-              <Text c="dimmed">No prompt markdown available.</Text>
-            )}
-          </Box>
-        </Stack>
-      </Modal>
     </Box>
   )
 }

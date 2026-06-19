@@ -341,10 +341,8 @@ export function RecentRuns({ runs, selectedRunId, onSelect, onResume }: Props) {
                                     >
                                       <Group gap={6} wrap="nowrap" className="run-details-timeline-title session">
                                         {child.section?.agent ? <AgentIcon agent={child.section.agent} /> : null}
-                                        <Text size="xs" fw={600} truncate>
-                                          {child.section?.agent ? agentLabel(child.section.agent) : child.title}
-                                          {child.subtitle ? ` - ${child.subtitle}` : ''}
-                                        </Text>
+                                        <Text size="xs" fw={600} truncate>{child.section?.agent ? agentLabel(child.section.agent) : child.title}</Text>
+                                        {child.subtitle ? <Text size="xs" c="dimmed" truncate>- {child.subtitle}</Text> : null}
                                       </Group>
                                     </UnstyledButton>
                                   ))}

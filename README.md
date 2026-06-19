@@ -312,12 +312,69 @@ nax handoff               Copy or continue from prior workflow/session results
 nax recent                Browse recent workflow/session/runner artifacts
 nax retry [run-id]        Retry one failed Netlify API agent run, then continue
 nax sync last             Pull remote updates for the latest local Agent Runner
+nax visualize [flow]      Open the experimental local workflow visualizer
 nax ci '<command>'        Run a command only inside Netlify Agent Runner
 nax skills install        Install bundled agent skills into detected harness dirs
 nax skills check          Show installed skill versions
 nax skills update         Reinstall the latest bundled skill copy
 nax list                  List available flows
 ```
+
+### `nax visualize`
+
+```bash
+nax visualize review
+nax visualize --no-open
+nax visualize --project-root ../my-site --flows-dir .github/nax-flows
+```
+
+`nax visualize` starts a localhost workbench for browsing workflows and renders the selected flow as a React Flow graph. Browsing and graph rendering are read-only. Dry-run and run controls are explicit actions inside the workbench.
+
+The workbench includes:
+
+| Surface | Behavior |
+|---|---|
+| Workflow list | Reads the same project and bundled flow definitions as `nax list`. |
+| Graph canvas | Renders workflow steps as React Flow nodes with agents, inputs, submit mode, and run status. |
+| Dry Run | Calls the local API to run `nax run <flow> --dry --force`; it previews the command and output without writing `.nax` artifacts. |
+| Run | Requires a browser confirmation, then starts the workflow through the local `nax` command and streams stdout/stderr into the UI. |
+| Recent runs | Reads durable `.nax/workflows` state, highlights resumable runs, and overlays run status on the graph. |
+
+The browser talks only to the local visualize server. Mutating endpoints require a per-process token embedded in the opened URL, and the server binds to `127.0.0.1` by default. Real runs still use the same transport setup as the CLI, so GitHub Actions and Netlify API prerequisites are unchanged.
+
+The published command serves built UI assets from the package. Developing or rebuilding the UI uses Vite 8, which requires Node 20.19+ or 22.12+:
+
+```bash
+npm run visualize:dev
+npm run visualize:build
+npm run visualize:smoke
+```
+
+By default, `npm run visualize:dev` serves read-only workflow data from Vite so the UI can boot without a running backend. To iterate against the real local API runner, start the visualize server in one terminal:
+
+```bash
+node bin/nax.js visualize --no-open --port 53734
+```
+
+Copy the `token` value from the printed URL, then start Vite in another terminal:
+
+```bash
+NAX_VISUALIZE_API_URL=http://127.0.0.1:53734 npm run visualize:dev
+```
+
+Open the Vite URL with the same token:
+
+```text
+http://127.0.0.1:5173/?token=<token>&workflow=do-next
+```
+
+You can also inject the token from the proxy process and omit it from the Vite URL:
+
+```bash
+NAX_VISUALIZE_API_URL=http://127.0.0.1:53734 NAX_VISUALIZE_TOKEN=<token> npm run visualize:dev
+```
+
+`NAX_VISUALIZE_API_URL` may point at either the backend origin or its `/api` path. For the common fixed-port loop, `npm run visualize:dev:real` defaults the backend to `http://127.0.0.1:53734`.
 
 ### `nax ci`
 
@@ -348,11 +405,15 @@ If you omit `--prompt` in a TTY, `nax` opens a multiline prompt. Single-agent ru
 
 ```bash
 nax sync last
+nax sync https://github.com/OWNER/REPO/actions/runs/123456789
+nax sync 123456789 --repo OWNER/REPO
 ```
 
 `nax sync last` reconciles the latest local `.nax/agent-runners/<id>` artifact with remote Netlify Agent Runner sessions. Use it when a follow-up happened out of band in the Netlify UI or another process and the local `.nax` cache is missing the newer session.
 
 The command fetches remote sessions with the Netlify CLI, writes missing or changed sessions under `.nax/agent-sessions/`, and rebuilds the runner rollup under `.nax/agent-runners/`.
+
+When the target is a GitHub Actions run URL or run ID, `nax sync` downloads the uploaded `nax-<flow>-<run_id>` artifact with `gh`, merges its workflow, runner, and session artifacts into local `.nax/`, localizes the workflow metadata for this checkout, and rebuilds the `latest` symlinks. This is the handoff path for workflows run through `.github/workflows/run-nax.yml`.
 
 ### `nax run` flags
 
@@ -628,6 +689,11 @@ nax run review --step <step-id>      # re-run one step from scratch
 | `Pinned SHA not on remote` | Auto-injected context pins to a SHA. Push first, or pass `--no-auto-context`. |
 | Resume keeps offering an old run | Decline the prompt; the run state is moved out of "unfinished" once you do. |
 | A Netlify UI follow-up is missing from `.nax` | Run `nax sync last` to refresh the latest local runner from remote sessions. |
+| `nax visualize` shows the fallback HTML page | Build the packaged UI with `npm run visualize:build`, or reinstall a package that includes `web/dist`. |
+| `nax visualize --port <n>` fails with address in use | Omit `--port` to let the server choose an available port, or pass a different port. |
+| Visualize API returns `unauthorized` | Reopen the full URL printed by `nax visualize`; mutating API calls require that session's `token` query value or `x-nax-token` header. |
+| Visualize reports an unknown workflow | Run `nax list` and use the displayed flow id. For project flows, also verify `--project-root` and `--flows-dir`. |
+| Visualize Run fails before submission | Fix the same GitHub/Netlify transport prerequisites you would fix for `nax run`: authenticated CLIs, linked Netlify site, or initialized GitHub Actions workflow. |
 
 ---
 

@@ -1,0 +1,1 @@
+import{l as e}from"./index-s3-dGEeQ.js";import{_ as t,w as n}from"./chunk-BO2N2NFS-H27Xj1O3.js";e((()=>{t()}))();export{n as Mermaid};

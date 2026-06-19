@@ -53,6 +53,7 @@ const { clearTrackedRunState, trackRunState } = require('../src/graceful-run-sta
 const { persistAgentRunnerArtifact } = require('../src/agent-runner-artifacts')
 const { persistAgentSessionArtifact } = require('../src/agent-session-artifacts')
 const { syncLastAgentRunner } = require('../src/agent-runner-sync')
+const { parseGithubActionsRunTarget, syncGithubActionsRun } = require('../src/github-actions-sync')
 const { listHandoffSources, readHandoffSource, relativeDisplayPath } = require('../src/handoff-sources')
 const {
   PROVIDER_DIRS,
@@ -64,6 +65,13 @@ const {
 const { NETLIFY_API_TRANSPORT, detectTransports, formatTransportSetupHelp, isNetlifyApiTransport, resolveTransport } = require('../src/transports')
 const { classifyNetlifyRuntime } = require('../src/netlify-runtime')
 const { enableGitHubActionsSetup, findExistingAgentRunnerWorkflow, initSite, readNetlifyProject } = require('../src/init')
+const { startVisualizeServer } = require('../src/visualize-server')
+const { runWorkflow } = require('../src/workflow-runner')
+const {
+  applyAgentSelection,
+  assertValidAgentSelection,
+  parseStepModelsEntries,
+} = require('../src/agent-selection')
 const {
   archiveAgentRun,
   buildNetlifyEnv,
@@ -1299,6 +1307,46 @@ async function handleList(options = {}) {
   console.log(formatFlowList(flows, { verbose: options.verbose, baseDir: invocationDir }))
 }
 
+async function handleVisualize(flowId, options = {}) {
+  const invocationDir = process.cwd()
+  const projectRoot = resolveProjectRoot(options.projectRoot, { cwd: invocationDir })
+  if (flowId) {
+    await loadFlow(flowId, flowLoadOptions(options, projectRoot))
+  }
+
+  const instance = await startVisualizeServer({
+    projectRoot,
+    flowsDir: options.flowsDir,
+    flowsDirs: options.flowsDirs,
+    host: options.host || '127.0.0.1',
+    port: options.port,
+    initialWorkflow: flowId || '',
+    dev: options.dev === true,
+  })
+
+  console.log(`Nax visualize: ${instance.url}`)
+  console.log(`Project root:  ${instance.projectRoot}`)
+
+  if (options.open !== false) {
+    const openBrowser = (await import('open')).default
+    await openBrowser(instance.url)
+  }
+
+  const close = async () => {
+    try {
+      await instance.close()
+    } catch (_err) {
+      /* ignore close races during process shutdown */
+    }
+  }
+  process.once('SIGINT', () => {
+    close().finally(() => process.exit(0))
+  })
+  process.once('SIGTERM', () => {
+    close().finally(() => process.exit(0))
+  })
+}
+
 function absolutePathOrEmpty(value, baseDir = '') {
   if (!value) return ''
   const raw = String(value)
@@ -2510,19 +2558,21 @@ function normalizeArray(value) {
 }
 
 function withSelectedAgents(flow, selectedAgents) {
-  const selected = new Set(selectedAgents)
+  return applyAgentSelection(flow, { models: selectedAgents })
+}
+
+function selectedStepModels(options = {}) {
+  return parseStepModelsEntries(options.stepModels || [])
+}
+
+function withSelectedStepModels(flow, options = {}) {
+  const models = parseCsv(options.models)
+  const stepModels = selectedStepModels(options)
+  const selection = { models, stepModels }
+  assertValidAgentSelection(flow, selection)
   return {
-    ...flow,
-    defaults: {
-      ...flow.defaults,
-      agents: normalizeArray(flow.defaults?.agents).filter((agent) => selected.has(agent)),
-    },
-    steps: flow.steps.map((step) => ({
-      ...step,
-      agents: normalizeArray(step.agents).length > 0
-        ? normalizeArray(step.agents).filter((agent) => selected.has(agent))
-        : normalizeArray(step.agents),
-    })),
+    flow: applyAgentSelection(flow, selection),
+    stepModels,
   }
 }
 
@@ -3067,15 +3117,18 @@ function printPartialArtifactHint(runState) {
 /** @param {Record<string, any>} param0 */
 async function prepareInteractiveFlowRun({ flow, options, transport, projectRoot }) {
   if (!process.stdin.isTTY || options.yes) {
-    const selected = parseCsv(options.models)
-    const configuredFlow = selected.length > 0 ? withSelectedAgents(flow, selected) : flow
-    const steps = runnableSteps(configuredFlow, options)
+    const { flow: configuredFlow, stepModels } = withSelectedStepModels(flow, options)
+    const configuredOptions = {
+      ...options,
+      stepModels,
+    }
+    const steps = runnableSteps(configuredFlow, configuredOptions)
     if (steps.length === 0) {
       throw new Error('No workflow steps have selected agents.')
     }
     return {
       flow: configuredFlow,
-      options,
+      options: configuredOptions,
       steps,
       previewPrinted: false,
     }
@@ -3083,7 +3136,11 @@ async function prepareInteractiveFlowRun({ flow, options, transport, projectRoot
 
   const clack = await loadClack()
   const agents = flowAgents(flow)
+  const requestedStepModels = selectedStepModels(options)
   let selectedAgents = parseCsv(options.models)
+  if (selectedAgents.length === 0 && Object.keys(requestedStepModels).length > 0) {
+    selectedAgents = agents
+  }
   if (selectedAgents.length === 0) {
     const selected = await clack.multiselect({
       message: 'Choose Netlify agent models',
@@ -3110,8 +3167,16 @@ async function prepareInteractiveFlowRun({ flow, options, transport, projectRoot
     ...options,
     context: manualContext || options.context,
     models: selectedAgents.join(','),
+    stepModels: requestedStepModels,
   }
-  const configuredFlow = withSelectedAgents(flow, selectedAgents)
+  assertValidAgentSelection(flow, {
+    models: selectedAgents,
+    stepModels: configuredOptions.stepModels,
+  })
+  const configuredFlow = applyAgentSelection(flow, {
+    models: selectedAgents,
+    stepModels: configuredOptions.stepModels,
+  })
   const steps = runnableSteps(configuredFlow, configuredOptions)
   if (steps.length === 0) {
     throw new Error('No workflow steps have selected agents.')
@@ -5467,7 +5532,7 @@ async function maybeResumeUnfinishedRun({ projectRoot, options = {}, flow = null
   return true
 }
 
-async function handleRun(flowId, options) {
+async function handleRunEngine(flowId, options) {
   const invocationDir = path.resolve(process.cwd())
   const projectRoot = resolveProjectRoot(options.projectRoot, { cwd: invocationDir })
   if (flowId === 'ls' || flowId === 'list') {
@@ -5589,6 +5654,20 @@ async function handleRun(flowId, options) {
     } else {
       console.log(`--notify is only supported on macOS; skipping desktop notification.`)
     }
+  }
+}
+
+async function handleRun(flowId, options = {}) {
+  const result = await runWorkflow({
+    flowId: flowId || '',
+    options,
+    engine: handleRunEngine,
+    passthrough: true,
+    forceNonInteractive: false,
+  })
+  if (result.status !== 'completed') {
+    const message = result.stderr.trim().split('\n').filter(Boolean).pop() || `Workflow "${flowId || 'review'}" failed.`
+    throw new Error(message)
   }
 }
 
@@ -5746,8 +5825,26 @@ function handleSync(target = 'last', options = {}, {
 } = {}) {
   const projectRoot = resolveProjectRoot(options.projectRoot, { cwd })
   const selected = String(target || 'last').trim().toLowerCase()
+  const githubRun = parseGithubActionsRunTarget(target)
+  if (githubRun) {
+    const repo = githubRun.repo || resolveRepo(options.repo)
+    const result = syncGithubActionsRun({
+      projectRoot,
+      repo,
+      runId: githubRun.runId,
+      artifactName: options.artifact,
+      cwd,
+      env,
+      runCommand,
+    })
+    log(`Synced GitHub Actions run ${result.runId}: ${result.artifactName}`)
+    log(`Materialized: ${relativeDisplayPath(projectRoot, result.dir)}`)
+    log(`Artifacts: ${result.workflowCount} workflows, ${result.runnerCount} runners, ${result.sessionCount} sessions`)
+    if (result.latestWorkflowId) log(`Latest workflow: ${result.latestWorkflowId}`)
+    return result
+  }
   if (selected !== 'last') {
-    throw new Error('Only `nax sync last` is supported right now.')
+    throw new Error('Expected `nax sync last`, a GitHub Actions run ID, or a GitHub Actions run URL.')
   }
   const netlify = buildNetlifyEnv({ projectRoot, env })
   const result = syncLastAgentRunner({
@@ -5872,6 +5969,8 @@ function buildProgram() {
     .option('--repo <owner/name>', 'GitHub repo; defaults to gh repo view')
     .option('--branch <branch-or-pr>', 'Git branch or PR number to run in Netlify agent runners')
     .option('--context <text>', 'Additional context appended to each prompt')
+    .option('--models <list>', 'Comma-separated agent models for workflow steps')
+    .option('--step-models <step=models>', 'Agent models for one workflow step; repeatable', collectOption, [])
     .option('--agent <name>', 'Agent for a Netlify agent run, e.g. codex')
     .option('--prompt <text>', 'Prompt text for a Netlify agent run')
     .option('--filter <app>', 'Netlify CLI monorepo app filter for local Netlify agent runs')
@@ -5976,8 +6075,10 @@ function buildProgram() {
 
   program
     .command('sync [target]')
-    .description('Sync local .nax artifacts from remote Netlify Agent Runner state')
+    .description('Sync local .nax artifacts from remote Netlify Agent Runner or GitHub Actions state')
     .option('--project-root <path>', 'Project root containing .nax artifacts')
+    .option('--repo <owner/name>', 'GitHub repo for Actions run IDs; defaults to gh repo view')
+    .option('--artifact <name>', 'GitHub Actions artifact name to download when a run has multiple NAX artifacts')
     .action((target, options, command) => {
       handleSync(target || 'last', actionOptions(options, command))
     })
@@ -6053,6 +6154,16 @@ function buildProgram() {
     .option('--context <context>', 'Additional context indicator', '')
     .action((flow, options, command) => handlePreviewBoxes(flow, actionOptions(options, command))))
 
+  addFlowsDirOption(program
+    .command('visualize [workflow]')
+    .description('Open the experimental local workflow visualizer')
+    .option('--project-root <path>', 'Project root containing project workflows')
+    .option('--host <host>', 'Host for the local visualizer server', '127.0.0.1')
+    .option('--port <port>', 'Port for the local visualizer server; defaults to an available port')
+    .option('--no-open', 'Print the visualizer URL without opening a browser')
+    .option('--dev', 'Use development-mode visualizer behavior')
+    .action((flow, options, command) => handleVisualize(flow || '', actionOptions(options, command))))
+
   program
     .command('preview-spinner')
     .description('Preview the wait-for-step progress reporter without running a workflow')
@@ -6127,6 +6238,8 @@ module.exports = {
     formatHandoffSourceKind,
     formatHandoffSourceLabel,
     formatHandoffSourceDetailBox,
+    handleRun,
+    handleRunEngine,
     handleCi,
     handleSync,
     handoffSourceDetailTitle,
@@ -6194,6 +6307,7 @@ module.exports = {
     sourceIssueNumbersForStep,
     sourceRunsForStep,
     withSelectedAgents,
+    withSelectedStepModels,
     workflowPickerLabel,
     workflowPickerHint,
     uniqueNumbers,

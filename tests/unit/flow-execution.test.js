@@ -2063,6 +2063,30 @@ test('withSelectedAgents filters each workflow step and runnableSteps drops empt
   assert.deepEqual(_private.runnableSteps(filtered, {}).map((step) => step.id), ['review'])
 })
 
+test('withSelectedStepModels applies step-specific agent overrides', () => {
+  const flow = {
+    id: 'review',
+    defaults: { agents: ['claude', 'gemini', 'codex'] },
+    steps: [
+      { id: 'review', agents: ['claude', 'gemini', 'codex'] },
+      { id: 'summarize', agents: ['codex'] },
+    ],
+  }
+
+  const configured = _private.withSelectedStepModels(flow, {
+    models: 'claude',
+    stepModels: ['review=gemini,codex', 'summarize='],
+  })
+
+  assert.deepEqual(configured.stepModels, {
+    review: ['gemini', 'codex'],
+    summarize: [],
+  })
+  assert.deepEqual(configured.flow.steps[0].agents, ['gemini', 'codex'])
+  assert.deepEqual(configured.flow.steps[1].agents, [])
+  assert.deepEqual(_private.runnableSteps(configured.flow, {}).map((step) => step.id), ['review'])
+})
+
 test('workflowPickerHint uses compact bundled flow descriptions without source labels', () => {
   assert.equal(_private.workflowPickerHint({
     id: 'performance-audit',

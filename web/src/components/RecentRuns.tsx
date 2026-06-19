@@ -29,6 +29,7 @@ type TimelineEntry = {
   status: string
   path: string
   markdown: string
+  stepNumber?: number
   section?: RunDetailsSection
 }
 
@@ -120,11 +121,12 @@ function buildTimelineEntries(
     entries.push({
       id: `step:${step.id}`,
       kind: 'step',
-      title: `${index + 1}. ${step.title}`,
+      title: step.title,
       subtitle: stepDescription(step, sessions),
       status: step.status,
       path: step.section?.path || '',
       markdown: step.section?.markdown || '',
+      stepNumber: index + 1,
       section: step.section,
     })
     sessions.forEach((section) => {
@@ -316,6 +318,7 @@ export function RecentRuns({ runs, selectedRunId, onSelect, onResume }: Props) {
                           key={entry.id}
                           className="run-details-timeline-item"
                           color={statusColor(entry.status)}
+                          bullet={entry.kind === 'step' ? <Text component="span" size="10px" fw={800}>{entry.stepNumber}</Text> : undefined}
                           title={(
                             <Paper className="run-details-timeline-card" withBorder>
                               <UnstyledButton

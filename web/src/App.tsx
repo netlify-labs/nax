@@ -33,7 +33,7 @@ import { RecentRuns } from './components/RecentRuns'
 import { WorkflowCanvas } from './components/WorkflowCanvas'
 import { WorkflowControls } from './components/WorkflowControls'
 import { WorkflowList } from './components/WorkflowList'
-import { initialLiveRunState, liveRunReducer } from './liveRunReducer'
+import { initialLiveRunState, liveRunReducer, visualStatus } from './liveRunReducer'
 import type { DryRunOptions, DryRunResult, RunDetailsSection, RunnerEvent, VisualizeRun, Workflow, WorkflowGraph, WorkflowGraphNodeData } from './types'
 
 type ContextModalAction = '' | 'dry-run' | 'run'
@@ -93,6 +93,14 @@ function completedRunForAgent(node: WorkflowGraphNodeData, agent: string): Recor
   ))
 }
 
+function runForAgent(node: WorkflowGraphNodeData, agent: string): Record<string, unknown> | undefined {
+  for (let index = node.runs.length - 1; index >= 0; index -= 1) {
+    const run = node.runs[index]
+    if (runValue(run, 'agent') === agent) return run
+  }
+  return undefined
+}
+
 function latestAgentEvent(events: RunnerEvent[], node: WorkflowGraphNodeData, agent: string): RunnerEvent | null {
   for (let index = events.length - 1; index >= 0; index -= 1) {
     const event = events[index]
@@ -105,6 +113,19 @@ function liveAgentUrl(event: RunnerEvent | null): string {
   if (!event) return ''
   const links = event.links || {}
   return links.sessionUrl || links.agentRunUrl || links.issueUrl || event.issueUrl || ''
+}
+
+function savedRunUrl(run: Record<string, unknown> | undefined): string {
+  if (!run) return ''
+  const links = run.links
+  if (links && typeof links === 'object' && !Array.isArray(links)) {
+    const typedLinks = links as Record<string, unknown>
+    for (const key of ['sessionUrl', 'agentRunUrl', 'commentUrl', 'issueUrl']) {
+      const value = typedLinks[key]
+      if (typeof value === 'string' && value) return value
+    }
+  }
+  return runValue(run, 'commentUrl') || runValue(run, 'issueUrl')
 }
 
 function NetlifyLogo() {
@@ -186,6 +207,7 @@ export default function App() {
   const dryRunSimulationTimers = useRef<number[]>([])
   const runEventsRef = useRef<EventSource | null>(null)
   const runReconnectTimerRef = useRef<number | null>(null)
+  const skipWorkflowGraphLoadRef = useRef('')
   const selectedWorkflow = useMemo(
     () => workflows.find((workflow) => workflow.id === selectedWorkflowId) || null,
     [workflows, selectedWorkflowId],
@@ -340,6 +362,12 @@ export default function App() {
       dispatchLiveRun({ type: 'reset' })
       return
     }
+    if (skipWorkflowGraphLoadRef.current === selectedWorkflowId) {
+      skipWorkflowGraphLoadRef.current = ''
+      setWorkflowUrl(selectedWorkflowId)
+      return
+    }
+    if (skipWorkflowGraphLoadRef.current) skipWorkflowGraphLoadRef.current = ''
     clearDryRunSimulation()
     dispatchLiveRun({ type: 'reset' })
     setDryRunOptions((options) => ({
@@ -612,9 +640,13 @@ export default function App() {
     const id = run.runId || run.id
     if (!id) return
     setSelectedRunId(id)
+    setLoadingGraph(true)
     try {
       const response = await getRunGraph(id)
       const runOptions = response.run.options || {}
+      if (response.workflow.id !== selectedWorkflowId) {
+        skipWorkflowGraphLoadRef.current = response.workflow.id
+      }
       setSelectedWorkflowId(response.workflow.id)
       setGraph(response.graph)
       dispatchLiveRun({ type: 'reset' })
@@ -630,8 +662,11 @@ export default function App() {
       }))
       setSelectedNode(null)
       setError('')
+      setWorkflowUrl(response.workflow.id)
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err))
+    } finally {
+      setLoadingGraph(false)
     }
   }
 
@@ -685,13 +720,19 @@ export default function App() {
   const agentResultLiveEvent = agentResultContext
     ? latestAgentEvent(liveRunState.rawEvents, agentResultContext.node, agentResultContext.agent)
     : null
+  const agentResultSavedRun = agentResultContext
+    ? runForAgent(agentResultContext.node, agentResultContext.agent)
+    : undefined
+  const agentResultSavedStatus = runValue(agentResultSavedRun, 'status')
   const agentResultLiveStatus = agentResultContext
-    ? agentResultContext.node.agentStatuses?.[agentResultContext.agent] || agentResultLiveEvent?.status || ''
+    ? agentResultContext.node.agentStatuses?.[agentResultContext.agent] || agentResultLiveEvent?.status || (agentResultSavedStatus ? visualStatus(agentResultSavedStatus) : '')
     : ''
-  const agentResultLiveUrl = liveAgentUrl(agentResultLiveEvent)
+  const agentResultLiveUrl = liveAgentUrl(agentResultLiveEvent) || savedRunUrl(agentResultSavedRun)
   const agentResultSubmittedAfter = typeof agentResultLiveEvent?.submittedAfterSeconds === 'number'
     ? agentResultLiveEvent.submittedAfterSeconds
     : null
+  const agentResultRunnerId = agentResultLiveEvent?.runnerId || runValue(agentResultSavedRun, 'runnerId')
+  const agentResultSessionId = agentResultLiveEvent?.sessionId || runValue(agentResultSavedRun, 'sessionId')
 
   return (
     <ReactFlowProvider>
@@ -992,16 +1033,16 @@ export default function App() {
             {['running', 'submitted', 'waiting', 'retrying', 'queued'].includes(agentResultLiveStatus) ? (
               <Stack gap={6}>
                 <Text c="dimmed">No result yet. This remote agent run is still in progress.</Text>
-                {agentResultLiveEvent?.runnerId ? (
+                {agentResultRunnerId ? (
                   <Group gap="xs" wrap="nowrap">
                     <Text size="sm" c="dimmed" w={92}>Runner ID</Text>
-                    <Code>{agentResultLiveEvent.runnerId}</Code>
+                    <Code>{agentResultRunnerId}</Code>
                   </Group>
                 ) : null}
-                {agentResultLiveEvent?.sessionId ? (
+                {agentResultSessionId ? (
                   <Group gap="xs" wrap="nowrap">
                     <Text size="sm" c="dimmed" w={92}>Session ID</Text>
-                    <Code>{agentResultLiveEvent.sessionId}</Code>
+                    <Code>{agentResultSessionId}</Code>
                   </Group>
                 ) : null}
                 {agentResultSubmittedAfter !== null ? (

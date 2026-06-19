@@ -11,6 +11,7 @@ import {
   type NodeMouseHandler,
 } from '@xyflow/react'
 import '@xyflow/react/dist/style.css'
+import { visualStatus } from '../liveRunReducer'
 import type { WorkflowGraph, WorkflowGraphNodeData } from '../types'
 import { WorkflowNode } from './WorkflowNode'
 
@@ -35,6 +36,23 @@ type Props = {
 
 type FlowBodyProps = Props & {
   fitViewKey: string
+}
+
+function runString(run: Record<string, unknown>, key: string): string {
+  const value = run[key]
+  return typeof value === 'string' ? value : ''
+}
+
+function agentStatusesFromRuns(runs: Array<Record<string, unknown>>): Record<string, string> {
+  const statuses: Record<string, string> = {}
+  for (const run of runs) {
+    const agent = runString(run, 'agent')
+    if (!agent) continue
+    const status = runString(run, 'status')
+    if (status) statuses[agent] = visualStatus(status)
+    else if (runString(run, 'runnerId') || runString(run, 'sessionId')) statuses[agent] = 'submitted'
+  }
+  return statuses
 }
 
 function FlowBody({ graph, loading, onSelectNode, fitViewKey }: FlowBodyProps) {
@@ -127,20 +145,29 @@ export function WorkflowCanvas(props: Props) {
     if (!props.graph) return null
     return {
       ...props.graph,
-      nodes: props.graph.nodes.map((node) => ({
-        ...node,
-        data: {
-          ...node.data,
-          status: props.stepStatuses[node.data.stepId] || node.data.status,
-          agentStatuses: props.stepAgentStatuses[node.data.stepId] || node.data.agentStatuses,
-          selectedAgents: Object.prototype.hasOwnProperty.call(props.stepModels, node.data.stepId)
-            ? props.stepModels[node.data.stepId]
-            : node.data.selectedAgents || node.data.agents,
-          onToggleAgent: props.onToggleStepAgent,
-          onViewPrompt: props.onViewPrompt,
-          onViewAgentResult: props.onViewAgentResult,
-        },
-      })),
+      nodes: props.graph.nodes.map((node) => {
+        const savedAgentStatuses = agentStatusesFromRuns(node.data.runs || [])
+        const embeddedAgentStatuses = node.data.agentStatuses || {}
+        const liveAgentStatuses = props.stepAgentStatuses[node.data.stepId] || {}
+        return {
+          ...node,
+          data: {
+            ...node.data,
+            status: props.stepStatuses[node.data.stepId] || node.data.status,
+            agentStatuses: {
+              ...savedAgentStatuses,
+              ...embeddedAgentStatuses,
+              ...liveAgentStatuses,
+            },
+            selectedAgents: Object.prototype.hasOwnProperty.call(props.stepModels, node.data.stepId)
+              ? props.stepModels[node.data.stepId]
+              : node.data.selectedAgents || node.data.agents,
+            onToggleAgent: props.onToggleStepAgent,
+            onViewPrompt: props.onViewPrompt,
+            onViewAgentResult: props.onViewAgentResult,
+          },
+        }
+      }),
     }
   }, [props.graph, props.onToggleStepAgent, props.onViewAgentResult, props.onViewPrompt, props.stepAgentStatuses, props.stepModels, props.stepStatuses])
 

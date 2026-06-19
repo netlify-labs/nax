@@ -551,13 +551,17 @@ body {
 
 .agent-chip.agent-running {
   border-color: var(--mantine-color-yellow-4);
-  background: color-mix(in srgb, var(--mantine-color-yellow-4), transparent 84%);
+  background:
+    linear-gradient(
+      110deg,
+      color-mix(in srgb, var(--mantine-color-yellow-4), transparent 88%) 0%,
+      color-mix(in srgb, var(--mantine-color-yellow-2), transparent 64%) 46%,
+      color-mix(in srgb, var(--mantine-color-yellow-4), transparent 88%) 92%
+    );
+  background-size: 220% 100%;
   color: light-dark(var(--mantine-color-yellow-9), var(--mantine-color-yellow-1));
   box-shadow: 0 0 0 1px color-mix(in srgb, var(--mantine-color-yellow-4), transparent 76%), 0 0 20px color-mix(in srgb, var(--mantine-color-yellow-4), transparent 84%);
-}
-
-.agent-chip.agent-running .agent-icon {
-  animation: agent-icon-spin 2.4s linear infinite;
+  animation: agent-chip-progress 3.2s ease-in-out infinite;
 }
 
 .agent-chip.agent-completed,
@@ -600,7 +604,6 @@ body {
   height: 14px;
   flex: 0 0 auto;
   fill: currentColor;
-  transform-origin: center;
 }
 
 .hidden-handle {
@@ -635,13 +638,13 @@ body {
   }
 }
 
-@keyframes agent-icon-spin {
+@keyframes agent-chip-progress {
   from {
-    transform: rotate(0deg);
+    background-position: 120% 0;
   }
 
   to {
-    transform: rotate(360deg);
+    background-position: -120% 0;
   }
 }
 

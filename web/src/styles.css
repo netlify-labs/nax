@@ -230,6 +230,20 @@ body {
   overflow-wrap: anywhere;
 }
 
+.path-code-row {
+  position: relative;
+}
+
+.path-code-openable {
+  padding-right: 42px;
+}
+
+.path-open-button {
+  position: absolute;
+  top: 7px;
+  right: 7px;
+}
+
 .field-value {
   overflow-wrap: anywhere;
 }
@@ -350,7 +364,7 @@ body {
 
 .run-details-layout {
   display: grid;
-  grid-template-columns: minmax(220px, 300px) minmax(0, 720px);
+  grid-template-columns: minmax(220px, 300px) minmax(0, 720px) minmax(180px, 1fr);
   align-items: start;
   gap: 28px;
 }
@@ -359,6 +373,19 @@ body {
   width: 100%;
   max-width: 720px;
   min-width: 0;
+}
+
+.run-details-meta {
+  position: sticky;
+  top: 0;
+  min-width: 0;
+  padding: 14px;
+  background: light-dark(var(--mantine-color-white), color-mix(in srgb, var(--mantine-color-dark-6), transparent 18%));
+}
+
+.run-details-meta-heading {
+  margin-bottom: 12px;
+  text-transform: uppercase;
 }
 
 .run-details-timeline {
@@ -780,6 +807,11 @@ body {
   .run-details-timeline {
     position: static;
     order: -1;
+  }
+
+  .run-details-meta {
+    position: static;
+    order: -2;
   }
 
   .main-workspace {

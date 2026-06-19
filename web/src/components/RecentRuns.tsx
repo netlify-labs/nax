@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { ActionIcon, Alert, Anchor, Badge, Box, Code, Group, Modal, Paper, ScrollArea, Stack, Text, Timeline, Title, Tooltip, UnstyledButton } from '@mantine/core'
-import { Check, GitBranch, History, RotateCcw } from 'lucide-react'
-import { getRunDetails } from '../api'
+import { Check, ExternalLink, GitBranch, History, RotateCcw } from 'lucide-react'
+import { getRunDetails, openLocalFile } from '../api'
 import { AgentIcon } from './AgentIcon'
 import { MarkdownRenderer } from './MarkdownRenderer'
 import type { RunDetailsResponse, RunDetailsSection, VisualizeRun } from '../types'
@@ -28,6 +28,7 @@ type TimelineEntry = {
   subtitle: string
   status: string
   path: string
+  absolutePath: string
   markdown: string
   stepNumber?: number
   section?: RunDetailsSection
@@ -119,6 +120,7 @@ function buildTimelineEntries(
     subtitle: 'click to view results',
     status: run?.status || 'completed',
     path: details.summaryPath || run?.summaryPath || runId(run || {}),
+    absolutePath: details.summaryAbsolutePath || '',
     markdown: details.summaryMarkdown,
   }]
 
@@ -131,6 +133,7 @@ function buildTimelineEntries(
       subtitle: stepDescription(step, sessions),
       status: step.status,
       path: step.section?.path || '',
+      absolutePath: step.section?.absolutePath || '',
       markdown: step.section?.markdown || '',
       stepNumber: index + 1,
       section: step.section,
@@ -143,6 +146,7 @@ function buildTimelineEntries(
         subtitle: section.status || section.runnerId || section.sessionId,
         status: section.status,
         path: section.path,
+        absolutePath: section.absolutePath,
         markdown: section.markdown,
         section,
       })
@@ -156,6 +160,7 @@ function buildTimelineEntries(
     subtitle: run?.status || 'final',
     status: run?.status || 'completed',
     path: '',
+    absolutePath: '',
     markdown: details.finalMarkdown,
   })
 
@@ -291,13 +296,6 @@ export function RecentRuns({ runs, selectedRunId, onSelect, onResume }: Props) {
         title={(
           <Group component="span" gap="xs" wrap="wrap" className="run-details-modal-title">
             <Text component="span" inherit>{detailWorkflowName ? `Workflow results for "${detailWorkflowName}"` : 'Workflow results'}</Text>
-            {detailRun ? (
-              <>
-                <Badge variant="light" color="gray">{detailRun.status || 'unknown'}</Badge>
-                {detailRun.transport ? <Badge variant="light" color="blue">{detailRun.transport}</Badge> : null}
-                {detailRun.branch ? <Badge variant="light" color="gray">{detailRun.branch}</Badge> : null}
-              </>
-            ) : null}
           </Group>
         )}
         size="90rem"
@@ -374,7 +372,7 @@ export function RecentRuns({ runs, selectedRunId, onSelect, onResume }: Props) {
                       ) : null}
                     </Group>
                     {activeEntry.section ? <RunSectionMeta section={activeEntry.section} /> : null}
-                    {!activeEntry.section && activeEntry.path ? <Code block className="path-code">{activeEntry.path}</Code> : null}
+                    {!activeEntry.section && activeEntry.absolutePath ? <ArtifactPath filePath={activeEntry.absolutePath} /> : null}
                     <Box className="prompt-markdown run-details-markdown">
                       {activeEntry.markdown ? (
                         <MarkdownRenderer>{activeEntry.markdown}</MarkdownRenderer>
@@ -387,11 +385,37 @@ export function RecentRuns({ runs, selectedRunId, onSelect, onResume }: Props) {
                   <Text c="dimmed">No run details were found.</Text>
                 )}
               </Box>
+              <RunDetailsMetadata run={detailRun} workflowName={detailWorkflowName} />
             </Box>
           </Stack>
         ) : null}
       </Modal>
     </>
+  )
+}
+
+function RunDetailsMetadata({ run, workflowName }: { run: VisualizeRun | undefined; workflowName: string }) {
+  return (
+    <Paper className="run-details-meta" withBorder>
+      <Text size="xs" fw={800} c="dimmed" className="run-details-meta-heading">Metadata</Text>
+      <Stack gap={10}>
+        <MetadataRow label="Workflow" value={workflowName} />
+        <MetadataRow label="Status" value={run?.status || 'unknown'} />
+        <MetadataRow label="Transport" value={run?.transport || ''} />
+        <MetadataRow label="Branch" value={run?.branch || ''} />
+        <MetadataRow label="Run ID" value={runId(run || {})} />
+      </Stack>
+    </Paper>
+  )
+}
+
+function MetadataRow({ label, value }: { label: string; value: string }) {
+  if (!value) return null
+  return (
+    <Box>
+      <Text size="10px" c="dimmed" fw={800} tt="uppercase">{label}</Text>
+      <Text size="xs" className="field-value">{value}</Text>
+    </Box>
   )
 }
 
@@ -404,7 +428,46 @@ function RunSectionMeta({ section }: { section: RunDetailsSection }) {
         {section.sessionId ? <Badge variant="light" color="gray">session {section.sessionId}</Badge> : null}
         {sessionUrl ? <Anchor href={sessionUrl} target="_blank" rel="noreferrer" size="xs">Open in Netlify</Anchor> : null}
       </Group>
-      {section.path ? <Code block className="path-code">{section.path}</Code> : null}
+      {section.absolutePath ? <ArtifactPath filePath={section.absolutePath} /> : null}
     </Stack>
+  )
+}
+
+function ArtifactPath({ filePath }: { filePath: string }) {
+  const [error, setError] = useState('')
+  const [opening, setOpening] = useState(false)
+
+  const openPath = async () => {
+    setOpening(true)
+    setError('')
+    try {
+      await openLocalFile(filePath)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err))
+    } finally {
+      setOpening(false)
+    }
+  }
+
+  return (
+    <Box>
+      <Box className="path-code-row">
+        <Code block className="path-code path-code-openable">{filePath}</Code>
+        <Tooltip label="Open file">
+          <ActionIcon
+            className="path-open-button"
+            aria-label="Open file"
+            variant="subtle"
+            color="gray"
+            size="sm"
+            loading={opening}
+            onClick={openPath}
+          >
+            <ExternalLink size={14} />
+          </ActionIcon>
+        </Tooltip>
+      </Box>
+      {error ? <Text size="xs" c="red" mt={4}>{error}</Text> : null}
+    </Box>
   )
 }

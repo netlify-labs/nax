@@ -49,6 +49,10 @@ function relativePath(fromDir, filePath) {
   return filePath ? path.relative(fromDir, filePath) : ''
 }
 
+function absolutePath(filePath) {
+  return filePath ? path.resolve(filePath) : ''
+}
+
 function stepTitleFromDir(stepDir, meta) {
   if (meta?.title) return meta.title
   if (meta?.id) return meta.id
@@ -81,6 +85,7 @@ function buildRunDetails(runState = {}) {
         runnerId: '',
         sessionId: '',
         path: relativePath(runDir, stepSummaryPath),
+        absolutePath: absolutePath(stepSummaryPath),
         links: {},
         usage: stepMeta.usage || null,
         markdown: stepSummary,
@@ -104,6 +109,7 @@ function buildRunDetails(runState = {}) {
         runnerId: metadata.runnerId || '',
         sessionId: metadata.sessionId || '',
         path: relativePath(runDir, markdownPath),
+        absolutePath: absolutePath(markdownPath),
         links: metadata.links || {},
         usage: metadata.usage || null,
         markdown,
@@ -117,6 +123,7 @@ function buildRunDetails(runState = {}) {
 
   return {
     summaryPath: relativePath(runDir, summaryPath),
+    summaryAbsolutePath: absolutePath(summaryPath),
     summaryMarkdown,
     finalMarkdown: finalSection?.markdown || summaryMarkdown,
     finalTitle: finalSection?.title || 'Final result',

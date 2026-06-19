@@ -107,3 +107,21 @@ export function getRunGraph(id: string): Promise<RunGraphResponse> {
 export function getRunDetails(id: string): Promise<RunDetailsResponse> {
   return requestJson<RunDetailsResponse>(`/api/runs/${encodeURIComponent(id)}/details`)
 }
+
+export async function openLocalFile(path: string): Promise<{ opened: boolean; path: string }> {
+  const response = await fetch('/api/files/open', {
+    method: 'POST',
+    headers: {
+      accept: 'application/json',
+      'content-type': 'application/json',
+      'x-nax-token': sessionToken(),
+    },
+    body: JSON.stringify({ path }),
+  })
+  const payload = await response.json().catch(() => null)
+  if (!response.ok) {
+    const message = payload?.error?.message || `Open failed with ${response.status}`
+    throw new Error(message)
+  }
+  return payload as { opened: boolean; path: string }
+}

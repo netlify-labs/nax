@@ -125,6 +125,25 @@ function readJsonBody(req) {
   })
 }
 
+function isInsideDir(parentDir, targetPath) {
+  const relative = path.relative(parentDir, targetPath)
+  return relative === '' || (relative && !relative.startsWith('..') && !path.isAbsolute(relative))
+}
+
+async function openLocalFile(filePath, { projectRoot }) {
+  const absoluteFilePath = path.resolve(String(filePath || ''))
+  const absoluteProjectRoot = path.resolve(projectRoot)
+  if (!isInsideDir(absoluteProjectRoot, absoluteFilePath)) {
+    throw requestError(403, 'forbidden_path', 'Only files under the current project root can be opened.')
+  }
+  if (!fs.existsSync(absoluteFilePath) || !fs.statSync(absoluteFilePath).isFile()) {
+    throw requestError(404, 'file_not_found', 'File not found.')
+  }
+  const openFile = (await import('open')).default
+  await openFile(absoluteFilePath)
+  return absoluteFilePath
+}
+
 function assertToken(req, requestUrl, token) {
   const provided = req.headers['x-nax-token'] || requestUrl.searchParams.get('token')
   if (provided !== token) {
@@ -600,6 +619,18 @@ function createRequestHandler(options = {}) {
             active: [...runs.values()].map(publicRun),
             durable,
           })
+          return
+        }
+
+        if (pathname === '/api/files/open') {
+          if (req.method !== 'POST') {
+            methodNotAllowed(res, req.method || 'UNKNOWN')
+            return
+          }
+          assertToken(req, requestUrl, token)
+          const body = await readJsonBody(req)
+          const openedPath = await openLocalFile(body.path, { projectRoot })
+          jsonResponse(res, 200, { opened: true, path: openedPath })
           return
         }
 

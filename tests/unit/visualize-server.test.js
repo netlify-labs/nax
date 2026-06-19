@@ -372,8 +372,13 @@ test('visualize runs API reads durable workflow state from .nax', async () => {
     assert.equal(details.statusCode, 200)
     assert.equal(details.payload.run.runId, runId)
     assert.match(details.payload.details.summaryMarkdown, /Review summary/)
+    assert.equal(details.payload.details.summaryAbsolutePath, path.join(artifactsDir, 'summary.md'))
     assert.match(details.payload.details.finalMarkdown, /Final result text/)
     assert.equal(details.payload.details.sections.some((section) => section.kind === 'session' && section.agent === 'codex'), true)
+    assert.equal(
+      details.payload.details.sections.find((section) => section.kind === 'session' && section.agent === 'codex')?.absolutePath,
+      path.join(runnerDir, 'codex.md'),
+    )
 
     const graph = await requestJson(`${base}/api/runs/${runId}/graph`)
     assert.equal(graph.statusCode, 200)

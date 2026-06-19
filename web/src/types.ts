@@ -182,6 +182,7 @@ export type RunDetailsSection = {
   runnerId: string
   sessionId: string
   path: string
+  absolutePath: string
   links: Record<string, string>
   usage: Record<string, unknown> | null
   markdown: string
@@ -189,6 +190,7 @@ export type RunDetailsSection = {
 
 export type RunDetails = {
   summaryPath: string
+  summaryAbsolutePath: string
   summaryMarkdown: string
   finalMarkdown: string
   finalTitle: string

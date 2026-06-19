@@ -391,11 +391,12 @@ body {
 }
 
 .run-details-timeline-item.child {
+  margin-top: 8px;
   padding-left: 14px;
 }
 
-.run-details-timeline-item.child .mantine-Timeline-itemContent {
-  padding-bottom: 8px;
+.run-details-timeline-item.child + .run-details-timeline-item.child {
+  margin-top: 6px;
 }
 
 .run-details-timeline-item.child .run-details-timeline-button {

@@ -150,19 +150,20 @@ export default function App() {
       : nodes.slice(Math.max(startIndex, 0))
 
     setLiveStepStatuses({})
+    const stepDelayMs = 5000
     selectedNodes.forEach((node, index) => {
       const runningTimer = window.setTimeout(() => {
         setLiveStepStatuses((value) => ({
           ...value,
           [node.data.stepId]: 'running',
         }))
-      }, index * 450)
+      }, index * stepDelayMs)
       const dryRunTimer = window.setTimeout(() => {
         setLiveStepStatuses((value) => ({
           ...value,
           [node.data.stepId]: 'dry-run',
         }))
-      }, index * 450 + 320)
+      }, (index + 1) * stepDelayMs)
       dryRunSimulationTimers.current.push(runningTimer, dryRunTimer)
     })
   }, [clearDryRunSimulation, graph])

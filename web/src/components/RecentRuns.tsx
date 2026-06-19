@@ -61,6 +61,16 @@ function statusColor(status: string): string {
   return 'gray'
 }
 
+function workflowName(run: VisualizeRun | undefined): string {
+  return run ? run.flowTitle || run.flowId || runId(run) : ''
+}
+
+function timelineContentTitle(entry: TimelineEntry, name: string): string {
+  if (!name) return entry.title
+  if (entry.kind === 'summary') return `${name} workflow summary`
+  return `${name} · ${entry.title}`
+}
+
 function buildStepItems(details: RunDetailsResponse['details'] | undefined, run: VisualizeRun | undefined): StepItem[] {
   const stepSections = details?.sections.filter((section) => section.kind === 'step') || []
   if (stepSections.length > 0) {
@@ -179,6 +189,7 @@ export function RecentRuns({ runs, selectedRunId, onSelect, onResume }: Props) {
   const activeTimelineIndex = Math.max(0, timelineEntries.findIndex((entry) => entry.id === activeTimelineId))
   const timelineProgressIndex = Math.max(0, parentTimelineEntries.length - 1)
   const activeEntry = timelineEntries[activeTimelineIndex] || null
+  const detailWorkflowName = workflowName(detailRun)
 
   useEffect(() => {
     setActiveTimelineId('summary')
@@ -271,7 +282,7 @@ export function RecentRuns({ runs, selectedRunId, onSelect, onResume }: Props) {
         onClose={() => setDetailsOpen(false)}
         title={(
           <Group component="span" gap="xs" wrap="wrap" className="run-details-modal-title">
-            <Text component="span" inherit>{detailRun ? `${detailRun.flowTitle || detailRun.flowId || runId(detailRun)} results` : 'Run results'}</Text>
+            <Text component="span" inherit>{detailWorkflowName ? `Workflow results for "${detailWorkflowName}"` : 'Workflow results'}</Text>
             {detailRun ? (
               <>
                 <Badge variant="light" color="gray">{detailRun.status || 'unknown'}</Badge>
@@ -345,7 +356,7 @@ export function RecentRuns({ runs, selectedRunId, onSelect, onResume }: Props) {
                 {activeEntry ? (
                   <Stack gap="sm">
                     <Group gap="xs" wrap="wrap">
-                      <Title order={2} size="h3">{activeEntry.title}</Title>
+                      <Title order={2} size="h3">{timelineContentTitle(activeEntry, detailWorkflowName)}</Title>
                       {activeEntry.status ? (
                         <Badge className={`run-status ${activeEntry.status}`} variant="light" size="xs">
                           {activeEntry.status}

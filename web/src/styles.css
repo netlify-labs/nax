@@ -633,6 +633,8 @@ body {
 
 .react-flow__edge.workflow-edge-done .react-flow__edge-path {
   stroke: var(--workflow-edge-done-color);
+  stroke-dasharray: none;
+  animation: none;
 }
 
 @keyframes workflow-edge-dash {

@@ -348,6 +348,26 @@ body {
   max-height: min(64vh, 820px);
 }
 
+.run-details-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 720px) minmax(220px, 1fr);
+  align-items: start;
+  gap: 28px;
+}
+
+.run-details-content {
+  width: 100%;
+  max-width: 720px;
+  min-width: 0;
+}
+
+.run-details-stepper {
+  position: sticky;
+  top: 0;
+  min-width: 0;
+  padding-top: 8px;
+}
+
 .run-details-modal-content {
   min-height: 80vh;
 }
@@ -688,6 +708,19 @@ body {
 }
 
 @media (max-width: 980px) {
+  .run-details-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .run-details-content {
+    max-width: none;
+  }
+
+  .run-details-stepper {
+    position: static;
+    order: -1;
+  }
+
   .main-workspace {
     display: block;
   }

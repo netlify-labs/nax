@@ -348,7 +348,7 @@ export function RecentRuns({ runs, selectedRunId, onSelect, onResume }: Props) {
                       ) : null}
                     </Group>
                     {activeEntry.section ? <RunSectionMeta section={activeEntry.section} /> : null}
-                    {activeEntry.path ? <Code block className="path-code">{activeEntry.path}</Code> : null}
+                    {!activeEntry.section && activeEntry.path ? <Code block className="path-code">{activeEntry.path}</Code> : null}
                     <Box className="prompt-markdown run-details-markdown">
                       {activeEntry.markdown ? (
                         <MarkdownRenderer>{activeEntry.markdown}</MarkdownRenderer>

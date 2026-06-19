@@ -556,6 +556,10 @@ body {
   box-shadow: 0 0 0 1px color-mix(in srgb, var(--mantine-color-yellow-4), transparent 76%), 0 0 20px color-mix(in srgb, var(--mantine-color-yellow-4), transparent 84%);
 }
 
+.agent-chip.agent-running .agent-icon {
+  animation: agent-icon-spin 2.4s linear infinite;
+}
+
 .agent-chip.agent-completed,
 .agent-chip.agent-dry-run {
   border-color: var(--mantine-color-green-4);
@@ -596,6 +600,7 @@ body {
   height: 14px;
   flex: 0 0 auto;
   fill: currentColor;
+  transform-origin: center;
 }
 
 .hidden-handle {
@@ -627,6 +632,16 @@ body {
 
   to {
     stroke-dashoffset: 0;
+  }
+}
+
+@keyframes agent-icon-spin {
+  from {
+    transform: rotate(0deg);
+  }
+
+  to {
+    transform: rotate(360deg);
   }
 }
 

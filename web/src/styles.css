@@ -245,6 +245,11 @@ body {
   line-height: 1.6;
 }
 
+.prompt-preview-markdown {
+  max-width: 720px;
+  margin-inline: auto;
+}
+
 .prompt-markdown :where(h1, h2, h3, h4) {
   margin: 1.15em 0 0.45em;
   color: var(--mantine-color-text);

@@ -610,7 +610,7 @@ export default function App() {
       >
         <Stack gap="sm">
           {promptNode?.promptPath ? <Code block className="path-code">{promptNode.promptPath}</Code> : null}
-          <Box className="prompt-markdown">
+          <Box className="prompt-markdown prompt-preview-markdown">
             {promptNode?.promptMarkdown ? (
               <MarkdownRenderer fallback="Rendering prompt...">{promptNode.promptMarkdown}</MarkdownRenderer>
             ) : (

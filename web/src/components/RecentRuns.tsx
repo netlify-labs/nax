@@ -170,9 +170,14 @@ export function RecentRuns({ runs, selectedRunId, onSelect, onResume }: Props) {
   const detailRun = detailsResponse?.run
   const stepItems = useMemo(() => buildStepItems(details, detailRun), [details, detailRun])
   const timelineEntries = useMemo(() => buildTimelineEntries(details, detailRun, stepItems), [details, detailRun, stepItems])
+  const parentTimelineEntries = useMemo(() => {
+    const summaryEntry = timelineEntries.find((entry) => entry.kind === 'summary')
+    const stepEntries = timelineEntries.filter((entry) => entry.kind === 'step')
+    return summaryEntry ? [...stepEntries, summaryEntry] : stepEntries
+  }, [timelineEntries])
   const [activeTimelineId, setActiveTimelineId] = useState('summary')
   const activeTimelineIndex = Math.max(0, timelineEntries.findIndex((entry) => entry.id === activeTimelineId))
-  const timelineProgressIndex = Math.max(0, timelineEntries.length - 1)
+  const timelineProgressIndex = Math.max(0, parentTimelineEntries.length - 1)
   const activeEntry = timelineEntries[activeTimelineIndex] || null
 
   useEffect(() => {
@@ -286,25 +291,48 @@ export function RecentRuns({ runs, selectedRunId, onSelect, onResume }: Props) {
               {timelineEntries.length > 0 ? (
                 <Box className="run-details-timeline" component="nav" aria-label="Workflow timeline">
                   <Timeline active={timelineProgressIndex} bulletSize={18} lineWidth={2}>
-                    {timelineEntries.map((entry) => (
-                      <Timeline.Item
-                        key={entry.id}
-                        className={`run-details-timeline-item ${entry.kind === 'session' ? 'child' : ''}`}
-                        color={statusColor(entry.status)}
-                        title={(
-                          <UnstyledButton
-                            className={`run-details-timeline-button${entry.id === activeTimelineId ? ' active' : ''}`}
-                            onClick={() => setActiveTimelineId(entry.id)}
-                          >
-                            <Group gap={6} wrap="nowrap" className={entry.kind === 'session' ? 'run-details-timeline-title session' : 'run-details-timeline-title'}>
-                              {entry.kind === 'session' && entry.section?.agent ? <AgentIcon agent={entry.section.agent} /> : null}
-                              <Text size={entry.kind === 'session' ? 'xs' : 'sm'} fw={entry.kind === 'session' ? 600 : 700} truncate>{entry.title}</Text>
-                            </Group>
-                            {entry.subtitle ? <Text size={entry.kind === 'session' ? '10px' : 'xs'} c="dimmed" truncate>{entry.subtitle}</Text> : null}
-                          </UnstyledButton>
-                        )}
-                      />
-                    ))}
+                    {parentTimelineEntries.map((entry) => {
+                      const childEntries = entry.kind === 'step'
+                        ? timelineEntries.filter((child) => child.kind === 'session' && child.section?.stepId && entry.id === `step:${child.section.stepId}`)
+                        : []
+                      return (
+                        <Timeline.Item
+                          key={entry.id}
+                          className="run-details-timeline-item"
+                          color={statusColor(entry.status)}
+                          title={(
+                            <Stack gap={4}>
+                              <UnstyledButton
+                                className={`run-details-timeline-button${entry.id === activeTimelineId ? ' active' : ''}`}
+                                onClick={() => setActiveTimelineId(entry.id)}
+                              >
+                                <Group gap={6} wrap="nowrap" className="run-details-timeline-title">
+                                  <Text size="sm" fw={700} truncate>{entry.title}</Text>
+                                </Group>
+                                {entry.subtitle ? <Text size="xs" c="dimmed" truncate>{entry.subtitle}</Text> : null}
+                              </UnstyledButton>
+                              {childEntries.length > 0 ? (
+                                <Stack className="run-details-timeline-children" gap={2}>
+                                  {childEntries.map((child) => (
+                                    <UnstyledButton
+                                      key={child.id}
+                                      className={`run-details-timeline-child-button${child.id === activeTimelineId ? ' active' : ''}`}
+                                      onClick={() => setActiveTimelineId(child.id)}
+                                    >
+                                      <Group gap={6} wrap="nowrap" className="run-details-timeline-title session">
+                                        {child.section?.agent ? <AgentIcon agent={child.section.agent} /> : null}
+                                        <Text size="xs" fw={600} truncate>{child.title}</Text>
+                                      </Group>
+                                      {child.subtitle ? <Text size="10px" c="dimmed" truncate>{child.subtitle}</Text> : null}
+                                    </UnstyledButton>
+                                  ))}
+                                </Stack>
+                              ) : null}
+                            </Stack>
+                          )}
+                        />
+                      )
+                    })}
                   </Timeline>
                 </Box>
               ) : null}

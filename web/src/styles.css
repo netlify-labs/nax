@@ -404,6 +404,11 @@ body {
   min-height: 80vh;
 }
 
+.run-details-modal-title {
+  display: inline-flex;
+  align-items: center;
+}
+
 .run-details-modal-body {
   min-height: calc(80vh - 64px);
 }

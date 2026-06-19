@@ -269,7 +269,18 @@ export function RecentRuns({ runs, selectedRunId, onSelect, onResume }: Props) {
       <Modal
         opened={detailsOpen}
         onClose={() => setDetailsOpen(false)}
-        title={detailRun ? `${detailRun.flowTitle || detailRun.flowId || runId(detailRun)} results` : 'Run results'}
+        title={(
+          <Group component="span" gap="xs" wrap="wrap" className="run-details-modal-title">
+            <Text component="span" inherit>{detailRun ? `${detailRun.flowTitle || detailRun.flowId || runId(detailRun)} results` : 'Run results'}</Text>
+            {detailRun ? (
+              <>
+                <Badge variant="light" color="gray">{detailRun.status || 'unknown'}</Badge>
+                {detailRun.transport ? <Badge variant="light" color="blue">{detailRun.transport}</Badge> : null}
+                {detailRun.branch ? <Badge variant="light" color="gray">{detailRun.branch}</Badge> : null}
+              </>
+            ) : null}
+          </Group>
+        )}
         size="90rem"
         centered
         classNames={{ content: 'run-details-modal-content', body: 'run-details-modal-body' }}
@@ -281,12 +292,6 @@ export function RecentRuns({ runs, selectedRunId, onSelect, onResume }: Props) {
           <Alert color="red" variant="light">{detailsError}</Alert>
         ) : details ? (
           <Stack gap="md">
-            <Group gap="xs" wrap="wrap">
-              <Badge variant="light" color="gray">{detailRun?.status || 'unknown'}</Badge>
-              {detailRun?.transport ? <Badge variant="light" color="blue">{detailRun.transport}</Badge> : null}
-              {detailRun?.branch ? <Badge variant="light" color="gray">{detailRun.branch}</Badge> : null}
-            </Group>
-            <Code block className="path-code">{details.summaryPath || detailRun?.summaryPath || runId(detailRun || {})}</Code>
             <Box className="run-details-layout">
               {timelineEntries.length > 0 ? (
                 <Box className="run-details-timeline" component="nav" aria-label="Workflow timeline">

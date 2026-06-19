@@ -368,6 +368,14 @@ body {
   padding-top: 8px;
 }
 
+.run-details-timeline-card {
+  width: 100%;
+  border-color: color-mix(in srgb, var(--mantine-color-default-border), transparent 28%);
+  border-radius: var(--mantine-radius-sm);
+  padding: 4px;
+  background: light-dark(var(--mantine-color-white), color-mix(in srgb, var(--mantine-color-dark-6), transparent 18%));
+}
+
 .run-details-timeline-button,
 .run-details-timeline-child-button {
   display: block;
@@ -393,7 +401,8 @@ body {
 }
 
 .run-details-timeline-children {
-  padding-left: 8px;
+  margin-top: 2px;
+  padding-left: 14px;
 }
 
 .run-details-timeline-child-button {

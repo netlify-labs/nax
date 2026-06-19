@@ -317,7 +317,7 @@ export function RecentRuns({ runs, selectedRunId, onSelect, onResume }: Props) {
                           className="run-details-timeline-item"
                           color={statusColor(entry.status)}
                           title={(
-                            <Stack gap={4}>
+                            <Paper className="run-details-timeline-card" withBorder>
                               <UnstyledButton
                                 className={`run-details-timeline-button${entry.id === activeTimelineId ? ' active' : ''}`}
                                 onClick={() => setActiveTimelineId(entry.id)}
@@ -344,7 +344,7 @@ export function RecentRuns({ runs, selectedRunId, onSelect, onResume }: Props) {
                                   ))}
                                 </Stack>
                               ) : null}
-                            </Stack>
+                            </Paper>
                           )}
                         />
                       )

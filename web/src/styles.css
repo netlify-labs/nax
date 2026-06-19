@@ -582,6 +582,20 @@ body {
   transform: translateY(-1px);
 }
 
+.agent-chip.agent-running:hover {
+  border-color: var(--mantine-color-yellow-4);
+  color: light-dark(var(--mantine-color-yellow-9), var(--mantine-color-yellow-1));
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--mantine-color-yellow-4), transparent 76%), 0 0 20px color-mix(in srgb, var(--mantine-color-yellow-4), transparent 84%);
+}
+
+.agent-chip.agent-completed:hover,
+.agent-chip.agent-dry-run:hover {
+  border-color: var(--mantine-color-green-4);
+  background: color-mix(in srgb, var(--mantine-color-green-4), transparent 88%);
+  color: light-dark(var(--mantine-color-green-9), var(--mantine-color-green-1));
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--mantine-color-green-4), transparent 72%), 0 0 18px color-mix(in srgb, var(--mantine-color-green-4), transparent 86%);
+}
+
 .agent-chip:focus-visible {
   outline: 2px solid var(--mantine-primary-color-5);
   outline-offset: 2px;

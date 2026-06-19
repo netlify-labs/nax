@@ -403,7 +403,7 @@ export default function App() {
     setAgentResultSection(null)
     setAgentResultError('')
     setAgentResultLoading(true)
-    if (!run && ['completed', 'dry-run'].includes(agentStatus)) {
+    if (!run && ['running', 'submitted', 'completed', 'dry-run'].includes(agentStatus)) {
       setAgentResultLoading(false)
       return
     }
@@ -848,7 +848,16 @@ export default function App() {
             </Box>
           </Stack>
         ) : agentResultContext ? (
-          <Text c="dimmed">No results from dry runs.</Text>
+          <Stack gap="sm">
+            {agentResultContext.node.agentStatuses?.[agentResultContext.agent] === 'running' ? (
+              <Badge variant="light" color="yellow" w="fit-content">running</Badge>
+            ) : null}
+            <Text c="dimmed">
+              {agentResultContext.node.agentStatuses?.[agentResultContext.agent] === 'running'
+                ? 'No result yet.'
+                : 'No results from dry runs.'}
+            </Text>
+          </Stack>
         ) : null}
       </Modal>
     </ReactFlowProvider>

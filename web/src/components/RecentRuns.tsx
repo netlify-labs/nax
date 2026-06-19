@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { ActionIcon, Alert, Anchor, Badge, Box, Code, Group, Modal, Paper, ScrollArea, Stack, Text, Timeline, Title, Tooltip, UnstyledButton } from '@mantine/core'
-import { GitBranch, History, RotateCcw } from 'lucide-react'
+import { Check, GitBranch, History, RotateCcw } from 'lucide-react'
 import { getRunDetails } from '../api'
 import { AgentIcon } from './AgentIcon'
 import { MarkdownRenderer } from './MarkdownRenderer'
@@ -70,6 +70,12 @@ function timelineContentTitle(entry: TimelineEntry, name: string): string {
   if (!name) return entry.title
   if (entry.kind === 'summary') return `"${name}" workflow results`
   return entry.title
+}
+
+function timelineBullet(entry: TimelineEntry) {
+  if (entry.kind === 'step') return <Text component="span" size="10px" fw={800}>{entry.stepNumber}</Text>
+  if (isDoneStatus(entry.status)) return <Check size={12} strokeWidth={3} />
+  return undefined
 }
 
 function buildStepItems(details: RunDetailsResponse['details'] | undefined, run: VisualizeRun | undefined): StepItem[] {
@@ -319,7 +325,7 @@ export function RecentRuns({ runs, selectedRunId, onSelect, onResume }: Props) {
                           key={entry.id}
                           className="run-details-timeline-item"
                           color={statusColor(entry.status)}
-                          bullet={entry.kind === 'step' ? <Text component="span" size="10px" fw={800}>{entry.stepNumber}</Text> : undefined}
+                          bullet={timelineBullet(entry)}
                           title={(
                             <Paper className="run-details-timeline-card" withBorder>
                               <UnstyledButton

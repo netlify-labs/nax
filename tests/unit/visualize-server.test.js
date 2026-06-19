@@ -5,7 +5,7 @@ const http = require('http')
 const os = require('os')
 const path = require('path')
 
-const { startVisualizeServer } = require('../../src/visualize-server')
+const { _private, startVisualizeServer } = require('../../src/visualize-server')
 
 function requestJson(url) {
   return new Promise((resolve, reject) => {
@@ -81,6 +81,16 @@ function writeProjectFlow(projectRoot, id, { title = id } = {}) {
   ].join('\n'))
   fs.writeFileSync(path.join(flowDir, 'prompts', 'one.md'), '---\ntitle: One\n---\n\nPrompt\n')
 }
+
+test('visualize extracts durable workflow run id from runner output', () => {
+  const output = [
+    'Run 2026-06-19T04-40-05-602Z-do-next',
+    'Flow: Do Next',
+    'State: /repo/.nax/workflows/2026-06-19T04-40-05-602Z-do-next/workflow.json',
+  ].join('\n')
+
+  assert.equal(_private.extractDurableRunId(output), '2026-06-19T04-40-05-602Z-do-next')
+})
 
 test('visualize server exposes health, workflow list, and graph routes', async () => {
   const server = await startVisualizeServer({ projectRoot: process.cwd(), initialWorkflow: 'review' })

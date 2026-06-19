@@ -331,6 +331,13 @@ function eventText(event) {
   return `event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`
 }
 
+function extractDurableRunId(output = '') {
+  const stateMatch = String(output).match(/(?:^|\n)State:\s+(.+?\.nax\/workflows\/([^/\n]+)\/workflow\.json)(?:\n|$)/)
+  if (stateMatch?.[2]) return stateMatch[2]
+  const runMatch = String(output).match(/(?:^|\n)Run\s+([^\s\n]+)(?:\n|$)/)
+  return runMatch?.[1] || ''
+}
+
 function contentTypeFor(filePath) {
   const extension = path.extname(filePath).toLowerCase()
   if (extension === '.html') return 'text/html; charset=utf-8'
@@ -395,6 +402,7 @@ function createRequestHandler(options = {}) {
     const id = `${new Date().toISOString().replace(/[:.]/g, '-')}-${flowId}`
     const run = {
       id,
+      runId: '',
       flowId,
       status: 'running',
       command: workflowCommand({ flowId, projectRoot, options: runOptions }),
@@ -418,7 +426,10 @@ function createRequestHandler(options = {}) {
       projectRoot,
       options: runOptions,
       eventSink: (event) => {
-        if (event.type === 'stdout') run.stdout += event.text || ''
+        if (event.type === 'stdout') {
+          run.stdout += event.text || ''
+          if (!run.runId) run.runId = extractDurableRunId(run.stdout)
+        }
         if (event.type === 'stderr') run.stderr += event.text || ''
         if (event.type === 'started') recordEvent(run, 'started', { command: event.command || run.command, flowId })
         else if (event.type === 'stdout') recordEvent(run, 'stdout', { text: event.text || '' })
@@ -436,6 +447,7 @@ function createRequestHandler(options = {}) {
       run.durationMs = result.durationMs
       run.stdout = result.stdout
       run.stderr = result.stderr
+      run.runId = run.runId || extractDurableRunId(`${result.stdout || ''}\n${result.stderr || ''}`)
       run.cancellable = false
       run.cancel = null
       activeByWorkflow.delete(flowId)
@@ -448,6 +460,7 @@ function createRequestHandler(options = {}) {
       run.exitedAt = new Date().toISOString()
       run.exitCode = 1
       run.stderr += `${message}\n`
+      run.runId = run.runId || extractDurableRunId(`${run.stdout || ''}\n${run.stderr || ''}`)
       run.cancellable = false
       run.cancel = null
       activeByWorkflow.delete(flowId)
@@ -460,8 +473,11 @@ function createRequestHandler(options = {}) {
   }
 
   function publicRun(run) {
+    const durableRunId = run.runId || extractDurableRunId(`${run.stdout || ''}\n${run.stderr || ''}`)
+    if (durableRunId && !run.runId) run.runId = durableRunId
     return {
       id: run.id,
+      runId: durableRunId || '',
       flowId: run.flowId,
       status: run.status,
       command: run.command,
@@ -475,6 +491,19 @@ function createRequestHandler(options = {}) {
       eventCount: run.events.length,
       cancellable: run.cancellable === true,
     }
+  }
+
+  function durableRunStateForId(id) {
+    const decoded = safeDecode(id)
+    const states = listRunStates(projectRoot)
+    const exact = states.find((state) => state.runId === decoded)
+    if (exact) return exact
+    const active = runs.get(decoded)
+    if (!active) return null
+    const durableRunId = active.runId || extractDurableRunId(`${active.stdout || ''}\n${active.stderr || ''}`)
+    if (!durableRunId) return null
+    active.runId = durableRunId
+    return states.find((state) => state.runId === durableRunId) || null
   }
 
   return {
@@ -556,8 +585,7 @@ function createRequestHandler(options = {}) {
             methodNotAllowed(res, req.method || 'UNKNOWN')
             return
           }
-          const runId = safeDecode(runGraphMatch[1])
-          const durable = listRunStates(projectRoot).find((state) => state.runId === runId)
+          const durable = durableRunStateForId(runGraphMatch[1])
           if (!durable) {
             notFound(res, 'Unknown visualize run.')
             return
@@ -579,8 +607,7 @@ function createRequestHandler(options = {}) {
             methodNotAllowed(res, req.method || 'UNKNOWN')
             return
           }
-          const runId = safeDecode(runDetailsMatch[1])
-          const durable = listRunStates(projectRoot).find((state) => state.runId === runId)
+          const durable = durableRunStateForId(runDetailsMatch[1])
           if (!durable) {
             notFound(res, 'Unknown visualize run.')
             return
@@ -627,7 +654,7 @@ function createRequestHandler(options = {}) {
             jsonResponse(res, 200, { run: publicRun(run) })
             return
           }
-          const durable = listRunStates(projectRoot).find((state) => state.runId === safeDecode(runMatch[1]))
+          const durable = durableRunStateForId(runMatch[1])
           if (!durable) {
             notFound(res, 'Unknown visualize run.')
             return
@@ -776,6 +803,9 @@ function startVisualizeServer(options = {}) {
 }
 
 module.exports = {
+  _private: {
+    extractDurableRunId,
+  },
   createRequestHandler,
   publicFlow,
   startVisualizeServer,

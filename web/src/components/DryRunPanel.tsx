@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef } from 'react'
-import { Alert, Badge, Box, Code, Group, Paper, ScrollArea, Stack, Text } from '@mantine/core'
-import { Terminal } from 'lucide-react'
+import { ActionIcon, Alert, Badge, Box, Code, CopyButton, Group, Paper, ScrollArea, Stack, Text, Tooltip } from '@mantine/core'
+import { Check, Copy, Terminal } from 'lucide-react'
 import type { DryRunResult } from '../types'
 
 type OutputPanel = {
@@ -47,9 +47,13 @@ function hasPanelContent(panel: OutputPanel): boolean {
   return Boolean(panel.running || panel.error || panel.result)
 }
 
-function OutputSection({ panel }: { panel: OutputPanel }) {
+function panelOutputText(panel: OutputPanel): string {
   const output = panel.result ? [panel.result.stdout, panel.result.stderr].filter(Boolean).join('\n') : ''
-  const visibleOutput = output ? stripAnsi(output) : panel.running ? 'Running...' : `No ${panel.title.toLowerCase()} output`
+  return output ? stripAnsi(output) : panel.running ? 'Running...' : `No ${panel.title.toLowerCase()} output`
+}
+
+function OutputSection({ panel }: { panel: OutputPanel }) {
+  const visibleOutput = panelOutputText(panel)
 
   return (
     <Box className="output-section">
@@ -96,6 +100,8 @@ export function WorkflowOutputTabs({ dryRun, run }: Props) {
     viewport.scrollTop = viewport.scrollHeight
   }, [outputVersion])
 
+  const copyText = visiblePanels.map((panel) => `${panel.title}\n${panelOutputText(panel)}`).join('\n\n')
+
   return (
     <Paper className="dry-run-panel" component="section" aria-label="Workflow output" radius={0} withBorder>
       <Group className="dry-run-header" justify="space-between" wrap="nowrap">
@@ -105,6 +111,22 @@ export function WorkflowOutputTabs({ dryRun, run }: Props) {
         </Group>
         <Group gap={6} wrap="nowrap">
           {visiblePanels.map((panel) => <OutputBadge key={panel.title} panel={panel} />)}
+          <CopyButton value={copyText} timeout={1500}>
+            {({ copied, copy }) => (
+              <Tooltip label={copied ? 'Copied' : 'Copy output'} withArrow>
+                <ActionIcon
+                  variant="subtle"
+                  color={copied ? 'green' : 'gray'}
+                  size="sm"
+                  aria-label="Copy output to clipboard"
+                  disabled={!copyText}
+                  onClick={copy}
+                >
+                  {copied ? <Check size={14} /> : <Copy size={14} />}
+                </ActionIcon>
+              </Tooltip>
+            )}
+          </CopyButton>
         </Group>
       </Group>
       <ScrollArea className="dry-run-output" viewportRef={viewportRef}>

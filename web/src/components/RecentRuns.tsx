@@ -67,8 +67,8 @@ function workflowName(run: VisualizeRun | undefined): string {
 
 function timelineContentTitle(entry: TimelineEntry, name: string): string {
   if (!name) return entry.title
-  if (entry.kind === 'summary') return `${name} workflow summary`
-  return `${name} · ${entry.title}`
+  if (entry.kind === 'summary') return `"${name}" workflow results`
+  return entry.title
 }
 
 function buildStepItems(details: RunDetailsResponse['details'] | undefined, run: VisualizeRun | undefined): StepItem[] {
@@ -108,7 +108,7 @@ function buildTimelineEntries(
   const entries: TimelineEntry[] = [{
     id: 'summary',
     kind: 'summary',
-    title: 'Workflow summary',
+    title: 'Results',
     subtitle: run?.status || 'summary',
     status: run?.status || 'completed',
     path: details.summaryPath || run?.summaryPath || runId(run || {}),

@@ -1,5 +1,5 @@
-import { Badge, Box, Button, Code, Divider, Group, ScrollArea, Stack, Table, Text, ThemeIcon, Title } from '@mantine/core'
-import { FileText, GitBranch, Layers, Route } from 'lucide-react'
+import { ActionIcon, Badge, Box, Code, Divider, Group, ScrollArea, Stack, Table, Text, ThemeIcon, Title } from '@mantine/core'
+import { GitBranch, Info, Layers, Route } from 'lucide-react'
 import type { Workflow, WorkflowGraph, WorkflowGraphNodeData } from '../types'
 
 type Props = {
@@ -35,18 +35,23 @@ export function Inspector({ workflow, selectedNode, graph, onViewPrompt }: Props
               <ThemeIcon variant="light" color="blue" size="md"><Route size={18} /></ThemeIcon>
               <Title order={3} size="md">{selectedNode.title}</Title>
             </Group>
-            {selectedNode.description ? <Text size="sm" c="dimmed">{selectedNode.description}</Text> : null}
-            <Button
-              variant="light"
-              size="xs"
-              leftSection={<FileText size={14} />}
-              onClick={() => {
-                if (selectedNode) onViewPrompt(selectedNode)
-              }}
-              disabled={!promptMarkdown}
-            >
-              View prompt
-            </Button>
+            <Group gap="xs" align="flex-start" wrap="nowrap">
+              {selectedNode.description ? <Text size="sm" c="dimmed">{selectedNode.description}</Text> : null}
+              {promptMarkdown ? (
+                <ActionIcon
+                  variant="subtle"
+                  color="gray"
+                  size="sm"
+                  aria-label={`View ${selectedNode.title} prompt`}
+                  title="View prompt"
+                  onClick={() => {
+                    if (selectedNode) onViewPrompt(selectedNode)
+                  }}
+                >
+                  <Info size={16} />
+                </ActionIcon>
+              ) : null}
+            </Group>
             <Table variant="vertical" layout="fixed" withRowBorders={false}>
               <Table.Tbody>
                 <Field label="Action" value={selectedNode.action} />

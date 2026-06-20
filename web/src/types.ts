@@ -194,7 +194,13 @@ export type RunDetailsSection = {
   sessionId: string
   path: string
   absolutePath: string
-  links: Record<string, string>
+  links: {
+    sessionUrl?: string
+    agentRunUrl?: string
+    commentUrl?: string
+    issueUrl?: string
+    [key: string]: string | undefined
+  }
   usage: Record<string, unknown> | null
   markdown: string
 }

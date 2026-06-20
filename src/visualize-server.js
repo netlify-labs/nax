@@ -135,10 +135,14 @@ async function openLocalFile(filePath, { projectRoot }) {
   const absoluteFilePath = path.resolve(String(filePath || ''))
   const absoluteProjectRoot = path.resolve(projectRoot)
   if (!isInsideDir(absoluteProjectRoot, absoluteFilePath)) {
-    throw requestError(403, 'forbidden_path', 'Only files under the current project root can be opened.')
+    throw requestError(403, 'forbidden_path', 'Only paths under the current project root can be opened.')
   }
-  if (!fs.existsSync(absoluteFilePath) || !fs.statSync(absoluteFilePath).isFile()) {
-    throw requestError(404, 'file_not_found', 'File not found.')
+  if (!fs.existsSync(absoluteFilePath)) {
+    throw requestError(404, 'path_not_found', 'Path not found.')
+  }
+  const stat = fs.statSync(absoluteFilePath)
+  if (!stat.isFile() && !stat.isDirectory()) {
+    throw requestError(400, 'unsupported_path', 'Path is not a file or directory.')
   }
   const openFile = (await import('open')).default
   await openFile(absoluteFilePath)

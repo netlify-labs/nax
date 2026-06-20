@@ -1,0 +1,851 @@
+import { useEffect, useMemo, useRef, useState, type RefObject } from 'react'
+import { ActionIcon, Alert, Anchor, Badge, Box, Code, Group, Modal, Paper, ScrollArea, Stack, Text, Timeline, Title, Tooltip, UnstyledButton } from '@mantine/core'
+import { Check, ChevronsDownUp, ChevronsUpDown, ChevronDown, ChevronRight, ExternalLink, Files } from 'lucide-react'
+import { getRunDetails, openLocalFile } from '../api'
+import { agentLabel, isDoneStatus, recordList, recordValue, runId, statusBadgeStyle, statusColor, statusLabel, workflowName } from '../run-format'
+import { extractMarkdownToc } from '../run-details-toc'
+import { selectRunDetailsSection, selectorKey, type RunDetailsSelector } from '../run-details-selection'
+import type { RunDetailsResponse, RunDetailsSection, Target, VisualizeRun } from '../types'
+import { AgentIcon } from './AgentIcon'
+import { MarkdownRenderer } from './MarkdownRenderer'
+
+export type RunDetailsLiveContext = {
+  selector: RunDetailsSelector
+  stepTitle: string
+  status: string
+  runnerId?: string
+  sessionId?: string
+  submittedAfterSeconds?: number | null
+  lastEventAt?: string
+  url?: string
+}
+
+type RunDetailsModalProps = {
+  opened: boolean
+  onClose: () => void
+  runId?: string
+  initialSelector?: RunDetailsSelector
+  liveContext?: RunDetailsLiveContext | null
+  missingRunMessage?: string
+}
+
+type StepItem = {
+  id: string
+  title: string
+  status: string
+  agents: string[]
+  section?: RunDetailsSection
+}
+
+type TimelineEntry = {
+  id: string
+  kind: 'summary' | 'step' | 'session' | 'final'
+  title: string
+  subtitle: string
+  status: string
+  path: string
+  absolutePath: string
+  markdown: string
+  stepNumber?: number
+  section?: RunDetailsSection
+  liveContext?: RunDetailsLiveContext
+}
+
+function targetLabel(target?: Target | null): string {
+  if (!target) return ''
+  const confidence = target.verified ? 'verified' : 'unverified'
+  return `${target.branch || 'unknown'} (${target.sourceType || 'unknown'}, ${confidence})`
+}
+
+function targetCaveats(target?: Target | null): string {
+  return target?.caveats?.length ? target.caveats.join(', ') : ''
+}
+
+function linkWithSession(url: string, sessionId: string): string {
+  if (!url || !sessionId || url.includes('session=')) return url
+  const separator = url.includes('?') ? '&' : '?'
+  return `${url}${separator}session=${encodeURIComponent(sessionId)}`
+}
+
+function sessionHref(section?: RunDetailsSection, liveContext?: RunDetailsLiveContext): string {
+  const sessionId = section?.sessionId || liveContext?.sessionId || ''
+  if (section?.links.sessionUrl) return linkWithSession(section.links.sessionUrl, sessionId)
+  if (section?.links.agentRunUrl) return linkWithSession(section.links.agentRunUrl, sessionId)
+  if (liveContext?.url) return linkWithSession(liveContext.url, sessionId)
+  return ''
+}
+
+function timelineContentTitle(entry: TimelineEntry, name: string): string {
+  if (entry.kind === 'step' && entry.stepNumber) return `Step ${entry.stepNumber}: ${entry.title}`
+  if (!name) return entry.title
+  if (entry.kind === 'summary') return `"${name}" workflow results`
+  return entry.title
+}
+
+function timelineBullet(entry: TimelineEntry) {
+  if (entry.kind === 'step') return <Text component="span" size="10px" fw={800}>{entry.stepNumber}</Text>
+  if (isDoneStatus(entry.status)) return <Check size={12} strokeWidth={3} />
+  return undefined
+}
+
+function buildStepItems(details: RunDetailsResponse['details'] | undefined, run: VisualizeRun | undefined): StepItem[] {
+  const stepSections = details?.sections.filter((section) => section.kind === 'step') || []
+  if (stepSections.length > 0) {
+    return stepSections.map((section) => ({
+      id: section.stepId || section.id,
+      title: section.stepTitle || section.title,
+      status: section.status || 'unknown',
+      agents: [],
+      section,
+    }))
+  }
+
+  return (run?.steps || []).map((step, index) => ({
+    id: recordValue(step, 'id') || `step-${index + 1}`,
+    title: recordValue(step, 'title') || recordValue(step, 'id') || `Step ${index + 1}`,
+    status: recordValue(step, 'status') || 'unknown',
+    agents: recordList(step, 'agents'),
+  }))
+}
+
+function stepDescription(step: StepItem, sessions: RunDetailsSection[]): string {
+  const parts = [step.status]
+  if (sessions.length > 0) parts.push(`${sessions.length} result${sessions.length === 1 ? '' : 's'}`)
+  if (step.agents.length > 0) parts.push(step.agents.join(', '))
+  return parts.filter(Boolean).join(' · ')
+}
+
+function liveEntryId(context: RunDetailsLiveContext): string {
+  return `live:${context.selector.stepId}:${context.selector.agent}`
+}
+
+function buildTimelineEntries(
+  details: RunDetailsResponse['details'] | undefined,
+  run: VisualizeRun | undefined,
+  steps: StepItem[],
+  liveContext?: RunDetailsLiveContext | null,
+): TimelineEntry[] {
+  if (!details) return []
+  const sessionSections = details.sections.filter((section) => section.kind === 'session')
+  const entries: TimelineEntry[] = [{
+    id: 'summary',
+    kind: 'summary',
+    title: run ? `"${workflowName(run)}" Workflow ${statusLabel(run.status || '')}` : 'Workflow results',
+    subtitle: 'click to view results',
+    status: run?.status || '',
+    path: details.summaryPath || run?.summaryPath || runId(run || {}),
+    absolutePath: details.summaryAbsolutePath || '',
+    markdown: details.summaryMarkdown,
+  }]
+
+  steps.forEach((step, index) => {
+    const sessions = sessionSections.filter((section) => section.stepId === step.id)
+    entries.push({
+      id: `step:${step.id}`,
+      kind: 'step',
+      title: step.title,
+      subtitle: stepDescription(step, sessions),
+      status: step.status,
+      path: step.section?.path || '',
+      absolutePath: step.section?.absolutePath || '',
+      markdown: step.section?.markdown || '',
+      stepNumber: index + 1,
+      section: step.section,
+    })
+    sessions.forEach((section) => {
+      entries.push({
+        id: `session:${section.id}`,
+        kind: 'session',
+        title: `${agentLabel(section.agent)} · ${section.stepTitle || step.title}`,
+        subtitle: section.status || section.runnerId || section.sessionId,
+        status: section.status,
+        path: section.path,
+        absolutePath: section.absolutePath,
+        markdown: section.markdown,
+        section,
+      })
+    })
+    if (
+      liveContext &&
+      liveContext.selector.stepId === step.id &&
+      !sessions.some((section) => section.agent === liveContext.selector.agent)
+    ) {
+      entries.push({
+        id: liveEntryId(liveContext),
+        kind: 'session',
+        title: `${agentLabel(liveContext.selector.agent)} · ${liveContext.stepTitle || step.title}`,
+        subtitle: liveContext.status,
+        status: liveContext.status,
+        path: '',
+        absolutePath: '',
+        markdown: '',
+        liveContext,
+      })
+    }
+  })
+
+  entries.push({
+    id: 'final',
+    kind: 'final',
+    title: details.finalTitle || 'Final result',
+    subtitle: run?.status || 'final',
+    status: run?.status || 'completed',
+    path: '',
+    absolutePath: '',
+    markdown: details.finalMarkdown,
+  })
+
+  return entries
+}
+
+function resolveInitialTimelineId(
+  details: RunDetailsResponse['details'] | undefined,
+  entries: TimelineEntry[],
+  selector?: RunDetailsSelector,
+  liveContext?: RunDetailsLiveContext | null,
+): { id: string; warning: string } {
+  if (!selector) return { id: 'summary', warning: '' }
+  if (details) {
+    const result = selectRunDetailsSection(details.sections, selector)
+    if (result.status === 'selected') return { id: `session:${result.section.id}`, warning: '' }
+    if (result.status === 'unresolved') {
+      return {
+        id: 'summary',
+        warning: `Multiple saved ${agentLabel(selector.agent)} results exist for this step, but none matched the requested runner/session id.`,
+      }
+    }
+  }
+  if (liveContext) {
+    const id = liveEntryId(liveContext)
+    if (!details || entries.some((entry) => entry.id === id)) return { id, warning: '' }
+  }
+  return {
+    id: 'summary',
+    warning: `No saved ${agentLabel(selector.agent)} result was found for this step.`,
+  }
+}
+
+function isActiveLiveStatus(status: string): boolean {
+  return ['running', 'submitted', 'waiting', 'retrying', 'queued'].includes(status.toLowerCase())
+}
+
+export function RunDetailsModal({
+  opened,
+  onClose,
+  runId: detailsRunId = '',
+  initialSelector,
+  liveContext,
+  missingRunMessage = 'Load a saved workflow run before opening agent results.',
+}: RunDetailsModalProps) {
+  const [detailsLoading, setDetailsLoading] = useState(false)
+  const [detailsError, setDetailsError] = useState('')
+  const [detailsResponse, setDetailsResponse] = useState<RunDetailsResponse | null>(null)
+  const [activeTimelineId, setActiveTimelineId] = useState('summary')
+  const [selectionWarning, setSelectionWarning] = useState('')
+  const details = detailsResponse?.details
+  const detailRun = detailsResponse?.run
+  const markdownScrollRef = useRef<HTMLDivElement>(null)
+  const stepItems = useMemo(() => buildStepItems(details, detailRun), [details, detailRun])
+  const timelineEntries = useMemo(
+    () => buildTimelineEntries(details, detailRun, stepItems, liveContext),
+    [details, detailRun, liveContext, stepItems],
+  )
+  const parentTimelineEntries = useMemo(() => {
+    const summaryEntry = timelineEntries.find((entry) => entry.kind === 'summary')
+    const stepEntries = timelineEntries.filter((entry) => entry.kind === 'step')
+    return summaryEntry ? [...stepEntries, summaryEntry] : stepEntries
+  }, [timelineEntries])
+  const activeTimelineIndex = Math.max(0, timelineEntries.findIndex((entry) => entry.id === activeTimelineId))
+  const timelineProgressIndex = Math.max(0, parentTimelineEntries.length - 1)
+  const activeEntry = timelineEntries[activeTimelineIndex] || null
+  const detailWorkflowName = workflowName(detailRun)
+  const selectorIdentity = selectorKey(initialSelector)
+  const liveIdentity = liveContext
+    ? [
+      selectorKey(liveContext.selector),
+      liveContext.status,
+      liveContext.runnerId || '',
+      liveContext.sessionId || '',
+      liveContext.submittedAfterSeconds ?? '',
+      liveContext.lastEventAt || '',
+      liveContext.url || '',
+    ].join('|')
+    : ''
+
+  useEffect(() => {
+    if (!opened) return undefined
+    setSelectionWarning('')
+    if (!detailsRunId) {
+      setDetailsResponse(null)
+      setDetailsLoading(false)
+      setDetailsError('')
+      return undefined
+    }
+
+    let cancelled = false
+    setDetailsLoading(true)
+    setDetailsError('')
+    setDetailsResponse(null)
+    getRunDetails(detailsRunId)
+      .then((response) => {
+        if (!cancelled) setDetailsResponse(response)
+      })
+      .catch((err) => {
+        if (!cancelled) setDetailsError(err instanceof Error ? err.message : String(err))
+      })
+      .finally(() => {
+        if (!cancelled) setDetailsLoading(false)
+      })
+
+    return () => {
+      cancelled = true
+    }
+  }, [detailsRunId, opened, selectorIdentity])
+
+  useEffect(() => {
+    if (!opened) return
+    const resolved = resolveInitialTimelineId(details, timelineEntries, initialSelector, liveContext)
+    setActiveTimelineId(resolved.id)
+    setSelectionWarning(resolved.warning)
+  }, [details, initialSelector, liveContext, liveIdentity, opened, selectorIdentity, timelineEntries])
+
+  const title = detailWorkflowName
+    ? `Workflow results for "${detailWorkflowName}"`
+    : liveContext
+      ? `${agentLabel(liveContext.selector.agent)} result · ${liveContext.stepTitle}`
+      : 'Workflow results'
+
+  return (
+    <Modal
+      opened={opened}
+      onClose={onClose}
+      title={(
+        <Group component="span" gap="xs" wrap="wrap" className="run-details-modal-title">
+          <Text component="span" inherit>{title}</Text>
+        </Group>
+      )}
+      size="90rem"
+      centered
+      classNames={{ content: 'run-details-modal-content', body: 'run-details-modal-body' }}
+      scrollAreaComponent={ScrollArea.Autosize}
+    >
+      {detailsLoading ? (
+        <Text c="dimmed">Loading run results...</Text>
+      ) : detailsError ? (
+        <Alert color="red" variant="light">{detailsError}</Alert>
+      ) : details ? (
+        <Stack gap="md">
+          {selectionWarning ? <Alert color="yellow" variant="light">{selectionWarning}</Alert> : null}
+          <Box className="run-details-layout">
+            {timelineEntries.length > 0 ? (
+              <RunDetailsTimeline
+                activeTimelineId={activeTimelineId}
+                parentTimelineEntries={parentTimelineEntries}
+                timelineEntries={timelineEntries}
+                timelineProgressIndex={timelineProgressIndex}
+                onSelect={setActiveTimelineId}
+              />
+            ) : null}
+            <Box className="run-details-content">
+              {activeEntry ? (
+                <RunDetailsContent entry={activeEntry} workflowName={detailWorkflowName} scrollRootRef={markdownScrollRef} />
+              ) : (
+                <Text c="dimmed">No run details were found.</Text>
+              )}
+            </Box>
+            <Stack className="run-details-side" gap="md">
+              <MarkdownTableOfContents entry={activeEntry} scrollRootRef={markdownScrollRef} />
+              <RunDetailsMetadata run={detailRun} workflowName={detailWorkflowName} section={activeEntry?.section} liveContext={activeEntry?.liveContext} />
+            </Stack>
+          </Box>
+        </Stack>
+      ) : liveContext ? (
+        <RunDetailsStandaloneLivePanel context={liveContext} />
+      ) : (
+        <Alert color="yellow" variant="light">{missingRunMessage}</Alert>
+      )}
+    </Modal>
+  )
+}
+
+function RunDetailsTimeline({
+  activeTimelineId,
+  parentTimelineEntries,
+  timelineEntries,
+  timelineProgressIndex,
+  onSelect,
+}: {
+  activeTimelineId: string
+  parentTimelineEntries: TimelineEntry[]
+  timelineEntries: TimelineEntry[]
+  timelineProgressIndex: number
+  onSelect: (id: string) => void
+}) {
+  return (
+    <Box className="run-details-timeline" component="nav" aria-label="Workflow timeline">
+      <Text className="run-details-timeline-heading" size="xs" fw={800} c="dimmed">Timeline</Text>
+      <Timeline active={timelineProgressIndex} bulletSize={18} lineWidth={2}>
+        {parentTimelineEntries.map((entry) => {
+          const childEntries = entry.kind === 'step'
+            ? timelineEntries.filter((child) => (
+              child.kind === 'session' &&
+              ((child.section?.stepId && entry.id === `step:${child.section.stepId}`) ||
+                (child.liveContext?.selector.stepId && entry.id === `step:${child.liveContext.selector.stepId}`))
+            ))
+            : []
+          return (
+            <Timeline.Item
+              key={entry.id}
+              className="run-details-timeline-item"
+              color={statusColor(entry.status)}
+              bullet={timelineBullet(entry)}
+              title={(
+                <Paper className="run-details-timeline-card" withBorder>
+                  <UnstyledButton
+                    className={`run-details-timeline-button${entry.id === activeTimelineId ? ' active' : ''}`}
+                    onClick={() => onSelect(entry.id)}
+                  >
+                    <Group gap={6} wrap="nowrap" className="run-details-timeline-title">
+                      <Text size="sm" fw={700} truncate>{entry.title}</Text>
+                    </Group>
+                    {entry.subtitle ? <Text size="xs" c="dimmed" truncate>{entry.subtitle}</Text> : null}
+                  </UnstyledButton>
+                  {childEntries.length > 0 ? (
+                    <Stack className="run-details-timeline-children" gap={2}>
+                      {childEntries.map((child) => {
+                        const agent = child.section?.agent || child.liveContext?.selector.agent || ''
+                        return (
+                          <UnstyledButton
+                            key={child.id}
+                            className={`run-details-timeline-child-button${child.id === activeTimelineId ? ' active' : ''}`}
+                            onClick={() => onSelect(child.id)}
+                          >
+                            <Group gap={6} wrap="nowrap" className="run-details-timeline-title session">
+                              {agent ? <AgentIcon agent={agent} /> : null}
+                              <Text size="xs" truncate>
+                                <Text component="span" inherit fw={600} className="run-details-timeline-agent-name">
+                                  {agent ? agentLabel(agent) : child.title}
+                                </Text>
+                                {child.subtitle ? (
+                                  <Text component="span" inherit c="dimmed">
+                                    {' - '}
+                                    {child.subtitle}
+                                  </Text>
+                                ) : null}
+                              </Text>
+                            </Group>
+                          </UnstyledButton>
+                        )
+                      })}
+                    </Stack>
+                  ) : null}
+                </Paper>
+              )}
+            />
+          )
+        })}
+      </Timeline>
+    </Box>
+  )
+}
+
+function RunDetailsContent({
+  entry,
+  workflowName: name,
+  scrollRootRef,
+}: {
+  entry: TimelineEntry
+  workflowName: string
+  scrollRootRef?: RefObject<HTMLDivElement | null>
+}) {
+  return (
+    <Stack gap="sm" style={{ marginTop: -4 }}>
+      <Group gap="xs" wrap="wrap">
+        <Title order={2} size="h4">{timelineContentTitle(entry, name)}</Title>
+        {entry.status ? (
+          <Badge
+            className={`run-status ${entry.status}`}
+            variant="light"
+            color={statusColor(entry.status)}
+            size="xs"
+            style={statusBadgeStyle(entry.status)}
+          >
+            {entry.status}
+          </Badge>
+        ) : null}
+        {entry.absolutePath ? (
+          <ArtifactActions
+            filePath={entry.absolutePath}
+            sessionUrl={entry.section?.links.sessionUrl || entry.section?.links.agentRunUrl}
+          />
+        ) : null}
+      </Group>
+      <Box className="prompt-markdown run-details-markdown" ref={scrollRootRef}>
+        {entry.markdown ? (
+          <MarkdownRenderer>{entry.markdown}</MarkdownRenderer>
+        ) : entry.liveContext ? (
+          <LivePanel context={entry.liveContext} />
+        ) : (
+          <Text c="dimmed">No result text.</Text>
+        )}
+      </Box>
+    </Stack>
+  )
+}
+
+function MarkdownTableOfContents({
+  entry,
+  scrollRootRef,
+}: {
+  entry: TimelineEntry | null
+  scrollRootRef: RefObject<HTMLDivElement | null>
+}) {
+  const headings = useMemo(() => extractMarkdownToc(entry?.markdown || ''), [entry?.markdown])
+  const tocGroups = useMemo(() => {
+    const groups: Array<{ heading: typeof headings[number]; children: typeof headings }> = []
+    for (const heading of headings) {
+      if (heading.level === 1 || groups.length === 0) {
+        groups.push({ heading, children: [] })
+      } else {
+        groups[groups.length - 1].children.push(heading)
+      }
+    }
+    return groups
+  }, [headings])
+  const [activeKey, setActiveKey] = useState('')
+  const [expandedKeys, setExpandedKeys] = useState<Set<string>>(() => new Set())
+  const [expandAllPinned, setExpandAllPinned] = useState(false)
+
+  useEffect(() => {
+    setActiveKey('')
+    setExpandAllPinned(false)
+    setExpandedKeys(tocGroups[0] ? new Set([tocGroups[0].heading.key]) : new Set())
+  }, [entry?.key, tocGroups])
+
+  useEffect(() => {
+    const root = scrollRootRef.current
+    if (!root || headings.length === 0) return undefined
+
+    const updateActiveHeading = () => {
+      const renderedHeadings = Array.from(root.querySelectorAll('h1, h2, h3, h4'))
+      const rootTop = root.getBoundingClientRect().top
+      let nextActive = headings[0]
+      for (const heading of headings) {
+        const node = renderedHeadings[heading.headingIndex]
+        if (!node) continue
+        if (node.getBoundingClientRect().top - rootTop <= 24) nextActive = heading
+      }
+      setActiveKey(nextActive.key)
+    }
+
+    updateActiveHeading()
+    root.addEventListener('scroll', updateActiveHeading, { passive: true })
+    return () => root.removeEventListener('scroll', updateActiveHeading)
+  }, [headings, scrollRootRef])
+
+  useEffect(() => {
+    if (!activeKey || expandAllPinned || tocGroups.length === 0) return
+    const activeGroup = tocGroups.find((group) => group.heading.key === activeKey || group.children.some((child) => child.key === activeKey))
+    if (!activeGroup) return
+    setExpandedKeys(new Set([activeGroup.heading.key]))
+  }, [activeKey, expandAllPinned, tocGroups])
+
+  if (headings.length === 0) return null
+
+  const scrollToHeading = (heading: typeof headings[number]) => {
+    const root = scrollRootRef.current
+    const renderedHeading = root?.querySelectorAll('h1, h2, h3, h4')[heading.headingIndex]
+    if (!renderedHeading) return
+    setActiveKey(heading.key)
+    renderedHeading.scrollIntoView({ behavior: 'smooth', block: 'start' })
+  }
+
+  const toggleAll = () => {
+    if (expandAllPinned) {
+      setExpandAllPinned(false)
+      const activeGroup = tocGroups.find((group) => group.heading.key === activeKey || group.children.some((child) => child.key === activeKey))
+      setExpandedKeys(activeGroup ? new Set([activeGroup.heading.key]) : new Set())
+      return
+    }
+    setExpandAllPinned(true)
+    setExpandedKeys(new Set(tocGroups.map((group) => group.heading.key)))
+  }
+  const toggleGroup = (key: string) => {
+    setExpandAllPinned(false)
+    setExpandedKeys((current) => {
+      const next = new Set(current)
+      if (next.has(key)) next.delete(key)
+      else next.add(key)
+      return next
+    })
+  }
+
+  return (
+    <Paper className="run-details-toc" withBorder>
+      <Group justify="space-between" align="center" gap="xs" className="run-details-toc-heading">
+        <Text size="xs" fw={800} c="dimmed" className="run-details-meta-heading">Contents</Text>
+        <Tooltip label={expandAllPinned ? 'Collapse all' : 'Expand all'} withArrow>
+          <ActionIcon
+            aria-label={expandAllPinned ? 'Collapse all contents sections' : 'Expand all contents sections'}
+            className="run-details-toc-toggle"
+            onClick={toggleAll}
+            size="sm"
+            variant="subtle"
+          >
+            {expandAllPinned ? <ChevronsDownUp size={14} /> : <ChevronsUpDown size={14} />}
+          </ActionIcon>
+        </Tooltip>
+      </Group>
+      <Stack gap={2}>
+        {tocGroups.map((group) => {
+          const expanded = expandedKeys.has(group.heading.key)
+          const groupActive = group.heading.key === activeKey || group.children.some((child) => child.key === activeKey)
+          return (
+            <Box key={group.heading.key} className="run-details-toc-group" data-active={groupActive || undefined}>
+              <Group
+                gap={2}
+                wrap="nowrap"
+                className="run-details-toc-row"
+                data-active={group.heading.key === activeKey || undefined}
+              >
+                <ActionIcon
+                  aria-label={expanded ? `Collapse ${group.heading.text}` : `Expand ${group.heading.text}`}
+                  className="run-details-toc-section-toggle"
+                  disabled={group.children.length === 0}
+                  onClick={() => toggleGroup(group.heading.key)}
+                  size="sm"
+                  variant="subtle"
+                >
+                  {expanded ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
+                </ActionIcon>
+                <UnstyledButton
+                  className="run-details-toc-link"
+                  data-active={group.heading.key === activeKey || undefined}
+                  data-level={group.heading.level}
+                  onClick={() => scrollToHeading(group.heading)}
+                  type="button"
+                >
+                  <Text size="xs" truncate>{group.heading.text}</Text>
+                </UnstyledButton>
+              </Group>
+              {expanded ? (
+                <Stack gap={2} className="run-details-toc-children">
+                  {group.children.map((heading) => (
+                    <UnstyledButton
+                      key={heading.key}
+                      className="run-details-toc-link"
+                      data-active={heading.key === activeKey || undefined}
+                      data-level={heading.level}
+                      onClick={() => scrollToHeading(heading)}
+                      type="button"
+                    >
+                      <Text size="xs" truncate>{heading.text}</Text>
+                    </UnstyledButton>
+                  ))}
+                </Stack>
+              ) : null}
+            </Box>
+          )
+        })}
+      </Stack>
+    </Paper>
+  )
+}
+
+function RunDetailsStandaloneLivePanel({ context }: { context: RunDetailsLiveContext }) {
+  return (
+    <Stack gap="sm">
+      <Group gap="xs" wrap="wrap">
+        <Title order={2} size="h4">{`${agentLabel(context.selector.agent)} · ${context.stepTitle}`}</Title>
+        <Badge
+          className={`run-status ${context.status}`}
+          variant="light"
+          color={statusColor(context.status)}
+          w="fit-content"
+          style={statusBadgeStyle(context.status)}
+        >
+          {context.status || 'unknown'}
+        </Badge>
+      </Group>
+      <Box className="prompt-markdown run-details-markdown">
+        <LivePanel context={context} />
+      </Box>
+    </Stack>
+  )
+}
+
+function LivePanel({ context }: { context: RunDetailsLiveContext }) {
+  if (context.status === 'dry-run') return <Text c="dimmed">No results from dry runs.</Text>
+  const contextSessionHref = context.sessionId ? linkWithSession(context.url || '', context.sessionId) : ''
+  return (
+    <Stack gap={6}>
+      {isActiveLiveStatus(context.status) ? (
+        <Text c="dimmed">No result yet. This remote agent run is still in progress.</Text>
+      ) : (
+        <Text c="dimmed">No saved markdown result was found for this agent run.</Text>
+      )}
+      {context.runnerId ? (
+        <Group gap="xs" wrap="nowrap">
+          <Text size="sm" c="dimmed" w={92}>Runner ID</Text>
+          <Code>{context.runnerId}</Code>
+        </Group>
+      ) : null}
+      {context.sessionId ? (
+        <Group gap="xs" wrap="nowrap">
+          <Text size="sm" c="dimmed" w={92}>Session ID</Text>
+          {contextSessionHref ? (
+            <Anchor href={contextSessionHref} target="_blank" rel="noreferrer" size="sm">
+              <Code>{context.sessionId}</Code>
+            </Anchor>
+          ) : (
+            <Code>{context.sessionId}</Code>
+          )}
+        </Group>
+      ) : null}
+      {typeof context.submittedAfterSeconds === 'number' ? (
+        <Group gap="xs" wrap="nowrap">
+          <Text size="sm" c="dimmed" w={92}>Submitted</Text>
+          <Text size="sm">after {context.submittedAfterSeconds}s</Text>
+        </Group>
+      ) : null}
+      {context.lastEventAt ? (
+        <Group gap="xs" wrap="nowrap">
+          <Text size="sm" c="dimmed" w={92}>Last event</Text>
+          <Text size="sm">{new Date(context.lastEventAt).toLocaleTimeString()}</Text>
+        </Group>
+      ) : null}
+      {context.url ? (
+        <Anchor href={context.url} target="_blank" rel="noreferrer" size="sm">
+          Open in Netlify
+        </Anchor>
+      ) : null}
+    </Stack>
+  )
+}
+
+function RunDetailsMetadata({
+  run,
+  workflowName: name,
+  section,
+  liveContext,
+}: {
+  run: VisualizeRun | undefined
+  workflowName: string
+  section?: RunDetailsSection
+  liveContext?: RunDetailsLiveContext
+}) {
+  const sessionLink = sessionHref(section, liveContext)
+  const [openingRunDir, setOpeningRunDir] = useState(false)
+  const [runDirError, setRunDirError] = useState('')
+  const runDir = run?.dir || ''
+
+  const openRunDir = async () => {
+    if (!runDir) return
+    setOpeningRunDir(true)
+    setRunDirError('')
+    try {
+      await openLocalFile(runDir)
+    } catch (err) {
+      setRunDirError(err instanceof Error ? err.message : String(err))
+    } finally {
+      setOpeningRunDir(false)
+    }
+  }
+
+  return (
+    <Paper className="run-details-meta" withBorder>
+      <Text size="xs" fw={800} c="dimmed" className="run-details-meta-heading">Metadata</Text>
+      <Stack gap={10}>
+        <MetadataRow label="Workflow" value={name} />
+        <MetadataRow label="Status" value={run?.status || liveContext?.status || 'unknown'} />
+        <MetadataRow label="Transport" value={run?.transport || ''} />
+        <MetadataRow label="Branch" value={run?.branch || ''} />
+        <MetadataRow label="Target" value={targetLabel(run?.target)} />
+        <MetadataRow label="Target SHA" value={run?.target?.sha || ''} />
+        <MetadataRow label="Target Caveats" value={targetCaveats(run?.target)} />
+        <MetadataRow label="Run ID" value={runId(run || {})} onClick={runDir ? openRunDir : undefined} loading={openingRunDir} />
+        {runDirError ? <Text size="xs" c="red">{runDirError}</Text> : null}
+        <MetadataRow label="Runner ID" value={section?.runnerId || liveContext?.runnerId || ''} />
+        <MetadataRow label="Session ID" value={section?.sessionId || liveContext?.sessionId || ''} href={sessionLink} />
+      </Stack>
+    </Paper>
+  )
+}
+
+function MetadataRow({
+  label,
+  value,
+  href,
+  onClick,
+  loading,
+}: {
+  label: string
+  value: string
+  href?: string
+  onClick?: () => void
+  loading?: boolean
+}) {
+  if (!value) return null
+  return (
+    <Box>
+      <Text size="10px" c="dimmed" fw={800} tt="uppercase">{label}</Text>
+      {href ? (
+        <Anchor href={href} target="_blank" rel="noreferrer" size="xs" className="field-value">
+          {value}
+        </Anchor>
+      ) : onClick ? (
+        <Anchor component="button" type="button" onClick={onClick} size="xs" className="field-value">
+          {loading ? 'Opening...' : value}
+        </Anchor>
+      ) : (
+        <Text size="xs" className="field-value">{value}</Text>
+      )}
+    </Box>
+  )
+}
+
+function ArtifactActions({ filePath, sessionUrl }: { filePath: string; sessionUrl?: string }) {
+  const [error, setError] = useState('')
+  const [opening, setOpening] = useState(false)
+  const [copied, setCopied] = useState(false)
+
+  const openPath = async () => {
+    setOpening(true)
+    setError('')
+    try {
+      await openLocalFile(filePath)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err))
+    } finally {
+      setOpening(false)
+    }
+  }
+
+  const copyPath = async () => {
+    setError('')
+    try {
+      await navigator.clipboard.writeText(filePath)
+      setCopied(true)
+      window.setTimeout(() => setCopied(false), 1200)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err))
+    }
+  }
+
+  return (
+    <Group gap={4} wrap="nowrap" className="artifact-actions">
+      <Tooltip label={copied ? 'Copied' : 'Copy file path'}>
+        <ActionIcon aria-label="Copy file path" variant="subtle" color="gray" size="sm" onClick={copyPath}>
+          <Files size={14} />
+        </ActionIcon>
+      </Tooltip>
+      <Tooltip label="Open file">
+        <ActionIcon aria-label="Open file" variant="subtle" color="gray" size="sm" loading={opening} onClick={openPath}>
+          <ExternalLink size={14} />
+        </ActionIcon>
+      </Tooltip>
+      {sessionUrl ? <Anchor href={sessionUrl} target="_blank" rel="noreferrer" size="xs">Open in Netlify</Anchor> : null}
+      {error ? <Text size="xs" c="red" mt={4}>{error}</Text> : null}
+    </Group>
+  )
+}

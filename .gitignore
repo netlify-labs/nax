@@ -1,5 +1,6 @@
 node_modules/
 .nax/
+web/dist/
 .DS_Store
 
 # Local Netlify folder

@@ -205,7 +205,7 @@ function buildAgentMarkdown({ runState, step, run }) {
   if (url) lines.push(`- Link: ${url}`)
   lines.push('', '---', '')
   if (String(run.resultText || '').trim()) {
-    lines.push(String(run.resultText).trimEnd())
+    lines.push(formatAgentResultMarkdown(String(run.resultText).trimEnd()))
   } else if (run.error || run.status === 'failed' || run.status === 'timeout') {
     lines.push(`**${run.status || 'failed'}**: ${run.error || run.resultText || 'No result text was returned.'}`)
   } else {
@@ -213,6 +213,159 @@ function buildAgentMarkdown({ runState, step, run }) {
   }
   lines.push('')
   return lines.join('\n')
+}
+
+function demoteMarkdownHeadings(markdown, by = 1) {
+  let inFence = false
+  return String(markdown || '')
+    .split(/\r?\n/)
+    .map((line) => {
+      if (/^\s*(```|~~~)/.test(line)) {
+        inFence = !inFence
+        return line
+      }
+      if (inFence) return line
+      return line.replace(/^(#{1,6})(\s+)/, (_match, hashes, spacing) => {
+        const nextLevel = Math.min(6, hashes.length + by)
+        return `${'#'.repeat(nextLevel)}${spacing}`
+      })
+    })
+    .join('\n')
+}
+
+function parseMarkdownHeading(line) {
+  const match = /^(#{1,6})(\s+)(.*)$/.exec(line)
+  if (!match) return null
+  return {
+    level: match[1].length,
+    text: match[3].replace(/\s+#+\s*$/, '').trim(),
+  }
+}
+
+function stripHeadingNumberPrefix(text) {
+  return String(text || '').replace(/^\d+\.\s+/, '').trim()
+}
+
+function isRepositoryStateHeading(text) {
+  return stripHeadingNumberPrefix(text).toLowerCase() === 'repository state'
+}
+
+function formatAgentLabel(agent) {
+  const normalized = String(agent || 'Agent').trim() || 'Agent'
+  return normalized.replace(/(^|-)([a-z])/g, (_match, prefix, char) => `${prefix}${char.toUpperCase()}`)
+}
+
+function formatRunResultsHeading(run) {
+  const label = `${formatAgentLabel(run?.agent)} Results`
+  const url = resultUrlForRun(run)
+  return url ? `[${label}](${url})` : label
+}
+
+function stripNumberedMarkdownHeadings(markdown) {
+  let inFence = false
+  return String(markdown || '')
+    .split(/\r?\n/)
+    .map((line) => {
+      if (/^\s*(```|~~~)/.test(line)) {
+        inFence = !inFence
+        return line
+      }
+      if (inFence) return line
+      return line.replace(/^(#{1,6}\s+)\d+\.\s+/, '$1')
+    })
+    .join('\n')
+}
+
+function foldRepositoryStateSections(markdown) {
+  const lines = String(markdown || '').split(/\r?\n/)
+  const output = []
+  let inFence = false
+
+  for (let index = 0; index < lines.length; index++) {
+    const line = lines[index]
+    if (/^\s*(```|~~~)/.test(line)) {
+      inFence = !inFence
+      output.push(line)
+      continue
+    }
+    if (inFence) {
+      output.push(line)
+      continue
+    }
+
+    const heading = parseMarkdownHeading(line)
+    if (!heading || !isRepositoryStateHeading(heading.text)) {
+      output.push(line)
+      continue
+    }
+
+    let end = index + 1
+    let sectionFence = false
+    for (; end < lines.length; end++) {
+      const nextLine = lines[end]
+      if (/^\s*(```|~~~)/.test(nextLine)) {
+        sectionFence = !sectionFence
+        continue
+      }
+      if (sectionFence) continue
+      const nextHeading = parseMarkdownHeading(nextLine)
+      if (nextHeading && nextHeading.level <= heading.level) break
+    }
+
+    const body = lines.slice(index + 1, end)
+    while (body.length > 0 && !body[0].trim()) body.shift()
+    while (body.length > 0 && !body[body.length - 1].trim()) body.pop()
+
+    output.push('<details>', '<summary>Repository State</summary>', '')
+    if (body.length > 0) output.push(...body, '')
+    output.push('</details>', '')
+    index = end - 1
+  }
+
+  return output.join('\n')
+}
+
+function nestedMarkdownHeadings(markdown, parentLevel = 2) {
+  const lines = String(markdown || '').split(/\r?\n/)
+  const headingLevels = []
+  let inFence = false
+  for (const line of lines) {
+    if (/^\s*(```|~~~)/.test(line)) {
+      inFence = !inFence
+      continue
+    }
+    if (inFence) continue
+    const match = /^(#{1,6})\s+/.exec(line)
+    if (match) headingLevels.push(match[1].length)
+  }
+
+  if (headingLevels.length === 0) return lines.join('\n')
+
+  const firstNestedLevel = Math.min(6, parentLevel + 1)
+  const minLevel = Math.min(...headingLevels)
+  const offset = firstNestedLevel - minLevel
+  if (offset === 0) return lines.join('\n')
+
+  inFence = false
+  return lines.map((line) => {
+    if (/^\s*(```|~~~)/.test(line)) {
+      inFence = !inFence
+      return line
+    }
+    if (inFence) return line
+    return line.replace(/^(#{1,6})(\s+)/, (_match, hashes, spacing) => {
+      const nextLevel = Math.max(1, Math.min(6, hashes.length + offset))
+      return `${'#'.repeat(nextLevel)}${spacing}`
+    })
+  }).join('\n')
+}
+
+function formatNestedAgentMarkdown(markdown) {
+  return nestedMarkdownHeadings(stripNumberedMarkdownHeadings(foldRepositoryStateSections(markdown)))
+}
+
+function formatAgentResultMarkdown(markdown) {
+  return stripNumberedMarkdownHeadings(foldRepositoryStateSections(markdown))
 }
 
 function attemptsForAgent(runsDir, agent) {
@@ -299,9 +452,9 @@ function buildStepMarkdown({ runState, step, linkPrefix = '' }) {
   if (usage) lines.push(`- Usage: ${usage}`)
   lines.push(`- Files: [step metadata](${joinLinkPath(linkPrefix, 'step.json')}), [usage](${joinLinkPath(linkPrefix, 'usage.json')})`)
   for (const run of step.runs || []) {
-    lines.push('', `## ${run.agent || 'Agent'}`, '')
+    lines.push('', `## ${formatRunResultsHeading(run)}`, '')
     const links = runArtifactLinks(runState, step, run, linkPrefix)
-    if (links.length > 0) lines.push(`- Files: ${links.join(', ')}`, '')
+    if (links.length > 0) lines.push(`- Files: ${links.join(', ')}`)
     if (run.runnerId || run.sessionId) {
       const canonicalLinks = []
       if (run.runnerId && runState.projectRoot) {
@@ -310,14 +463,15 @@ function buildStepMarkdown({ runState, step, linkPrefix = '' }) {
       if (run.sessionId && runState.projectRoot) {
         canonicalLinks.push(`[session](${posixPath(path.relative(currentDir, path.join(runState.projectRoot, '.nax', 'agent-sessions', run.sessionId, 'summary.md')))})`)
       }
-      if (canonicalLinks.length > 0) lines.push(`- Canonical artifacts: ${canonicalLinks.join(', ')}`, '')
+      if (canonicalLinks.length > 0) lines.push(`- Canonical artifacts: ${canonicalLinks.join(', ')}`)
     }
     const filePath = path.join(runsArtifactsDir(runState, step), `${safeArtifactName(run.agent || 'agent')}.md`)
     const markdown = readFileIfExists(filePath).trim()
     if (markdown) {
-      lines.push(markdown.replace(/^# .+\n+/, '').trim())
+      const nestedMarkdown = markdown.replace(/^# .+\n+/, '').trim()
+      lines.push(formatNestedAgentMarkdown(nestedMarkdown).trim())
     } else if (run.resultText) {
-      lines.push(String(run.resultText).trim())
+      lines.push(formatNestedAgentMarkdown(String(run.resultText).trim()).trim())
     } else {
       lines.push('_No result text._')
     }
@@ -568,6 +722,8 @@ module.exports = {
   buildStepMarkdown,
   buildTopSummaryMarkdown,
   buildTopUsageJson,
+  demoteMarkdownHeadings,
+  nestedMarkdownHeadings,
   existingAttemptCount,
   nextAttemptNumber,
   persistRunArtifact,

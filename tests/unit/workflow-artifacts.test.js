@@ -7,6 +7,8 @@ const path = require('path')
 const {
   artifactsRootForRunState,
   buildStepJson,
+  demoteMarkdownHeadings,
+  nestedMarkdownHeadings,
   nextAttemptNumber,
   persistRunArtifact,
   persistWorkflowArtifacts,
@@ -202,6 +204,105 @@ test('buildStepJson lists immutable attempts in attempt-number order', () => {
 
   const json = buildStepJson({ runState: state, step })
   assert.deepEqual(json.runs[0].attempts.map((attempt) => attempt.attemptNumber), [1, 2])
+})
+
+test('step summary demotes embedded agent markdown headings', () => {
+  const state = sampleRunState()
+  state.steps[0].runs = [{
+    ...state.steps[0].runs[0],
+    resultText: [
+      '## 1. Repository State',
+      '',
+      '- ok',
+      '',
+      '```json',
+      '{',
+      '  "literal": "## not a heading"',
+      '}',
+      '```',
+      '',
+      '## 2. Structured Findings',
+      '',
+      '### Child Section',
+    ].join('\n'),
+  }]
+
+  const root = persistWorkflowArtifacts(state)
+  const agentMarkdown = fs.readFileSync(path.join(root, 'steps', '01-review', 'agent-runners', 'claude.md'), 'utf8')
+  const stepSummary = fs.readFileSync(path.join(root, 'steps', '01-review', 'summary.md'), 'utf8')
+
+  assert.doesNotMatch(agentMarkdown, /^## 1\. Repository State/m)
+  assert.match(agentMarkdown, /<details>\n<summary>Repository State<\/summary>/)
+  assert.match(agentMarkdown, /^## Structured Findings$/m)
+  assert.match(stepSummary, /^## \[Claude Results\]\(https:\/\/app\.netlify\.com\/projects\/site\/agent-runs\/runner-claude\?session=session-claude\)$/m)
+  assert.doesNotMatch(stepSummary, /^### 1\. Repository State$/m)
+  assert.match(stepSummary, /<details>\n<summary>Repository State<\/summary>/)
+  assert.match(stepSummary, /^### Structured Findings$/m)
+  assert.match(stepSummary, /^#### Child Section$/m)
+  assert.match(stepSummary, /"literal": "## not a heading"/)
+})
+
+test('step summary nests embedded h1 headings below agent h2', () => {
+  const state = sampleRunState()
+  state.steps[0].runs = [{
+    ...state.steps[0].runs[0],
+    resultText: [
+      '# Agent Report',
+      '',
+      '## Finding',
+      '',
+      '### Detail',
+    ].join('\n'),
+  }]
+
+  const root = persistWorkflowArtifacts(state)
+  const stepSummary = fs.readFileSync(path.join(root, 'steps', '01-review', 'summary.md'), 'utf8')
+
+  assert.match(stepSummary, /^## \[Claude Results\]\(https:\/\/app\.netlify\.com\/projects\/site\/agent-runs\/runner-claude\?session=session-claude\)$/m)
+  assert.match(stepSummary, /^### Agent Report$/m)
+  assert.match(stepSummary, /^#### Finding$/m)
+  assert.match(stepSummary, /^##### Detail$/m)
+  assert.doesNotMatch(stepSummary, /^## Agent Report$/m)
+})
+
+test('demoteMarkdownHeadings leaves fenced headings unchanged', () => {
+  const markdown = [
+    '## Visible',
+    '',
+    '```',
+    '## Hidden',
+    '```',
+  ].join('\n')
+
+  assert.equal(demoteMarkdownHeadings(markdown), [
+    '### Visible',
+    '',
+    '```',
+    '## Hidden',
+    '```',
+  ].join('\n'))
+})
+
+test('nestedMarkdownHeadings normalizes first embedded heading under parent', () => {
+  const markdown = [
+    '# Top',
+    '',
+    '```',
+    '# Hidden',
+    '```',
+    '',
+    '## Child',
+  ].join('\n')
+
+  assert.equal(nestedMarkdownHeadings(markdown), [
+    '### Top',
+    '',
+    '```',
+    '# Hidden',
+    '```',
+    '',
+    '#### Child',
+  ].join('\n'))
 })
 
 test('artifacts serialize blob prompt delivery and context fetch metadata', () => {

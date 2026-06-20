@@ -2,7 +2,6 @@ import { type CSSProperties, useCallback, useEffect, useMemo, useReducer, useRef
 import {
   ActionIcon,
   Alert,
-  Anchor,
   AppShell,
   Badge,
   Box,
@@ -25,21 +24,26 @@ import {
 import { useDisclosure } from '@mantine/hooks'
 import { Check, Copy, FolderGit2, GitBranch, Moon, RefreshCw, Sun } from 'lucide-react'
 import { ReactFlowProvider } from '@xyflow/react'
-import { cancelWorkflowRun, getHealth, getRunDetails, getRunGraph, getWorkflowGraph, listRuns, listWorkflows, runEventsUrl, runWorkflowDryRun, startWorkflowRun } from './api'
+import { cancelWorkflowRun, getHealth, getRunGraph, getWorkflowGraph, listRuns, listWorkflows, runEventsUrl, runWorkflowDryRun, startWorkflowRun } from './api'
 import { WorkflowOutputTabs } from './components/DryRunPanel'
 import { Inspector } from './components/Inspector'
 import { MarkdownRenderer } from './components/MarkdownRenderer'
 import { RecentRuns } from './components/RecentRuns'
+import { RunDetailsModal, type RunDetailsLiveContext } from './components/RunDetailsModal'
 import { WorkflowCanvas } from './components/WorkflowCanvas'
 import { WorkflowControls } from './components/WorkflowControls'
 import { WorkflowList } from './components/WorkflowList'
 import { initialLiveRunState, liveRunReducer, visualStatus } from './liveRunReducer'
-import type { DryRunOptions, DryRunResult, RunDetailsSection, RunnerEvent, VisualizeRun, Workflow, WorkflowGraph, WorkflowGraphNodeData } from './types'
+import { recordValue, runId } from './run-format'
+import type { RunDetailsSelector } from './run-details-selection'
+import type { DryRunOptions, DryRunResult, RunnerEvent, VisualizeRun, Workflow, WorkflowGraph, WorkflowGraphNodeData } from './types'
 
 type ContextModalAction = '' | 'dry-run' | 'run'
-type AgentResultContext = {
+type DetailsModalContext = {
   node: WorkflowGraphNodeData
   agent: string
+  runId: string
+  selector: RunDetailsSelector
 }
 
 function parseRunEvent(event: Event): RunnerEvent {
@@ -88,20 +92,8 @@ function shortHomePath(value: string, projectRoot = ''): string {
   return value
 }
 
-function agentLabel(agent: string): string {
-  return agent.replace(/(^|-)([a-z])/g, (_match, prefix, char) => `${prefix}${char.toUpperCase()}`)
-}
-
 function runValue(run: Record<string, unknown> | undefined, key: string): string {
-  const value = run?.[key]
-  return typeof value === 'string' || typeof value === 'number' ? String(value) : ''
-}
-
-function completedRunForAgent(node: WorkflowGraphNodeData, agent: string): Record<string, unknown> | undefined {
-  return node.runs.find((run) => (
-    runValue(run, 'agent') === agent &&
-    ['complete', 'completed'].includes(runValue(run, 'status').toLowerCase())
-  ))
+  return recordValue(run, key)
 }
 
 function runForAgent(node: WorkflowGraphNodeData, agent: string): Record<string, unknown> | undefined {
@@ -139,35 +131,8 @@ function savedRunUrl(run: Record<string, unknown> | undefined): string {
   return runValue(run, 'commentUrl') || runValue(run, 'issueUrl')
 }
 
-function statusBadgeTone(status: string): 'green' | 'yellow' | 'red' | undefined {
-  const normalized = status.toLowerCase()
-  if (['complete', 'completed', 'dry-run'].includes(normalized)) return 'green'
-  if (['running', 'submitted', 'waiting', 'retrying', 'queued', 'interrupted'].includes(normalized)) return 'yellow'
-  return ['failed', 'timeout', 'cancelled', 'dismissed', 'error'].includes(normalized) ? 'red' : undefined
-}
-
-function statusBadgeColor(status: string): string {
-  return statusBadgeTone(status) || 'gray'
-}
-
-function statusBadgeStyle(status: string): CSSProperties | undefined {
-  const tone = statusBadgeTone(status)
-  if (!tone) return undefined
-
-  const color = tone === 'green' ? 'green' : tone === 'yellow' ? 'yellow' : 'red'
-  const shade = tone === 'green' ? '4' : tone === 'yellow' ? '4' : '5'
-  const mixShadow = tone === 'green' ? '72%' : tone === 'yellow' ? '76%' : '74%'
-  const mixGlow = tone === 'green' ? '86%' : tone === 'yellow' ? '84%' : '86%'
-  return {
-    '--badge-bg': `color-mix(in srgb, var(--mantine-color-${color}-${shade}), transparent 88%)`,
-    '--badge-color': `light-dark(var(--mantine-color-${color}-9), var(--mantine-color-${color}-1))`,
-    '--badge-bd': `calc(0.0625rem * var(--mantine-scale)) solid var(--mantine-color-${color}-${shade})`,
-    boxShadow: `0 0 0 1px color-mix(in srgb, var(--mantine-color-${color}-${shade}), transparent ${mixShadow}), 0 0 18px color-mix(in srgb, var(--mantine-color-${color}-${shade}), transparent ${mixGlow})`,
-  } as CSSProperties
-}
-
 function runIdentifier(run: Partial<VisualizeRun>): string {
-  return run.runId || run.id || ''
+  return runId(run)
 }
 
 function mergeRunLists(active: VisualizeRun[], durable: VisualizeRun[]): VisualizeRun[] {
@@ -262,10 +227,7 @@ export default function App() {
   const [contextModalAction, setContextModalAction] = useState<ContextModalAction>('')
   const [contextDraft, setContextDraft] = useState('')
   const [promptNode, setPromptNode] = useState<WorkflowGraphNodeData | null>(null)
-  const [agentResultContext, setAgentResultContext] = useState<AgentResultContext | null>(null)
-  const [agentResultSection, setAgentResultSection] = useState<RunDetailsSection | null>(null)
-  const [agentResultLoading, setAgentResultLoading] = useState(false)
-  const [agentResultError, setAgentResultError] = useState('')
+  const [detailsModalContext, setDetailsModalContext] = useState<DetailsModalContext | null>(null)
   const dryRunSimulationTimers = useRef<number[]>([])
   const runEventsRef = useRef<EventSource | null>(null)
   const runReconnectTimerRef = useRef<number | null>(null)
@@ -556,50 +518,21 @@ export default function App() {
     }
   }
 
-  const openAgentResult = useCallback(async (node: WorkflowGraphNodeData, agent: string) => {
-    const run = completedRunForAgent(node, agent)
-    const agentStatus = node.agentStatuses?.[agent] || ''
-    const runId = selectedRunId || activeRun?.runId || ''
-    setAgentResultContext({ node, agent })
-    setAgentResultSection(null)
-    setAgentResultError('')
-    setAgentResultLoading(true)
-    if (!run && ['running', 'submitted', 'waiting', 'retrying', 'queued'].includes(agentStatus)) {
-      setAgentResultLoading(false)
-      return
-    }
-    if (!run && agentStatus === 'dry-run') {
-      setAgentResultLoading(false)
-      return
-    }
-    if (!runId) {
-      setAgentResultError('Load a completed workflow run before opening agent results.')
-      setAgentResultLoading(false)
-      return
-    }
-    try {
-      const response = await getRunDetails(runId)
-      const runnerId = runValue(run, 'runnerId')
-      const sessionId = runValue(run, 'sessionId')
-      const sections = response.details.sections.filter((section) => (
-        section.kind === 'session' &&
-        section.stepId === node.stepId &&
-        section.agent === agent
-      ))
-      const exact = sections.find((section) => (
-        (runnerId && section.runnerId === runnerId) ||
-        (sessionId && section.sessionId === sessionId)
-      ))
-      const section = exact || sections[0] || null
-      if (!section) {
-        setAgentResultError(`No saved ${agentLabel(agent)} result was found for ${node.title}.`)
-      }
-      setAgentResultSection(section)
-    } catch (err) {
-      setAgentResultError(err instanceof Error ? err.message : String(err))
-    } finally {
-      setAgentResultLoading(false)
-    }
+  const openAgentResult = useCallback((node: WorkflowGraphNodeData, agent: string) => {
+    const savedRun = runForAgent(node, agent)
+    const runnerId = runValue(savedRun, 'runnerId')
+    const sessionId = runValue(savedRun, 'sessionId')
+    setDetailsModalContext({
+      node,
+      agent,
+      runId: selectedRunId || activeRun?.runId || '',
+      selector: {
+        stepId: node.stepId,
+        agent,
+        runnerId,
+        sessionId,
+      },
+    })
   }, [activeRun?.runId, selectedRunId])
 
   const runWorkflow = async (workflowOverride?: Workflow, optionsOverride: DryRunOptions = dryRunOptions, confirmed = false) => {
@@ -812,22 +745,29 @@ export default function App() {
     stdout: liveRunState.output || runOutput,
     stderr: '',
   } : null
-  const agentResultLiveEvent = agentResultContext
-    ? latestAgentEvent(liveRunState.rawEvents, agentResultContext.node, agentResultContext.agent)
-    : null
-  const agentResultSavedRun = agentResultContext
-    ? runForAgent(agentResultContext.node, agentResultContext.agent)
-    : undefined
-  const agentResultSavedStatus = runValue(agentResultSavedRun, 'status')
-  const agentResultLiveStatus = agentResultContext
-    ? agentResultContext.node.agentStatuses?.[agentResultContext.agent] || agentResultLiveEvent?.status || (agentResultSavedStatus ? visualStatus(agentResultSavedStatus) : '')
-    : ''
-  const agentResultLiveUrl = liveAgentUrl(agentResultLiveEvent) || savedRunUrl(agentResultSavedRun)
-  const agentResultSubmittedAfter = typeof agentResultLiveEvent?.submittedAfterSeconds === 'number'
-    ? agentResultLiveEvent.submittedAfterSeconds
-    : null
-  const agentResultRunnerId = agentResultLiveEvent?.runnerId || runValue(agentResultSavedRun, 'runnerId')
-  const agentResultSessionId = agentResultLiveEvent?.sessionId || runValue(agentResultSavedRun, 'sessionId')
+  const detailsModalLiveContext = useMemo<RunDetailsLiveContext | null>(() => {
+    if (!detailsModalContext) return null
+    const event = latestAgentEvent(liveRunState.rawEvents, detailsModalContext.node, detailsModalContext.agent)
+    const savedRun = runForAgent(detailsModalContext.node, detailsModalContext.agent)
+    const savedStatus = runValue(savedRun, 'status')
+    const status = detailsModalContext.node.agentStatuses?.[detailsModalContext.agent] ||
+      event?.status ||
+      (savedStatus ? visualStatus(savedStatus) : '')
+    return {
+      selector: {
+        ...detailsModalContext.selector,
+        runnerId: detailsModalContext.selector.runnerId || runValue(savedRun, 'runnerId') || event?.runnerId || '',
+        sessionId: detailsModalContext.selector.sessionId || runValue(savedRun, 'sessionId') || event?.sessionId || '',
+      },
+      stepTitle: detailsModalContext.node.title,
+      status,
+      runnerId: event?.runnerId || runValue(savedRun, 'runnerId'),
+      sessionId: event?.sessionId || runValue(savedRun, 'sessionId'),
+      submittedAfterSeconds: typeof event?.submittedAfterSeconds === 'number' ? event.submittedAfterSeconds : null,
+      lastEventAt: event?.at || '',
+      url: liveAgentUrl(event) || savedRunUrl(savedRun),
+    }
+  }, [detailsModalContext, liveRunState.rawEvents])
 
   return (
     <ReactFlowProvider>
@@ -1071,111 +1011,14 @@ export default function App() {
           </Box>
         </Stack>
       </Modal>
-      <Modal
-        opened={Boolean(agentResultContext)}
-        onClose={() => {
-          setAgentResultContext(null)
-          setAgentResultSection(null)
-          setAgentResultError('')
-        }}
-        title={agentResultContext ? `${agentLabel(agentResultContext.agent)} result · ${agentResultContext.node.title}` : 'Agent result'}
-        size="72rem"
-        centered
-        classNames={{ content: 'run-details-modal-content', body: 'run-details-modal-body' }}
-        scrollAreaComponent={ScrollArea.Autosize}
-      >
-        {agentResultLoading ? (
-          <Text c="dimmed">Loading agent result...</Text>
-        ) : agentResultError ? (
-          <Alert color="red" variant="light">{agentResultError}</Alert>
-        ) : agentResultSection ? (
-          <Stack gap="sm">
-            <Group gap="xs" wrap="wrap">
-              {agentResultSection.status ? (
-                <Badge
-                  className={`run-status ${agentResultSection.status}`}
-                  variant="light"
-                  color={statusBadgeColor(agentResultSection.status)}
-                  size="xs"
-                  style={statusBadgeStyle(agentResultSection.status)}
-                >
-                  {agentResultSection.status}
-                </Badge>
-              ) : null}
-              {agentResultSection.runnerId ? <Badge variant="light" color="gray">runner {agentResultSection.runnerId}</Badge> : null}
-              {agentResultSection.sessionId ? <Badge variant="light" color="gray">session {agentResultSection.sessionId}</Badge> : null}
-              {agentResultSection.links.sessionUrl || agentResultSection.links.agentRunUrl ? (
-                <Anchor
-                  href={agentResultSection.links.sessionUrl || agentResultSection.links.agentRunUrl}
-                  target="_blank"
-                  rel="noreferrer"
-                  size="xs"
-                >
-                  Open in Netlify
-                </Anchor>
-              ) : null}
-            </Group>
-            {agentResultSection.path ? <Code block className="path-code">{agentResultSection.path}</Code> : null}
-            <Box className="prompt-markdown run-details-markdown">
-              {agentResultSection.markdown ? (
-                <MarkdownRenderer>{agentResultSection.markdown}</MarkdownRenderer>
-              ) : (
-                <Text c="dimmed">No markdown result was found for this agent run.</Text>
-              )}
-            </Box>
-          </Stack>
-        ) : agentResultContext ? (
-          <Stack gap="sm">
-            {agentResultLiveStatus ? (
-              <Badge
-                className={`run-status ${agentResultLiveStatus}`}
-                variant="light"
-                color={statusBadgeColor(agentResultLiveStatus)}
-                w="fit-content"
-                style={statusBadgeStyle(agentResultLiveStatus)}
-              >
-                {agentResultLiveStatus}
-              </Badge>
-            ) : null}
-            {['running', 'submitted', 'waiting', 'retrying', 'queued'].includes(agentResultLiveStatus) ? (
-              <Stack gap={6}>
-                <Text c="dimmed">No result yet. This remote agent run is still in progress.</Text>
-                {agentResultRunnerId ? (
-                  <Group gap="xs" wrap="nowrap">
-                    <Text size="sm" c="dimmed" w={92}>Runner ID</Text>
-                    <Code>{agentResultRunnerId}</Code>
-                  </Group>
-                ) : null}
-                {agentResultSessionId ? (
-                  <Group gap="xs" wrap="nowrap">
-                    <Text size="sm" c="dimmed" w={92}>Session ID</Text>
-                    <Code>{agentResultSessionId}</Code>
-                  </Group>
-                ) : null}
-                {agentResultSubmittedAfter !== null ? (
-                  <Group gap="xs" wrap="nowrap">
-                    <Text size="sm" c="dimmed" w={92}>Submitted</Text>
-                    <Text size="sm">after {agentResultSubmittedAfter}s</Text>
-                  </Group>
-                ) : null}
-                {agentResultLiveEvent?.at ? (
-                  <Group gap="xs" wrap="nowrap">
-                    <Text size="sm" c="dimmed" w={92}>Last event</Text>
-                    <Text size="sm">{new Date(agentResultLiveEvent.at).toLocaleTimeString()}</Text>
-                  </Group>
-                ) : null}
-                {agentResultLiveUrl ? (
-                  <Anchor href={agentResultLiveUrl} target="_blank" rel="noreferrer" size="sm">
-                    Open in Netlify
-                  </Anchor>
-                ) : null}
-              </Stack>
-            ) : (
-              <Text c="dimmed">No results from dry runs.</Text>
-            )}
-          </Stack>
-        ) : null}
-      </Modal>
+      <RunDetailsModal
+        opened={Boolean(detailsModalContext)}
+        onClose={() => setDetailsModalContext(null)}
+        runId={detailsModalContext?.runId || ''}
+        initialSelector={detailsModalLiveContext?.selector || detailsModalContext?.selector}
+        liveContext={detailsModalLiveContext}
+        missingRunMessage="Load a saved workflow run before opening agent results."
+      />
     </ReactFlowProvider>
   )
 }

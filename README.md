@@ -451,6 +451,8 @@ When the target is a GitHub Actions run URL or run ID, `nax sync` downloads the 
 | `--notify` | macOS desktop notification when the flow finishes. |
 | `--no-auto-context` | Skip pinned SHA + PR ledger injection. |
 | `--no-fetch-results` | Skip prior-round result fetching. |
+| `--output-budget` | Opt into response-size guidance for chained workflow prompts. Off by default because blob offload can carry large downstream context. |
+| `--output-budget-bytes <n>` | Target response size when `--output-budget` is enabled (default `64000`). |
 | `--issue <list>` | Recovery: comma-separated issue numbers for comment steps. |
 | `--from-issues <list>` | Recovery: source issue numbers to embed for comment steps. |
 | `--filter <app>` | Explicit Netlify JavaScript workspace filter for local Agent Runner API runs. |
@@ -501,6 +503,32 @@ frontend (1963fff0-bb0c-4f91-8601-f7acd91cd76e)
 ```
 
 For JavaScript workspaces, `nax` uses `@netlify/build-info` to decide whether a Netlify CLI `--filter` is required. Non-workspace multi-project repos can choose a project without inventing a workspace filter; workspace repos still need one clear filter in the build command or an explicit `--filter <app>`.
+
+### Oversized fan-in prompts
+
+This is a temporary workaround for a Netlify platform limitation: hosted Agent Runner currently receives prompts through a constrained argv path, so large fan-in prompts can fail before the agent starts.
+
+For Netlify Agent Runner prompt delivery (`netlify-api` plus GitHub Actions issue/comment flows), if a step's full prompt is larger than `NAX_SAFE_PROMPT_BYTES`, `nax` writes oversized content to a temporary Netlify Blob with retrying `netlify blobs:set --input <tempfile>`. Fan-in steps offload complete prior results while keeping bounded essentials inline. If the base prompt itself is too large, `nax` offloads the full prompt and submits a small fetch wrapper instead. Both paths use a full-path `/opt/buildhome/node-deps/node_modules/.bin/netlify blobs:get` instruction and verification markers. If blob offload is disabled or upload fails, `nax` falls back to the compact prompt only when that compact prompt is still inside the safe byte budget; otherwise it fails before submission with exact size details.
+
+Blob refs are recorded in `.nax/blob-refs.jsonl`, and every offloaded payload is mirrored locally under `.nax/workflows/<run-id>/blobs/<blob-key>.md` with adjacent metadata JSON for debugging. Remote blobs are cleaned up at flow completion with retrying deletes, but the local debug copies stay in the workflow artifact directory. Cleanup is based on recorded blob refs, not on the selected transport, so it applies to both `netlify-api` and GitHub Actions issue/comment flows. If `nax` itself is running inside GitHub Actions, the job needs Netlify CLI plus `NETLIFY_AUTH_TOKEN`/site context. Interrupted cleanup leaves refs marked for later sweep:
+
+```bash
+nax clean blobs          # dry-run stale/pending blob cleanup
+nax clean blobs --force  # delete stale/pending blob refs
+```
+
+Relevant environment knobs:
+
+| Name | Default | Meaning |
+|---|---|---|
+| `NAX_SAFE_PROMPT_BYTES` | `16384` | Maximum target bytes for submitted Netlify Agent Runner prompts. |
+| `NAX_PROMPT_BLOB_DISABLE` | unset | Disable blob offload and use compact-only fallback. |
+| `NAX_BLOB_RETRY_ATTEMPTS` | `3` | Attempts for blob set/get/delete CLI operations. |
+| `NAX_BLOB_CLEANUP_TTL_HOURS` | `24` | Age after which pending registry refs are eligible for `nax clean blobs`. |
+| `NAX_OUTPUT_BUDGET` | unset | Set to `1`/`true` to append optional response-size guidance to chained prompts. |
+| `NAX_OUTPUT_BUDGET_BYTES` | `64000` | Target response size when output-budget guidance is enabled. |
+
+Context fetch verification is intentionally conservative. `nax` records `contextFetchStatus` as `confirmed`, `probable`, `suspect`, or `failed`; it does not automatically rerun an expensive synthesis just because an agent forgot to echo a marker.
 
 ---
 
@@ -644,11 +672,13 @@ Every completed workflow writes durable artifacts under `.nax/`:
 ```text
 .nax/workflows/<workflow-run-id>/workflow.json
 .nax/workflows/<workflow-run-id>/artifacts/summary.md
+.nax/workflows/<workflow-run-id>/blobs/<blob-key>.md
 .nax/agent-runners/<runner-id>/summary.md
 .nax/agent-sessions/<session-id>/summary.md
 ```
 
 - `.nax/workflows/` — full multi-step workflow record and rollup.
+- `.nax/workflows/<id>/blobs/` — local debug mirrors of prompt blob payloads.
 - `.nax/agent-runners/` — one Netlify Agent Runner thread/conversation rollup.
 - `.nax/agent-sessions/` — one concrete agent result with output, usage, links, metadata.
 

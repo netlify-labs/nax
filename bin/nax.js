@@ -21,6 +21,7 @@ const {
 const { buildAutomaticContext, resolveRemoteBranchSha } = require('../src/review-context')
 const {
   assertCrossReviewComplete,
+  extractStructuredSection,
   fetchRoundResults,
   formatRoundResults,
   rawIssuesFromResults,
@@ -68,6 +69,22 @@ const { enableGitHubActionsSetup, findExistingAgentRunnerWorkflow, initSite, rea
 const { startVisualizeServer } = require('../src/visualize-server')
 const { runWorkflow } = require('../src/workflow-runner')
 const { createWorkflowEventContext } = require('../src/workflow-events')
+const { setBlob, deleteBlob } = require('../src/netlify-blobs')
+const {
+  addRunBlobRef,
+  cleanupRunBlobRefs,
+  sweepBlobRefs,
+} = require('../src/blob-ref-registry')
+const { writeLocalBlobDebugPayload } = require('../src/blob-debug-cache')
+const {
+  blobRefForStep,
+  buildBlobPayload,
+  buildFetchInstruction,
+  buildInlineEssentials,
+  classifyContextFetch,
+  compactTextByBytes,
+  safePromptBytes,
+} = require('../src/prompt-offload')
 const {
   applyAgentSelection,
   assertValidAgentSelection,
@@ -109,10 +126,11 @@ const BODY_FALLBACK_THRESHOLD = GITHUB_ISSUE_BODY_LIMIT - BODY_SAFETY_MARGIN
 const GITHUB_ACTION_TRIGGER_TEXT_WARNING_BYTES = 70 * 1024
 const GITHUB_ACTION_TRIGGER_TEXT_SAFE_MAX_BYTES = 80000
 const GITHUB_ACTION_TRIGGER_TEXT_ENV_PREFIX = 'TRIGGER_TEXT='
-const DEFAULT_OUTPUT_BUDGET_BYTES = 12000
+const DEFAULT_OUTPUT_BUDGET_BYTES = 64000
 const COMPACT_LOCAL_RESULT_CHAR_LIMIT = 6000
 const COMPACT_LOCAL_RESULTS_TOTAL_LIMIT = 36000
 const COMPACT_LOCAL_CONTEXT_CHAR_LIMIT = 12000
+const DEFAULT_LOCAL_SAFE_PROMPT_BYTES = 16384
 const AD_HOC_RUN_TARGET = '__ad_hoc_agent_run__'
 
 let clackModulePromise
@@ -221,10 +239,13 @@ function parsePositiveInteger(value, fallback) {
 }
 
 function outputBudgetEnabled(options = {}) {
+  if (options.outputBudget === true) return true
   if (options.outputBudget === false) return false
   const raw = String(process.env.NAX_OUTPUT_BUDGET || '').trim().toLowerCase()
+  if (['1', 'true', 'yes', 'on'].includes(raw)) return true
   if (['0', 'false', 'no', 'off'].includes(raw)) return false
-  return true
+  if (options.outputBudgetBytes || process.env.NAX_OUTPUT_BUDGET_BYTES) return true
+  return false
 }
 
 function outputBudgetBytes(options = {}) {
@@ -954,6 +975,173 @@ function buildCommentPlan({ promptName, prompt: promptOverride, options, context
   return { repo, issues }
 }
 
+function githubSafePromptBytes(options = {}) {
+  const envPrefixBytes = utf8ByteLength(GITHUB_ACTION_TRIGGER_TEXT_ENV_PREFIX)
+  return Math.min(localSafePromptBytes(options), GITHUB_ACTION_TRIGGER_TEXT_SAFE_MAX_BYTES - envPrefixBytes)
+}
+
+function githubResultsToSourceRuns(results = []) {
+  const runs = []
+  for (const result of results || []) {
+    const replies = Array.isArray(result.replies) ? result.replies : []
+    const body = replies.length > 0
+      ? replies.map((reply, index) => [
+          replies.length > 1 ? `### Reply ${index + 1} of ${replies.length}` : '',
+          reply?.body || '',
+        ].filter(Boolean).join('\n\n')).join('\n\n')
+      : 'No agent reply was found.'
+    runs.push({
+      agent: result.model || inferModelFromIssueTitle(result.issueTitle) || 'agent',
+      sourceStep: result.issueNumber ? `issue #${result.issueNumber}` : '',
+      runnerId: result.issueUrl || '',
+      resultText: body,
+    })
+  }
+  return runs
+}
+
+function githubIssueDeliveryKey(issue = {}) {
+  return [
+    issue.model || '',
+    issue.promptName || '',
+    issue.targetKind || '',
+    issue.targetNumber || issue.issueNumber || '',
+    issue.title || issue.issueTitle || '',
+  ].join(':')
+}
+
+function buildGithubFullPromptWrapper({ runner = '@netlify', model, blobRef }) {
+  return [
+    `${runner} ${model || 'agent'} fetch and follow the complete offloaded prompt before doing any other work.`,
+    '',
+    buildFullPromptWrapper({ blobRef }),
+  ].join('\n')
+}
+
+/** @param {Record<string, any>} param0 */
+function optionalNetlifyForBlobOffload({ projectRoot, options = {} } = {}) {
+  try {
+    return buildNetlifyEnv({ projectRoot, siteId: options.netlifySiteId })
+  } catch {
+    return null
+  }
+}
+
+/** @param {Record<string, any>} param0 */
+function ensureGithubIssueFullPromptBlobOffload({
+  issue,
+  promptBody,
+  runState,
+  stepState,
+  step,
+  projectRoot,
+  netlify,
+  options = {},
+  dryRun = false,
+} = {}) {
+  if (!netlify?.siteId) throw new Error('Netlify site context is required for GitHub full-prompt blob offload.')
+  const effectiveRunState = runState || { runId: `github-${Date.now()}`, blobRefs: [] }
+  const effectiveStepState = stepState || { id: step?.id || issue?.promptName || 'github' }
+  return ensureStepBlobOffload({
+    sourceRuns: [],
+    roundResults: '',
+    payloadText: promptBody,
+    refKind: 'full-prompt',
+    refStepId: [step?.id || issue?.promptName || 'github', issue?.model || 'agent'].join('-'),
+    runState: effectiveRunState,
+    stepState: effectiveStepState,
+    step: step || { id: issue?.promptName || 'github' },
+    projectRoot,
+    netlify,
+    options,
+    dryRun,
+    onRetry: ({ nextAttempt, attempts, delayMs, error, store, key }) => {
+      const delaySeconds = Math.round(delayMs / 1000)
+      console.log(`  Blob ${store}/${key}: retrying upload ${nextAttempt}/${attempts} in ${delaySeconds}s - ${error.message}`)
+    },
+  })
+}
+
+/** @param {Record<string, any>} param0 */
+function ensureGithubPlanBlobOffload({
+  results,
+  fullRoundResults,
+  runState,
+  stepState,
+  step,
+  projectRoot,
+  netlify,
+  options = {},
+  dryRun = false,
+} = {}) {
+  if (stepState.promptBlobRef) return stepState.promptBlobRef
+  if (!netlify?.siteId) throw new Error('Netlify site context is required for GitHub prompt blob offload.')
+  const sourceRuns = githubResultsToSourceRuns(results)
+  const seed = fullRoundResults || formatRoundResults({ heading: 'Prior Round Outputs', results })
+  const ref = blobRefForStep({
+    runId: runState?.runId || `github-${Date.now()}`,
+    stepId: step?.id || 'github',
+    payloadSeed: seed,
+  })
+  const blobPayload = buildBlobPayload({ fullResults: seed, sentinel: ref.sentinel })
+  const localDebug = dryRun || !runState || !stepState
+    ? {}
+    : writeLocalBlobDebugPayload({
+      runState,
+      stepState,
+      ref: { ...ref, kind: 'prior-results' },
+      payload: blobPayload,
+      kind: 'prior-results',
+      projectRoot,
+    })
+  const refInput = {
+    runId: runState?.runId || '',
+    stepId: stepState?.id || step?.id || '',
+    store: ref.store,
+    key: ref.key,
+    marker: ref.marker,
+    sentinel: ref.sentinel,
+    kind: 'prior-results',
+    ...localDebug,
+    status: 'active',
+  }
+  const entry = dryRun || !runState || !stepState
+    ? {
+        id: `${refInput.runId || ''}:${refInput.store}:${refInput.key}`,
+        ...refInput,
+        createdAt: new Date().toISOString(),
+        cleanupAttempts: 0,
+        lastCleanupError: '',
+      }
+    : addRunBlobRef(runState, stepState, refInput)
+  if (dryRun && runState && stepState) {
+    runState.blobRefs = [...(Array.isArray(runState.blobRefs) ? runState.blobRefs : []), entry]
+    stepState.blobRefs = [...(Array.isArray(stepState.blobRefs) ? stepState.blobRefs : []), entry]
+  }
+  if (stepState) stepState.promptBlobRef = entry
+  if (!dryRun) {
+    setBlob({
+      store: ref.store,
+      key: ref.key,
+      value: blobPayload,
+      siteId: netlify.siteId,
+      token: netlify.env?.NETLIFY_AUTH_TOKEN,
+      cwd: projectRoot,
+      env: netlify.env,
+      onRetry: ({ nextAttempt, attempts, delayMs, error, store, key }) => {
+        const delaySeconds = Math.round(delayMs / 1000)
+        console.log(`  Blob ${store}/${key}: retrying upload ${nextAttempt}/${attempts} in ${delaySeconds}s - ${error.message}`)
+      },
+    })
+  }
+  const safeBytes = githubSafePromptBytes(options)
+  return {
+    ...entry,
+    sourceRuns,
+    offloadedRoundResults: buildOffloadedRoundResults({ sourceRuns, blobRef: entry, safeBytes }),
+  }
+}
+
 async function pickPromptInteractively() {
   const clack = await loadClack()
   const prompts = listPrompts()
@@ -1135,12 +1323,54 @@ function buildAndMaybeFallbackPlan(input, planBuilder) {
 
   const fullRoundResults = formatFor(false)
   let plan = planBuilder({ ...input, context, roundResults: fullRoundResults })
+  const originalIssueBodies = new Map((plan.issues || []).map((issue) => [githubIssueDeliveryKey(issue), issue.body]))
+  const safeBytes = githubSafePromptBytes(input.options)
+  const promptUnsafe = plan.issues.some((issue) => utf8ByteLength(issue.body) > safeBytes)
 
-  const oversized = plan.issues.some((issue) => issue.body.length > BODY_FALLBACK_THRESHOLD)
-  if (oversized && input.promptName === 'summarize-consensus' && results.length > 0) {
+  if (promptUnsafe && results.length > 0 && !blobOffloadDisabled(input.options)) {
+	    const netlify = input.netlify || optionalNetlifyForBlobOffload(/** @type {any} */ ({ projectRoot: input.projectRoot, options: input.options }))
+    if (netlify) {
+      try {
+        const ref = ensureGithubPlanBlobOffload({
+          results,
+          fullRoundResults,
+          runState: input.runState,
+          stepState: input.stepState,
+          step: input.step,
+          projectRoot: input.projectRoot,
+          netlify,
+          options: input.options,
+          dryRun: input.options.dryRun === true,
+        })
+        plan = planBuilder({ ...input, context, roundResults: ref.offloadedRoundResults })
+        for (const issue of plan.issues) {
+          issue.promptDelivery = {
+            mode: 'blob',
+            promptBytes: utf8ByteLength(issue.body),
+            safePromptBytes: safeBytes,
+            blobRef: {
+              id: ref.id,
+              store: ref.store,
+              key: ref.key,
+              marker: ref.marker,
+              sentinel: ref.sentinel,
+            },
+            contextFetchPolicy: input.options.contextFetchPolicy || input.step?.contextFetchPolicy || 'optional',
+          }
+        }
+      } catch (error) {
+        console.error(`Warning: GitHub prompt blob offload failed; trying compact fallback. ${error?.message || String(error)}`)
+      }
+    } else {
+      console.error('Warning: GitHub prompt blob offload skipped because Netlify site/token context is unavailable; trying compact fallback.')
+    }
+  }
+
+  const oversized = plan.issues.some((issue) => issue.body.length > BODY_FALLBACK_THRESHOLD || utf8ByteLength(issue.body) > safeBytes)
+  if (oversized && results.length > 0 && !plan.issues.every((issue) => issue.promptDelivery?.mode === 'blob')) {
     const offending = plan.issues.find((issue) => issue.body.length > BODY_FALLBACK_THRESHOLD)
     console.error(
-      `Issue body is ${offending.body.length} chars (limit ${BODY_FALLBACK_THRESHOLD}); ` +
+      `Issue body is ${(offending || plan.issues[0]).body.length} chars; ` +
         'falling back to structured-findings JSON only for embedded round outputs.',
     )
     const structuredRoundResults = formatFor(true)
@@ -1151,6 +1381,59 @@ function buildAndMaybeFallbackPlan(input, planBuilder) {
         `Warning: structured-only body is still ${stillOversized.body.length} chars (over ${BODY_FALLBACK_THRESHOLD}); ` +
           'gh issue create may fail. Consider --no-auto-context or fewer source issues.',
       )
+    }
+  }
+
+  const stillUnsafe = (plan.issues || []).filter((issue) => utf8ByteLength(issue.body) > safeBytes)
+  if (stillUnsafe.length > 0 && !blobOffloadDisabled(input.options)) {
+    const netlify = input.netlify || optionalNetlifyForBlobOffload(/** @type {any} */ ({ projectRoot: input.projectRoot, options: input.options }))
+    if (netlify) {
+      for (const issue of stillUnsafe) {
+        const originalBody = originalIssueBodies.get(githubIssueDeliveryKey(issue)) || issue.body
+        const ref = ensureGithubIssueFullPromptBlobOffload({
+          issue,
+          promptBody: originalBody,
+          runState: input.runState,
+          stepState: input.stepState,
+          step: input.step,
+          projectRoot: input.projectRoot,
+          netlify,
+          options: input.options,
+          dryRun: input.options.dryRun === true,
+        })
+        const wrapper = buildGithubFullPromptWrapper({
+          runner: input.options.runner || '@netlify',
+          model: issue.model,
+          blobRef: ref,
+        })
+        const wrapperBytes = utf8ByteLength(wrapper)
+        if (wrapperBytes > safeBytes) {
+          throw new Error([
+            `GitHub full-prompt wrapper for ${githubActionPromptBudgetLabel(issue)} still exceeds the safe prompt budget.`,
+            `Wrapper prompt: ${wrapperBytes.toLocaleString()} bytes.`,
+            `Safe budget: ${safeBytes.toLocaleString()} bytes.`,
+            `Blob: ${ref.store}/${ref.key}.`,
+          ].join(' '))
+        }
+        issue.body = wrapper
+        issue.promptDelivery = {
+          mode: 'blob',
+          kind: 'full-prompt',
+          promptBytes: utf8ByteLength(originalBody),
+          safePromptBytes: safeBytes,
+          offloadedPromptBytes: wrapperBytes,
+          blobRef: {
+            id: ref.id,
+            store: ref.store,
+            key: ref.key,
+            marker: ref.marker,
+            sentinel: ref.sentinel,
+          },
+          contextFetchPolicy: input.options.contextFetchPolicy || input.step?.contextFetchPolicy || 'optional',
+        }
+      }
+    } else {
+      console.error('Warning: GitHub full-prompt blob offload skipped because Netlify site/token context is unavailable.')
     }
   }
 
@@ -3310,6 +3593,18 @@ function compactTextForRetry(text, limit, label = 'content') {
   return `${value.slice(0, headLength).trimEnd()}${note}${value.slice(value.length - tailLength).trimStart()}`
 }
 
+function localSafePromptBytes(options = {}) {
+  return safePromptBytes({
+    safePromptBytes: options.safePromptBytes || options.safePromptBytes === 0
+      ? options.safePromptBytes
+      : options.promptSafeBytes || process.env.NAX_SAFE_PROMPT_BYTES || DEFAULT_LOCAL_SAFE_PROMPT_BYTES,
+  })
+}
+
+function compactLocalTextByBytes(text, limit, label = 'content') {
+  return compactTextByBytes(text, Math.max(0, Number(limit) || 0), label)
+}
+
 /** @param {any} runs @param {Record<string, any>} param1 */
 function formatCompactLocalRunResults(runs, {
   perRunLimit = COMPACT_LOCAL_RESULT_CHAR_LIMIT,
@@ -3319,7 +3614,7 @@ function formatCompactLocalRunResults(runs, {
   if (completed.length === 0) return ''
 
   const parts = ['## Prior Agent Results']
-  let used = parts[0].length
+  let used = utf8ByteLength(parts[0])
   for (let index = 0; index < completed.length; index += 1) {
     const run = completed[index]
     const source = run.sourceStep ? ` from ${run.sourceStep}` : ''
@@ -3327,12 +3622,12 @@ function formatCompactLocalRunResults(runs, {
     const blockPrefix = ['', `<details>`, `<summary>${title}</summary>`, ''].join('\n')
     const blockSuffix = ['', `</details>`].join('\n')
     const remaining = totalLimit - used
-    const contentLimit = Math.min(perRunLimit, remaining - blockPrefix.length - blockSuffix.length)
+    const contentLimit = Math.min(perRunLimit, remaining - utf8ByteLength(blockPrefix) - utf8ByteLength(blockSuffix))
     if (contentLimit < 200) {
       parts.push('', `[${completed.length - index} prior results omitted to fit retry prompt size.]`)
       break
     }
-    const content = compactTextForRetry(run.resultText, contentLimit, `${title} result`)
+    const content = compactLocalTextByBytes(run.resultText, contentLimit, `${title} result`)
     const block = [
       '',
       `<details>`,
@@ -3343,9 +3638,9 @@ function formatCompactLocalRunResults(runs, {
       `</details>`,
     ].join('\n')
     parts.push(block)
-    used += block.length
+    used += utf8ByteLength(block)
   }
-  return parts.join('\n')
+  return compactLocalTextByBytes(parts.join('\n'), totalLimit, 'Prior Agent Results')
 }
 
 /** @param {Record<string, any>} param0 */
@@ -3373,20 +3668,454 @@ function buildLocalAgentPrompt({ model, prompt, context, roundResults }) {
   return parts.join('\n')
 }
 
+function renderStructuredForLocalEssentials(resultText) {
+  const section = extractStructuredSection(resultText)
+  if (!section) return ''
+  return [
+    section.heading,
+    '',
+    '```json',
+    section.json,
+    '```',
+  ].join('\n')
+}
+
+function blobOffloadDisabled(options = {}) {
+  return options.promptBlobDisable === true || process.env.NAX_PROMPT_BLOB_DISABLE === '1' || /^true$/i.test(process.env.NAX_PROMPT_BLOB_DISABLE || '')
+}
+
+function localPromptByteMetrics(promptText, compactPromptText, safeBytes) {
+  return {
+    promptBytes: utf8ByteLength(promptText),
+    compactPromptBytes: utf8ByteLength(compactPromptText),
+    safePromptBytes: safeBytes,
+  }
+}
+
+/** @param {Record<string, any>} param0 */
+function ensureStepBlobOffload({
+  sourceRuns,
+  roundResults,
+  payloadText,
+  refKind = 'prior-results',
+  refStepId,
+  runState,
+  stepState,
+  step,
+  projectRoot,
+  netlify,
+  options = {},
+  dryRun = false,
+  onRetry = () => {},
+} = {}) {
+  const seed = payloadText || roundResults || formatLocalRunResults(sourceRuns)
+  const ref = blobRefForStep({
+    runId: runState.runId,
+    stepId: refStepId || step.id,
+    payloadSeed: seed,
+    kind: refKind,
+  })
+  if (stepState.promptBlobRef?.store === ref.store && stepState.promptBlobRef?.key === ref.key) return stepState.promptBlobRef
+  const blobPayload = buildBlobPayload({ fullResults: seed, sentinel: ref.sentinel })
+  const localDebug = dryRun
+    ? {}
+    : writeLocalBlobDebugPayload({
+      runState,
+      stepState,
+      ref: { ...ref, kind: refKind },
+      payload: blobPayload,
+      kind: refKind,
+      projectRoot,
+    })
+  const refInput = {
+    ...ref,
+    kind: refKind,
+    ...localDebug,
+    status: dryRun ? 'dry-run' : 'active',
+  }
+  const entry = dryRun
+    ? {
+      id: `${runState.runId || ''}:${ref.store}:${ref.key}`,
+      runId: runState.runId || '',
+      stepId: stepState.id || '',
+      ...refInput,
+      createdAt: new Date().toISOString(),
+      cleanupAttempts: 0,
+      lastCleanupError: '',
+    }
+    : addRunBlobRef(runState, stepState, refInput)
+  if (dryRun) {
+    runState.blobRefs = [...(Array.isArray(runState.blobRefs) ? runState.blobRefs : []), entry]
+    stepState.blobRefs = [...(Array.isArray(stepState.blobRefs) ? stepState.blobRefs : []), entry]
+  }
+  stepState.promptBlobRef = entry
+  if (!dryRun) {
+    setBlob({
+      store: ref.store,
+      key: ref.key,
+      value: blobPayload,
+      siteId: netlify.siteId,
+      token: netlify.env?.NETLIFY_AUTH_TOKEN,
+      cwd: projectRoot,
+      env: netlify.env,
+      onRetry,
+    })
+  }
+  return entry
+}
+
+/** @param {Record<string, any>} param0 */
+function buildSafeCompactLocalPrompt({ agent, prompt, stepContext, sourceRuns, safeBytes }) {
+  const basePrompt = buildLocalAgentPrompt({ model: agent, prompt, context: '', roundResults: '' })
+  const remaining = Math.max(800, safeBytes - utf8ByteLength(basePrompt) - 400)
+  const resultBudget = Math.floor(remaining * 0.7)
+  const contextBudget = Math.max(0, remaining - resultBudget)
+  const compactRoundResults = formatCompactLocalRunResults(sourceRuns, {
+    totalLimit: resultBudget,
+    perRunLimit: Math.max(500, Math.floor(resultBudget / Math.max(1, sourceRuns.length))),
+  })
+  const compactContext = compactLocalTextByBytes(stepContext, contextBudget, 'Additional Context')
+  return buildLocalAgentPrompt({
+    model: agent,
+    prompt,
+    context: compactContext,
+    roundResults: compactRoundResults,
+  })
+}
+
+/** @param {Record<string, any>} param0 */
+function buildOffloadedRoundResults({ sourceRuns, blobRef, safeBytes }) {
+  const essentialsBytes = Math.max(1200, Math.floor(safeBytes * 0.55))
+  const inlineEssentials = buildInlineEssentials(sourceRuns, /** @type {any} */ ({
+    renderStructured: renderStructuredForLocalEssentials,
+    totalBytes: essentialsBytes,
+  }))
+  const instruction = buildFetchInstruction(blobRef)
+  return [inlineEssentials, instruction].filter(Boolean).join('\n\n')
+}
+
+function buildFullPromptWrapper({ blobRef }) {
+  return buildFetchInstruction({
+    ...blobRef,
+    kind: 'full-prompt',
+  })
+}
+
+/** @param {Record<string, any>} param0 */
+function ensureFullPromptBlobOffload({
+  agent,
+  promptText,
+  runState,
+  stepState,
+  step,
+  projectRoot,
+  netlify,
+  options = {},
+  dryRun = false,
+  onRetry = () => {},
+} = {}) {
+  return ensureStepBlobOffload({
+    sourceRuns: [],
+    roundResults: '',
+    payloadText: promptText,
+    refKind: 'full-prompt',
+    refStepId: [step?.id || 'step', agent || 'agent'].join('-'),
+    runState,
+    stepState,
+    step,
+    projectRoot,
+    netlify,
+    options,
+    dryRun,
+    onRetry,
+  })
+}
+
+/** @param {Record<string, any>} param0 */
+function prepareLocalPromptDelivery({
+  agent,
+  prompt,
+  step,
+  sourceRuns,
+  roundResults,
+  stepContext,
+  runState,
+  stepState,
+  projectRoot,
+  netlify,
+  options = {},
+  dryRun = false,
+} = {}) {
+  const safeBytes = localSafePromptBytes(options)
+  const promptText = buildLocalAgentPrompt({
+    model: agent,
+    prompt,
+    context: stepContext,
+    roundResults,
+  })
+  const compactPromptText = buildSafeCompactLocalPrompt({
+    agent,
+    prompt,
+    stepContext,
+    sourceRuns,
+    safeBytes,
+  })
+  const metrics = localPromptByteMetrics(promptText, compactPromptText, safeBytes)
+  if (metrics.promptBytes <= safeBytes) {
+    return {
+      promptText,
+      compactPromptText: metrics.compactPromptBytes < metrics.promptBytes ? compactPromptText : '',
+      promptDelivery: { mode: 'inline', ...metrics },
+    }
+  }
+  if (blobOffloadDisabled(options)) {
+    if (metrics.compactPromptBytes <= safeBytes) {
+      return {
+        promptText: compactPromptText,
+        compactPromptText,
+        promptDelivery: {
+          mode: 'compact',
+          fallbackReason: 'blob-offload-disabled',
+          ...metrics,
+        },
+      }
+    }
+    throw new Error([
+      `Prompt for ${agent} ${step.id} is too large for Netlify runner argv and cannot be offloaded.`,
+      `Full prompt: ${metrics.promptBytes.toLocaleString()} bytes.`,
+      `Compact prompt: ${metrics.compactPromptBytes.toLocaleString()} bytes.`,
+      `Safe budget: ${safeBytes.toLocaleString()} bytes.`,
+      'Blob offload is disabled by NAX_PROMPT_BLOB_DISABLE.',
+    ].join(' '))
+  }
+  let blobRef
+  if (sourceRuns.length > 0) {
+    try {
+      blobRef = ensureStepBlobOffload({
+        sourceRuns,
+        roundResults,
+        runState,
+        stepState,
+        step,
+        projectRoot,
+        netlify,
+        options,
+        dryRun,
+        onRetry: ({ nextAttempt, attempts, delayMs, error, store, key }) => {
+          const delaySeconds = Math.round(delayMs / 1000)
+          console.log(`  Blob ${store}/${key}: retrying upload ${nextAttempt}/${attempts} in ${delaySeconds}s — ${error.message}`)
+        },
+      })
+      const offloadedRoundResults = buildOffloadedRoundResults({ sourceRuns, blobRef, safeBytes })
+      const offloadedContext = compactLocalTextByBytes(stepContext, Math.max(0, Math.floor(safeBytes * 0.2)), 'Additional Context')
+      const offloadedPromptText = buildLocalAgentPrompt({
+        model: agent,
+        prompt,
+        context: offloadedContext,
+        roundResults: offloadedRoundResults,
+      })
+      const offloadedBytes = utf8ByteLength(offloadedPromptText)
+      if (offloadedBytes <= safeBytes) {
+        return {
+          promptText: offloadedPromptText,
+          compactPromptText: compactPromptText && metrics.compactPromptBytes <= safeBytes ? compactPromptText : '',
+          promptDelivery: {
+            mode: 'blob',
+            kind: 'prior-results',
+            ...metrics,
+            offloadedPromptBytes: offloadedBytes,
+            blobRef,
+            contextFetchPolicy: options.contextFetchPolicy || step.contextFetchPolicy || 'optional',
+          },
+          blobRef,
+        }
+      }
+    } catch (error) {
+      if (metrics.compactPromptBytes <= safeBytes) {
+        return {
+          promptText: compactPromptText,
+          compactPromptText,
+          promptDelivery: {
+            mode: 'compact',
+            fallbackReason: 'blob-set-failed',
+            fallbackError: error?.message || String(error),
+            ...metrics,
+          },
+        }
+      }
+      throw new Error([
+        `Prompt for ${agent} ${step.id} is too large and blob offload failed.`,
+        `Full prompt: ${metrics.promptBytes.toLocaleString()} bytes.`,
+        `Compact prompt: ${metrics.compactPromptBytes.toLocaleString()} bytes.`,
+        `Safe budget: ${safeBytes.toLocaleString()} bytes.`,
+        `Blob: ${stepState.promptBlobRef?.store || 'unknown'}/${stepState.promptBlobRef?.key || 'unknown'}.`,
+        `Error: ${error?.message || String(error)}`,
+      ].join(' '))
+    }
+  }
+
+  try {
+    blobRef = ensureFullPromptBlobOffload({
+      agent,
+      promptText,
+      runState,
+      stepState,
+      step,
+      projectRoot,
+      netlify,
+      options,
+      dryRun,
+      onRetry: ({ nextAttempt, attempts, delayMs, error, store, key }) => {
+        const delaySeconds = Math.round(delayMs / 1000)
+        console.log(`  Blob ${store}/${key}: retrying upload ${nextAttempt}/${attempts} in ${delaySeconds}s — ${error.message}`)
+      },
+    })
+  } catch (error) {
+    if (metrics.compactPromptBytes <= safeBytes) {
+      return {
+        promptText: compactPromptText,
+        compactPromptText,
+        promptDelivery: {
+          mode: 'compact',
+          fallbackReason: 'blob-set-failed',
+          fallbackError: error?.message || String(error),
+          ...metrics,
+        },
+      }
+    }
+    throw new Error([
+      `Prompt for ${agent} ${step.id} is too large and full-prompt blob offload failed.`,
+      `Full prompt: ${metrics.promptBytes.toLocaleString()} bytes.`,
+      `Compact prompt: ${metrics.compactPromptBytes.toLocaleString()} bytes.`,
+      `Safe budget: ${safeBytes.toLocaleString()} bytes.`,
+      `Error: ${error?.message || String(error)}`,
+    ].join(' '))
+  }
+  const offloadedPromptText = buildFullPromptWrapper({ blobRef })
+  const offloadedBytes = utf8ByteLength(offloadedPromptText)
+  if (offloadedBytes > safeBytes) {
+    throw new Error([
+      `Full-prompt wrapper for ${agent} ${step.id} still exceeds the safe Netlify runner budget.`,
+      `Wrapper prompt: ${offloadedBytes.toLocaleString()} bytes.`,
+      `Safe budget: ${safeBytes.toLocaleString()} bytes.`,
+      `Blob: ${blobRef.store}/${blobRef.key}.`,
+    ].join(' '))
+  }
+  return {
+    promptText: offloadedPromptText,
+    compactPromptText: compactPromptText && metrics.compactPromptBytes <= safeBytes ? compactPromptText : '',
+    promptDelivery: {
+      mode: 'blob',
+      kind: 'full-prompt',
+      ...metrics,
+      offloadedPromptBytes: offloadedBytes,
+      blobRef,
+      contextFetchPolicy: options.contextFetchPolicy || step.contextFetchPolicy || 'optional',
+    },
+    blobRef,
+  }
+}
+
+function applyContextFetchClassification(run) {
+  const ref = run.promptDelivery?.blobRef || run.blobRef
+  if (!ref || !String(run.resultText || '').trim()) return run
+  const classified = classifyContextFetch(/** @type {any} */ ({
+    reply: run.resultText,
+    marker: ref.marker,
+    sentinel: ref.sentinel,
+  }))
+  return {
+    ...run,
+    contextFetchStatus: classified.status,
+    contextFetchSignals: classified.signals,
+    contextFetchConfirmed: classified.confirmed,
+    promptDelivery: {
+      ...(run.promptDelivery || {}),
+      contextFetchStatus: classified.status,
+      contextFetchSignals: classified.signals,
+      contextFetchConfirmed: classified.confirmed,
+    },
+  }
+}
+
+/** @param {Record<string, any>} param0 */
+function cleanupLocalWorkflowBlobs({ runState, projectRoot, netlify, reason = 'flow-terminal' } = {}) {
+  if (!Array.isArray(runState?.blobRefs) || runState.blobRefs.length === 0) return []
+  const results = cleanupRunBlobRefs(/** @type {any} */ ({
+    runState,
+    projectRoot,
+    siteId: netlify?.siteId,
+    token: netlify?.env?.NETLIFY_AUTH_TOKEN,
+    env: netlify?.env,
+    deleteBlob,
+    log: (message) => console.warn(message),
+  }))
+  const failed = results.filter((result) => !result.ok)
+  if (failed.length > 0) {
+    runState.blobCleanupWarning = `${failed.length} prompt blob cleanup ${failed.length === 1 ? 'operation' : 'operations'} pending after ${reason}. Run "nax clean blobs --force" later.`
+  }
+  return results
+}
+
+/** @param {Record<string, any>} param0 */
+function cleanupWorkflowBlobsForRun({ runState, projectRoot, options = {}, reason = 'flow-terminal' } = {}) {
+  if (!Array.isArray(runState?.blobRefs) || runState.blobRefs.length === 0) return []
+  const netlify = buildNetlifyEnv({ projectRoot, siteId: options.netlifySiteId })
+  return cleanupLocalWorkflowBlobs({ runState, projectRoot, netlify, reason })
+}
+
+function handleClean(target = '', options = {}) {
+  const selected = String(target || '').trim().toLowerCase()
+  if (selected && selected !== 'blobs') {
+    throw new Error('Only `nax clean blobs` is implemented.')
+  }
+  const projectRoot = resolveProjectRoot(options.projectRoot, { cwd: process.cwd() })
+  const netlify = buildNetlifyEnv({ projectRoot, env: process.env, siteId: options.netlifySiteId })
+  const results = sweepBlobRefs(/** @type {any} */ ({
+    projectRoot,
+    siteId: netlify.siteId,
+    token: netlify.env.NETLIFY_AUTH_TOKEN,
+    env: netlify.env,
+    deleteBlob,
+    dryRun: options.force !== true,
+    ttlHours: Number.parseInt(options.ttlHours || process.env.NAX_BLOB_CLEANUP_TTL_HOURS || '24', 10),
+    log: (message) => console.warn(message),
+  }))
+  const action = options.force ? 'Cleaned' : 'Would clean'
+  console.log(`${action} ${results.length} prompt blob ${results.length === 1 ? 'ref' : 'refs'}.`)
+  for (const result of results) {
+    const ref = result.ref || {}
+    console.log(`- ${ref.store}/${ref.key}${result.ok ? '' : ` — ${result.error?.message || 'failed'}`}`)
+  }
+  if (!options.force && results.length > 0) console.log('Run again with --force to delete these blobs.')
+  return results
+}
+
 /** @param {Record<string, any>} param0 */
 function buildCompactLocalPromptForRetry({ flow, step, runState, run }) {
   const savedCompact = String(run.compactPromptText || '').trim()
   const savedPrompt = String(run.promptText || '')
-  if (savedCompact && savedCompact.length < savedPrompt.length) return savedCompact
+  const safeBytes = localSafePromptBytes(runState.options || {})
+  if (savedCompact && utf8ByteLength(savedCompact) < utf8ByteLength(savedPrompt) && utf8ByteLength(savedCompact) <= safeBytes) return savedCompact
 
   const options = runState.options || {}
   const prompt = loadStepPrompt(flow, step)
   const completedStepStates = completedStepMapFromRunState(runState)
   const sourceRuns = sourceRunsForStep(step, completedStepStates)
-  const compactRoundResults = formatCompactLocalRunResults(sourceRuns)
-  const compactContext = compactTextForRetry(
+  const instructionOnly = buildLocalAgentPrompt({
+    model: run.agent,
+    prompt,
+    context: '',
+    roundResults: '',
+  })
+  const remaining = Math.max(800, safeBytes - utf8ByteLength(instructionOnly) - 400)
+  const compactRoundResults = formatCompactLocalRunResults(sourceRuns, {
+    totalLimit: Math.floor(remaining * 0.7),
+    perRunLimit: Math.max(500, Math.floor(remaining * 0.7 / Math.max(1, sourceRuns.length))),
+  })
+  const compactContext = compactLocalTextByBytes(
     contextForRunState(runState, options),
-    COMPACT_LOCAL_CONTEXT_CHAR_LIMIT,
+    Math.floor(remaining * 0.3),
     'Additional Context',
   )
   const rebuilt = buildLocalAgentPrompt({
@@ -3395,8 +4124,8 @@ function buildCompactLocalPromptForRetry({ flow, step, runState, run }) {
     context: compactContext,
     roundResults: compactRoundResults,
   })
-  if (rebuilt.trim() && (!savedPrompt || rebuilt.length < savedPrompt.length)) return rebuilt
-  return compactTextForRetry(savedPrompt, COMPACT_LOCAL_RESULTS_TOTAL_LIMIT + COMPACT_LOCAL_CONTEXT_CHAR_LIMIT, 'Local agent prompt')
+  if (rebuilt.trim() && (!savedPrompt || utf8ByteLength(rebuilt) < utf8ByteLength(savedPrompt)) && utf8ByteLength(rebuilt) <= safeBytes) return rebuilt
+  return compactLocalTextByBytes(savedPrompt, safeBytes, 'Local agent prompt')
 }
 
 function completedStepMapFromRunState(runState) {
@@ -4738,13 +5467,13 @@ async function completeGithubStep({ runState, repo, stepState, step, options, ru
         step,
         timeoutMinutes,
         onRunResult: ({ result, reply, run, status }) => {
-          const normalized = normalizeGithubRunResult({
-            run,
-            result,
-            reply,
-            status,
-            marker: parseRunnerResultMarker(reply?.body || ''),
-          })
+	          const normalized = applyContextFetchClassification(normalizeGithubRunResult({
+	            run,
+	            result,
+	            reply,
+	            status,
+	            marker: parseRunnerResultMarker(reply?.body || ''),
+	          }))
           const index = stepState.runs.findIndex((candidate) => candidate.issueNumber === normalized.issueNumber)
           if (index !== -1) {
             Object.assign(stepState.runs[index], normalized)
@@ -4764,13 +5493,13 @@ async function completeGithubStep({ runState, repo, stepState, step, options, ru
         const result = results.find((item) => item.issueNumber === run.issueNumber)
         const replies = result?.replies || []
         const latest = replies[replies.length - 1]
-        const normalized = normalizeGithubRunResult({
-          run,
-          result,
-          reply: latest,
-          status: latest ? 'completed' : 'timeout',
-          marker: parseRunnerResultMarker(latest?.body || ''),
-        })
+	        const normalized = applyContextFetchClassification(normalizeGithubRunResult({
+	          run,
+	          result,
+	          reply: latest,
+	          status: latest ? 'completed' : 'timeout',
+	          marker: parseRunnerResultMarker(latest?.body || ''),
+	        }))
         Object.assign(run, normalized)
         runtimeEvents?.agentStatus(normalized.status || 'completed', run, stepState, step, {
           terminal: true,
@@ -4838,6 +5567,10 @@ async function executeGithubFlow({ flow, steps, options, runState, completedStep
       context: baseContext,
       roundResultsRaw,
       hasFutureSteps: stepIndex < steps.length - 1,
+      runState,
+      stepState,
+      step,
+      projectRoot: runState.projectRoot,
     }
     const plan = buildAndMaybeFallbackPlan(
       input,
@@ -4853,14 +5586,16 @@ async function executeGithubFlow({ flow, steps, options, runState, completedStep
 
     if (options.dryRun) {
       stepState.status = 'dry-run'
-      stepState.runs = (plan.issues || []).map((issue) => ({
-        transport: 'github',
-        agent: issue.model,
-        status: 'dry-run',
-        promptText: issue.body,
-        resultText: '',
-        raw: issue,
-      }))
+	      stepState.runs = (plan.issues || []).map((issue) => ({
+	        transport: 'github',
+	        agent: issue.model,
+	        status: 'dry-run',
+	        promptText: issue.body,
+	        resultText: '',
+	        promptDelivery: issue.promptDelivery || null,
+	        ...(issue.promptDelivery?.blobRef ? { blobRef: issue.promptDelivery.blobRef } : {}),
+	        raw: issue,
+	      }))
       completedStepStates.set(step.id, stepState)
       saveRunState(runState)
       for (const run of stepState.runs) runtimeEvents?.agentStatus('dry-run', run, stepState, step)
@@ -4899,9 +5634,11 @@ async function executeGithubFlow({ flow, steps, options, runState, completedStep
           transport: 'github',
           agent: issue.model,
           status: 'submitted',
-          promptText: issue.body,
-          resultText: '',
-          issueNumber,
+	          promptText: issue.body,
+	          resultText: '',
+	          promptDelivery: issue.promptDelivery || null,
+	          ...(issue.promptDelivery?.blobRef ? { blobRef: issue.promptDelivery.blobRef } : {}),
+	          issueNumber,
           issueUrl: issue.issueUrl,
           commentUrl: url,
           prUrl: issue.targetKind === 'pr' ? issue.targetUrl : '',
@@ -4942,9 +5679,11 @@ async function executeGithubFlow({ flow, steps, options, runState, completedStep
           transport: 'github',
           agent: issue.model,
           status: 'submitted',
-          promptText: issue.body,
-          resultText: '',
-          issueNumber,
+	          promptText: issue.body,
+	          resultText: '',
+	          promptDelivery: issue.promptDelivery || null,
+	          ...(issue.promptDelivery?.blobRef ? { blobRef: issue.promptDelivery.blobRef } : {}),
+	          issueNumber,
           issueUrl: url,
           commentUrl: '',
           prUrl: '',
@@ -5023,25 +5762,29 @@ async function completeLocalStep({ runState, stepState, step, options, projectRo
           reporter.updateRun(event)
         },
         onTerminalRun: (run) => {
-          addLocalRunLinks(run, projectRoot)
-          const index = stepState.runs.findIndex((candidate) => candidate.runnerId === run.runnerId)
-          if (index !== -1) stepState.runs[index] = run
-          const artifactResult = persistRunArtifact(runState, stepState, run)
-          emitRunArtifact(runtimeEvents, runState, stepState, run, artifactResult)
-          reportTerminalLocalRun(reporter, run, projectRoot)
-          runtimeEvents?.agentStatus(run.status || 'completed', run, stepState, step, {
+          const classifiedRun = applyContextFetchClassification(run)
+          addLocalRunLinks(classifiedRun, projectRoot)
+          const index = stepState.runs.findIndex((candidate) => candidate.runnerId === classifiedRun.runnerId)
+          if (index !== -1) stepState.runs[index] = classifiedRun
+          const artifactResult = persistRunArtifact(runState, stepState, classifiedRun)
+          emitRunArtifact(runtimeEvents, runState, stepState, classifiedRun, artifactResult)
+          reportTerminalLocalRun(reporter, classifiedRun, projectRoot)
+          runtimeEvents?.agentStatus(classifiedRun.status || 'completed', classifiedRun, stepState, step, {
             terminal: true,
-            usage: run.usage || null,
-            hasResult: Boolean(run.resultText),
-            error: run.status === 'failed' || run.status === 'timeout' ? conciseErrorMessage(run.resultText || run.raw?.submissionError || '') : '',
+            usage: classifiedRun.usage || null,
+            hasResult: Boolean(classifiedRun.resultText),
+            contextFetchStatus: classifiedRun.contextFetchStatus || '',
+            error: classifiedRun.status === 'failed' || classifiedRun.status === 'timeout' ? conciseErrorMessage(classifiedRun.resultText || classifiedRun.raw?.submissionError || '') : '',
           })
         },
       })
-      for (const run of completedRuns) {
-        addLocalRunLinks(run, projectRoot)
-      }
-      stepState.runs = completedRuns
-      for (const run of completedRuns) {
+      const classifiedRuns = completedRuns.map((run) => {
+        const classifiedRun = applyContextFetchClassification(run)
+        addLocalRunLinks(classifiedRun, projectRoot)
+        return classifiedRun
+      })
+      stepState.runs = classifiedRuns
+      for (const run of classifiedRuns) {
         reporter.updateRun({
           run,
           state: run.status,
@@ -5050,10 +5793,10 @@ async function completeLocalStep({ runState, stepState, step, options, projectRo
           terminalFailure: run.status === 'failed' || run.status === 'timeout',
         })
       }
-      const failedCount = completedRuns.filter((r) => r.status === 'failed' || r.status === 'timeout').length
+      const failedCount = classifiedRuns.filter((r) => r.status === 'failed' || r.status === 'timeout').length
       const completionSummary = agentStepCompletionSummary({
         stepTitle: step.title,
-        runs: completedRuns,
+        runs: classifiedRuns,
         failedCount,
       })
       if (failedCount > 0) {
@@ -5100,36 +5843,38 @@ async function executeLocalFlow({ flow, steps, options, runState, projectRoot, c
 
     const sourceRuns = sourceRunsForStep(step, completedStepStates)
     const roundResults = formatLocalRunResults(sourceRuns)
-    const compactRoundResults = formatCompactLocalRunResults(sourceRuns)
     const stepContext = contextWithOutputBudget(baseContext, options, {
       hasPriorResults: sourceRuns.length > 0,
       hasFutureSteps: stepIndex < steps.length - 1,
     })
-    const compactContext = compactTextForRetry(stepContext, COMPACT_LOCAL_CONTEXT_CHAR_LIMIT, 'Additional Context')
     const runs = step.agents.map((agent) => {
       const followUpRun = step.submit === 'follow-up'
         ? sourceRuns.find((sourceRun) => sourceRun.agent === agent && sourceRun.runnerId)
         : null
-      const promptText = buildLocalAgentPrompt({
-        model: agent,
+      const delivery = prepareLocalPromptDelivery({
+        agent,
         prompt,
-        context: stepContext,
+        step,
+        sourceRuns,
         roundResults,
-        date,
+        stepContext,
+        runState,
+        stepState,
+        projectRoot,
+        netlify,
+        options,
+        dryRun: options.dryRun,
       })
-      const compactPromptText = buildLocalAgentPrompt({
-        model: agent,
-        prompt,
-        context: compactContext,
-        roundResults: compactRoundResults,
-        date,
-      })
+      const promptDelivery = /** @type {any} */ (delivery.promptDelivery || {})
       return {
         transport: NETLIFY_API_TRANSPORT,
         agent,
         status: options.dryRun ? 'dry-run' : 'pending',
-        promptText,
-        compactPromptText: compactPromptText.length < promptText.length ? compactPromptText : '',
+        promptText: delivery.promptText,
+        compactPromptText: delivery.compactPromptText && utf8ByteLength(delivery.compactPromptText) < utf8ByteLength(delivery.promptText) ? delivery.compactPromptText : '',
+        promptDelivery,
+        ...(delivery.blobRef ? { blobRef: delivery.blobRef } : {}),
+        contextFetchPolicy: promptDelivery.contextFetchPolicy || '',
         resultText: '',
         runnerId: '',
         issueUrl: '',
@@ -5149,6 +5894,9 @@ async function executeLocalFlow({ flow, steps, options, runState, projectRoot, c
       console.log(`\n- ${titleCase(run.agent)} ${prompt.title}`)
       console.log(`  prompt: ${prompt.name}`)
       console.log(`  body: ${run.promptText.length} chars / ${utf8ByteLength(run.promptText).toLocaleString()} bytes`)
+      if (run.promptDelivery?.mode && run.promptDelivery.mode !== 'inline') {
+        console.log(`  delivery: ${run.promptDelivery.mode}${run.promptDelivery.blobRef ? ` (${run.promptDelivery.blobRef.store}/${run.promptDelivery.blobRef.key})` : ''}`)
+      }
     }
 
     if (options.dryRun) {
@@ -5805,6 +6553,12 @@ async function handleRunEngine(flowId, options) {
     } else {
       await executeGithubFlow({ flow: configuredFlow, steps, options: configuredOptions, runState, runtimeEvents })
     }
+    cleanupWorkflowBlobsForRun(/** @type {any} */ ({
+      runState,
+      projectRoot,
+      options: configuredOptions,
+      reason: 'completed workflow',
+    }))
 
     clearTrackedRunState(runState, { completed: true })
     persistWorkflowArtifacts(runState, { summaryOnly: true })
@@ -5815,6 +6569,16 @@ async function handleRunEngine(flowId, options) {
     printPostSuccessHandoffHint(runState, projectRoot)
   } catch (error) {
     runState.status = 'failed'
+    try {
+      cleanupWorkflowBlobsForRun(/** @type {any} */ ({
+        runState,
+        projectRoot,
+        options: configuredOptions,
+        reason: 'failed workflow',
+      }))
+    } catch (cleanupError) {
+      runState.blobCleanupWarning = cleanupError?.message || String(cleanupError)
+    }
     saveRunState(runState)
     persistWorkflowArtifacts(runState, { summaryOnly: true })
     emitWorkflowArtifacts(runtimeEvents, runState)
@@ -6089,6 +6853,7 @@ function hiddenCostOption() {
 
 function addOutputBudgetOptions(command) {
   return command
+    .option('--output-budget', 'Append optional output size guidance to chained workflow prompts')
     .option('--no-output-budget', 'Do not append output size guidance to chained workflow prompts')
     .option('--output-budget-bytes <bytes>', `Target response size for chained workflow outputs (default: ${DEFAULT_OUTPUT_BUDGET_BYTES})`)
 }
@@ -6262,6 +7027,16 @@ function buildProgram() {
     })
 
   program
+    .command('clean [target]')
+    .description('Clean temporary nax resources')
+    .option('--project-root <path>', 'Project root containing .nax artifacts')
+    .option('--ttl-hours <hours>', 'Age after which pending prompt blob refs are eligible for cleanup', '24')
+    .option('--force', 'Actually delete resources; without this, prints a dry-run plan')
+    .action((target, options, command) => {
+      handleClean(target || 'blobs', actionOptions(options, command))
+    })
+
+  program
     .command('issue [prompt]')
     .description('Create issues for a prompt')
     .option('--models <list>', `Comma-separated models (default: ${DEFAULT_MODELS.join(',')})`)
@@ -6393,9 +7168,13 @@ module.exports = {
     conciseErrorMessage,
     buildOutputBudgetContext,
     buildCompactLocalPromptForRetry,
+    buildFetchInstruction,
     buildHandoffPrompt,
+    buildOffloadedRoundResults,
     compactTextForRetry,
+    compactLocalTextByBytes,
     contextWithOutputBudget,
+    cleanupLocalWorkflowBlobs,
     enforceGithubActionPromptBudget,
     copyToClipboard,
     findGithubRunnerFailures,
@@ -6439,6 +7218,7 @@ module.exports = {
     localRetryCandidates,
     sortNetlifyConfigChoices,
     agentStepCompletionSummary,
+    applyContextFetchClassification,
     applyArchiveResultToRunner,
     archiveEligibleCompletedLocalRuns,
     AGENT_RUNNER_USE_CASES,
@@ -6461,6 +7241,10 @@ module.exports = {
     normalizeHandoffSourceKind,
     pickFlavor,
     formatCompactLocalRunResults,
+    formatLocalRunResults,
+    githubResultsToSourceRuns,
+    githubSafePromptBytes,
+    handleClean,
     makeStepProgressReporter,
     normalizeGithubRunResult,
     printPostSuccessHandoffHint,
@@ -6484,6 +7268,10 @@ module.exports = {
     waitForGithubStep,
     sourceIssueNumbersForStep,
     sourceRunsForStep,
+    prepareLocalPromptDelivery,
+    ensureGithubPlanBlobOffload,
+    buildAndMaybeFallbackPlan,
+    renderStructuredForLocalEssentials,
     withSelectedAgents,
     withSelectedStepModels,
     workflowPickerLabel,

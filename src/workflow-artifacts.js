@@ -175,6 +175,10 @@ function buildAgentJson({ runState = {}, step = {}, run = {}, attemptNumber = nu
     attemptNumber,
     usage: run.usage || null,
     fileChanges: run.fileChanges || null,
+    promptDelivery: run.promptDelivery || null,
+    contextFetchStatus: run.contextFetchStatus || '',
+    contextFetchSignals: run.contextFetchSignals || [],
+    contextFetchConfirmed: run.contextFetchConfirmed === true,
     links: runLinks(run),
     error: run.error || (run.status === 'failed' ? run.resultText || '' : ''),
     resultText: run.resultText || '',
@@ -193,6 +197,8 @@ function buildAgentMarkdown({ runState, step, run }) {
   if (run.sessionId) lines.push(`- Session ID: \`${run.sessionId}\``)
   const usage = formatUsageSummary(run.usage || {})
   if (usage) lines.push(`- Usage: ${usage}`)
+  if (run.promptDelivery?.mode) lines.push(`- Prompt delivery: ${run.promptDelivery.mode}`)
+  if (run.contextFetchStatus) lines.push(`- Offloaded context: ${run.contextFetchStatus}`)
   const fileChanges = formatFileChangesSummary(run.fileChanges || {})
   if (fileChanges) lines.push(`- File changes: ${fileChanges}`)
   const url = resultUrlForRun(run)
@@ -271,6 +277,10 @@ function buildStepJson({ runState = {}, step = {}, ordinal = stepOrdinal(runStat
         metadataPath: `agent-runners/${agent}.json`,
         attempts: attemptsForAgent(runsDir, agent),
         usage: run.usage || null,
+        promptDelivery: run.promptDelivery || null,
+        contextFetchStatus: run.contextFetchStatus || '',
+        contextFetchSignals: run.contextFetchSignals || [],
+        contextFetchConfirmed: run.contextFetchConfirmed === true,
         links: runLinks(run),
       }
     }),

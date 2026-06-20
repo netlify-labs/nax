@@ -5,7 +5,7 @@ const os = require('os')
 const path = require('path')
 const { spawnSync } = require('child_process')
 
-const { _private } = require('../../bin/nax')
+const { buildPlan, _private } = require('../../bin/nax')
 
 function tmpRoot() {
   return fs.mkdtempSync(path.join(os.tmpdir(), 'nax-flow-execution-'))
@@ -111,6 +111,251 @@ test('sourceRunsForStep dedupes within a single input step', () => {
   assert.deepEqual(_private.sourceRunsForStep(step, completed), [
     { agent: 'codex', runnerId: 'runner-1', resultText: 'a', sourceStep: 'review' },
   ])
+})
+
+test('prepareLocalPromptDelivery offloads unsafe fan-in prompts before first submit', () => {
+  const projectRoot = tmpRoot()
+  const sourceRuns = [
+    { agent: 'codex', runnerId: 'r1', sourceStep: 'review', resultText: `Codex full prose ${'A'.repeat(9000)} codex-tail` },
+    { agent: 'gemini', runnerId: 'r2', sourceStep: 'review', resultText: `Gemini full prose ${'B'.repeat(9000)} gemini-tail` },
+  ]
+  const runState = { runId: 'run-blob', projectRoot }
+  const stepState = { id: 'synthesize' }
+  const roundResults = _private.formatLocalRunResults(sourceRuns)
+
+  const delivery = _private.prepareLocalPromptDelivery({
+    agent: 'codex',
+    prompt: { name: 'synthesize', instruction: 'Synthesize.', body: 'Use the prior work.' },
+    step: { id: 'synthesize' },
+    sourceRuns,
+    roundResults,
+    stepContext: '',
+    runState,
+    stepState,
+    projectRoot,
+    netlify: { siteId: 'site-1', env: { NETLIFY_AUTH_TOKEN: 'token-1' } },
+    options: { safePromptBytes: 9000 },
+    dryRun: true,
+  })
+
+  assert.equal(delivery.promptDelivery.mode, 'blob')
+  assert.ok(Buffer.byteLength(delivery.promptText, 'utf8') <= 9000)
+  assert.match(delivery.promptText, /\/opt\/buildhome\/node-deps\/node_modules\/\.bin\/netlify blobs:get nax-run-blob synthesize-prior-results/)
+  assert.match(delivery.promptText, /NAX-CONTEXT-LOADED/)
+  assert.equal(delivery.promptText.includes(delivery.blobRef.sentinel), false)
+  assert.equal(delivery.promptText.includes(sourceRuns[0].resultText), false)
+  assert.equal(runState.blobRefs.length, 1)
+  assert.equal(stepState.promptBlobRef.key, 'synthesize-prior-results')
+})
+
+test('prepareLocalPromptDelivery falls back to compact prompt when blob offload is disabled', () => {
+  const sourceRuns = [
+    { agent: 'codex', runnerId: 'r1', sourceStep: 'review', resultText: `Codex full prose ${'A'.repeat(9000)} codex-tail` },
+  ]
+  const roundResults = _private.formatLocalRunResults(sourceRuns)
+
+  const delivery = _private.prepareLocalPromptDelivery({
+    agent: 'codex',
+    prompt: { name: 'synthesize', instruction: 'Synthesize.', body: 'Use the prior work.' },
+    step: { id: 'synthesize' },
+    sourceRuns,
+    roundResults,
+    stepContext: '',
+    runState: { runId: 'run-compact' },
+    stepState: { id: 'synthesize' },
+    projectRoot: tmpRoot(),
+    netlify: { siteId: 'site-1', env: { NETLIFY_AUTH_TOKEN: 'token-1' } },
+    options: { safePromptBytes: 9000, promptBlobDisable: true },
+    dryRun: true,
+  })
+
+  assert.equal(delivery.promptDelivery.mode, 'compact')
+  assert.equal(/** @type {any} */ (delivery.promptDelivery).fallbackReason, 'blob-offload-disabled')
+  assert.ok(Buffer.byteLength(delivery.promptText, 'utf8') <= 9000)
+  assert.equal(delivery.promptText.includes(sourceRuns[0].resultText), false)
+})
+
+test('prepareLocalPromptDelivery offloads an oversized first-step prompt with no prior results', () => {
+  const projectRoot = tmpRoot()
+  const largeBody = `Generate ideas from this complete brief. ${'A'.repeat(12000)} brief-tail`
+  const runState = { runId: 'run-full-prompt', projectRoot }
+  const stepState = { id: 'ideate' }
+
+  const delivery = _private.prepareLocalPromptDelivery({
+    agent: 'claude',
+    prompt: { name: 'ideate', instruction: 'Ideate.', body: largeBody },
+    step: { id: 'ideate' },
+    sourceRuns: [],
+    roundResults: '',
+    stepContext: '',
+    runState,
+    stepState,
+    projectRoot,
+    netlify: { siteId: 'site-1', env: { NETLIFY_AUTH_TOKEN: 'token-1' } },
+    options: { safePromptBytes: 5000 },
+    dryRun: true,
+  })
+
+  const promptDelivery = /** @type {any} */ (delivery.promptDelivery)
+  assert.equal(promptDelivery.mode, 'blob')
+  assert.equal(promptDelivery.kind, 'full-prompt')
+  assert.ok(Buffer.byteLength(delivery.promptText, 'utf8') <= 5000)
+  assert.match(delivery.promptText, /\/opt\/buildhome\/node-deps\/node_modules\/\.bin\/netlify blobs:get nax-run-full-prompt ideate-claude-full-prompt/)
+  assert.match(delivery.promptText, /Full prompt \(offloaded\)/)
+  assert.equal(delivery.promptText.includes('brief-tail'), false)
+  assert.equal(delivery.promptText.includes(delivery.blobRef.sentinel), false)
+  assert.equal(runState.blobRefs.length, 1)
+  assert.equal(stepState.promptBlobRef.key, 'ideate-claude-full-prompt')
+})
+
+test('applyContextFetchClassification records confidence without requiring rerun on missing marker', () => {
+  const run = {
+    resultText: `The blob-only conclusion was applied. ${'substantive '.repeat(200)}`,
+    promptDelivery: {
+      mode: 'blob',
+      blobRef: { marker: 'ctx-123', sentinel: 'blob-456' },
+    },
+  }
+
+  const classified = _private.applyContextFetchClassification(run)
+
+  assert.equal(classified.contextFetchStatus, 'probable')
+  assert.equal(classified.contextFetchConfirmed, true)
+  assert.deepEqual(classified.contextFetchSignals, ['substantive-output'])
+  assert.equal(classified.promptDelivery.contextFetchStatus, 'probable')
+})
+
+test('buildAndMaybeFallbackPlan offloads oversized GitHub issue prompts', () => {
+  const projectRoot = tmpRoot()
+  const largeReply = `Prior prose ${'A'.repeat(9000)} raw-tail`
+  const runState = { runId: 'github-run', projectRoot }
+  const stepState = { id: 'synthesize' }
+  const plan = _private.buildAndMaybeFallbackPlan({
+    promptName: 'synthesize',
+    prompt: { name: 'synthesize', title: 'Synthesize', instruction: 'synthesize', body: 'Use prior work.' },
+    options: {
+      models: 'codex',
+      repo: 'owner/repo',
+      runner: '@netlify',
+      date: '2026-06-20',
+      safePromptBytes: 5000,
+      dryRun: true,
+    },
+    context: '',
+    roundResultsRaw: [{
+      issueNumber: 29,
+      issueTitle: '2026-06-20 Codex Review',
+      issueUrl: 'https://github.com/owner/repo/issues/29',
+      model: 'codex',
+      replies: [{ body: largeReply, url: 'https://github.com/owner/repo/issues/29#issuecomment-1' }],
+    }],
+    runState,
+    stepState,
+    step: { id: 'synthesize' },
+    projectRoot,
+    netlify: { siteId: 'site-1', env: { NETLIFY_AUTH_TOKEN: 'token-1' } },
+  }, buildPlan)
+
+  const body = plan.issues[0].body
+  assert.equal(plan.issues[0].promptDelivery.mode, 'blob')
+  assert.match(body, /\/opt\/buildhome\/node-deps\/node_modules\/\.bin\/netlify blobs:get nax-github-run synthesize-prior-results/)
+  assert.match(body, /NAX-CONTEXT-LOADED/)
+  assert.equal(body.includes(stepState.promptBlobRef.sentinel), false)
+  assert.equal(body.includes(largeReply), false)
+  assert.ok(Buffer.byteLength(body, 'utf8') <= 5000)
+  assert.equal(runState.blobRefs.length, 1)
+})
+
+test('buildAndMaybeFallbackPlan offloads oversized GitHub comment-shaped prompts', () => {
+  const projectRoot = tmpRoot()
+  const largeReply = `Prior prose ${'B'.repeat(9000)} comment-tail`
+  const runState = { runId: 'github-comment-run', projectRoot }
+  const stepState = { id: 'cross-review' }
+  const commentPlanBuilder = ({ prompt, options, roundResults }) => ({
+    repo: options.repo,
+    issues: [{
+      issueNumber: '29',
+      issueTitle: '2026-06-20 Codex Review',
+      issueUrl: 'https://github.com/owner/repo/issues/29',
+      targetRepo: 'owner/repo',
+      targetKind: 'issue',
+      targetNumber: 29,
+      model: 'codex',
+      promptName: prompt.name,
+      body: `@netlify codex ${prompt.instruction}\n\n${roundResults}`,
+    }],
+  })
+
+  const plan = _private.buildAndMaybeFallbackPlan({
+    promptName: 'cross-review',
+    prompt: { name: 'cross-review', title: 'Cross Review', instruction: 'cross review', body: 'Compare prior work.' },
+    options: {
+      models: 'codex',
+      repo: 'owner/repo',
+      runner: '@netlify',
+      date: '2026-06-20',
+      issues: '29',
+      safePromptBytes: 5000,
+      dryRun: true,
+    },
+    context: '',
+    roundResultsRaw: [{
+      issueNumber: 29,
+      issueTitle: '2026-06-20 Codex Review',
+      issueUrl: 'https://github.com/owner/repo/issues/29',
+      model: 'codex',
+      replies: [{ body: largeReply, url: 'https://github.com/owner/repo/issues/29#issuecomment-1' }],
+    }],
+    runState,
+    stepState,
+    step: { id: 'cross-review' },
+    projectRoot,
+    netlify: { siteId: 'site-1', env: { NETLIFY_AUTH_TOKEN: 'token-1' } },
+  }, commentPlanBuilder)
+
+  const body = plan.issues[0].body
+  assert.equal(plan.issues[0].promptDelivery.mode, 'blob')
+  assert.match(body, /\/opt\/buildhome\/node-deps\/node_modules\/\.bin\/netlify blobs:get nax-github-comment-run cross-review-prior-results/)
+  assert.equal(body.includes(stepState.promptBlobRef.sentinel), false)
+  assert.equal(body.includes(largeReply), false)
+  assert.ok(Buffer.byteLength(body, 'utf8') <= 5000)
+})
+
+test('buildAndMaybeFallbackPlan offloads oversized GitHub first-step prompts with no prior results', () => {
+  const projectRoot = tmpRoot()
+  const largeBody = `Generate ideas from this complete brief. ${'C'.repeat(12000)} github-tail`
+  const runState = { runId: 'github-first-run', projectRoot }
+  const stepState = { id: 'ideate' }
+  const plan = _private.buildAndMaybeFallbackPlan({
+    promptName: 'ideate',
+    prompt: { name: 'ideate', title: 'Ideate', instruction: 'ideate', body: largeBody },
+    options: {
+      models: 'codex',
+      repo: 'owner/repo',
+      runner: '@netlify',
+      date: '2026-06-20',
+      safePromptBytes: 5000,
+      dryRun: true,
+    },
+    context: '',
+    roundResultsRaw: [],
+    runState,
+    stepState,
+    step: { id: 'ideate' },
+    projectRoot,
+    netlify: { siteId: 'site-1', env: { NETLIFY_AUTH_TOKEN: 'token-1' } },
+  }, buildPlan)
+
+  const body = plan.issues[0].body
+  const promptDelivery = /** @type {any} */ (plan.issues[0].promptDelivery)
+  assert.equal(promptDelivery.mode, 'blob')
+  assert.equal(promptDelivery.kind, 'full-prompt')
+  assert.match(body, /^@netlify codex fetch and follow the complete offloaded prompt/)
+  assert.match(body, /\/opt\/buildhome\/node-deps\/node_modules\/\.bin\/netlify blobs:get nax-github-first-run ideate-codex-full-prompt/)
+  assert.equal(body.includes('github-tail'), false)
+  assert.equal(body.includes(stepState.promptBlobRef.sentinel), false)
+  assert.ok(Buffer.byteLength(body, 'utf8') <= 5000)
+  assert.equal(runState.blobRefs.length, 1)
 })
 
 test('chooseNetlifyFilterOption does not require filters for non-workspace multi-app repos', async () => {
@@ -2250,12 +2495,18 @@ test('workflowPickerHint compacts project flow descriptions without source prefi
   assert.equal(hint.includes('project'), false)
 })
 
-test('contextWithOutputBudget appends default chained-output guidance', () => {
+test('contextWithOutputBudget does not append chained-output guidance by default', () => {
   const context = _private.contextWithOutputBudget('Base context', {}, { hasFutureSteps: true })
+
+  assert.equal(context, 'Base context')
+})
+
+test('contextWithOutputBudget appends opt-in chained-output guidance', () => {
+  const context = _private.contextWithOutputBudget('Base context', { outputBudget: true }, { hasFutureSteps: true })
 
   assert.match(context, /Base context/)
   assert.match(context, /## Output Budget/)
-  assert.match(context, /12,000 bytes/)
+  assert.match(context, /64,000 bytes/)
   assert.match(context, /reused as input to later workflow steps/)
   assert.match(context, /Omit:/)
 })

@@ -207,7 +207,7 @@ npm link    # exposes `nax` globally
 
 **Prerequisites:**
 
-- Node 22+
+- Node 18+ for the published CLI. Developing or rebuilding the visualizer UI requires Node 20.19+ or 22.12+.
 - [Netlify CLI](https://docs.netlify.com/cli/get-started/) — authenticated (`netlify login`)
 - [GitHub CLI](https://cli.github.com/) — authenticated (`gh auth login`)
 
@@ -312,6 +312,7 @@ nax handoff               Copy or continue from prior workflow/session results
 nax recent                Browse recent workflow/session/runner artifacts
 nax retry [run-id]        Retry one failed Netlify API agent run, then continue
 nax sync last             Pull remote updates for the latest local Agent Runner
+nax clean blobs           Preview or delete stale prompt blob refs
 nax visualize [flow]      Open the experimental local workflow visualizer
 nax ci '<command>'        Run a command only inside Netlify Agent Runner
 nax skills install        Install bundled agent skills into detected harness dirs
@@ -340,11 +341,13 @@ The workbench includes:
 | Dry Run | Calls the local API to run `nax run <flow> --dry --force`; it previews the command and output without writing `.nax` artifacts. |
 | Run | Requires a browser confirmation, then starts the workflow through the local `nax` command and streams stdout/stderr plus structured run events into the UI. |
 | Recent runs | Reads durable `.nax/workflows` state, highlights resumable runs, and overlays run status on the graph. |
-| Run details actions | Opens saved workflow, step, and agent results; copies result output; and can send selected artifacts to a follow-up agent. |
+| Run details actions | Opens saved workflow, step, and agent results; switches between Results and Prompt when prompt markdown is available; copies or opens the active markdown source; and can send selected artifacts to a follow-up agent. |
 
 The browser talks only to the local visualize server. Mutating endpoints require a per-process token embedded in the opened URL, and the server binds to `127.0.0.1` by default. Real runs still use the same transport setup as the CLI, so GitHub Actions and Netlify API prerequisites are unchanged.
 
-From a completed run details modal, **Send to next agent** opens a follow-up composer. The composer requires fresh user instructions before submission, defaults to the last meaningful result artifact, and lets you choose which workflow, step, runner, session, or result artifacts to include. In **Follow up on existing thread** mode, the selected model continues the matching prior Netlify Agent Runner when one exists; extra selected models start fresh runner threads seeded with the selected artifacts. **Start fresh agent runner** always starts new runner threads.
+Run details resolve the original step prompt from the workflow definition when possible. The center pane switches between rendered **Results** and **Prompt**, while the table of contents, copy button, open-file actions, and markdown source links follow the active view.
+
+From a completed run details modal, **Send to next agent** opens a follow-up composer. The composer requires fresh user instructions before submission, defaults to the last meaningful result artifact, and lets you choose which workflow, step, runner, session, or result artifacts to include. In **Follow up prompt on previous Agent Run** mode, the selected model continues the matching prior Netlify Agent Runner when one exists; extra selected models start fresh runner threads seeded with the selected artifacts. **Start fresh agent runner** always starts new runner threads.
 
 Visualizer follow-up submission returns after Netlify accepts the runner/session, not after the remote agent finishes. The notification includes remote links and any local artifact path the server could persist. Fresh runner submissions are saved as one-step pseudo-workflow runs so they can be opened from Recent runs. If Netlify accepts work but local artifact persistence fails, the API still returns success with `warnings[]` so the remote link is not lost.
 
@@ -443,6 +446,15 @@ The command fetches remote sessions with the Netlify CLI, writes missing or chan
 
 When the target is a GitHub Actions run URL or run ID, `nax sync` downloads the uploaded `nax-<flow>-<run_id>` artifact with `gh`, merges its workflow, runner, and session artifacts into local `.nax/`, localizes the workflow metadata for this checkout, and rebuilds the `latest` symlinks. This is the handoff path for workflows run through `.github/workflows/run-nax.yml`.
 
+### `nax clean`
+
+```bash
+nax clean blobs
+nax clean blobs --ttl-hours 1 --force
+```
+
+`nax clean blobs` sweeps stale or pending Netlify Blob prompt refs recorded in `.nax/blob-refs.jsonl`. It is a dry run by default. Add `--force` to delete eligible remote refs after interrupted runs or cleanup retries. Local debug mirrors under `.nax/workflows/<run-id>/blobs/` are workflow artifacts and are not removed by this command.
+
 ### `nax run` flags
 
 | Flag | What it does |
@@ -450,7 +462,11 @@ When the target is a GitHub Actions run URL or run ID, `nax sync` downloads the 
 | `--dry` | Preview the workflow plan without creating issues, comments, Agent Runner jobs, or `.nax` artifacts. |
 | `--force` | Skip confirmation prompts. |
 | `--branch <name>` | Branch to review. Accepts a PR selector like `#123`. |
-| `--transport <kind>` | `auto` (default), `github-actions`, `netlify-api`. |
+| `--transport <kind>` | `auto` (default), `netlify-api`, or GitHub Actions aliases (`github`, `github-actions`). |
+| `--models <list>` | Override the default agent list for runnable steps, e.g. `--models claude,codex`. |
+| `--step-models <step=models>` | Override agents for one step, e.g. `--step-models review=claude,codex`. Repeat as needed. |
+| `--label <name>` / `--labels <list>` | Add labels to GitHub issue/comment based submissions. |
+| `--date <yyyy-mm-dd>` | Pin date-sensitive prompt context. |
 | `--archive` | With `netlify-api`, archive completed intermediate agent runs after their results are captured; final-step runs stay visible. |
 | `--step <id>` | Run only that step. |
 | `--from-step <id>` | Run from that step through the end. |
@@ -493,7 +509,7 @@ nax skills update                        # reinstall latest
 | Desktop notifications | n/a | macOS only (`--notify`) |
 | Resume after interruption | Re-run the issue | `nax` offers to resume the unfinished run |
 
-`--transport auto` (default) prefers `github-actions` if both are configured. Pass `--transport netlify-api` to force Netlify API orchestration. `local-machine` remains as a backwards-compatible alias.
+`--transport auto` (default) prefers GitHub Actions if both transports are configured. Pass `--transport github` or `--transport github-actions` to force the workflow-dispatch path, and pass `--transport netlify-api` to force local Netlify API orchestration. `local-machine` remains as a backwards-compatible alias for older scripts.
 
 ### Multi-project Netlify repos
 
@@ -577,7 +593,9 @@ src/flows/<id>/flow.*   # one workflow file per built-in flow
 src/flows/<id>/prompts/ # one Markdown prompt per step
 .github/nax-flows/ # optional committed project-local workflows
 src/templates/      # bundled GitHub Actions workflow and skill templates
-tests/              # unit and integration suites (`npm test`)
+web/src/            # React visualizer source
+web/dist/           # packaged visualizer assets served by `nax visualize`
+tests/              # unit, integration, and e2e suites
 ```
 
 Key modules:
@@ -587,6 +605,12 @@ Key modules:
 - `src/run-state.js:1` — `.nax/workflows/<id>/workflow.json` durable state.
 - `src/workflow-artifacts.js:1` — summary rollups.
 - `src/round-results.js:1` — prior-round result fetching for follow-up steps.
+- `src/visualize-server.js:1` — local visualizer API, SSE, and mutation auth.
+- `src/visualize-run-details.js:1` — run-details data assembly for workflow, step, runner, session, result, and prompt markdown.
+- `src/followup-plan.js:1` — visualizer follow-up target, artifact, model, and mode planning.
+- `src/followup-delivery.js:1` — prompt/context delivery policy for visualizer follow-ups.
+- `src/followup-persistence.js:1` — submitted follow-up and fresh-run artifact projection.
+- `src/runner-event-log.js:1` — structured event JSONL append/replay support.
 
 ---
 
@@ -710,7 +734,7 @@ nax handoff --runner  <id> --agent codex
 nax handoff --workflow <id> --flow review     # chain a follow-up flow
 ```
 
-`nax visualize` offers a browser-based handoff path from Run details: choose **Send to next agent** -> **Run a followup** to submit a Netlify Agent Runner follow-up or a fresh seeded runner from selected artifacts. The CLI `nax handoff` command remains the terminal path for copying or chaining saved results.
+`nax visualize` offers a browser-based handoff path from Run details: choose **Send to next agent** to submit a Netlify Agent Runner follow-up or a fresh seeded runner from selected artifacts. The CLI `nax handoff` command remains the terminal path for copying or chaining saved results.
 
 ### Browsing recents
 
@@ -752,6 +776,7 @@ nax run review --step <step-id>      # re-run one step from scratch
 | `nax visualize` shows the fallback HTML page | Build the packaged UI with `npm run visualize:build`, or reinstall a package that includes `web/dist`. |
 | `nax visualize --port <n>` fails with address in use | Omit `--port` to let the server choose an available port, or pass a different port. |
 | Visualize API returns `unauthorized` | Reopen the full URL printed by `nax visualize`; mutating API calls require that session's `token` query value or `x-nax-token` header. |
+| Run details has no Prompt tab | The selected entry only shows Prompt when its workflow definition and prompt file can still be resolved. Verify the flow root, prompt path, or open the prompt from the graph node. |
 | Visualize follow-up is unavailable | The browser follow-up composer currently submits through the Netlify API transport. Use CLI handoff/workflow commands for GitHub Actions transport. |
 | Visualize reports an unknown workflow | Run `nax list` and use the displayed flow id. For project flows, also verify `--project-root` and `--flows-dir`. |
 | Visualize Run fails before submission | Fix the same GitHub/Netlify transport prerequisites you would fix for `nax run`: authenticated CLIs, linked Netlify site, or initialized GitHub Actions workflow. |
@@ -786,6 +811,9 @@ A: Yes — `.github/nax-flows/<id>/flow.*` plus a `prompts/` dir is the whole co
 
 **Q: Can I run only one agent for a step?**
 A: Set the step's `agents:` list to one entry (e.g. `agents: [codex]`). The `synthesize` step in the bundled flows does this.
+
+**Q: Can I inspect the prompt that produced a result?**
+A: Yes. In `nax visualize`, open Run details and switch from **Results** to **Prompt**. Copy and open-file actions follow the active view, so copying from the Prompt tab copies prompt markdown instead of result markdown.
 
 **Q: What happens if one agent fails mid-step?**
 A: The step still completes when the other agents finish or time out. The failed agent's result is recorded as a failure; downstream steps that depend on it can still run with the surviving results. Use `nax retry` to redo just the failed one.

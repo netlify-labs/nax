@@ -59,6 +59,24 @@ nax do-next
 nax do-next --branch '#123' --transport netlify-api --force
 ```
 
+## Additional Bundled Flows
+
+Use `nax list --verbose` for the live bundled and project-local flow set. Current bundled audit, implementation, and polish flows include:
+
+| Flow | Purpose |
+|------|---------|
+| `security-audit` | Auth, billing, webhook, tenant isolation, secrets, and attack-surface audits. |
+| `performance-audit` | Bottleneck discovery and measurement-first optimization planning. |
+| `analytics-audit` | Missing funnel, conversion, feature usage, and product telemetry plans. |
+| `seo-audit` | Metadata, crawlability, structured data, links, alt text, content, page-speed checks. |
+| `accessibility-audit` | WCAG 2.1 AA audit, synthesized fix plan, focused Codex implementation. |
+| `mobile-responsiveness` | Small-viewport audit and focused responsive layout fixes. |
+| `e2e-tests` | Critical-flow discovery, Playwright test planning, first test implementation. |
+| `unit-tests` | High-value unit test gap discovery and focused test implementation. |
+| `documentation` | README, setup, architecture, and operational documentation grounded in the codebase. |
+| `error-handling` | Error boundaries, logging, retries, validation, and user-friendly failure states. |
+| `ux-copy-polish` | Loading, empty, and error states plus visual polish, CTA hierarchy, and product copy. |
+
 ## Flow Authoring Notes
 
 - A flow is `<flows-dir>/<id>/flow.*` plus `<flows-dir>/<id>/prompts/*.md`.
@@ -67,4 +85,4 @@ nax do-next --branch '#123' --transport netlify-api --force
 - Use `action: comment` when continuing a runner thread.
 - Use `submit: follow-up` only when there is a prior runner for the same agent.
 - Use `input` to embed prior step results into the current prompt.
-- Keep follow-up prompt size under control; prior outputs can get large quickly.
+- Keep follow-up prompt size under control; prior outputs can get large quickly. `nax` can offload oversized context through Netlify Blobs, but concise step outputs still make downstream synthesis better.

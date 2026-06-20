@@ -20,15 +20,21 @@ nax run <flow>
 nax init
 nax handoff
 nax recent
+nax sync last
+nax clean blobs
+nax visualize
 nax skills install
 ```
 
 Useful flags:
 
 ```bash
---transport github-actions      # run through GitHub Actions
+--transport github              # run through GitHub Actions
+--transport github-actions      # same GitHub Actions transport, older explicit name
 --transport netlify-api         # orchestrate through Netlify CLI/API from this machine
 --branch <branch-or-pr>     # branch name or PR selector like '#123'
+--models <list>             # override agents for runnable steps
+--step-models <step=models> # override agents for a specific step
 --step <id>                 # run only one step
 --from-step <id>            # continue from a step through the end
 --timeout-minutes <n>       # per-step wait timeout
@@ -72,10 +78,11 @@ Use to pick the next best task. Steps:
 ## Operating Rules
 
 - Prefer `--transport netlify-api` when the user wants live local progress, resume state, or direct Netlify API control.
-- Prefer `--transport github-actions` when the user wants remote reproducibility and GitHub Actions logs.
+- Prefer `--transport github` / `--transport github-actions` when the user wants remote reproducibility and GitHub Actions logs.
 - Warn that local uncommitted/unpushed changes are invisible to remote Netlify agent runners.
 - Use `--branch '#123'` for PR-specific runs when the user references a PR number.
 - Use `--step` only for deliberate partial reruns; otherwise resume/retry saved Netlify API state.
+- Use `nax visualize` when the user wants to browse workflow state, inspect graph status, compare Results vs Prompt in run details, or send selected artifacts to a follow-up agent from the browser.
 - Treat `.nax/workflows/<workflow-run-id>/workflow.json` as the source of truth for workflow recovery.
 - Use `.nax/workflows/<workflow-run-id>/artifacts/summary.md` for full workflow handoff context.
 - Use `.nax/agent-sessions/<session-id>/summary.md` for one concrete agent result.
@@ -101,6 +108,10 @@ Completed results also persist as artifacts:
 
 Use `nax handoff` to continue from prior results interactively, or `nax handoff -c` to copy the latest useful summary.
 
+Use `nax sync last` when a Netlify UI follow-up happened outside the local process and the latest local runner is missing remote sessions.
+
+Use `nax visualize` to inspect saved runs in a browser. Run details can switch between rendered Results and the original Prompt when the prompt file is still resolvable from the flow definition.
+
 For a terminal failed Netlify API run that needs a compact follow-up prompt, use:
 
 ```bash
@@ -116,6 +127,17 @@ nax retry 2026-05-15T01-24-10-177Z-ideas --step react --agent claude
 The retry command submits a new follow-up session to the existing runner, waits for that one agent, updates run state, and continues downstream steps if the failed step becomes complete.
 
 ## Known Failure Modes
+
+### Prompt Blob Cleanup
+
+Large fan-in prompts can be offloaded to temporary Netlify Blobs. `nax` records refs in `.nax/blob-refs.jsonl`, mirrors payloads under `.nax/workflows/<run-id>/blobs/`, and retries cleanup at flow completion. If cleanup is interrupted:
+
+```bash
+nax clean blobs          # dry run
+nax clean blobs --force  # delete eligible stale/pending refs
+```
+
+Do not delete the local `.nax/workflows/<run-id>/blobs/` mirrors unless the user explicitly wants to prune workflow artifacts; they are useful for debugging prompt delivery.
 
 ### Capacity
 
@@ -133,7 +155,7 @@ Retryable once with a compact prompt when the failure text matches:
 fork/exec /opt/build-bin/agent-runner: argument list too long
 ```
 
-The compact prompt keeps the current step instructions intact and trims only embedded prior agent outputs / additional context. This is a workaround for a Netlify runner launch-path limitation, not a platform fix.
+The current prompt delivery path uses Netlify Blob offload when a full prompt is larger than the safe submission budget. If blob offload is disabled or unavailable, compact fallback keeps the current step instructions intact and trims only embedded prior agent outputs / additional context when the compact prompt is still under budget. This is a workaround for a Netlify runner launch-path limitation, not a platform fix.
 
 ## Extending Flows
 

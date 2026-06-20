@@ -34,11 +34,27 @@ function tmpRoot() {
 
 function writeCompletedRunFixture(projectRoot) {
   const runId = 'fixture-run-details'
+  const flowDir = path.join(projectRoot, '.github', 'nax-flows', 'review')
   const dir = path.join(projectRoot, '.nax', 'workflows', runId)
   const artifactsDir = path.join(dir, 'artifacts')
   const stepDir = path.join(artifactsDir, 'steps', '01-review')
   const runnerDir = path.join(stepDir, 'agent-runners')
+  fs.mkdirSync(path.join(flowDir, 'prompts'), { recursive: true })
   fs.mkdirSync(runnerDir, { recursive: true })
+
+  fs.writeFileSync(path.join(flowDir, 'flow.yml'), [
+    'id: review',
+    'title: Review',
+    'description: Fixture review flow',
+    'defaults:',
+    '  agents: [codex]',
+    'steps:',
+    '  - id: review',
+    '    title: Review',
+    '    prompt: prompts/review.md',
+    '',
+  ].join('\n'))
+  fs.writeFileSync(path.join(flowDir, 'prompts', 'review.md'), '---\ntitle: Review\n---\n\nReview this fixture prompt.\n')
 
   fs.writeFileSync(path.join(dir, 'workflow.json'), JSON.stringify({
     schemaVersion: 1,
@@ -69,8 +85,9 @@ function writeCompletedRunFixture(projectRoot) {
     flow: {
       id: 'review',
       title: 'Review',
+      dir: flowDir,
       steps: [
-        { id: 'review', title: 'Review', agents: ['codex'], submit: 'new-run' },
+        { id: 'review', title: 'Review', prompt: 'prompts/review.md', agents: ['codex'], submit: 'new-run' },
       ],
     },
     steps: [{
@@ -173,6 +190,11 @@ test('visualize opens shared run details modal from runs and graph agent results
 
     await expect(page.getByRole('dialog', { name: /Workflow results for "Review"/ })).toBeVisible()
     await expect(page.getByRole('heading', { name: 'Codex result' })).toBeVisible()
+    await expect(page.getByText('Final result text.')).toBeVisible()
+    await page.locator('.run-details-content-switch').getByRole('button', { name: 'Prompt' }).click()
+    await expect(page.getByRole('heading', { name: 'Review prompt' })).toBeVisible()
+    await expect(page.getByText('Review this fixture prompt.')).toBeVisible()
+    await page.locator('.run-details-content-switch').getByRole('button', { name: 'Results' }).click()
     await expect(page.getByText('Final result text.')).toBeVisible()
   } finally {
     await server.close()

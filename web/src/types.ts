@@ -203,6 +203,9 @@ export type RunDetailsSection = {
   }
   usage: Record<string, unknown> | null
   markdown: string
+  promptMarkdown?: string
+  promptPath?: string
+  promptTitle?: string
 }
 
 export type RunFollowupTarget = {

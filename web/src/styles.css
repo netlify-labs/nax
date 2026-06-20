@@ -280,6 +280,10 @@ body {
   margin: 0 0 0.9em;
 }
 
+.prompt-markdown details {
+  margin-top: 20px;
+}
+
 .prompt-markdown :where(code, pre) {
   font-family: var(--mantine-font-family-monospace);
   font-size: 11px;
@@ -381,8 +385,44 @@ body {
   height: calc(90vh - 110px);
   max-height: none;
   overflow: auto;
-  padding-bottom: 200px;
-  scroll-padding-bottom: 200px;
+  padding-bottom: 540px;
+  scroll-padding-bottom: 540px;
+}
+
+.run-details-markdown-shell {
+  min-width: 0;
+}
+
+.run-details-content-switch {
+  position: relative;
+  z-index: 1;
+  width: fit-content;
+  margin: -28px 0 -1px auto;
+  overflow: hidden;
+  border: 1px solid color-mix(in srgb, var(--mantine-color-default-border), transparent 12%);
+  border-bottom-color: var(--mantine-color-default-border);
+  border-radius: var(--mantine-radius-sm) var(--mantine-radius-sm) 0 0;
+  background: light-dark(var(--mantine-color-gray-0), color-mix(in srgb, var(--mantine-color-dark-8), transparent 18%));
+}
+
+.run-details-content-switch-button {
+  min-width: 58px;
+  border-radius: 0;
+  color: light-dark(var(--mantine-color-gray-7), var(--mantine-color-dark-1));
+}
+
+.run-details-content-switch-button:hover {
+  color: light-dark(var(--mantine-color-teal-8), var(--mantine-color-teal-1));
+  background: light-dark(color-mix(in srgb, var(--mantine-color-teal-1), transparent 18%), color-mix(in srgb, var(--mantine-color-teal-9), transparent 70%));
+}
+
+.run-details-content-switch-button[data-active='true'] {
+  color: light-dark(var(--mantine-color-teal-9), var(--mantine-color-teal-1));
+  background: light-dark(color-mix(in srgb, var(--mantine-color-teal-1), transparent 8%), color-mix(in srgb, var(--mantine-color-teal-9), transparent 58%));
+}
+
+.run-details-content-switch-button[data-active='true']:hover {
+  background: light-dark(color-mix(in srgb, var(--mantine-color-teal-1), transparent 8%), color-mix(in srgb, var(--mantine-color-teal-9), transparent 58%));
 }
 
 .run-details-layout {

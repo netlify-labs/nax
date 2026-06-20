@@ -26,14 +26,22 @@ const StreamdownMarkdown = lazy(async () => {
   }
 })
 
-export function MarkdownRenderer({ children, fallback = 'Rendering markdown...' }: { children: string; fallback?: string }) {
+export function MarkdownRenderer({
+  children,
+  copyLabel = 'Copy markdown',
+  fallback = 'Rendering markdown...',
+}: {
+  children: string
+  copyLabel?: string
+  fallback?: string
+}) {
   return (
     <>
       <CopyButton value={children} timeout={1200}>
         {({ copied, copy }) => (
-          <Tooltip label={copied ? 'Copied' : 'Copy markdown'} position="left" withArrow>
+          <Tooltip label={copied ? 'Copied' : copyLabel} position="left" withArrow>
             <ActionIcon
-              aria-label="Copy raw markdown"
+              aria-label={copyLabel}
               className="markdown-copy-button"
               color={copied ? 'green' : 'gray'}
               onClick={copy}

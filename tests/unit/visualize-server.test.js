@@ -436,6 +436,22 @@ test('visualize real-run endpoint starts a tracked process and replays events', 
 
 test('visualize runs API reads durable workflow state from .nax', async () => {
   const projectRoot = tmpRoot()
+  const flowDir = path.join(projectRoot, '.github', 'nax-flows', 'review')
+  fs.mkdirSync(path.join(flowDir, 'prompts'), { recursive: true })
+  fs.writeFileSync(path.join(flowDir, 'flow.yml'), [
+    'id: review',
+    'title: Review',
+    'description: Project-local visualize flow',
+    'defaults:',
+    '  agents: [claude, gemini, codex]',
+    'steps:',
+    '  - id: review',
+    '    title: Review',
+    '    prompt: prompts/review.md',
+    '    agents: [claude, gemini, codex]',
+    '',
+  ].join('\n'))
+  fs.writeFileSync(path.join(flowDir, 'prompts', 'review.md'), '---\ntitle: Review\n---\n\nPrompt\n')
   const runId = 'fixture-run'
   const dir = path.join(projectRoot, '.nax', 'workflows', runId)
   fs.mkdirSync(dir, { recursive: true })
@@ -533,6 +549,10 @@ test('visualize runs API reads durable workflow state from .nax', async () => {
     assert.equal(
       details.payload.details.sections.find((section) => section.kind === 'session' && section.agent === 'codex')?.absolutePath,
       path.join(runnerDir, 'codex.md'),
+    )
+    assert.equal(
+      details.payload.details.sections.find((section) => section.kind === 'session' && section.agent === 'codex')?.promptMarkdown,
+      'Prompt',
     )
     assert.equal(details.payload.details.followupTargets[0].kind, 'step-summary')
     assert.equal(details.payload.details.followupTargets[0].isDefault, true)

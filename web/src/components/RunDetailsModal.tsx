@@ -48,6 +48,9 @@ type TimelineEntry = {
   path: string
   absolutePath: string
   markdown: string
+  promptMarkdown?: string
+  promptPath?: string
+  promptTitle?: string
   stepNumber?: number
   section?: RunDetailsSection
   liveContext?: RunDetailsLiveContext
@@ -151,6 +154,9 @@ function buildTimelineEntries(
       path: step.section?.path || '',
       absolutePath: step.section?.absolutePath || '',
       markdown: step.section?.markdown || '',
+      promptMarkdown: step.section?.promptMarkdown || '',
+      promptPath: step.section?.promptPath || '',
+      promptTitle: step.section?.promptTitle || step.title,
       stepNumber: index + 1,
       section: step.section,
     })
@@ -164,6 +170,9 @@ function buildTimelineEntries(
         path: section.path,
         absolutePath: section.absolutePath,
         markdown: section.markdown,
+        promptMarkdown: section.promptMarkdown || '',
+        promptPath: section.promptPath || '',
+        promptTitle: section.promptTitle || section.stepTitle || step.title,
         section,
       })
     })
@@ -276,6 +285,7 @@ export function RunDetailsModal({
   const [activeTimelineId, setActiveTimelineId] = useState('summary')
   const [selectionWarning, setSelectionWarning] = useState('')
   const [detailsView, setDetailsView] = useState<'results' | 'followup'>('results')
+  const [contentView, setContentView] = useState<'results' | 'prompt'>('results')
   const [followupSubmitting, setFollowupSubmitting] = useState(false)
   const details = detailsResponse?.details
   const detailRun = detailsResponse?.run
@@ -294,6 +304,12 @@ export function RunDetailsModal({
   const activeTimelineIndex = Math.max(0, timelineEntries.findIndex((entry) => entry.id === activeTimelineId))
   const timelineProgressIndex = Math.max(0, parentTimelineEntries.length - 1)
   const activeEntry = timelineEntries[activeTimelineIndex] || null
+  const activeContentMarkdown = activeEntry?.promptMarkdown && contentView === 'prompt'
+    ? activeEntry.promptMarkdown
+    : activeEntry?.markdown || ''
+  const tocEntry = activeEntry
+    ? { ...activeEntry, id: `${activeEntry.id}:${contentView}`, markdown: activeContentMarkdown }
+    : null
   const detailWorkflowName = workflowName(detailRun)
   const selectorIdentity = selectorKey(initialSelector)
   const liveIdentity = liveContext
@@ -357,6 +373,14 @@ export function RunDetailsModal({
   }, [detailsView])
 
   useEffect(() => {
+    setContentView('results')
+  }, [activeTimelineId, detailsRunId])
+
+  useEffect(() => {
+    if (contentView === 'prompt' && !activeEntry?.promptMarkdown) setContentView('results')
+  }, [activeEntry?.promptMarkdown, contentView])
+
+  useEffect(() => {
     if (!opened) return
     const resolved = resolveInitialTimelineId(details, timelineEntries, initialSelector, liveContext)
     setActiveTimelineId(resolved.id)
@@ -417,13 +441,19 @@ export function RunDetailsModal({
             ) : null}
             <Box className="run-details-content">
               {activeEntry ? (
-                <RunDetailsContent entry={activeEntry} workflowName={detailWorkflowName} scrollRootRef={markdownScrollRef} />
+                <RunDetailsContent
+                  contentView={contentView}
+                  entry={activeEntry}
+                  onContentViewChange={setContentView}
+                  workflowName={detailWorkflowName}
+                  scrollRootRef={markdownScrollRef}
+                />
               ) : (
                 <Text c="dimmed">No run details were found.</Text>
               )}
             </Box>
             <Stack className="run-details-side" gap="md">
-              <MarkdownTableOfContents entry={activeEntry} scrollRootRef={markdownScrollRef} />
+              <MarkdownTableOfContents entry={tocEntry} scrollRootRef={markdownScrollRef} />
               <RunDetailsMetadata run={detailRun} workflowName={detailWorkflowName} section={activeEntry?.section} liveContext={activeEntry?.liveContext} />
             </Stack>
           </Box>
@@ -578,19 +608,29 @@ function RunDetailsTimeline({
 }
 
 function RunDetailsContent({
+  contentView,
   entry,
+  onContentViewChange,
   workflowName: name,
   scrollRootRef,
 }: {
+  contentView: 'results' | 'prompt'
   entry: TimelineEntry
+  onContentViewChange: (view: 'results' | 'prompt') => void
   workflowName: string
   scrollRootRef?: RefObject<HTMLDivElement | null>
 }) {
+  const hasPrompt = Boolean(entry.promptMarkdown)
+  const showingPrompt = contentView === 'prompt' && hasPrompt
+  const markdown = showingPrompt ? entry.promptMarkdown || '' : entry.markdown
+  const promptTitle = entry.promptTitle || entry.section?.stepTitle || entry.title
+  const actionFilePath = showingPrompt ? entry.promptPath || '' : entry.absolutePath
+  const actionSessionUrl = showingPrompt ? '' : entry.section?.links.sessionUrl || entry.section?.links.agentRunUrl
   return (
     <Stack gap="sm" style={{ marginTop: -4 }}>
       <Group gap="xs" wrap="wrap">
-        <Title order={2} size="h4">{timelineContentTitle(entry, name)}</Title>
-        {entry.status ? (
+        <Title order={2} size="h4">{showingPrompt ? `${promptTitle} prompt` : timelineContentTitle(entry, name)}</Title>
+        {!showingPrompt && entry.status ? (
           <Badge
             className={`run-status ${entry.status}`}
             variant="light"
@@ -601,21 +641,45 @@ function RunDetailsContent({
             {entry.status}
           </Badge>
         ) : null}
-        {entry.absolutePath ? (
+        {actionFilePath ? (
           <ArtifactActions
-            filePath={entry.absolutePath}
-            sessionUrl={entry.section?.links.sessionUrl || entry.section?.links.agentRunUrl}
+            filePath={actionFilePath}
+            sessionUrl={actionSessionUrl}
           />
         ) : null}
       </Group>
-      <Box className="prompt-markdown run-details-markdown" ref={scrollRootRef}>
-        {entry.markdown ? (
-          <MarkdownRenderer>{entry.markdown}</MarkdownRenderer>
-        ) : entry.liveContext ? (
-          <LivePanel context={entry.liveContext} />
-        ) : (
-          <Text c="dimmed">No result text.</Text>
-        )}
+      <Box className="run-details-markdown-shell">
+        {hasPrompt ? (
+          <Group gap={0} wrap="nowrap" className="run-details-content-switch" aria-label="Run details content">
+            <Button
+              className="run-details-content-switch-button"
+              data-active={!showingPrompt || undefined}
+              onClick={() => onContentViewChange('results')}
+              size="compact-xs"
+              variant={!showingPrompt ? 'filled' : 'subtle'}
+            >
+              Results
+            </Button>
+            <Button
+              className="run-details-content-switch-button"
+              data-active={showingPrompt || undefined}
+              onClick={() => onContentViewChange('prompt')}
+              size="compact-xs"
+              variant={showingPrompt ? 'filled' : 'subtle'}
+            >
+              Prompt
+            </Button>
+          </Group>
+        ) : null}
+        <Box className="prompt-markdown run-details-markdown" ref={scrollRootRef}>
+          {markdown ? (
+            <MarkdownRenderer copyLabel={showingPrompt ? 'Copy prompt markdown' : 'Copy results markdown'}>{markdown}</MarkdownRenderer>
+          ) : entry.liveContext ? (
+            <LivePanel context={entry.liveContext} />
+          ) : (
+            <Text c="dimmed">{showingPrompt ? 'No prompt markdown available.' : 'No result text.'}</Text>
+          )}
+        </Box>
       </Box>
     </Stack>
   )
@@ -631,8 +695,9 @@ function MarkdownTableOfContents({
   const headings = useMemo(() => extractMarkdownToc(entry?.markdown || ''), [entry?.markdown])
   const tocGroups = useMemo(() => {
     const groups: Array<{ heading: typeof headings[number]; children: typeof headings }> = []
+    const topLevel = Math.min(...headings.map((heading) => heading.level))
     for (const heading of headings) {
-      if (heading.level === 1 || groups.length === 0) {
+      if (heading.level <= topLevel || groups.length === 0) {
         groups.push({ heading, children: [] })
       } else {
         groups[groups.length - 1].children.push(heading)
@@ -650,7 +715,7 @@ function MarkdownTableOfContents({
     setExpandAllPinned(false)
     setCollapseAllPinned(false)
     setExpandedKeys(tocGroups[0] ? new Set([tocGroups[0].heading.key]) : new Set())
-  }, [entry?.key, tocGroups])
+  }, [entry?.id, tocGroups])
 
   useEffect(() => {
     const root = scrollRootRef.current
@@ -681,6 +746,8 @@ function MarkdownTableOfContents({
   }, [activeKey, collapseAllPinned, expandAllPinned, tocGroups])
 
   if (headings.length === 0) return null
+
+  const hasNestedHeadings = tocGroups.some((group) => group.children.length > 0)
 
   const scrollToHeading = (heading: typeof headings[number]) => {
     const root = scrollRootRef.current
@@ -741,16 +808,18 @@ function MarkdownTableOfContents({
                 className="run-details-toc-row"
                 data-active={group.heading.key === activeKey || undefined}
               >
-                <ActionIcon
-                  aria-label={expanded ? `Collapse ${group.heading.text}` : `Expand ${group.heading.text}`}
-                  className="run-details-toc-section-toggle"
-                  disabled={group.children.length === 0}
-                  onClick={() => toggleGroup(group.heading.key)}
-                  size="sm"
-                  variant="subtle"
-                >
-                  {expanded ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
-                </ActionIcon>
+                {hasNestedHeadings ? (
+                  <ActionIcon
+                    aria-label={expanded ? `Collapse ${group.heading.text}` : `Expand ${group.heading.text}`}
+                    className="run-details-toc-section-toggle"
+                    disabled={group.children.length === 0}
+                    onClick={() => toggleGroup(group.heading.key)}
+                    size="sm"
+                    variant="subtle"
+                  >
+                    {expanded ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
+                  </ActionIcon>
+                ) : null}
                 <UnstyledButton
                   className="run-details-toc-link"
                   data-active={group.heading.key === activeKey || undefined}

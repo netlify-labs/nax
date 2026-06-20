@@ -1,6 +1,8 @@
 const fs = require('fs')
 const path = require('path')
 
+const { loadStepPrompt } = require('./flows')
+
 function readText(filePath) {
   try {
     if (!filePath || !fs.existsSync(filePath) || !fs.statSync(filePath).isFile()) return ''
@@ -202,6 +204,23 @@ function stepLabel(stepNumber, label) {
   return stepNumber > 0 ? `Step ${stepNumber}: ${label}` : label
 }
 
+function promptDetailsForStep(flow, stepMeta = {}) {
+  const stepId = String(stepMeta.id || '')
+  if (!flow || !Array.isArray(flow.steps) || !stepId) return null
+  const step = flow.steps.find((candidate) => String(candidate?.id || '') === stepId)
+  if (!step?.prompt) return null
+  try {
+    const prompt = loadStepPrompt(flow, step)
+    return {
+      promptMarkdown: prompt.body || '',
+      promptPath: prompt.path || '',
+      promptTitle: prompt.title || step.title || stepMeta.title || stepId,
+    }
+  } catch {
+    return null
+  }
+}
+
 function targetSortRank(target = {}) {
   return target.stepNumber || 0
 }
@@ -268,7 +287,7 @@ function sortArtifactsNewestFirst(artifacts = []) {
   })
 }
 
-function buildRunDetails(runState = {}) {
+function buildRunDetails(runState = {}, options = {}) {
   const runDir = runState.dir || ''
   const artifactsDir = runDir ? path.join(runDir, 'artifacts') : ''
   const summaryPath = artifactsDir ? path.join(artifactsDir, 'summary.md') : ''
@@ -280,6 +299,7 @@ function buildRunDetails(runState = {}) {
   const alternateTargets = []
   const followupArtifacts = []
   const stepNumbers = stepNumberLookup(runState)
+  const flow = options.flow || runState.flow || null
 
   if (summaryMarkdown) {
     addUnique(followupArtifacts, followupArtifact({
@@ -304,6 +324,7 @@ function buildRunDetails(runState = {}) {
     const stepMeta = readJson(path.join(stepDir, 'step.json')) || {}
     const stepNumber = stepNumberFor(stepDir, stepMeta, stepNumbers)
     const stepTitle = stepTitleFromDir(stepDir, stepMeta)
+    const promptDetails = promptDetailsForStep(flow, stepMeta) || {}
     const stepSummaryPath = path.join(stepDir, 'summary.md')
     const stepSummary = readText(stepSummaryPath)
 
@@ -323,6 +344,7 @@ function buildRunDetails(runState = {}) {
         links: {},
         usage: stepMeta.usage || null,
         markdown: stepSummary,
+        ...promptDetails,
       })
       const stepTarget = followupTargetFromArtifact({
         kind: 'step-summary',
@@ -377,6 +399,7 @@ function buildRunDetails(runState = {}) {
         links: metadata.links || {},
         usage: metadata.usage || null,
         markdown,
+        ...promptDetails,
       }
       sections.push(section)
       sessionSections.push(section)

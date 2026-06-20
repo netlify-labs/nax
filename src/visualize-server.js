@@ -1185,9 +1185,15 @@ function createRequestHandler(options = {}) {
             notFound(res, 'Unknown visualize run.')
             return
           }
+          let flow
+          try {
+            flow = await loadFlow(durable.flowId, flowOptions)
+          } catch (_err) {
+            flow = durable.flow && Array.isArray(durable.flow.steps) ? durable.flow : null
+          }
           jsonResponse(res, 200, {
             run: publicRunState(durable),
-            details: buildRunDetails(durable),
+            details: buildRunDetails(durable, { flow }),
           })
           return
         }

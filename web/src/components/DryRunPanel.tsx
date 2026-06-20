@@ -1,13 +1,14 @@
 import { useEffect, useMemo, useRef } from 'react'
 import { ActionIcon, Alert, Badge, Box, Code, CopyButton, Group, Paper, ScrollArea, Stack, Text, Tooltip } from '@mantine/core'
 import { Check, Copy, ListTree, Terminal } from 'lucide-react'
-import type { DryRunResult, RunnerEvent } from '../types'
+import type { DryRunResult, RunnerEvent, Target } from '../types'
 
 type OutputPanel = {
   title: string
   result: DryRunResult | null
   running: boolean
   error: string
+  target?: Target | null
 }
 
 type Props = {
@@ -23,6 +24,11 @@ function statusColor(panel: OutputPanel): string {
   if (panel.result?.status === 'completed') return 'green'
   if (panel.result) return 'red'
   return 'gray'
+}
+
+function targetLabel(target?: Target | null): string {
+  if (!target) return ''
+  return `${target.branch || 'unknown'} · ${target.sourceType || 'unknown'} · ${target.verified ? 'verified' : 'unverified'}`
 }
 
 function statusText(panel: OutputPanel): string {
@@ -122,6 +128,7 @@ export function WorkflowOutputTabs({ dryRun, run, events = [], eventErrors = [],
           <Text fw={700} size="sm">Output</Text>
         </Group>
         <Group gap={6} wrap="nowrap">
+          {run.target ? <Badge size="sm" variant="light" color={run.target.verified ? 'green' : 'yellow'}>{targetLabel(run.target)}</Badge> : null}
           {visiblePanels.map((panel) => <OutputBadge key={panel.title} panel={panel} />)}
           {onViewEvents ? (
             <Tooltip label={eventErrors.length > 0 ? 'View event diagnostics' : 'View raw events'} withArrow>

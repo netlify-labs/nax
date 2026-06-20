@@ -102,6 +102,7 @@ function buildBoundedEssential(run, {
   ].join('\n')
 }
 
+/** @param {Array<Record<string, unknown>>} runs @param {{ renderStructured?: (text: string) => string, totalBytes?: number, perRunBytes?: number }} [options] */
 function buildInlineEssentials(runs, {
   renderStructured,
   totalBytes = 9000,
@@ -125,8 +126,15 @@ function buildInlineEssentials(runs, {
   return compactTextByBytes(parts.join('\n').trim(), totalBytes, 'Bounded prior results')
 }
 
-function buildFetchInstruction({ store, key, marker, kind = 'prior-results' }) {
+function runnerNetlifyCliCommand({ cliPath = RUNNER_NETLIFY_CLI_PATH, fallbackToPath = false } = {}) {
+  const normalized = String(cliPath || '').trim() || RUNNER_NETLIFY_CLI_PATH
+  if (!fallbackToPath || normalized === 'netlify') return normalized
+  return `$(if [ -x "${normalized}" ]; then printf %s "${normalized}"; else printf %s netlify; fi)`
+}
+
+function buildFetchInstruction({ store, key, marker, kind = 'prior-results', runner = {}, fetchCommand = '' }) {
   const fullPrompt = kind === 'full-prompt'
+  const command = fetchCommand || runnerNetlifyCliCommand(runner)
   return [
     fullPrompt ? '## Full prompt (offloaded)' : '## Prior round context (full detail)',
     '',
@@ -134,7 +142,7 @@ function buildFetchInstruction({ store, key, marker, kind = 'prior-results' }) {
       ? 'Before you do anything else, fetch the full prompt for this run:'
       : 'Before you do anything else, fetch the full prior-round results for this run:',
     '',
-    `    NETLIFY_SITE_ID="\${NETLIFY_SITE_ID:-$SITE_ID}" ${RUNNER_NETLIFY_CLI_PATH} blobs:get ${store} ${key} --auth "$NETLIFY_AUTH_TOKEN"`,
+    `    NETLIFY_SITE_ID="\${NETLIFY_SITE_ID:-$SITE_ID}" ${command} blobs:get ${store} ${key} --auth "$NETLIFY_AUTH_TOKEN"`,
     '',
     fullPrompt
       ? 'Read the returned Markdown as your complete prompt, follow it exactly, then echo the context marker and the NAX-BLOB-SENTINEL line from the top of the blob so nax can verify the prompt was loaded:'
@@ -165,15 +173,30 @@ function blobRefForStep({ runId, stepId, payloadSeed = '', kind = 'prior-results
   return { store, key, marker, sentinel }
 }
 
-function classifyContextFetch({ reply, marker, sentinel, inlineOnlyNeedles = [] } = {}) {
+/** @param {{ reply?: string, transcript?: string, commandOutput?: string, fetchExitCode?: number | null, fetchError?: string, marker?: string, sentinel?: string, inlineOnlyNeedles?: string[] }} [options] */
+function classifyContextFetch({
+  reply,
+  transcript,
+  commandOutput,
+  fetchExitCode = null,
+  fetchError = '',
+  marker,
+  sentinel,
+  inlineOnlyNeedles = [],
+} = {}) {
   const text = String(reply || '')
+  const proofText = [transcript, commandOutput].map((value) => String(value || '')).filter(Boolean).join('\n')
   const signals = []
-  if (marker && text.includes(`NAX-CONTEXT-LOADED ${marker}`)) signals.push('marker')
-  if (sentinel && text.includes(`NAX-BLOB-SENTINEL ${sentinel}`)) signals.push('sentinel')
+  const markerNeedle = marker ? `NAX-CONTEXT-LOADED ${marker}` : ''
+  const sentinelNeedle = sentinel ? `NAX-BLOB-SENTINEL ${sentinel}` : ''
+  if (markerNeedle && (proofText.includes(markerNeedle) || text.includes(markerNeedle))) signals.push('marker')
+  if (sentinelNeedle && (proofText.includes(sentinelNeedle) || text.includes(sentinelNeedle))) signals.push('sentinel')
   if (signals.length > 0) {
     return { status: 'confirmed', confirmed: true, signals }
   }
-  if (/blobs:get|blob.*(?:failed|error|forbidden|unauthori[sz]ed|not found)|NETLIFY_AUTH_TOKEN|permission denied/i.test(text)) {
+  const hasStructuredFetchFailure = fetchExitCode !== null && fetchExitCode !== undefined && Number(fetchExitCode) !== 0
+  const commandFailureText = String(fetchError || commandOutput || transcript || '')
+  if (hasStructuredFetchFailure || /(?:blobs:get|blob).*(?:failed|error|forbidden|unauthori[sz]ed|not found)|permission denied/i.test(commandFailureText)) {
     return { status: 'failed', confirmed: false, signals: ['fetch-error'] }
   }
   if (inlineOnlyNeedles.some((needle) => needle && text.includes(needle))) {
@@ -193,6 +216,7 @@ module.exports = {
   buildBoundedEssential,
   buildFetchInstruction,
   buildInlineEssentials,
+  runnerNetlifyCliCommand,
   classifyContextFetch,
   compactTextByBytes,
   safePromptBytes,

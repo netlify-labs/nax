@@ -65,6 +65,7 @@ test('workflow event context writes durable events.jsonl after run state is know
 test('workflow event safe options omit large context and secrets', () => {
   assert.deepEqual(safeOptions({
     branch: 'main',
+    target: { branch: 'main', verified: true },
     transport: 'netlify-api',
     context: 'do not include',
     token: 'secret',
@@ -72,6 +73,7 @@ test('workflow event safe options omit large context and secrets', () => {
   }), {
     branch: 'main',
     branchSource: '',
+    target: { branch: 'main', verified: true },
     transport: 'netlify-api',
     models: '',
     stepModels: { review: ['codex'] },

@@ -369,6 +369,7 @@ function buildTopUsageJson(runState = {}) {
   return {
     schemaVersion: 1,
     runId: runState.runId || '',
+    target: runState.target || null,
     total: summaries.total,
     totalSummary: summaries.totalSummary,
     steps: summaries.steps,
@@ -386,6 +387,13 @@ function buildTopSummaryMarkdown(runState = {}) {
     `- Status: ${runState.status || 'running'}`,
   ]
   if (usage.totalSummary) lines.push(`- Usage: ${usage.totalSummary}`)
+  if (runState.target) {
+    lines.push(`- Target: \`${runState.target.branch || 'unknown'}\` (${runState.target.sourceType || 'unknown'}, ${runState.target.verified ? 'verified' : 'unverified'})`)
+    if (runState.target.sha) lines.push(`- Target SHA: \`${runState.target.sha}\``)
+    if (Array.isArray(runState.target.caveats) && runState.target.caveats.length > 0) {
+      lines.push(`- Target caveats: ${runState.target.caveats.map((caveat) => `\`${caveat}\``).join(', ')}`)
+    }
+  }
   lines.push(`- Files: [usage](usage.json)`)
   const steps = runState.steps || []
   if (steps.length > 0) {
@@ -514,6 +522,12 @@ function compactGithubSummary(runState = {}) {
     `- Status: ${runState.status || 'running'}`,
   ]
   if (usage.totalSummary) lines.push(`- Usage: ${usage.totalSummary}`)
+  if (runState.target) {
+    lines.push(`- Target: \`${runState.target.branch || 'unknown'}\` (${runState.target.sourceType || 'unknown'}, ${runState.target.verified ? 'verified' : 'unverified'})`)
+    if (Array.isArray(runState.target.caveats) && runState.target.caveats.length > 0) {
+      lines.push(`- Target caveats: ${runState.target.caveats.map((caveat) => `\`${caveat}\``).join(', ')}`)
+    }
+  }
   lines.push('', `Full output: download the \`nax-${runState.flowId || 'workflow'}-${process.env.GITHUB_RUN_ID || runState.runId || 'run'}\` artifact from this job.`, '')
   for (const step of usage.steps) lines.push(`- ${step.title}: ${step.summary}`)
   lines.push('')

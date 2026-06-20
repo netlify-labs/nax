@@ -4,7 +4,7 @@ import { Check, ExternalLink, Files, GitBranch, History, RotateCcw } from 'lucid
 import { getRunDetails, openLocalFile } from '../api'
 import { AgentIcon } from './AgentIcon'
 import { MarkdownRenderer } from './MarkdownRenderer'
-import type { RunDetailsResponse, RunDetailsSection, VisualizeRun } from '../types'
+import type { RunDetailsResponse, RunDetailsSection, Target, VisualizeRun } from '../types'
 
 type Props = {
   runs: VisualizeRun[]
@@ -36,6 +36,16 @@ type TimelineEntry = {
 
 function runId(run: Partial<VisualizeRun>): string {
   return run.runId || run.id || ''
+}
+
+function targetLabel(target?: Target | null): string {
+  if (!target) return ''
+  const confidence = target.verified ? 'verified' : 'unverified'
+  return `${target.branch || 'unknown'} (${target.sourceType || 'unknown'}, ${confidence})`
+}
+
+function targetCaveats(target?: Target | null): string {
+  return target?.caveats?.length ? target.caveats.join(', ') : ''
 }
 
 function recordValue(record: Record<string, unknown> | undefined, key: string): string {
@@ -462,6 +472,9 @@ function RunDetailsMetadata({ run, workflowName, section }: { run: VisualizeRun 
         <MetadataRow label="Status" value={run?.status || 'unknown'} />
         <MetadataRow label="Transport" value={run?.transport || ''} />
         <MetadataRow label="Branch" value={run?.branch || ''} />
+        <MetadataRow label="Target" value={targetLabel(run?.target)} />
+        <MetadataRow label="Target SHA" value={run?.target?.sha || ''} />
+        <MetadataRow label="Target Caveats" value={targetCaveats(run?.target)} />
         <MetadataRow label="Run ID" value={runId(run || {})} />
         <MetadataRow label="Runner ID" value={section?.runnerId || ''} />
         <MetadataRow label="Session ID" value={section?.sessionId || ''} />

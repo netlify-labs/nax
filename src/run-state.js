@@ -193,7 +193,7 @@ function findLatestUnfinishedLocalRun(projectRoot, { flowId } = {}) {
 }
 
 /** @param {Record<string, any>} param0 */
-function createRunState({ projectRoot, flow, transport, options = {}, now = new Date() }) {
+function createRunState({ projectRoot, flow, transport, options = {}, target = null, now = new Date() }) {
   const runId = createRunId(flow.id, now)
   cleanupLegacyRunsDir(projectRoot)
   const dir = path.join(getWorkflowsDir(projectRoot), runId)
@@ -208,6 +208,14 @@ function createRunState({ projectRoot, flow, transport, options = {}, now = new 
     createdAt: now.toISOString(),
     updatedAt: now.toISOString(),
     options,
+    status: 'running',
+    context: null,
+    blobCleanupWarning: '',
+    ...(target ? {
+      target,
+      branch: target.branch || '',
+      branchSource: target.sourceType || '',
+    } : {}),
     steps: [],
     dir,
   }

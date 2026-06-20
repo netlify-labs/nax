@@ -1,3 +1,5 @@
+const { DEFAULT_MODELS } = require('./prompts')
+
 function normalizeAgentList(value) {
   const raw = Array.isArray(value)
     ? value
@@ -88,8 +90,33 @@ function flowAgentSet(flow = {}) {
   return agents
 }
 
-function selectionValidationErrors(flow = {}, selection = {}) {
+function flowDeclaredAgentValidationErrors(flow = {}, { knownAgents = DEFAULT_MODELS } = {}) {
   const errors = []
+  const known = new Set(normalizeAgentList(knownAgents))
+  const knownLabel = [...known].join(', ') || 'none'
+  for (const agent of normalizeAgentList(flow.defaults?.agents)) {
+    if (!known.has(agent)) {
+      errors.push({
+        code: 'unknown_flow_agent',
+        message: `Unknown agent "${agent}" in defaults.agents for flow "${flow.id}". Known agents: ${knownLabel}.`,
+      })
+    }
+  }
+  for (const step of flow.steps || []) {
+    for (const agent of normalizeAgentList(step.agents)) {
+      if (!known.has(agent)) {
+        errors.push({
+          code: 'unknown_step_agent',
+          message: `Unknown agent "${agent}" in step "${step.id}" for flow "${flow.id}". Known agents: ${knownLabel}.`,
+        })
+      }
+    }
+  }
+  return errors
+}
+
+function selectionValidationErrors(flow = {}, selection = {}, options = {}) {
+  const errors = flowDeclaredAgentValidationErrors(flow, options)
   const flowAgents = flowAgentSet(flow)
   for (const model of normalizeAgentList(selection.models)) {
     if (!flowAgents.has(model)) {
@@ -117,8 +144,8 @@ function selectionValidationErrors(flow = {}, selection = {}) {
   return errors
 }
 
-function assertValidAgentSelection(flow, selection = {}) {
-  const errors = selectionValidationErrors(flow, selection)
+function assertValidAgentSelection(flow, selection = {}, options = {}) {
+  const errors = selectionValidationErrors(flow, selection, options)
   if (errors.length > 0) {
     /** @type {Error & { code?: string }} */
     const error = new Error(errors[0].message)
@@ -162,6 +189,7 @@ module.exports = {
   applyAgentSelection,
   assertValidAgentSelection,
   flowAgentSet,
+  flowDeclaredAgentValidationErrors,
   normalizeAgentList,
   normalizeStepModels,
   parseStepModelsEntries,

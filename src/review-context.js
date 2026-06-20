@@ -2,6 +2,10 @@ const path = require('path')
 const { spawnSync } = require('child_process')
 const { runGh } = require('./gh-cli')
 
+/**
+ * @typedef {{ branch?: string, ref?: string, sha?: string | null, sourceType?: string, verified?: boolean, caveats?: string[] }} TargetSnapshot
+ */
+
 function runCommand(command, args, options = {}) {
   const result = spawnSync(command, args, {
     encoding: 'utf8',
@@ -104,15 +108,48 @@ function formatReviewContract({ pinnedSha }) {
   ].join('\n')
 }
 
+/** @param {string[]} [caveats] */
+function formatTargetCaveats(caveats = []) {
+  return caveats.length > 0 ? caveats.map((caveat) => `\`${caveat}\``).join(', ') : ''
+}
+
+/** @param {{ target?: TargetSnapshot }} param0 */
+function formatUnverifiedTargetContract({ target = {} }) {
+  const lines = [
+    '## Target Contract',
+    '',
+    `- Target branch: \`${target.branch || 'unknown'}\``,
+    `- Target source: \`${target.sourceType || 'unknown'}\``,
+    '- Target verification: unverified',
+  ]
+  if (target.ref) lines.push(`- Target ref: \`${target.ref}\``)
+  const caveats = formatTargetCaveats(target.caveats || [])
+  if (caveats) lines.push(`- Caveats: ${caveats}`)
+  if ((target.caveats || []).includes('gha-implicit')) {
+    lines.push('- GitHub Actions checkout is implicit; nax records this advisory target but cannot prove the exact checkout from this repo alone.')
+  }
+  return lines.join('\n')
+}
+
 /** @param {Record<string, any>} param0 */
-function formatRepositorySnapshot({ repoRoot, branch, pinnedSha, pinnedSource, generatedAt }) {
+function formatRepositorySnapshot({ repoRoot, branch, pinnedSha, pinnedSource, generatedAt, target }) {
   const lines = [
     '## Repository Snapshot',
     '',
     `- Branch at prompt generation time: \`${branch}\``,
-    `- Pinned commit SHA: \`${pinnedSha}\``,
   ]
+  if (pinnedSha) {
+    lines.push(`- Pinned commit SHA: \`${pinnedSha}\``)
+  } else {
+    lines.push('- Pinned commit SHA: unverified')
+  }
   if (pinnedSource) lines.push(`- Pinned source: \`${pinnedSource}\``)
+  if (target) {
+    lines.push(`- Target source type: \`${target.sourceType || 'unknown'}\``)
+    lines.push(`- Target verified: ${target.verified === true ? 'yes' : 'no'}`)
+    const caveats = formatTargetCaveats(target.caveats || [])
+    if (caveats) lines.push(`- Target caveats: ${caveats}`)
+  }
   lines.push(`- Prompt generated at: \`${generatedAt}\``)
   return lines.join('\n')
 }
@@ -211,22 +248,25 @@ function buildAutomaticContext({
   sha,
   pinnedSha: explicitPinnedSha,
   pinnedSource,
+  target,
   generatedAt = new Date().toISOString(),
   prLimit = 10,
 }) {
   const repoRoot = resolveRepoRoot(explicitRepoRoot)
-  const pinnedSha = explicitPinnedSha || resolvePinnedSha({ repoRoot, sha })
-  const branch = resolveCurrentBranch(repoRoot)
+  const targetSha = target?.verified === true ? target.sha : ''
+  const pinnedSha = explicitPinnedSha || targetSha || (target && !sha ? '' : resolvePinnedSha({ repoRoot, sha }))
+  const branch = target?.branch || resolveCurrentBranch(repoRoot)
   const { pullRequests, error } = loadOpenPullRequests({ repo, limit: prLimit })
 
   return [
-    formatReviewContract({ pinnedSha }),
+    pinnedSha ? formatReviewContract({ pinnedSha }) : formatUnverifiedTargetContract({ target }),
     '',
     formatRepositorySnapshot({
       repoRoot,
       branch,
       pinnedSha,
-      pinnedSource,
+      pinnedSource: pinnedSource || target?.ref || '',
+      target,
       generatedAt,
     }),
     '',
@@ -290,6 +330,7 @@ module.exports = {
   formatMergeStateLedger,
   formatRepositorySnapshot,
   formatReviewContract,
+  formatUnverifiedTargetContract,
   formatWorkingTreeSummary,
   loadOpenPullRequests,
   readWorkingTreeStatus,

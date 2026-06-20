@@ -422,6 +422,9 @@ function isRetryableArgumentLimitFailure(run) {
 }
 
 function compactPromptForArgumentLimitRetry(runState) {
+  if (runState?.promptDelivery?.mode === 'blob' || runState?.blobRef) {
+    return String(runState?.promptText || '')
+  }
   const compactPromptText = String(runState?.compactPromptText || '').trim()
   const promptText = String(runState?.promptText || '')
   if (!compactPromptText || compactPromptText.length >= promptText.length) return ''
@@ -1020,6 +1023,7 @@ module.exports = {
   createAgentRunAsync,
   createAgentSession,
   createAgentSessionAsync,
+  compactPromptForArgumentLimitRetry,
   currentGitBranch,
   detectJavascriptWorkspace,
   formatCommandForError,

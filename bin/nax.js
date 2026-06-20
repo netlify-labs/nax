@@ -19,6 +19,7 @@ const {
   titleCase,
 } = require('../src/prompts')
 const { buildAutomaticContext, resolveRemoteBranchSha } = require('../src/review-context')
+const { legacyTargetFromRunState, resolveTarget, targetBranch, targetSummary } = require('../src/target')
 const {
   assertCrossReviewComplete,
   extractStructuredSection,
@@ -72,6 +73,7 @@ const { createWorkflowEventContext } = require('../src/workflow-events')
 const { setBlob, deleteBlob } = require('../src/netlify-blobs')
 const {
   addRunBlobRef,
+  compactBlobRefs,
   cleanupRunBlobRefs,
   sweepBlobRefs,
 } = require('../src/blob-ref-registry')
@@ -445,6 +447,7 @@ function readAutoContext(options) {
     sha: options.sha,
     pinnedSha: options.pinnedSha,
     pinnedSource: options.pinnedSource,
+    target: options.target,
     prLimit: options.prLimit,
   })
 }
@@ -488,47 +491,6 @@ function readContext(options) {
   return joinContext(readAutoContext(options), readManualContext(options))
 }
 
-function isPullRequestSelector(value) {
-  return /^#?\d+$/.test(String(value || '').trim())
-}
-
-/** @param {Record<string, any>} param0 */
-function resolvePullRequestBranch({ selector, repo, projectRoot }) {
-  const number = String(selector).trim().replace(/^#/, '')
-  const result = spawnSync(
-    'gh',
-    ['pr', 'view', number, '--repo', repo, '--json', 'headRefName', '--jq', '.headRefName'],
-    { cwd: projectRoot, encoding: 'utf8' },
-  )
-  const branch = (result.stdout || '').trim()
-  if (result.status !== 0 || !branch) {
-    const detail = (result.stderr || result.stdout || '').trim()
-    throw new Error(`Could not resolve PR #${number} branch${detail ? `: ${detail}` : ''}`)
-  }
-  return branch
-}
-
-/** @param {Record<string, any>} param0 */
-function resolveWorkflowBranch({ options, projectRoot }) {
-  const requested = String(options.branch || '').trim()
-  if (!requested) {
-    const branch = currentGitBranch(projectRoot)
-    if (!branch && options.dryRun) return { branch: '(dry run)', source: 'dry-run' }
-    if (!branch) throw new Error('Could not resolve the current git branch. Pass --branch <name> explicitly.')
-    return { branch, source: 'current-branch' }
-  }
-
-  if (isPullRequestSelector(requested)) {
-    const repo = resolveRepo(options.repo)
-    return {
-      branch: resolvePullRequestBranch({ selector: requested, repo, projectRoot }),
-      source: `pr-${requested.replace(/^#/, '')}`,
-    }
-  }
-
-  return { branch: requested, source: 'explicit-branch' }
-}
-
 /** @param {Record<string, any>} param0 */
 function resolveDryRunTransport({ requestedTransport, projectRoot }) {
   const requested = requestedTransport || 'auto'
@@ -538,8 +500,17 @@ function resolveDryRunTransport({ requestedTransport, projectRoot }) {
 }
 
 /** @param {Record<string, any>} param0 */
-function remotePinnedOptions({ options, projectRoot, transport }) {
+function remotePinnedOptions({ options, projectRoot, transport, target }) {
   if (options.autoContext === false || options.sha || options.pinnedSha) return options
+  if (target) {
+    return {
+      ...options,
+      target,
+      branch: target.branch || options.branch,
+      branchSource: target.sourceType || options.branchSource,
+      ...(target.verified && target.sha ? { pinnedSha: target.sha, pinnedSource: target.ref || target.sourceType } : {}),
+    }
+  }
   if (!isNetlifyApiTransport(transport) && transport !== 'github') return options
   const branch = options.branch || currentGitBranch(projectRoot)
   const pinned = resolveRemoteBranchSha({ repoRoot: projectRoot, branch })
@@ -551,8 +522,8 @@ function remotePinnedOptions({ options, projectRoot, transport }) {
 }
 
 /** @param {Record<string, any>} param0 */
-function buildFlowRunContext({ options, projectRoot, transport }) {
-  const contextOptions = remotePinnedOptions({ options, projectRoot, transport })
+function buildFlowRunContext({ options, projectRoot, transport, target }) {
+  const contextOptions = remotePinnedOptions({ options, projectRoot, transport, target: target || options.target })
   const automatic = readAutoContext(contextOptions)
   const manual = readManualContext(options)
   return {
@@ -1027,6 +998,12 @@ function optionalNetlifyForBlobOffload({ projectRoot, options = {} } = {}) {
   }
 }
 
+function blobOffloadContextError(netlify) {
+  if (!netlify?.siteId) return 'Netlify site context is required for prompt blob offload. Run nax init or set NETLIFY_SITE_ID.'
+  if (!netlify?.env?.NETLIFY_AUTH_TOKEN) return 'NETLIFY_AUTH_TOKEN is required for prompt blob offload. Run netlify login or set NETLIFY_AUTH_TOKEN.'
+  return ''
+}
+
 /** @param {Record<string, any>} param0 */
 function ensureGithubIssueFullPromptBlobOffload({
   issue,
@@ -1074,7 +1051,7 @@ function ensureGithubPlanBlobOffload({
   options = {},
   dryRun = false,
 } = {}) {
-  if (stepState.promptBlobRef) return stepState.promptBlobRef
+  if (stepState?.promptBlobRef) return stepState.promptBlobRef
   if (!netlify?.siteId) throw new Error('Netlify site context is required for GitHub prompt blob offload.')
   const sourceRuns = githubResultsToSourceRuns(results)
   const seed = fullRoundResults || formatRoundResults({ heading: 'Prior Round Outputs', results })
@@ -1441,6 +1418,7 @@ function buildAndMaybeFallbackPlan(input, planBuilder) {
 }
 
 async function handleIssue(promptName, options) {
+  const projectRoot = resolveProjectRoot(options.projectRoot, { cwd: process.cwd() })
   const wantsInteractive = process.stdin.isTTY && (!promptName || !options.yes)
 
   let resolvedPromptName = promptName
@@ -1463,17 +1441,32 @@ async function handleIssue(promptName, options) {
           embedAll: shouldEmbedAllReplies(resolvedPromptName),
         }),
       }
+  const stepState = input.stepState || { id: input.promptName || resolvedPromptName || 'github' }
+  const runState = input.runState || {
+    runId: `github-${Date.now()}`,
+    projectRoot,
+    blobRefs: [],
+    steps: [stepState],
+    transport: 'github',
+  }
+  const enrichedInput = {
+    ...input,
+    projectRoot,
+    runState,
+    stepState,
+    step: input.step || { id: stepState.id },
+  }
 
   if (
     input.promptName === 'summarize-consensus' &&
     options.skipRoundCheck !== true &&
-    Array.isArray(input.roundResultsRaw) &&
-    input.roundResultsRaw.length > 0
+    Array.isArray(enrichedInput.roundResultsRaw) &&
+    enrichedInput.roundResultsRaw.length > 0
   ) {
-    assertCrossReviewComplete(rawIssuesFromResults(input.roundResultsRaw))
+    assertCrossReviewComplete(rawIssuesFromResults(enrichedInput.roundResultsRaw))
   }
 
-  const plan = buildAndMaybeFallbackPlan(input, buildPlan)
+  const plan = buildAndMaybeFallbackPlan(enrichedInput, buildPlan)
   printPlan(plan, { dryRun: options.dryRun })
 
   if (options.dryRun) {
@@ -1509,6 +1502,7 @@ async function handleIssue(promptName, options) {
 }
 
 async function handleComment(promptName, options) {
+  const projectRoot = resolveProjectRoot(options.projectRoot, { cwd: process.cwd() })
   const wantsInteractive = process.stdin.isTTY && (!promptName || !options.yes || !(options.issues || options.issue))
   const resolvedPromptName = promptName || 'cross-review'
 
@@ -1533,8 +1527,23 @@ async function handleComment(promptName, options) {
           embedAll: shouldEmbedAllReplies(resolvedPromptName),
         }),
       }
+  const stepState = input.stepState || { id: input.promptName || resolvedPromptName || 'github-comment' }
+  const runState = input.runState || {
+    runId: `github-${Date.now()}`,
+    projectRoot,
+    blobRefs: [],
+    steps: [stepState],
+    transport: 'github',
+  }
+  const enrichedInput = {
+    ...input,
+    projectRoot,
+    runState,
+    stepState,
+    step: input.step || { id: stepState.id },
+  }
 
-  const plan = buildAndMaybeFallbackPlan(input, buildCommentPlan)
+  const plan = buildAndMaybeFallbackPlan(enrichedInput, buildCommentPlan)
   printCommentPlan(plan, { dryRun: options.dryRun })
 
   if (options.dryRun) {
@@ -3710,6 +3719,10 @@ function ensureStepBlobOffload({
   dryRun = false,
   onRetry = () => {},
 } = {}) {
+  if (!dryRun) {
+    const contextError = blobOffloadContextError(netlify)
+    if (contextError) throw new Error(contextError)
+  }
   const seed = payloadText || roundResults || formatLocalRunResults(sourceRuns)
   const ref = blobRefForStep({
     runId: runState.runId,
@@ -3788,10 +3801,10 @@ function buildSafeCompactLocalPrompt({ agent, prompt, stepContext, sourceRuns, s
 /** @param {Record<string, any>} param0 */
 function buildOffloadedRoundResults({ sourceRuns, blobRef, safeBytes }) {
   const essentialsBytes = Math.max(1200, Math.floor(safeBytes * 0.55))
-  const inlineEssentials = buildInlineEssentials(sourceRuns, /** @type {any} */ ({
+  const inlineEssentials = buildInlineEssentials(sourceRuns, {
     renderStructured: renderStructuredForLocalEssentials,
     totalBytes: essentialsBytes,
-  }))
+  })
   const instruction = buildFetchInstruction(blobRef)
   return [inlineEssentials, instruction].filter(Boolean).join('\n\n')
 }
@@ -3888,6 +3901,28 @@ function prepareLocalPromptDelivery({
       `Compact prompt: ${metrics.compactPromptBytes.toLocaleString()} bytes.`,
       `Safe budget: ${safeBytes.toLocaleString()} bytes.`,
       'Blob offload is disabled by NAX_PROMPT_BLOB_DISABLE.',
+    ].join(' '))
+  }
+  const contextError = dryRun ? '' : blobOffloadContextError(netlify)
+  if (contextError) {
+    if (metrics.compactPromptBytes <= safeBytes) {
+      return {
+        promptText: compactPromptText,
+        compactPromptText,
+        promptDelivery: {
+          mode: 'compact',
+          fallbackReason: 'blob-context-missing',
+          fallbackError: contextError,
+          ...metrics,
+        },
+      }
+    }
+    throw new Error([
+      `Prompt for ${agent} ${step.id} is too large for Netlify runner argv and cannot be offloaded.`,
+      `Full prompt: ${metrics.promptBytes.toLocaleString()} bytes.`,
+      `Compact prompt: ${metrics.compactPromptBytes.toLocaleString()} bytes.`,
+      `Safe budget: ${safeBytes.toLocaleString()} bytes.`,
+      contextError,
     ].join(' '))
   }
   let blobRef
@@ -4021,11 +4056,15 @@ function prepareLocalPromptDelivery({
 function applyContextFetchClassification(run) {
   const ref = run.promptDelivery?.blobRef || run.blobRef
   if (!ref || !String(run.resultText || '').trim()) return run
-  const classified = classifyContextFetch(/** @type {any} */ ({
+  const classified = classifyContextFetch({
     reply: run.resultText,
+    transcript: run.transcript || run.commandTranscript || run.rawResult?.transcript || run.raw?.transcript || '',
+    commandOutput: run.commandOutput || run.rawResult?.commandOutput || run.raw?.commandOutput || '',
+    fetchExitCode: run.fetchExitCode ?? run.rawResult?.fetchExitCode ?? run.raw?.fetchExitCode ?? null,
+    fetchError: run.fetchError || run.rawResult?.fetchError || run.raw?.fetchError || '',
     marker: ref.marker,
     sentinel: ref.sentinel,
-  }))
+  })
   return {
     ...run,
     contextFetchStatus: classified.status,
@@ -4040,11 +4079,37 @@ function applyContextFetchClassification(run) {
   }
 }
 
+function blobRefHasCompletedGithubConsumer(runState = {}, ref = {}) {
+  if (runState.transport !== 'github') return true
+  const refId = ref.id || `${ref.runId || ''}:${ref.store || ''}:${ref.key || ''}`
+  let foundConsumer = false
+  for (const step of runState.steps || []) {
+    for (const run of step.runs || []) {
+      const runRef = run.blobRef || run.promptDelivery?.blobRef
+      const runRefId = runRef?.id || `${runRef?.runId || ''}:${runRef?.store || ''}:${runRef?.key || ''}`
+      if (runRefId !== refId) continue
+      foundConsumer = true
+      if (run.contextFetchConfirmed === true || run.promptDelivery?.contextFetchConfirmed === true) return true
+      if (['completed', 'failed', 'timeout', 'dry-run'].includes(String(run.status || ''))) return true
+    }
+  }
+  return !foundConsumer
+}
+
 /** @param {Record<string, any>} param0 */
 function cleanupLocalWorkflowBlobs({ runState, projectRoot, netlify, reason = 'flow-terminal' } = {}) {
   if (!Array.isArray(runState?.blobRefs) || runState.blobRefs.length === 0) return []
+  const deferredRefs = runState.transport === 'github'
+    ? runState.blobRefs.filter((ref) => !blobRefHasCompletedGithubConsumer(runState, ref))
+    : []
+  const cleanupState = deferredRefs.length > 0
+    ? {
+        ...runState,
+        blobRefs: runState.blobRefs.filter((ref) => blobRefHasCompletedGithubConsumer(runState, ref)),
+      }
+    : runState
   const results = cleanupRunBlobRefs(/** @type {any} */ ({
-    runState,
+    runState: cleanupState,
     projectRoot,
     siteId: netlify?.siteId,
     token: netlify?.env?.NETLIFY_AUTH_TOKEN,
@@ -4055,6 +4120,10 @@ function cleanupLocalWorkflowBlobs({ runState, projectRoot, netlify, reason = 'f
   const failed = results.filter((result) => !result.ok)
   if (failed.length > 0) {
     runState.blobCleanupWarning = `${failed.length} prompt blob cleanup ${failed.length === 1 ? 'operation' : 'operations'} pending after ${reason}. Run "nax clean blobs --force" later.`
+  }
+  if (deferredRefs.length > 0) {
+    runState.blobRefs = [...(cleanupState.blobRefs || []), ...deferredRefs]
+    runState.blobCleanupWarning = `${deferredRefs.length} GitHub prompt blob ${deferredRefs.length === 1 ? 'ref was' : 'refs were'} left for TTL cleanup because consumer completion/fetch confirmation was not proven.`
   }
   return results
 }
@@ -4090,6 +4159,7 @@ function handleClean(target = '', options = {}) {
     console.log(`- ${ref.store}/${ref.key}${result.ok ? '' : ` — ${result.error?.message || 'failed'}`}`)
   }
   if (!options.force && results.length > 0) console.log('Run again with --force to delete these blobs.')
+  if (options.force) compactBlobRefs(projectRoot)
   return results
 }
 
@@ -6032,9 +6102,11 @@ async function resumeLocalFlow({ flow, runState, projectRoot }) {
     projectRoot,
     options: runState.options || {},
   })
+  const branch = targetBranch(runState, { required: true })
   runState.options = {
     ...(runState.options || {}),
     ...options,
+    branch,
   }
   saveRunState(runState)
   const netlify = buildNetlifyEnv({ projectRoot, siteId: options.netlifySiteId })
@@ -6091,9 +6163,18 @@ async function resumeLocalFlow({ flow, runState, projectRoot }) {
 }
 
 /** @param {Record<string, any>} param0 */
-async function resumeGithubFlow({ flow, runState }) {
-  trackRunState(runState)
+async function resumeGithubFlow({ flow, runState, projectRoot }) {
   const options = runState.options || {}
+  trackRunState(runState, {
+    onInterrupt: ({ runState: activeRunState, reason }) => {
+      cleanupWorkflowBlobsForRun({
+        runState: activeRunState,
+        projectRoot,
+        options,
+        reason: `interrupted workflow (${reason})`,
+      })
+    },
+  })
   const repo = resolveRepo(options.repo)
   const completedStepStates = completedStepMapFromRunState(runState)
   const startIndex = firstRunnableStepIndex(flow, runState)
@@ -6205,7 +6286,7 @@ async function handleRetry(runId, options) {
   const flowStep = flow.steps.find((candidate) => candidate.id === step.id)
   if (!flowStep) throw new Error(`Flow ${flow.id} no longer contains step ${step.id}.`)
 
-  const branch = runState.branch || runState.options?.branch || currentGitBranch(projectRoot)
+  const branch = targetBranch(runState, { required: true })
   const retryOptions = await chooseNetlifyFilterOption({
     projectRoot,
     options: {
@@ -6425,7 +6506,7 @@ async function maybeResumeUnfinishedRun({ projectRoot, options = {}, flow = null
     flow: resumableFlow,
     steps: resumableSteps.length > 0 ? resumableSteps : resumableFlow.steps,
     transport: resumable.transport || 'github',
-    branch: resumable.options?.branch || currentGitBranch(projectRoot),
+    branch: targetBranch(resumable) || currentGitBranch(projectRoot),
     context: resumable.options?.context || '',
     runState: resumable,
   })
@@ -6436,7 +6517,7 @@ async function maybeResumeUnfinishedRun({ projectRoot, options = {}, flow = null
   if (clack.isCancel(resumeAfterPreview)) process.exit(0)
   if (!resumeAfterPreview) return true
   if (resumable.transport === 'github') {
-    await resumeGithubFlow({ flow: resumableFlow, runState: resumable })
+    await resumeGithubFlow({ flow: resumableFlow, runState: resumable, projectRoot })
   } else {
     await resumeLocalFlow({ flow: resumableFlow, runState: resumable, projectRoot })
   }
@@ -6489,11 +6570,12 @@ async function handleRunEngine(flowId, options) {
     }
   }
 
-  const resolvedBranch = resolveWorkflowBranch({ options: flowOptions, projectRoot })
+  const target = resolveTarget({ options: flowOptions, projectRoot, transport })
   const branchOptions = {
     ...flowOptions,
-    branch: resolvedBranch.branch,
-    branchSource: resolvedBranch.source,
+    branch: target.branch,
+    branchSource: target.sourceType,
+    target,
   }
 
   const netlifyOptions = isNetlifyApiTransport(transport) && !branchOptions.dryRun
@@ -6519,21 +6601,29 @@ async function handleRunEngine(flowId, options) {
     return
   }
 
-  const runContext = buildFlowRunContext({ options: configuredOptions, projectRoot, transport })
+  const runContext = buildFlowRunContext({ options: configuredOptions, projectRoot, transport, target })
 
   const runState = createRunState({
     projectRoot,
     flow: configuredFlow,
     transport,
+    target,
     options: {
       ...configuredOptions,
       projectRoot,
     },
   })
-  trackRunState(runState)
+  trackRunState(runState, {
+    onInterrupt: ({ runState: activeRunState, reason }) => {
+      cleanupWorkflowBlobsForRun({
+        runState: activeRunState,
+        projectRoot,
+        options: configuredOptions,
+        reason: `interrupted workflow (${reason})`,
+      })
+    },
+  })
   runState.context = runContext
-  runState.branch = configuredOptions.branch
-  runState.branchSource = configuredOptions.branchSource
   saveRunState(runState)
   runtimeEvents.setRunState(runState)
   runtimeEvents.workflowStarted({
@@ -6545,6 +6635,7 @@ async function handleRunEngine(flowId, options) {
   })
   console.log(`Run ${runState.runId}`)
   console.log(`Flow: ${configuredFlow.title}`)
+  console.log(`Target: ${targetSummary(target)}`)
   console.log(`Transport: ${transport}`)
   console.log(`Branch: ${configuredOptions.branch}`)
   console.log(`State: ${workflowStatePath(runState.dir)}`)
@@ -6555,12 +6646,12 @@ async function handleRunEngine(flowId, options) {
     } else {
       await executeGithubFlow({ flow: configuredFlow, steps, options: configuredOptions, runState, runtimeEvents })
     }
-    cleanupWorkflowBlobsForRun(/** @type {any} */ ({
+    cleanupWorkflowBlobsForRun({
       runState,
       projectRoot,
       options: configuredOptions,
       reason: 'completed workflow',
-    }))
+    })
 
     clearTrackedRunState(runState, { completed: true })
     persistWorkflowArtifacts(runState, { summaryOnly: true })
@@ -6572,12 +6663,12 @@ async function handleRunEngine(flowId, options) {
   } catch (error) {
     runState.status = 'failed'
     try {
-      cleanupWorkflowBlobsForRun(/** @type {any} */ ({
+      cleanupWorkflowBlobsForRun({
         runState,
         projectRoot,
         options: configuredOptions,
         reason: 'failed workflow',
-      }))
+      })
     } catch (cleanupError) {
       runState.blobCleanupWarning = cleanupError?.message || String(cleanupError)
     }

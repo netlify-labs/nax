@@ -444,6 +444,7 @@ function publicRunState(runState = {}) {
     status: runState.status || inferRunStateStatus(runState),
     transport: runState.transport || '',
     branch: runState.branch || '',
+    target: runState.target || null,
     createdAt: runState.createdAt || '',
     updatedAt: runState.updatedAt || '',
     dir: runState.dir || '',
@@ -474,6 +475,7 @@ function publicRunOptions(runState = {}) {
   const options = runState.options || {}
   return {
     branch: options.branch || runState.branch || '',
+    target: runState.target || options.target || null,
     transport: options.transport || runState.transport || '',
     models: normalizeAgentList(options.models),
     stepModels: normalizeStepModels(options.stepModels),

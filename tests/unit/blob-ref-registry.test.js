@@ -9,6 +9,7 @@ const {
   addRunBlobRef,
   appendBlobRef,
   blobRefId,
+  compactBlobRefs,
   cleanupRunBlobRefs,
   latestBlobRefs,
   readBlobRefs,
@@ -160,4 +161,16 @@ test('sweepBlobRefs deletes eligible refs when forced and records failures', () 
   assert.equal(results.find((result) => result.ref.key === 'ok').ref.status, 'cleaned')
   assert.equal(results.find((result) => result.ref.key === 'bad').ref.status, 'pending-cleanup')
   assert.equal(latestBlobRefs(root).find((ref) => ref.key === 'ok').status, 'cleaned')
+})
+
+test('compactBlobRefs rewrites registry to latest record per blob id', () => {
+  const root = tmpRoot()
+  appendBlobRef(root, { id: 'one', runId: 'run', store: 's', key: 'one', status: 'active', createdAt: '2026-01-01T00:00:00.000Z' })
+  appendBlobRef(root, { id: 'one', runId: 'run', store: 's', key: 'one', status: 'cleaned', updatedAt: '2026-01-01T00:01:00.000Z' })
+  appendBlobRef(root, { id: 'two', runId: 'run', store: 's', key: 'two', status: 'pending-cleanup', createdAt: '2026-01-01T00:02:00.000Z' })
+
+  const compacted = compactBlobRefs(root)
+
+  assert.deepEqual(compacted.map((ref) => `${ref.id}:${ref.status}`).sort(), ['one:cleaned', 'two:pending-cleanup'])
+  assert.equal(readBlobRefs(root).length, 2)
 })

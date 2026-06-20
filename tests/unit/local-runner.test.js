@@ -8,6 +8,7 @@ const { spawnSync } = require('child_process')
 const {
   archiveAgentRun,
   buildNetlifyEnv,
+  compactPromptForArgumentLimitRetry,
   createAgentRun,
   createAgentRunAsync,
   createAgentSession,
@@ -44,6 +45,17 @@ test('formatCommandForError redacts prompt and API payload values', () => {
     formatCommandForError('netlify', ['api', 'createAgentRunnerSession', '--data', '{"prompt":"secret"}']),
     'netlify api createAgentRunnerSession --data <redacted>',
   )
+})
+
+test('compactPromptForArgumentLimitRetry preserves blob prompt wrappers', () => {
+  const run = {
+    promptText: 'short blob wrapper',
+    compactPromptText: 'compact fallback',
+    blobRef: { store: 's', key: 'k' },
+    promptDelivery: { mode: 'blob' },
+  }
+
+  assert.equal(compactPromptForArgumentLimitRetry(run), 'short blob wrapper')
 })
 
 test('archiveAgentRun invokes Netlify API archive operation', () => {

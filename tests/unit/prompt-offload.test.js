@@ -9,6 +9,7 @@ const {
   buildInlineEssentials,
   classifyContextFetch,
   compactTextByBytes,
+  runnerNetlifyCliCommand,
   safePromptBytes,
   utf8ByteLength,
 } = require('../../src/prompt-offload')
@@ -50,6 +51,23 @@ test('fetch instruction preserves shell-expanded token env vars and verification
   assert.match(instruction, /NAX-CONTEXT-LOADED ctx-123/)
   assert.match(instruction, /NAX-BLOB-SENTINEL <the exact sentinel value from the blob>/)
   assert.doesNotMatch(instruction, /blob-456/)
+})
+
+test('runner fetch command defaults to the hosted runner netlify CLI path', () => {
+  assert.equal(runnerNetlifyCliCommand(), '/opt/buildhome/node-deps/node_modules/.bin/netlify')
+})
+
+test('fetch instruction can render a PATH fallback runner command', () => {
+  const instruction = buildFetchInstruction({
+    store: 'nax-run-1',
+    key: 'synthesize-prior-results',
+    marker: 'ctx-123',
+    runner: { fallbackToPath: true },
+  })
+
+  assert.match(instruction, /\$\(if \[ -x "\/opt\/buildhome\/node-deps\/node_modules\/\.bin\/netlify" \]/)
+  assert.match(instruction, /else printf %s netlify/)
+  assert.equal(runnerNetlifyCliCommand({ cliPath: 'netlify' }), 'netlify')
 })
 
 test('blob payload plants the blob-only sentinel before full prior results', () => {
@@ -97,10 +115,26 @@ test('context fetch classifier avoids fragile marker-only rerun signals', () => 
   )
   assert.deepEqual(
     classifyContextFetch({ reply: 'netlify blobs:get failed with Forbidden', marker: 'ctx-1', sentinel: 'blob-1' }),
+    { status: 'suspect', confirmed: false, signals: ['context-starved'] },
+  )
+  assert.deepEqual(
+    classifyContextFetch({ commandOutput: 'netlify blobs:get failed with Forbidden', fetchExitCode: 1, marker: 'ctx-1', sentinel: 'blob-1' }),
     { status: 'failed', confirmed: false, signals: ['fetch-error'] },
   )
   assert.deepEqual(
     classifyContextFetch({ reply: 'I do not have enough context.', marker: 'ctx-1', sentinel: 'blob-1' }),
     { status: 'suspect', confirmed: false, signals: ['context-starved'] },
+  )
+})
+
+test('context fetch classifier confirms command transcript proof even when final prose omits marker', () => {
+  assert.deepEqual(
+    classifyContextFetch({
+      reply: `I used the fetched context. This answer discusses blobs:get and NETLIFY_AUTH_TOKEN without echoing them. ${'substantive '.repeat(200)}`,
+      transcript: 'NAX-CONTEXT-LOADED ctx-9\nNAX-BLOB-SENTINEL blob-9\nfull payload',
+      marker: 'ctx-9',
+      sentinel: 'blob-9',
+    }),
+    { status: 'confirmed', confirmed: true, signals: ['marker', 'sentinel'] },
   )
 })

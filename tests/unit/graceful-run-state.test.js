@@ -62,3 +62,23 @@ test('clearTrackedRunState can mark a completed run complete', () => {
   assert.equal(saved.status, 'completed')
   assert.equal(saved.interruptedAt, undefined)
 })
+
+test('persistActiveRunState invokes interrupt cleanup hook before saving', () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'nax-graceful-state-hook-test-'))
+  const state = runState(tmp)
+  const calls = []
+
+  trackRunState(state, {
+    onInterrupt({ runState: active, reason }) {
+      calls.push({ runId: active.runId, reason })
+      active.blobCleanupWarning = 'cleanup attempted'
+    },
+  })
+  _private.persistActiveRunState('test-interrupt', new Date('2026-05-12T01:00:00.000Z'))
+  clearTrackedRunState(state)
+
+  const saved = readSaved(state)
+  assert.deepEqual(calls, [{ runId: 'run-1', reason: 'test-interrupt' }])
+  assert.equal(saved.blobCleanupWarning, 'cleanup attempted')
+  assert.equal(saved.status, 'interrupted')
+})

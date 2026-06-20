@@ -62,6 +62,14 @@ function sampleRunState(projectRoot = tmpRoot(), overrides = {}) {
     flowId: 'review',
     flowTitle: 'Review',
     transport: 'netlify-api',
+    target: overrides.target || {
+      branch: 'main',
+      ref: 'origin/main',
+      sha: '0123456789abcdef0123456789abcdef01234567',
+      sourceType: 'current-branch',
+      verified: true,
+      caveats: [],
+    },
     projectRoot,
     createdAt: '2026-05-20T20:39:05.695Z',
     updatedAt: '2026-05-20T20:55:11.000Z',
@@ -111,6 +119,8 @@ test('persistWorkflowArtifacts writes summaries, usage, step files, and agent fi
   assert.equal(fs.existsSync(path.join(state.projectRoot, '.nax', 'agent-runners', 'runner-claude', 'summary.md')), true)
 
   const usage = readJson(path.join(root, 'usage.json'))
+  assert.equal(usage.target.branch, 'main')
+  assert.equal(usage.target.verified, true)
   assert.deepEqual(usage.total, {
     totalTokens: 3000,
     stepsCount: 7,
@@ -118,6 +128,8 @@ test('persistWorkflowArtifacts writes summaries, usage, step files, and agent fi
   })
 
   const topSummary = fs.readFileSync(path.join(root, 'summary.md'), 'utf8')
+  assert.match(topSummary, /Target: `main` \(current-branch, verified\)/)
+  assert.match(topSummary, /Target SHA: `0123456789abcdef0123456789abcdef01234567`/)
   assert.ok(topSummary.includes('[summary](steps/01-review/summary.md)'))
   assert.ok(topSummary.includes('[metadata](steps/01-review/step.json)'))
   assert.ok(topSummary.includes('[usage](steps/01-review/usage.json)'))
@@ -192,6 +204,33 @@ test('buildStepJson lists immutable attempts in attempt-number order', () => {
   assert.deepEqual(json.runs[0].attempts.map((attempt) => attempt.attemptNumber), [1, 2])
 })
 
+test('artifacts serialize blob prompt delivery and context fetch metadata', () => {
+  const state = sampleRunState()
+  const run = state.steps[0].runs[0]
+  run.promptDelivery = {
+    mode: 'blob',
+    kind: 'prior-results',
+    safePromptBytes: 16384,
+    blobRef: { id: 'run:s:k', store: 's', key: 'k', marker: 'ctx', sentinel: 'blob' },
+    contextFetchStatus: 'confirmed',
+    contextFetchSignals: ['marker', 'sentinel'],
+    contextFetchConfirmed: true,
+  }
+  run.blobRef = run.promptDelivery.blobRef
+  run.contextFetchStatus = 'confirmed'
+  run.contextFetchSignals = ['marker', 'sentinel']
+  run.contextFetchConfirmed = true
+
+  persistRunArtifact(state, state.steps[0], run)
+
+  const agentJson = readJson(path.join(artifactsRootForRunState(state), 'steps', '01-review', 'agent-runners', 'claude.json'))
+  assert.equal(agentJson.promptDelivery.mode, 'blob')
+  assert.equal(agentJson.promptDelivery.blobRef.key, 'k')
+  assert.equal(agentJson.contextFetchStatus, 'confirmed')
+  assert.deepEqual(agentJson.contextFetchSignals, ['marker', 'sentinel'])
+  assert.equal(agentJson.contextFetchConfirmed, true)
+})
+
 test('summaryOnly rebuild skips new immutable attempt files', () => {
   const state = sampleRunState()
   const step = state.steps[0]
@@ -245,5 +284,6 @@ test('writeGithubStepSummary writes compact summary for oversized content', () =
 
   const written = fs.readFileSync(target, 'utf8')
   assert.match(written, /Full output: download the `nax-review-/)
+  assert.match(written, /Target: `main` \(current-branch, verified\)/)
   assert.ok(Buffer.byteLength(written) < 900 * 1024)
 })

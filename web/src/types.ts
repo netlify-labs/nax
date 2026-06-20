@@ -101,6 +101,15 @@ export type WorkflowGraphResponse = {
   graph: WorkflowGraph
 }
 
+export type Target = {
+  branch: string
+  ref: string
+  sha: string | null
+  sourceType: string
+  verified: boolean
+  caveats: string[]
+}
+
 export type DryRunOptions = {
   branch: string
   transport: string
@@ -109,6 +118,7 @@ export type DryRunOptions = {
   context: string
   step: string
   fromStep: string
+  target?: Target | null
 }
 
 export type DryRunResult = {
@@ -136,6 +146,7 @@ export type VisualizeRun = {
   status: string
   transport?: string
   branch?: string
+  target?: Target | null
   createdAt?: string
   updatedAt?: string
   dir?: string

@@ -42,6 +42,17 @@ function latestBlobRefs(projectRoot) {
   return [...byId.values()]
 }
 
+function compactBlobRefs(projectRoot) {
+  const filePath = registryPath(projectRoot)
+  if (!fs.existsSync(filePath)) return []
+  const refs = latestBlobRefs(projectRoot)
+  ensureRegistryDir(projectRoot)
+  const tmp = `${filePath}.tmp-${process.pid}-${Date.now()}`
+  fs.writeFileSync(tmp, refs.map((ref) => JSON.stringify(ref)).join('\n') + (refs.length > 0 ? '\n' : ''))
+  fs.renameSync(tmp, filePath)
+  return refs
+}
+
 function blobRefId(ref = {}) {
   return ref.id || `${ref.runId || ''}:${ref.store || ''}:${ref.key || ''}`
 }
@@ -193,6 +204,7 @@ module.exports = {
   addRunBlobRef,
   appendBlobRef,
   blobRefId,
+  compactBlobRefs,
   cleanupRunBlobRefs,
   latestBlobRefs,
   markBlobRef,

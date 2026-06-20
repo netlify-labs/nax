@@ -11,7 +11,17 @@ function tmpRoot() {
   return fs.mkdtempSync(path.join(os.tmpdir(), 'nax-flow-execution-'))
 }
 
-/** @param {any} projectRoot @param {any} id @param {Record<string, any>} param2 */
+/**
+ * @typedef {{ mode?: string, kind?: string, fallbackReason?: string, fallbackError?: string }} PromptDeliveryForTest
+ */
+
+/** @param {unknown} value @returns {PromptDeliveryForTest} */
+function promptDeliveryForTest(value) {
+  assert.ok(value && typeof value === 'object')
+  return /** @type {PromptDeliveryForTest} */ (value)
+}
+
+/** @param {string} projectRoot @param {string} id @param {Record<string, string>} param2 */
 function writeProjectFlow(projectRoot, id, { title = id, promptBody = 'Prompt body' } = {}) {
   const flowDir = path.join(projectRoot, '.github', 'nax-flows', id)
   fs.mkdirSync(path.join(flowDir, 'prompts'), { recursive: true })
@@ -170,9 +180,36 @@ test('prepareLocalPromptDelivery falls back to compact prompt when blob offload 
   })
 
   assert.equal(delivery.promptDelivery.mode, 'compact')
-  assert.equal(/** @type {any} */ (delivery.promptDelivery).fallbackReason, 'blob-offload-disabled')
+  assert.equal(promptDeliveryForTest(delivery.promptDelivery).fallbackReason, 'blob-offload-disabled')
   assert.ok(Buffer.byteLength(delivery.promptText, 'utf8') <= 9000)
   assert.equal(delivery.promptText.includes(sourceRuns[0].resultText), false)
+})
+
+test('prepareLocalPromptDelivery falls back to compact prompt when blob auth context is missing', () => {
+  const sourceRuns = [
+    { agent: 'codex', runnerId: 'r1', sourceStep: 'review', resultText: `Codex full prose ${'A'.repeat(9000)} codex-tail` },
+  ]
+  const roundResults = _private.formatLocalRunResults(sourceRuns)
+
+  const delivery = _private.prepareLocalPromptDelivery({
+    agent: 'codex',
+    prompt: { name: 'synthesize', instruction: 'Synthesize.', body: 'Use the prior work.' },
+    step: { id: 'synthesize' },
+    sourceRuns,
+    roundResults,
+    stepContext: '',
+    runState: { runId: 'run-compact-missing-token' },
+    stepState: { id: 'synthesize' },
+    projectRoot: tmpRoot(),
+    netlify: { siteId: 'site-1', env: {} },
+    options: { safePromptBytes: 9000 },
+    dryRun: false,
+  })
+
+  assert.equal(delivery.promptDelivery.mode, 'compact')
+  assert.equal(promptDeliveryForTest(delivery.promptDelivery).fallbackReason, 'blob-context-missing')
+  assert.match(promptDeliveryForTest(delivery.promptDelivery).fallbackError || '', /NETLIFY_AUTH_TOKEN/)
+  assert.ok(Buffer.byteLength(delivery.promptText, 'utf8') <= 9000)
 })
 
 test('prepareLocalPromptDelivery offloads an oversized first-step prompt with no prior results', () => {
@@ -196,7 +233,7 @@ test('prepareLocalPromptDelivery offloads an oversized first-step prompt with no
     dryRun: true,
   })
 
-  const promptDelivery = /** @type {any} */ (delivery.promptDelivery)
+  const promptDelivery = promptDeliveryForTest(delivery.promptDelivery)
   assert.equal(promptDelivery.mode, 'blob')
   assert.equal(promptDelivery.kind, 'full-prompt')
   assert.ok(Buffer.byteLength(delivery.promptText, 'utf8') <= 5000)
@@ -223,6 +260,25 @@ test('applyContextFetchClassification records confidence without requiring rerun
   assert.equal(classified.contextFetchConfirmed, true)
   assert.deepEqual(classified.contextFetchSignals, ['substantive-output'])
   assert.equal(classified.promptDelivery.contextFetchStatus, 'probable')
+})
+
+test('applyContextFetchClassification confirms transcript marker and ignores prose token mentions', () => {
+  const run = {
+    resultText: `I reviewed the blob feature and mention blobs:get plus NETLIFY_AUTH_TOKEN in prose. ${'substantive '.repeat(200)}`,
+    rawResult: {
+      transcript: 'NAX-CONTEXT-LOADED ctx-123\nNAX-BLOB-SENTINEL blob-456',
+    },
+    promptDelivery: {
+      mode: 'blob',
+      blobRef: { marker: 'ctx-123', sentinel: 'blob-456' },
+    },
+  }
+
+  const classified = _private.applyContextFetchClassification(run)
+
+  assert.equal(classified.contextFetchStatus, 'confirmed')
+  assert.equal(classified.contextFetchConfirmed, true)
+  assert.deepEqual(classified.contextFetchSignals, ['marker', 'sentinel'])
 })
 
 test('buildAndMaybeFallbackPlan offloads oversized GitHub issue prompts', () => {
@@ -264,6 +320,57 @@ test('buildAndMaybeFallbackPlan offloads oversized GitHub issue prompts', () => 
   assert.equal(body.includes(largeReply), false)
   assert.ok(Buffer.byteLength(body, 'utf8') <= 5000)
   assert.equal(runState.blobRefs.length, 1)
+})
+
+test('ensureGithubPlanBlobOffload tolerates missing stepState for standalone issue path', () => {
+  const ref = _private.ensureGithubPlanBlobOffload({
+    results: [{
+      issueNumber: 29,
+      issueTitle: 'Prior',
+      issueUrl: 'https://github.com/owner/repo/issues/29',
+      model: 'codex',
+      replies: [{ body: `Prior prose ${'A'.repeat(2000)}` }],
+    }],
+    fullRoundResults: `Prior prose ${'A'.repeat(2000)}`,
+    runState: null,
+    stepState: undefined,
+    step: { id: 'standalone' },
+    projectRoot: tmpRoot(),
+    netlify: { siteId: 'site-1', env: { NETLIFY_AUTH_TOKEN: 'token-1' } },
+    options: { safePromptBytes: 5000 },
+    dryRun: true,
+  })
+
+  assert.equal(ref.key, 'standalone-prior-results')
+  assert.match(ref.offloadedRoundResults, /blobs:get/)
+})
+
+test('cleanupLocalWorkflowBlobs defers GitHub refs without completed consumers', () => {
+  const ref = { id: 'run:s:k', runId: 'run', store: 's', key: 'k', status: 'active' }
+  const runState = {
+    transport: 'github',
+    blobRefs: [ref],
+    steps: [{
+      id: 'fan-in',
+      runs: [{
+        agent: 'codex',
+        status: 'submitted',
+        blobRef: ref,
+        promptDelivery: { blobRef: ref },
+      }],
+    }],
+  }
+
+  const results = _private.cleanupLocalWorkflowBlobs({
+    runState,
+    projectRoot: tmpRoot(),
+    netlify: { siteId: 'site-1', env: { NETLIFY_AUTH_TOKEN: 'token-1' } },
+    reason: 'test',
+  })
+
+  assert.deepEqual(results, [])
+  assert.equal(runState.blobRefs[0].status, 'active')
+  assert.match(runState.blobCleanupWarning, /left for TTL cleanup/)
 })
 
 test('buildAndMaybeFallbackPlan offloads oversized GitHub comment-shaped prompts', () => {
@@ -347,7 +454,7 @@ test('buildAndMaybeFallbackPlan offloads oversized GitHub first-step prompts wit
   }, buildPlan)
 
   const body = plan.issues[0].body
-  const promptDelivery = /** @type {any} */ (plan.issues[0].promptDelivery)
+  const promptDelivery = promptDeliveryForTest(plan.issues[0].promptDelivery)
   assert.equal(promptDelivery.mode, 'blob')
   assert.equal(promptDelivery.kind, 'full-prompt')
   assert.match(body, /^@netlify codex fetch and follow the complete offloaded prompt/)

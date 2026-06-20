@@ -5,6 +5,7 @@ function safeOptions(options = {}) {
   return {
     branch: options.branch || '',
     branchSource: options.branchSource || '',
+    target: options.target || null,
     transport: options.transport || '',
     models: options.models || '',
     stepModels: options.stepModels || {},
@@ -47,6 +48,7 @@ function createWorkflowEventContext(options = {}) {
       projectRoot: runState?.projectRoot || '',
       transport: runState?.transport || '',
       branch: runState?.branch || runState?.options?.branch || '',
+      target: runState?.target || null,
     }
   }
 

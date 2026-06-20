@@ -5,6 +5,7 @@ const {
   formatMergeStateLedger,
   formatRepositorySnapshot,
   formatReviewContract,
+  formatUnverifiedTargetContract,
   formatWorkingTreeSummary,
   resolveRemoteBranchSha,
 } = require('../../src/review-context')
@@ -65,6 +66,40 @@ test('formatRepositorySnapshot can include the pinned remote source', () => {
   })
 
   assert.match(snapshot, /Pinned source: `origin\/master`/)
+})
+
+test('formatRepositorySnapshot renders target verification metadata', () => {
+  const snapshot = formatRepositorySnapshot({
+    repoRoot: '/tmp/repo',
+    branch: 'main',
+    pinnedSha: '',
+    pinnedSource: 'github-actions:main',
+    generatedAt: '2026-04-25T18:00:00.000Z',
+    target: {
+      sourceType: 'github-actions-implicit',
+      verified: false,
+      caveats: ['gha-implicit'],
+    },
+  })
+
+  assert.match(snapshot, /Pinned commit SHA: unverified/)
+  assert.match(snapshot, /Target source type: `github-actions-implicit`/)
+  assert.match(snapshot, /Target verified: no/)
+  assert.match(snapshot, /Target caveats: `gha-implicit`/)
+})
+
+test('formatUnverifiedTargetContract warns for GitHub implicit targets', () => {
+  const contract = formatUnverifiedTargetContract({
+    target: {
+      branch: 'main',
+      ref: 'github-actions:main',
+      sourceType: 'github-actions-implicit',
+      caveats: ['gha-implicit'],
+    },
+  })
+
+  assert.match(contract, /Target verification: unverified/)
+  assert.match(contract, /GitHub Actions checkout is implicit/)
 })
 
 test('resolveRemoteBranchSha uses upstream branch for the current branch', () => {

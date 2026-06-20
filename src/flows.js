@@ -10,6 +10,12 @@ const FLOW_FILE_EXTENSIONS = ['yml', 'yaml', 'json', 'toml', 'js', 'cjs', 'mjs',
 const NAX_CONFIG_FILE_NAMES = CONFIG_FILE_EXTENSIONS.map((extension) => `nax.config.${extension}`)
 const FLOW_FILE_NAMES = FLOW_FILE_EXTENSIONS.map((extension) => `flow.${extension}`)
 const WAIT_FOR_AGENT_RESULTS = 'agent-results'
+const ALLOWED_STEP_ACTIONS = ['issue', 'comment']
+const ALLOWED_STEP_SUBMITS = ['new-run', 'follow-up']
+/**
+ * @typedef {{ stepId: string, code: string, message: string, hint: string }} FlowDiagnostic
+ * @typedef {{ errors: FlowDiagnostic[], warnings: FlowDiagnostic[] }} FlowValidation
+ */
 const FLOW_PICKER_ORDER = [
   'review',
   'ideas',
@@ -163,6 +169,175 @@ function normalizeBoolean(value, fallback = false) {
   return fallback
 }
 
+function flowDiagnostic({ stepId = '', code, message, hint = '' }) {
+  return { stepId, code, message, hint }
+}
+
+function formatAllowed(values = []) {
+  return values.map((value) => `"${value}"`).join(', ')
+}
+
+function promptPathForStep(flow, step) {
+  return path.resolve(flow.dir, String(step.prompt || ''))
+}
+
+function validateFlowStructure(flow, { existsSync = fs.existsSync } = {}) {
+  const errors = []
+  const warnings = []
+  const steps = Array.isArray(flow.steps) ? flow.steps : []
+  const stepIds = new Map()
+
+  for (let index = 0; index < steps.length; index += 1) {
+    const step = steps[index]
+    const stepId = String(step.id || `step-${index + 1}`)
+    if (stepIds.has(stepId)) {
+      errors.push(flowDiagnostic({
+        stepId,
+        code: 'duplicate_step_id',
+        message: `Step id "${stepId}" is used more than once in flow "${flow.id}".`,
+        hint: 'Give each step a unique id.',
+      }))
+    } else {
+      stepIds.set(stepId, index)
+    }
+  }
+
+  for (let index = 0; index < steps.length; index += 1) {
+    const step = steps[index]
+    const stepId = String(step.id || `step-${index + 1}`)
+    if (!step.prompt) {
+      errors.push(flowDiagnostic({
+        stepId,
+        code: 'missing_prompt',
+        message: `Step "${stepId}" is missing a prompt path.`,
+        hint: 'Set step.prompt to a prompt file relative to the flow directory.',
+      }))
+    } else {
+      const resolvedPrompt = promptPathForStep(flow, step)
+      if (!existsSync(resolvedPrompt)) {
+        errors.push(flowDiagnostic({
+          stepId,
+          code: 'missing_prompt_file',
+          message: `Step "${stepId}" prompt file does not exist: ${resolvedPrompt}`,
+          hint: 'Create the prompt file or update step.prompt.',
+        }))
+      }
+    }
+
+    if (!ALLOWED_STEP_ACTIONS.includes(step.action)) {
+      errors.push(flowDiagnostic({
+        stepId,
+        code: 'invalid_action',
+        message: `Step "${stepId}" has unsupported action "${step.action}".`,
+        hint: `Allowed actions: ${formatAllowed(ALLOWED_STEP_ACTIONS)}.`,
+      }))
+    }
+
+    if (!ALLOWED_STEP_SUBMITS.includes(step.submit)) {
+      errors.push(flowDiagnostic({
+        stepId,
+        code: 'invalid_submit',
+        message: `Step "${stepId}" has unsupported submit "${step.submit}".`,
+        hint: `Allowed submit modes: ${formatAllowed(ALLOWED_STEP_SUBMITS)}.`,
+      }))
+    }
+
+    if (step.waitFor !== WAIT_FOR_AGENT_RESULTS) {
+      errors.push(flowDiagnostic({
+        stepId,
+        code: 'invalid_wait_for',
+        message: `Step "${stepId}" has unsupported waitFor "${step.waitFor}".`,
+        hint: 'Only "agent-results" is supported.',
+      }))
+    }
+
+    if (step.input !== undefined && !Array.isArray(step.input)) {
+      errors.push(flowDiagnostic({
+        stepId,
+        code: 'invalid_input',
+        message: `Step "${stepId}" input must be an array.`,
+        hint: 'Use input entries like { step: "previous-step", results: "all" }.',
+      }))
+      continue
+    }
+
+    for (const input of step.input || []) {
+      const sourceStepId = String(input?.step || '').trim()
+      if (!sourceStepId) {
+        errors.push(flowDiagnostic({
+          stepId,
+          code: 'missing_input_step',
+          message: `Step "${stepId}" has an input entry without a step id.`,
+          hint: 'Set input[].step to an earlier step id.',
+        }))
+        continue
+      }
+      if (!stepIds.has(sourceStepId)) {
+        errors.push(flowDiagnostic({
+          stepId,
+          code: 'unknown_input_step',
+          message: `Step "${stepId}" references unknown input step "${sourceStepId}".`,
+          hint: `Known steps: ${[...stepIds.keys()].join(', ') || 'none'}.`,
+        }))
+        continue
+      }
+      const sourceIndex = stepIds.get(sourceStepId)
+      if (sourceIndex === index) {
+        errors.push(flowDiagnostic({
+          stepId,
+          code: 'self_input_step',
+          message: `Step "${stepId}" cannot use itself as an input source.`,
+          hint: 'Reference an earlier step.',
+        }))
+      } else if (sourceIndex > index) {
+        errors.push(flowDiagnostic({
+          stepId,
+          code: 'future_input_step',
+          message: `Step "${stepId}" references later input step "${sourceStepId}".`,
+          hint: 'Inputs can only reference earlier steps.',
+        }))
+      }
+    }
+  }
+
+  return { errors, warnings }
+}
+
+/** @param {{ flow?: { id?: string }, errors?: FlowDiagnostic[], warnings?: FlowDiagnostic[] }} [param0] */
+function formatFlowValidation({ flow = {}, errors = [], warnings = [] } = {}) {
+  const lines = []
+  if (errors.length > 0) {
+    lines.push(`Flow "${flow?.id || 'unknown'}" is invalid:`)
+    for (const error of errors) {
+      const scope = error.stepId ? `step "${error.stepId}"` : 'flow'
+      lines.push(`- ${scope}: ${error.message}`)
+      if (error.hint) lines.push(`  Hint: ${error.hint}`)
+    }
+  }
+  if (warnings.length > 0) {
+    if (lines.length > 0) lines.push('')
+    lines.push(`Flow "${flow?.id || 'unknown'}" has warnings:`)
+    for (const warning of warnings) {
+      const scope = warning.stepId ? `step "${warning.stepId}"` : 'flow'
+      lines.push(`- ${scope}: ${warning.message}`)
+      if (warning.hint) lines.push(`  Hint: ${warning.hint}`)
+    }
+  }
+  return lines.join('\n')
+}
+
+function assertValidFlowStructure(flow, options = {}) {
+  const validation = validateFlowStructure(flow, options)
+  if (validation.errors.length > 0) {
+    /** @type {Error & { code?: string, validation?: FlowValidation }} */
+    const error = new Error(formatFlowValidation({ flow, ...validation }))
+    error.code = 'invalid_flow'
+    error.validation = validation
+    throw error
+  }
+  return validation
+}
+
 /** @param {any} raw @param {Record<string, any>} param1 */
 function normalizeFlow(raw, { id, dir, file, source = {} }) {
   const flowId = String(raw.id || id || path.basename(dir))
@@ -172,7 +347,7 @@ function normalizeFlow(raw, { id, dir, file, source = {} }) {
     throw new Error(`Flow "${flowId}" has no steps in ${file}`)
   }
 
-  return {
+  const flow = {
     id: flowId,
     title: raw.title || flowId,
     description: raw.description || '',
@@ -191,9 +366,6 @@ function normalizeFlow(raw, { id, dir, file, source = {} }) {
     steps: steps.map((step, index) => {
       const stepId = String(step.id || `step-${index + 1}`)
       const waitFor = String(step.waitFor || WAIT_FOR_AGENT_RESULTS)
-      if (waitFor !== WAIT_FOR_AGENT_RESULTS) {
-        throw new Error(`Flow "${flowId}" step "${stepId}" has unsupported waitFor "${waitFor}". Only "agent-results" is supported.`)
-      }
       return {
         id: stepId,
         title: step.title || stepId,
@@ -202,13 +374,15 @@ function normalizeFlow(raw, { id, dir, file, source = {} }) {
         action: step.action || 'issue',
         submit: step.submit || 'new-run',
         agents: normalizeList(step.agents).length > 0 ? normalizeList(step.agents) : normalizeList(defaults.agents),
-        input: Array.isArray(step.input) ? step.input : [],
+        input: step.input === undefined ? [] : step.input,
         waitFor,
         autoArchive: normalizeBoolean(step.autoArchive, null),
         isArchivable: normalizeBoolean(step.isArchivable, true),
       }
     }),
   }
+  assertValidFlowStructure(flow)
+  return flow
 }
 
 async function loadFlow(id, options = {}) {
@@ -262,17 +436,22 @@ function loadStepPrompt(flow, step) {
 }
 
 module.exports = {
+  ALLOWED_STEP_ACTIONS,
+  ALLOWED_STEP_SUBMITS,
   DEFAULT_PROJECT_FLOWS_DIRS,
   FLOWS_DIR,
   FLOW_FILE_NAMES,
   FLOW_PICKER_ORDER,
   NAX_CONFIG_FILE_NAMES,
   WAIT_FOR_AGENT_RESULTS,
+  assertValidFlowStructure,
   findFlowFile,
   flowSources,
+  formatFlowValidation,
   listFlows,
   loadFlow,
   loadStepPrompt,
   normalizeFlow,
   projectFlowDirs,
+  validateFlowStructure,
 }

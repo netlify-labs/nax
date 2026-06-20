@@ -930,7 +930,7 @@ export default function App() {
                     <Splitter.Pane defaultSize={28} min={18}>
                       <WorkflowOutputTabs
                         dryRun={{ result: dryRunResult, running: dryRunRunning, error: dryRunError }}
-                        run={{ result: activeRunResult, running: runRunning, error: runError }}
+                        run={{ result: activeRunResult, running: runRunning, error: runError, target: activeRun?.target || null }}
                         events={liveRunState.rawEvents}
                         eventErrors={liveRunState.errors}
                         onViewEvents={openEventDiagnostics}

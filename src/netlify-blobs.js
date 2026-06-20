@@ -185,6 +185,8 @@ function getBlob({
   jitter,
   onRetry,
 } = {}) {
+  // Used by the credentialed roundtrip probe and debugging paths. Hosted agent
+  // prompts still fetch with the runner-local CLI command embedded in the prompt.
   const args = withAuth(['blobs:get', store, key], token)
   const result = runBlobCommand({
     operation: 'get',

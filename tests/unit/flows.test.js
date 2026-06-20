@@ -4,9 +4,19 @@ const fs = require('fs')
 const os = require('os')
 const path = require('path')
 
-const { DEFAULT_PROJECT_FLOWS_DIRS, FLOW_PICKER_ORDER, listFlows, loadFlow, loadStepPrompt, projectFlowDirs } = require('../../src/flows')
+const { DEFAULT_PROJECT_FLOWS_DIRS, FLOW_PICKER_ORDER, listFlows, loadFlow, loadStepPrompt, projectFlowDirs, validateFlowStructure } = require('../../src/flows')
 
-/** @param {any} projectRoot @param {any} flowsDir @param {any} id @param {Record<string, any>} param3 */
+/**
+ * @typedef {Error & { code?: string, validation?: { errors: Array<{ code: string }> } }} FlowError
+ */
+
+/** @param {unknown} error @returns {FlowError} */
+function flowError(error) {
+  assert.ok(error instanceof Error)
+  return /** @type {FlowError} */ (error)
+}
+
+/** @param {string} projectRoot @param {string} flowsDir @param {string} id @param {Record<string, string>} param3 */
 function writeFlow(projectRoot, flowsDir, id, { title = id, description = '', promptBody = 'Prompt body' } = {}) {
   const flowDir = path.join(projectRoot, flowsDir, id)
   fs.mkdirSync(path.join(flowDir, 'prompts'), { recursive: true })
@@ -282,5 +292,137 @@ test('loadFlow rejects unsupported wait modes', async () => {
   await assert.rejects(
     () => loadFlow('bad-flow', { flowsDir: tmp }),
     /Only "agent-results" is supported/,
+  )
+})
+
+test('validateFlowStructure accepts a valid bundled resolved flow', async () => {
+  const flow = await loadFlow('error-handling')
+  assert.deepEqual(validateFlowStructure(flow), { errors: [], warnings: [] })
+})
+
+test('loadFlow rejects missing prompt files with the resolved path', async () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'nax-flow-test-'))
+  const flowDir = path.join(tmp, 'missing-prompt')
+  fs.mkdirSync(flowDir, { recursive: true })
+  fs.writeFileSync(path.join(flowDir, 'flow.yml'), [
+    'id: missing-prompt',
+    'steps:',
+    '  - id: one',
+    '    prompt: prompts/missing.md',
+    '    agents: [codex]',
+    '',
+  ].join('\n'))
+
+  await assert.rejects(
+    () => loadFlow('missing-prompt', { flowsDir: tmp }),
+    (error) => {
+      const err = flowError(error)
+      assert.equal(err.code, 'invalid_flow')
+      assert.match(err.message, /step "one": Step "one" prompt file does not exist:/)
+      assert.match(err.message, new RegExp(path.join(flowDir, 'prompts', 'missing.md').replace(/[.*+?^${}()|[\]\\]/g, '\\$&')))
+      return true
+    },
+  )
+})
+
+test('loadFlow rejects bad input step references', async () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'nax-flow-test-'))
+  const flowDir = path.join(tmp, 'bad-inputs')
+  fs.mkdirSync(path.join(flowDir, 'prompts'), { recursive: true })
+  fs.writeFileSync(path.join(flowDir, 'prompts', 'one.md'), '---\ntitle: One\n---\n\nOne\n')
+  fs.writeFileSync(path.join(flowDir, 'prompts', 'two.md'), '---\ntitle: Two\n---\n\nTwo\n')
+  fs.writeFileSync(path.join(flowDir, 'flow.yml'), [
+    'id: bad-inputs',
+    'steps:',
+    '  - id: one',
+    '    prompt: prompts/one.md',
+    '    agents: [codex]',
+    '    input:',
+    '      - step: two',
+    '      - step: missing',
+    '  - id: two',
+    '    prompt: prompts/two.md',
+    '    agents: [codex]',
+    '    input:',
+    '      - step: two',
+    '',
+  ].join('\n'))
+
+  await assert.rejects(
+    () => loadFlow('bad-inputs', { flowsDir: tmp }),
+    (error) => {
+      const err = flowError(error)
+      assert.match(err.message, /Step "one" references later input step "two"/)
+      assert.match(err.message, /Step "one" references unknown input step "missing"/)
+      assert.match(err.message, /Step "two" cannot use itself as an input source/)
+      return true
+    },
+  )
+})
+
+test('loadFlow rejects invalid action and submit modes', async () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'nax-flow-test-'))
+  const flowDir = path.join(tmp, 'bad-enums')
+  fs.mkdirSync(path.join(flowDir, 'prompts'), { recursive: true })
+  fs.writeFileSync(path.join(flowDir, 'prompts', 'one.md'), '---\ntitle: One\n---\n\nOne\n')
+  fs.writeFileSync(path.join(flowDir, 'flow.yml'), [
+    'id: bad-enums',
+    'steps:',
+    '  - id: one',
+    '    prompt: prompts/one.md',
+    '    action: bogus',
+    '    submit: sideways',
+    '    agents: [codex]',
+    '',
+  ].join('\n'))
+
+  await assert.rejects(
+    () => loadFlow('bad-enums', { flowsDir: tmp }),
+    (error) => {
+      const err = flowError(error)
+      assert.match(err.message, /unsupported action "bogus"/)
+      assert.match(err.message, /Allowed actions: "issue", "comment"/)
+      assert.match(err.message, /unsupported submit "sideways"/)
+      assert.match(err.message, /Allowed submit modes: "new-run", "follow-up"/)
+      return true
+    },
+  )
+})
+
+test('flow validation returns multiple diagnostics together', async () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'nax-flow-test-'))
+  const flowDir = path.join(tmp, 'many-errors')
+  fs.mkdirSync(path.join(flowDir, 'prompts'), { recursive: true })
+  fs.writeFileSync(path.join(flowDir, 'prompts', 'two.md'), '---\ntitle: Two\n---\n\nTwo\n')
+  fs.writeFileSync(path.join(flowDir, 'flow.yml'), [
+    'id: many-errors',
+    'steps:',
+    '  - id: one',
+    '    prompt: prompts/missing.md',
+    '    action: bogus',
+    '    submit: sideways',
+    '    waitFor: submitted',
+    '    agents: [codex]',
+    '    input:',
+    '      - step: two',
+    '  - id: two',
+    '    prompt: prompts/two.md',
+    '    agents: [codex]',
+    '',
+  ].join('\n'))
+
+  await assert.rejects(
+    () => loadFlow('many-errors', { flowsDir: tmp }),
+    (error) => {
+      const err = flowError(error)
+      assert.ok(err.validation)
+      const codes = err.validation.errors.map((item) => item.code)
+      assert.ok(codes.includes('missing_prompt_file'))
+      assert.ok(codes.includes('invalid_action'))
+      assert.ok(codes.includes('invalid_submit'))
+      assert.ok(codes.includes('invalid_wait_for'))
+      assert.ok(codes.includes('future_input_step'))
+      return true
+    },
   )
 })

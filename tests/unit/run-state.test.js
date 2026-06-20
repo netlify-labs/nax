@@ -5,6 +5,7 @@ const os = require('os')
 const path = require('path')
 
 const {
+  createRunState,
   dismissRunState,
   findLatestUnfinishedRun,
   findLatestUnfinishedLocalRun,
@@ -48,6 +49,30 @@ test('isUnfinishedLocalRun detects submitted local runner ids', () => {
   assert.equal(isUnfinishedLocalRun(runState('/tmp/x', {
     steps: [{ id: 'review', status: 'completed', runs: [{ runnerId: 'runner-1', status: 'completed' }] }],
   })), false)
+})
+
+test('createRunState persists immutable target and branch aliases', () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'nax-run-state-target-test-'))
+  const target = {
+    branch: 'main',
+    ref: 'origin/main',
+    sha: '0123456789abcdef0123456789abcdef01234567',
+    sourceType: 'current-branch',
+    verified: true,
+    caveats: [],
+  }
+
+  const state = createRunState({
+    projectRoot: tmp,
+    flow: { id: 'review', title: 'Review' },
+    transport: 'netlify-api',
+    target,
+    now: new Date('2026-05-12T00:00:00.000Z'),
+  })
+
+  assert.deepEqual(state.target, target)
+  assert.equal(state.branch, 'main')
+  assert.equal(state.branchSource, 'current-branch')
 })
 
 test('hasRepairableRuns ignores terminal failed and timeout runs', () => {

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState, type CSSProperties } from 'react'
 import { ActionIcon, Alert, Anchor, Badge, Box, Group, Modal, Paper, ScrollArea, Stack, Text, Timeline, Title, Tooltip, UnstyledButton } from '@mantine/core'
-import { Check, Copy, ExternalLink, GitBranch, History, RotateCcw } from 'lucide-react'
+import { Check, ExternalLink, Files, GitBranch, History, RotateCcw } from 'lucide-react'
 import { getRunDetails, openLocalFile } from '../api'
 import { AgentIcon } from './AgentIcon'
 import { MarkdownRenderer } from './MarkdownRenderer'
@@ -99,6 +99,7 @@ function workflowName(run: VisualizeRun | undefined): string {
 }
 
 function timelineContentTitle(entry: TimelineEntry, name: string): string {
+  if (entry.kind === 'step' && entry.stepNumber) return `Step ${entry.stepNumber}: ${entry.title}`
   if (!name) return entry.title
   if (entry.kind === 'summary') return `"${name}" workflow results`
   return entry.title
@@ -410,9 +411,9 @@ export function RecentRuns({ runs, selectedRunId, onSelect, onResume }: Props) {
               ) : null}
               <Box className="run-details-content">
                 {activeEntry ? (
-                  <Stack gap="sm">
+                  <Stack gap="sm" style={{ marginTop: -4 }}>
                     <Group gap="xs" wrap="wrap">
-                      <Title order={2} size="h3">{timelineContentTitle(activeEntry, detailWorkflowName)}</Title>
+                      <Title order={2} size="h4">{timelineContentTitle(activeEntry, detailWorkflowName)}</Title>
                       {activeEntry.status ? (
                         <Badge
                           className={`run-status ${activeEntry.status}`}
@@ -424,9 +425,13 @@ export function RecentRuns({ runs, selectedRunId, onSelect, onResume }: Props) {
                           {activeEntry.status}
                         </Badge>
                       ) : null}
-                      {!activeEntry.section && activeEntry.absolutePath ? <ArtifactActions filePath={activeEntry.absolutePath} /> : null}
+                      {activeEntry.absolutePath ? (
+                        <ArtifactActions
+                          filePath={activeEntry.absolutePath}
+                          sessionUrl={activeEntry.section?.links.sessionUrl || activeEntry.section?.links.agentRunUrl}
+                        />
+                      ) : null}
                     </Group>
-                    {activeEntry.section ? <RunSectionMeta section={activeEntry.section} /> : null}
                     <Box className="prompt-markdown run-details-markdown">
                       {activeEntry.markdown ? (
                         <MarkdownRenderer>{activeEntry.markdown}</MarkdownRenderer>
@@ -475,19 +480,7 @@ function MetadataRow({ label, value }: { label: string; value: string }) {
   )
 }
 
-function RunSectionMeta({ section }: { section: RunDetailsSection }) {
-  const sessionUrl = section.links.sessionUrl || section.links.agentRunUrl
-  return (
-    <Stack gap={6} mb="sm">
-      <Group gap="xs" wrap="wrap">
-        {sessionUrl ? <Anchor href={sessionUrl} target="_blank" rel="noreferrer" size="xs">Open in Netlify</Anchor> : null}
-        {section.absolutePath ? <ArtifactActions filePath={section.absolutePath} /> : null}
-      </Group>
-    </Stack>
-  )
-}
-
-function ArtifactActions({ filePath }: { filePath: string }) {
+function ArtifactActions({ filePath, sessionUrl }: { filePath: string; sessionUrl?: string }) {
   const [error, setError] = useState('')
   const [opening, setOpening] = useState(false)
   const [copied, setCopied] = useState(false)
@@ -519,7 +512,7 @@ function ArtifactActions({ filePath }: { filePath: string }) {
     <Group gap={4} wrap="nowrap" className="artifact-actions">
       <Tooltip label={copied ? 'Copied' : 'Copy file path'}>
         <ActionIcon aria-label="Copy file path" variant="subtle" color="gray" size="sm" onClick={copyPath}>
-          <Copy size={14} />
+          <Files size={14} />
         </ActionIcon>
       </Tooltip>
       <Tooltip label="Open file">
@@ -527,6 +520,7 @@ function ArtifactActions({ filePath }: { filePath: string }) {
           <ExternalLink size={14} />
         </ActionIcon>
       </Tooltip>
+      {sessionUrl ? <Anchor href={sessionUrl} target="_blank" rel="noreferrer" size="xs">Open in Netlify</Anchor> : null}
       {error ? <Text size="xs" c="red" mt={4}>{error}</Text> : null}
     </Group>
   )

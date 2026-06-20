@@ -58,7 +58,8 @@ function agentLabel(agent: string): string {
 
 function statusLabel(status: string): string {
   const normalized = status.toLowerCase()
-  if (!normalized || isDoneStatus(normalized)) return 'Completed'
+  if (!normalized) return 'Unknown'
+  if (isDoneStatus(normalized)) return 'Completed'
   return normalized.charAt(0).toUpperCase() + normalized.slice(1)
 }
 
@@ -146,9 +147,9 @@ function buildTimelineEntries(
   const entries: TimelineEntry[] = [{
     id: 'summary',
     kind: 'summary',
-    title: run ? `"${workflowName(run)}" Workflow ${statusLabel(run.status || '')}` : 'Workflow Completed',
+    title: run ? `"${workflowName(run)}" Workflow ${statusLabel(run.status || '')}` : 'Workflow results',
     subtitle: 'click to view results',
-    status: run?.status || 'completed',
+    status: run?.status || '',
     path: details.summaryPath || run?.summaryPath || runId(run || {}),
     absolutePath: details.summaryAbsolutePath || '',
     markdown: details.summaryMarkdown,

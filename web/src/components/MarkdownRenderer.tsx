@@ -1,5 +1,6 @@
 import { lazy, Suspense } from 'react'
-import { Text } from '@mantine/core'
+import { ActionIcon, CopyButton, Text, Tooltip } from '@mantine/core'
+import { Check, Copy } from 'lucide-react'
 
 const StreamdownMarkdown = lazy(async () => {
   const [{ Streamdown }, { createCodePlugin }] = await Promise.all([
@@ -27,8 +28,27 @@ const StreamdownMarkdown = lazy(async () => {
 
 export function MarkdownRenderer({ children, fallback = 'Rendering markdown...' }: { children: string; fallback?: string }) {
   return (
-    <Suspense fallback={<Text c="dimmed">{fallback}</Text>}>
-      <StreamdownMarkdown>{children}</StreamdownMarkdown>
-    </Suspense>
+    <>
+      <CopyButton value={children} timeout={1200}>
+        {({ copied, copy }) => (
+          <Tooltip label={copied ? 'Copied' : 'Copy markdown'} position="left" withArrow>
+            <ActionIcon
+              aria-label="Copy raw markdown"
+              className="markdown-copy-button"
+              color={copied ? 'green' : 'gray'}
+              onClick={copy}
+              size="sm"
+              type="button"
+              variant="light"
+            >
+              {copied ? <Check size={14} /> : <Copy size={14} />}
+            </ActionIcon>
+          </Tooltip>
+        )}
+      </CopyButton>
+      <Suspense fallback={<Text c="dimmed">{fallback}</Text>}>
+        <StreamdownMarkdown>{children}</StreamdownMarkdown>
+      </Suspense>
+    </>
   )
 }

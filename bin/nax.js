@@ -1606,10 +1606,12 @@ async function handleVisualize(flowId, options = {}) {
     port: options.port,
     initialWorkflow: flowId || '',
     dev: options.dev === true,
+    tail: options.tail === true,
   })
 
   console.log(`Nax visualize: ${instance.url}`)
   console.log(`Project root:  ${instance.projectRoot}`)
+  if (options.tail === true) console.log('Tail output:   on')
 
   if (options.open !== false) {
     const openBrowser = (await import('open')).default
@@ -7114,6 +7116,7 @@ function buildProgram() {
     .option('--host <host>', 'Host for the local visualizer server', '127.0.0.1')
     .option('--port <port>', 'Port for the local visualizer server; defaults to an available port')
     .option('--no-open', 'Print the visualizer URL without opening a browser')
+    .option('--tail', 'Stream child workflow stdout/stderr to this terminal while visualizing')
     .option('--dev', 'Use development-mode visualizer behavior')
     .action((flow, options, command) => handleVisualize(flow || '', actionOptions(options, command))))
 

@@ -223,12 +223,13 @@ function normalizeDryRunOptions(raw = {}, flow = {}) {
   return out
 }
 
-function runDryRunCommand({ flowId, projectRoot, options }) {
+function runDryRunCommand({ flowId, projectRoot, options, tailOutput = false }) {
   return runWorkflow({
     flowId,
     projectRoot,
     options,
     dryRun: true,
+    passthrough: tailOutput,
   })
 }
 
@@ -238,9 +239,9 @@ function runDryRunCommand({ flowId, projectRoot, options }) {
  */
 
 /**
- * @param {{ flowId: string, projectRoot: string, options?: Record<string, unknown>, eventSink?: VisualizeEventSink }} input
+ * @param {{ flowId: string, projectRoot: string, options?: Record<string, unknown>, eventSink?: VisualizeEventSink, tailOutput?: boolean }} input
  */
-function runWorkflowChild({ flowId, projectRoot, options = {}, eventSink = () => {} }) {
+function runWorkflowChild({ flowId, projectRoot, options = {}, eventSink = () => {}, tailOutput = false }) {
   const command = workflowCommand({ flowId, projectRoot, options })
   const args = [path.resolve(__dirname, '..', 'bin', 'nax.js'), ...command.slice(1)]
   const startedAt = new Date().toISOString()
@@ -270,10 +271,12 @@ function runWorkflowChild({ flowId, projectRoot, options = {}, eventSink = () =>
   if (child.stderr) child.stderr.setEncoding('utf8')
   child.stdout.on('data', (text) => {
     stdout += text
+    if (tailOutput) process.stdout.write(text)
     eventSink({ type: 'stdout', text })
   })
   child.stderr.on('data', (text) => {
     stderr += text
+    if (tailOutput) process.stderr.write(text)
     eventSink({ type: 'stderr', text })
   })
   const eventParser = createRunnerEventParser({
@@ -438,7 +441,7 @@ function publicRunState(runState = {}) {
     runId: runState.runId || '',
     flowId: runState.flowId || '',
     flowTitle: runState.flowTitle || '',
-    status: runState.status || '',
+    status: runState.status || inferRunStateStatus(runState),
     transport: runState.transport || '',
     branch: runState.branch || '',
     createdAt: runState.createdAt || '',
@@ -448,6 +451,23 @@ function publicRunState(runState = {}) {
     resumable: isUnfinishedRun(runState),
     steps: Array.isArray(runState.steps) ? runState.steps : [],
   }
+}
+
+function inferRunStateStatus(runState = {}) {
+  const steps = Array.isArray(runState.steps) ? runState.steps : []
+  if (steps.length === 0) return ''
+
+  const statuses = steps.map((step) => String(step?.status || '').toLowerCase()).filter(Boolean)
+  if (statuses.some((status) => ['failed', 'timeout', 'cancelled', 'canceled'].includes(status))) {
+    return 'failed'
+  }
+  if (statuses.length === steps.length && statuses.every((status) => ['complete', 'completed', 'dry-run'].includes(status))) {
+    return 'completed'
+  }
+  if (statuses.some((status) => ['running', 'submitted', 'submitting', 'pending', 'waiting', 'retrying', 'queued'].includes(status))) {
+    return 'running'
+  }
+  return statuses[statuses.length - 1] || ''
 }
 
 function publicRunOptions(runState = {}) {
@@ -520,6 +540,7 @@ function staticFileForPath(distDir, pathname) {
 function createRequestHandler(options = {}) {
   const projectRoot = path.resolve(options.projectRoot || process.cwd())
   const distDir = options.distDir || path.resolve(__dirname, '..', 'web', 'dist')
+  const tailOutput = options.tail === true || options.tailOutput === true
   const flowOptions = {
     projectRoot,
     flowsDir: options.flowsDir,
@@ -637,6 +658,7 @@ function createRequestHandler(options = {}) {
       flowId,
       projectRoot,
       options: runOptions,
+      tailOutput,
       eventSink: (event) => {
         if (event.type === 'stdout') {
           run.stdout += event.text || ''
@@ -977,7 +999,7 @@ function createRequestHandler(options = {}) {
           const flow = await loadFlow(id, flowOptions)
           const body = await readJsonBody(req)
           const options = normalizeDryRunOptions(body, flow)
-          const result = await runDryRunCommand({ flowId: id, projectRoot, options })
+          const result = await runDryRunCommand({ flowId: id, projectRoot, options, tailOutput })
           jsonResponse(res, result.exitCode === 0 ? 200 : 500, {
             workflow: publicFlow(flow),
             dryRun: result,

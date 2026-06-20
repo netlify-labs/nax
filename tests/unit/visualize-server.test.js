@@ -277,6 +277,28 @@ test('visualize dry-run returns preview output without writing artifacts', async
   }
 })
 
+test('visualize tail streams dry-run output to the server console', async () => {
+  const projectRoot = tmpRoot()
+  const server = await startVisualizeServer({ projectRoot, tail: true })
+  const originalLog = console.log
+  const lines = []
+  console.log = (...args) => {
+    lines.push(args.map(String).join(' '))
+  }
+  try {
+    const response = await postJson(`http://127.0.0.1:${server.port}/api/workflows/review/dry-run`, server.token, {
+      transport: 'netlify-api',
+      branch: 'master',
+    })
+    assert.equal(response.statusCode, 200, response.payload?.dryRun?.stderr || response.payload?.error?.message)
+    assert.match(lines.join('\n'), /Multi step agent workflow: "Review"/)
+    assert.match(response.payload.dryRun.stdout, /Multi step agent workflow: "Review"/)
+  } finally {
+    console.log = originalLog
+    await server.close()
+  }
+})
+
 test('visualize real-run endpoint starts a tracked process and replays events', async () => {
   const projectRoot = tmpRoot()
   const server = await startVisualizeServer({ projectRoot })

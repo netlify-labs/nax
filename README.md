@@ -325,6 +325,7 @@ nax list                  List available flows
 ```bash
 nax visualize review
 nax visualize --no-open
+nax visualize --no-open --tail
 nax visualize --project-root ../my-site --flows-dir .github/nax-flows
 ```
 
@@ -342,7 +343,7 @@ The workbench includes:
 
 The browser talks only to the local visualize server. Mutating endpoints require a per-process token embedded in the opened URL, and the server binds to `127.0.0.1` by default. Real runs still use the same transport setup as the CLI, so GitHub Actions and Netlify API prerequisites are unchanged.
 
-Live graph status is event-driven. When the visualizer starts a real run, the child `nax run` process writes JSONL lifecycle events on file descriptor 3 while stdout/stderr stay human-readable terminal streams. The visualize server relays those structured events to the browser with Server-Sent Events at `/api/runs/<id>/events`, and the UI reducer updates step cards, model pills, edges, output, and diagnostics from those events.
+Live graph status is event-driven. When the visualizer starts a real run, the child `nax run` process writes JSONL lifecycle events on file descriptor 3 while stdout/stderr are captured for the UI. The visualize server relays those structured events to the browser with Server-Sent Events at `/api/runs/<id>/events`, and the UI reducer updates step cards, model pills, edges, output, and diagnostics from those events. Pass `--tail` to also stream the child workflow stdout/stderr back to the `nax visualize` terminal while debugging.
 
 Each durable run also stores the same structured stream at:
 
@@ -370,6 +371,12 @@ By default, `npm run visualize:dev` serves read-only workflow data from Vite so 
 
 ```bash
 node bin/nax.js visualize --no-open --port 53734
+```
+
+For terminal-side debugging of runs started from the browser:
+
+```bash
+node bin/nax.js visualize --no-open --tail --port 53734
 ```
 
 Copy the `token` value from the printed URL, then start Vite in another terminal:

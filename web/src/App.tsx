@@ -77,6 +77,17 @@ function repoNameFromPath(projectRoot: string): string {
   return projectRoot.split('/').filter(Boolean).pop() || projectRoot || 'Repository'
 }
 
+function shortHomePath(value: string, projectRoot = ''): string {
+  if (!value) return ''
+  if (projectRoot.startsWith('/Users/david/dotfiles') && value.startsWith('/Users/david/dotfiles')) {
+    return `~/dotfiles${value.slice('/Users/david/dotfiles'.length)}`
+  }
+  if (projectRoot.startsWith('/Users/david') && value.startsWith('/Users/david')) {
+    return `~${value.slice('/Users/david'.length)}`
+  }
+  return value
+}
+
 function agentLabel(agent: string): string {
   return agent.replace(/(^|-)([a-z])/g, (_match, prefix, char) => `${prefix}${char.toUpperCase()}`)
 }
@@ -126,6 +137,57 @@ function savedRunUrl(run: Record<string, unknown> | undefined): string {
     }
   }
   return runValue(run, 'commentUrl') || runValue(run, 'issueUrl')
+}
+
+function statusBadgeTone(status: string): 'green' | 'yellow' | 'red' | undefined {
+  const normalized = status.toLowerCase()
+  if (['complete', 'completed', 'dry-run'].includes(normalized)) return 'green'
+  if (['running', 'submitted', 'waiting', 'retrying', 'queued', 'interrupted'].includes(normalized)) return 'yellow'
+  return ['failed', 'timeout', 'cancelled', 'dismissed', 'error'].includes(normalized) ? 'red' : undefined
+}
+
+function statusBadgeColor(status: string): string {
+  return statusBadgeTone(status) || 'gray'
+}
+
+function statusBadgeStyle(status: string): CSSProperties | undefined {
+  const tone = statusBadgeTone(status)
+  if (!tone) return undefined
+
+  const color = tone === 'green' ? 'green' : tone === 'yellow' ? 'yellow' : 'red'
+  const shade = tone === 'green' ? '4' : tone === 'yellow' ? '4' : '5'
+  const mixShadow = tone === 'green' ? '72%' : tone === 'yellow' ? '76%' : '74%'
+  const mixGlow = tone === 'green' ? '86%' : tone === 'yellow' ? '84%' : '86%'
+  return {
+    '--badge-bg': `color-mix(in srgb, var(--mantine-color-${color}-${shade}), transparent 88%)`,
+    '--badge-color': `light-dark(var(--mantine-color-${color}-9), var(--mantine-color-${color}-1))`,
+    '--badge-bd': `calc(0.0625rem * var(--mantine-scale)) solid var(--mantine-color-${color}-${shade})`,
+    boxShadow: `0 0 0 1px color-mix(in srgb, var(--mantine-color-${color}-${shade}), transparent ${mixShadow}), 0 0 18px color-mix(in srgb, var(--mantine-color-${color}-${shade}), transparent ${mixGlow})`,
+  } as CSSProperties
+}
+
+function runIdentifier(run: Partial<VisualizeRun>): string {
+  return run.runId || run.id || ''
+}
+
+function mergeRunLists(active: VisualizeRun[], durable: VisualizeRun[]): VisualizeRun[] {
+  const seen = new Set<string>()
+  return [...active, ...durable].filter((run) => {
+    const id = runIdentifier(run)
+    if (!id || seen.has(id)) return false
+    seen.add(id)
+    return true
+  })
+}
+
+function isTerminalRunStatus(status: string): boolean {
+  return ['completed', 'failed', 'timeout', 'cancelled', 'canceled', 'dry-run'].includes(status.toLowerCase())
+}
+
+function sameRun(left: Partial<VisualizeRun>, right: Partial<VisualizeRun>): boolean {
+  const leftIds = [left.id, left.runId].filter(Boolean)
+  const rightIds = [right.id, right.runId].filter(Boolean)
+  return leftIds.some((id) => rightIds.includes(id))
 }
 
 function NetlifyLogo() {
@@ -212,6 +274,13 @@ export default function App() {
     () => workflows.find((workflow) => workflow.id === selectedWorkflowId) || null,
     [workflows, selectedWorkflowId],
   )
+
+  const refreshRuns = useCallback(async (): Promise<VisualizeRun[]> => {
+    const response = await listRuns()
+    const combined = mergeRunLists(response.active, response.durable)
+    setRuns(combined)
+    return combined
+  }, [])
 
   const clearDryRunSimulation = useCallback(() => {
     for (const timer of dryRunSimulationTimers.current) window.clearTimeout(timer)
@@ -372,6 +441,7 @@ export default function App() {
     dispatchLiveRun({ type: 'reset' })
     setDryRunOptions((options) => ({
       ...options,
+      context: '',
       models: [],
       stepModels: {},
       step: '',
@@ -400,17 +470,9 @@ export default function App() {
 
   useEffect(() => {
     let cancelled = false
-    listRuns()
-      .then((response) => {
-        if (cancelled) return
-        const seen = new Set<string>()
-        const combined = [...response.active, ...response.durable].filter((run) => {
-          const id = run.runId || run.id
-          if (!id || seen.has(id)) return false
-          seen.add(id)
-          return true
-        })
-        setRuns(combined)
+    refreshRuns()
+      .then(() => {
+        // State is updated in refreshRuns.
       })
       .catch(() => {
         if (!cancelled) setRuns([])
@@ -418,7 +480,36 @@ export default function App() {
     return () => {
       cancelled = true
     }
-  }, [refreshKey, activeRun?.status])
+  }, [refreshKey, activeRun?.status, refreshRuns])
+
+  useEffect(() => {
+    if (!runRunning || !activeRun) return undefined
+    let cancelled = false
+
+    const reconcile = async () => {
+      try {
+        const latestRuns = await refreshRuns()
+        if (cancelled) return
+        const latest = latestRuns.find((run) => sameRun(run, activeRun))
+        if (!latest || !isTerminalRunStatus(latest.status || '')) return
+        setActiveRun((value) => value ? { ...value, ...latest } : latest)
+        setRunRunning(false)
+        setCancelRunning(false)
+        closeRunEvents()
+      } catch {
+        // Keep the EventSource path as the primary signal; polling is only a stale-state repair path.
+      }
+    }
+
+    void reconcile()
+    const timer = window.setInterval(() => {
+      void reconcile()
+    }, 2500)
+    return () => {
+      cancelled = true
+      window.clearInterval(timer)
+    }
+  }, [activeRun, closeRunEvents, refreshRuns, runRunning])
 
   const toggleStepAgent = useCallback((stepId: string, agent: string, allAgents: string[]) => {
     setDryRunOptions((options) => {
@@ -441,7 +532,7 @@ export default function App() {
   }, [])
 
   const openContextModal = (action: Exclude<ContextModalAction, ''>) => {
-    setContextDraft(dryRunOptions.context)
+    setContextDraft('')
     setContextModalAction(action)
   }
 
@@ -654,7 +745,7 @@ export default function App() {
         ...options,
         branch: typeof runOptions.branch === 'string' ? runOptions.branch : response.run.branch || options.branch,
         transport: typeof runOptions.transport === 'string' ? runOptions.transport : response.run.transport || options.transport,
-        context: typeof runOptions.context === 'string' ? runOptions.context : options.context,
+        context: '',
         step: typeof runOptions.step === 'string' ? runOptions.step : '',
         fromStep: typeof runOptions.fromStep === 'string' ? runOptions.fromStep : '',
         models: [],
@@ -688,7 +779,11 @@ export default function App() {
       ...dryRunOptions,
       context: contextDraft.trim(),
     }
-    setDryRunOptions(nextOptions)
+    setDryRunOptions({
+      ...nextOptions,
+      context: '',
+    })
+    setContextDraft('')
     closeContextModal()
     if (action === 'dry-run') {
       await runDryRun(nextOptions)
@@ -966,7 +1061,7 @@ export default function App() {
         scrollAreaComponent={ScrollArea.Autosize}
       >
         <Stack gap="sm">
-          {promptNode?.promptPath ? <Code block className="path-code">{promptNode.promptPath}</Code> : null}
+          {promptNode?.promptPath ? <Code block className="path-code">{shortHomePath(promptNode.promptPath, projectRoot)}</Code> : null}
           <Box className="prompt-markdown prompt-preview-markdown">
             {promptNode?.promptMarkdown ? (
               <MarkdownRenderer fallback="Rendering prompt...">{promptNode.promptMarkdown}</MarkdownRenderer>
@@ -997,7 +1092,13 @@ export default function App() {
           <Stack gap="sm">
             <Group gap="xs" wrap="wrap">
               {agentResultSection.status ? (
-                <Badge className={`run-status ${agentResultSection.status}`} variant="light" size="xs">
+                <Badge
+                  className={`run-status ${agentResultSection.status}`}
+                  variant="light"
+                  color={statusBadgeColor(agentResultSection.status)}
+                  size="xs"
+                  style={statusBadgeStyle(agentResultSection.status)}
+                >
                   {agentResultSection.status}
                 </Badge>
               ) : null}
@@ -1026,7 +1127,13 @@ export default function App() {
         ) : agentResultContext ? (
           <Stack gap="sm">
             {agentResultLiveStatus ? (
-              <Badge className={`run-status ${agentResultLiveStatus}`} variant="light" w="fit-content">
+              <Badge
+                className={`run-status ${agentResultLiveStatus}`}
+                variant="light"
+                color={statusBadgeColor(agentResultLiveStatus)}
+                w="fit-content"
+                style={statusBadgeStyle(agentResultLiveStatus)}
+              >
                 {agentResultLiveStatus}
               </Badge>
             ) : null}

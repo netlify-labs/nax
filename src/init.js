@@ -360,17 +360,16 @@ function enableGitHubActionsSetup({
 
   if (!skipSecrets) {
     if (dryRun) {
+      // Dry-run only previews which secrets would be set; setGitHubSecret ignores
+      // the value under dryRun, so no Netlify auth token is required to preview.
       const token = readNetlifyCliToken({ env })
       const effectiveSiteId = netlify.siteId || siteId || ((netlify.status === 'would-create' || netlify.status === 'would-link' || netlify.status === 'would-init') ? '<netlify-site-id>' : '')
-      if (!token.token) {
-        throw new Error('Could not find a Netlify auth token. Run netlify login or set NETLIFY_AUTH_TOKEN before running nax init.')
-      }
       if (!effectiveSiteId) {
         throw new Error('Could not resolve NETLIFY_SITE_ID. Link/create a Netlify project first, or pass --site-id.')
       }
       resolvedRepo = repo || '<github-repo>'
       secrets.push(setGitHubSecret({ projectRoot: root, repo: resolvedRepo, name: 'NETLIFY_SITE_ID', value: effectiveSiteId, dryRun }))
-      secrets.push(setGitHubSecret({ projectRoot: root, repo: resolvedRepo, name: 'NETLIFY_AUTH_TOKEN', value: token.token, dryRun }))
+      secrets.push(setGitHubSecret({ projectRoot: root, repo: resolvedRepo, name: 'NETLIFY_AUTH_TOKEN', value: token.token || '<netlify-auth-token>', dryRun }))
     } else if (!hasGitHubCli()) {
       secrets.push(...skippedGitHubSecrets('GitHub CLI is required. Install gh and authenticate with gh auth login.'))
       return {

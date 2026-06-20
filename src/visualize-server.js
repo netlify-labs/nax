@@ -68,6 +68,87 @@ function safeDecode(value) {
   }
 }
 
+// Live-run memory caps: the durable event log on disk is the source of truth for
+// full history; the in-memory window is bounded so long/verbose runs cannot grow
+// the visualize process without limit.
+const MAX_LIVE_OUTPUT_CHARS = 512 * 1024
+const MAX_LIVE_EVENTS = 2000
+const MAX_FINISHED_RUNS = 50
+
+function htmlEscape(value) {
+  return String(value)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;')
+}
+
+// Appends to a live output string while keeping only the most recent maxChars,
+// reporting how many leading characters were dropped so callers can flag truncation.
+function appendBounded(existing, addition, maxChars = MAX_LIVE_OUTPUT_CHARS) {
+  const combined = `${existing}${addition}`
+  if (combined.length <= maxChars) return { text: combined, dropped: 0 }
+  const dropped = combined.length - maxChars
+  return { text: combined.slice(dropped), dropped }
+}
+
+// Writes an event to every SSE client, dropping any client whose write throws so
+// a flaky/half-closed connection cannot surface an unhandled stream error.
+function broadcastEvent(clients, text) {
+  for (const client of clients) {
+    try {
+      client.write(text)
+    } catch (_err) {
+      clients.delete(client)
+      try { client.end() } catch (_endErr) { /* already torn down */ }
+    }
+  }
+}
+
+// Ends every SSE client and clears the set, tolerating already-closed responses.
+function endClients(clients) {
+  for (const client of clients) {
+    try { client.end() } catch (_err) { /* already torn down */ }
+  }
+  clients.clear()
+}
+
+// Registers an SSE response as a client of run, de-registering on both close and
+// error so a client that errors out can never crash the broadcast loop.
+function registerSseClient(run, req, res) {
+  run.clients.add(res)
+  const drop = () => run.clients.delete(res)
+  req.on('close', drop)
+  res.on('error', drop)
+}
+
+// Cancels every active workflow child, clears its status timer, and ends its SSE
+// clients so server shutdown leaves no child processes or open connections behind.
+function shutdownRuns(runs) {
+  for (const run of runs.values()) {
+    if (run.stepStatusTimer) {
+      clearInterval(run.stepStatusTimer)
+      run.stepStatusTimer = null
+    }
+    if (typeof run.cancel === 'function') {
+      try { run.cancel() } catch (_err) { /* child already gone */ }
+    }
+    endClients(run.clients)
+  }
+}
+
+// Evicts the oldest finished runs from the in-memory map once the finished count
+// exceeds maxFinished; durable run state on disk remains the record.
+function evictFinishedRuns(runs, maxFinished = MAX_FINISHED_RUNS) {
+  const finished = [...runs.values()].filter((run) => run.status !== 'running')
+  if (finished.length <= maxFinished) return
+  finished
+    .sort((a, b) => String(a.exitedAt || '').localeCompare(String(b.exitedAt || '')))
+    .slice(0, finished.length - maxFinished)
+    .forEach((run) => runs.delete(run.id))
+}
+
 function publicFlow(flow = {}) {
   return {
     id: flow.id || '',
@@ -107,29 +188,39 @@ function methodNotAllowed(res, method) {
   jsonResponse(res, 405, errorPayload(405, 'method_not_allowed', `Method ${method} is not allowed for this endpoint.`))
 }
 
-function readJsonBody(req) {
+function readJsonBody(req, { maxBytes = 1024 * 1024 } = {}) {
   return new Promise((resolve, reject) => {
     let body = ''
+    let settled = false
+    const settle = (fn, value) => {
+      if (settled) return
+      settled = true
+      fn(value)
+    }
     req.setEncoding('utf8')
     req.on('data', (chunk) => {
+      if (settled) return
       body += chunk
-      if (body.length > 1024 * 1024) {
-        reject(new Error('Request body is too large.'))
-        req.destroy()
+      if (body.length > maxBytes) {
+        // Stop reading and surface a typed error so the route catch can write a
+        // structured 413 — destroying the socket here would reset the connection
+        // before any HTTP response could be sent.
+        req.pause()
+        settle(reject, requestError(413, 'payload_too_large', 'Request body is too large.'))
       }
     })
     req.on('end', () => {
       if (!body.trim()) {
-        resolve({})
+        settle(resolve, {})
         return
       }
       try {
-        resolve(JSON.parse(body))
+        settle(resolve, JSON.parse(body))
       } catch (_err) {
-        reject(new Error('Request body must be valid JSON.'))
+        settle(reject, requestError(400, 'invalid_json', 'Request body must be valid JSON.'))
       }
     })
-    req.on('error', reject)
+    req.on('error', (error) => settle(reject, error))
   })
 }
 
@@ -269,7 +360,7 @@ function assertToken(req, requestUrl, token) {
 /** @param {{ token?: string, initialWorkflow?: string }} [options] */
 function defaultIndexHtml({ token, initialWorkflow = '' } = {}) {
   const workflowText = initialWorkflow
-    ? `<p>Initial workflow: <code>${initialWorkflow}</code></p>`
+    ? `<p>Initial workflow: <code>${htmlEscape(initialWorkflow)}</code></p>`
     : ''
   return [
     '<!doctype html>',
@@ -289,7 +380,7 @@ function defaultIndexHtml({ token, initialWorkflow = '' } = {}) {
     '    <h1>Nax Visualize</h1>',
     '    <p>The visualize API is running. Build the web UI with <code>npm run visualize:build</code> to serve the full workbench.</p>',
     `    ${workflowText}`,
-    `    <p>API health: <a href="/api/health?token=${token}">/api/health</a></p>`,
+    `    <p>API health: <a href="/api/health?token=${htmlEscape(encodeURIComponent(token))}">/api/health</a></p>`,
     '  </main>',
     '</body>',
     '</html>',
@@ -362,6 +453,8 @@ function runWorkflowChild({ flowId, projectRoot, options = {}, eventSink = () =>
   const started = Date.now()
   let stdout = ''
   let stderr = ''
+  let stdoutDropped = 0
+  let stderrDropped = 0
   let cancelRequested = false
   let settled = false
   let forceKillTimer = null
@@ -384,12 +477,16 @@ function runWorkflowChild({ flowId, projectRoot, options = {}, eventSink = () =>
   if (child.stdout) child.stdout.setEncoding('utf8')
   if (child.stderr) child.stderr.setEncoding('utf8')
   child.stdout.on('data', (text) => {
-    stdout += text
+    const bounded = appendBounded(stdout, text)
+    stdout = bounded.text
+    stdoutDropped += bounded.dropped
     if (tailOutput) process.stdout.write(text)
     eventSink({ type: 'stdout', text })
   })
   child.stderr.on('data', (text) => {
-    stderr += text
+    const bounded = appendBounded(stderr, text)
+    stderr = bounded.text
+    stderrDropped += bounded.dropped
     if (tailOutput) process.stderr.write(text)
     eventSink({ type: 'stderr', text })
   })
@@ -426,7 +523,9 @@ function runWorkflowChild({ flowId, projectRoot, options = {}, eventSink = () =>
       settled = true
       if (forceKillTimer) clearTimeout(forceKillTimer)
       const message = error?.message || String(error)
-      stderr += `${message}\n`
+      const bounded = appendBounded(stderr, `${message}\n`)
+      stderr = bounded.text
+      stderrDropped += bounded.dropped
       eventSink({ type: 'stderr', text: `${message}\n` })
       eventSink({ type: 'error', message })
       const result = {
@@ -439,6 +538,8 @@ function runWorkflowChild({ flowId, projectRoot, options = {}, eventSink = () =>
         signal: null,
         stdout,
         stderr,
+        stdoutDropped,
+        stderrDropped,
       }
       eventSink({ type: 'exited', status: result.status, exitCode: result.exitCode, signal: result.signal, durationMs: result.durationMs })
       resolve(result)
@@ -458,6 +559,8 @@ function runWorkflowChild({ flowId, projectRoot, options = {}, eventSink = () =>
         signal: signal || null,
         stdout,
         stderr,
+        stdoutDropped,
+        stderrDropped,
       }
       if (status === 'failed') {
         const message = stderr.trim().split('\n').filter(Boolean).pop() || `Workflow "${flowId}" failed.`
@@ -674,15 +777,19 @@ function createRequestHandler(options = {}) {
   const activeByWorkflow = new Map()
 
   function recordEvent(run, type, data = {}) {
+    run.eventSeq = (run.eventSeq || 0) + 1
     const event = {
-      id: run.events.length + 1,
       type,
       at: new Date().toISOString(),
       runId: run.id,
       ...data,
+      // monotonic id/seq last so a bounded events window never reuses ids
+      id: run.eventSeq,
+      seq: run.eventSeq,
     }
     run.events.push(event)
-    for (const client of run.clients) client.write(eventText(event))
+    if (run.events.length > MAX_LIVE_EVENTS) run.events.shift()
+    broadcastEvent(run.clients, eventText(event))
     return event
   }
 
@@ -762,7 +869,10 @@ function createRequestHandler(options = {}) {
       signal: null,
       stdout: '',
       stderr: '',
+      stdoutDropped: 0,
+      stderrDropped: 0,
       events: [],
+      eventSeq: 0,
       clients: new Set(),
       cancellable: true,
       cancelRequested: false,
@@ -783,11 +893,17 @@ function createRequestHandler(options = {}) {
       tailOutput,
       eventSink: (event) => {
         if (event.type === 'stdout') {
-          run.stdout += event.text || ''
+          const bounded = appendBounded(run.stdout, event.text || '')
+          run.stdout = bounded.text
+          run.stdoutDropped += bounded.dropped
           if (!run.runId) run.runId = extractDurableRunId(run.stdout)
           if (run.runId) recordStepStatusEvents(run)
         }
-        if (event.type === 'stderr') run.stderr += event.text || ''
+        if (event.type === 'stderr') {
+          const bounded = appendBounded(run.stderr, event.text || '')
+          run.stderr = bounded.text
+          run.stderrDropped += bounded.dropped
+        }
         if (event.type === 'started') recordEvent(run, 'started', { command: event.command || run.command, flowId })
         else if (event.type === 'stdout') recordEvent(run, 'stdout', { text: event.text || '' })
         else if (event.type === 'stderr') recordEvent(run, 'stderr', { text: event.text || '' })
@@ -815,6 +931,8 @@ function createRequestHandler(options = {}) {
       run.durationMs = result.durationMs
       run.stdout = result.stdout
       run.stderr = result.stderr
+      run.stdoutDropped = result.stdoutDropped || 0
+      run.stderrDropped = result.stderrDropped || 0
       run.runId = run.runId || extractDurableRunId(`${result.stdout || ''}\n${result.stderr || ''}`)
       run.cancellable = false
       run.cancel = null
@@ -823,14 +941,16 @@ function createRequestHandler(options = {}) {
       activeByWorkflow.delete(flowId)
       recordStepStatusEvents(run)
       recordEvent(run, 'exited', { status: run.status, exitCode: run.exitCode, signal: run.signal, durationMs: run.durationMs })
-      for (const client of run.clients) client.end()
-      run.clients.clear()
+      endClients(run.clients)
+      evictFinishedRuns(runs)
     }).catch((error) => {
       const message = error?.message || String(error)
       run.status = 'failed'
       run.exitedAt = new Date().toISOString()
       run.exitCode = 1
-      run.stderr += `${message}\n`
+      const bounded = appendBounded(run.stderr, `${message}\n`)
+      run.stderr = bounded.text
+      run.stderrDropped += bounded.dropped
       run.runId = run.runId || extractDurableRunId(`${run.stdout || ''}\n${run.stderr || ''}`)
       run.cancellable = false
       run.cancel = null
@@ -840,8 +960,8 @@ function createRequestHandler(options = {}) {
       recordStepStatusEvents(run)
       recordEvent(run, 'error', { message })
       recordEvent(run, 'exited', { status: run.status, exitCode: run.exitCode, signal: run.signal })
-      for (const client of run.clients) client.end()
-      run.clients.clear()
+      endClients(run.clients)
+      evictFinishedRuns(runs)
     })
     return run
   }
@@ -862,6 +982,9 @@ function createRequestHandler(options = {}) {
       signal: run.signal,
       stdout: run.stdout,
       stderr: run.stderr,
+      stdoutDropped: run.stdoutDropped || 0,
+      stderrDropped: run.stderrDropped || 0,
+      truncated: (run.stdoutDropped || 0) > 0 || (run.stderrDropped || 0) > 0,
       eventCount: run.events.length,
       cancellable: run.cancellable === true,
     }
@@ -882,6 +1005,11 @@ function createRequestHandler(options = {}) {
 
   return {
     token,
+    // Cancels every active workflow child, ends SSE clients, and clears timers so
+    // server shutdown does not leak child processes or open connections.
+    shutdown() {
+      shutdownRuns(runs)
+    },
     async handle(req, res) {
       const base = `http://${req.headers.host || '127.0.0.1'}`
       const requestUrl = new URL(req.url || '/', base)
@@ -1007,8 +1135,7 @@ function createRequestHandler(options = {}) {
             }
           }
           if (run && run.status === 'running') {
-            run.clients.add(res)
-            req.on('close', () => run.clients.delete(res))
+            registerSseClient(run, req, res)
           } else {
             res.end()
           }
@@ -1371,6 +1498,7 @@ function startVisualizeServer(options = {}) {
         url,
         projectRoot: path.resolve(options.projectRoot || process.cwd()),
         close: () => new Promise((closeResolve, closeReject) => {
+          try { handler.shutdown() } catch (_err) { /* best-effort cleanup */ }
           server.close((error) => (error ? closeReject(error) : closeResolve()))
         }),
       })
@@ -1380,9 +1508,21 @@ function startVisualizeServer(options = {}) {
 
 module.exports = {
   _private: {
+    appendBounded,
+    broadcastEvent,
     createRunnerEventParser,
+    defaultIndexHtml,
+    endClients,
+    evictFinishedRuns,
     extractDurableRunId,
+    htmlEscape,
+    readJsonBody,
+    registerSseClient,
+    shutdownRuns,
     stepStatusSnapshot,
+    MAX_LIVE_EVENTS,
+    MAX_LIVE_OUTPUT_CHARS,
+    MAX_FINISHED_RUNS,
   },
   createRequestHandler,
   publicFlow,

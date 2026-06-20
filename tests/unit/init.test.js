@@ -147,6 +147,25 @@ test('enableGitHubActionsSetup creates workflow even when gh is not installed', 
   assert.match(result.secrets[0].reason, /GitHub CLI is required/)
 })
 
+test('enableGitHubActionsSetup dry-run previews would-set secrets without a Netlify token', () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'nax-init-test-'))
+  fs.mkdirSync(path.join(tmp, '.git'))
+
+  const result = enableGitHubActionsSetup({
+    projectRoot: tmp,
+    repo: 'netlify-labs/nax',
+    netlify: { status: 'would-link' },
+    env: {},
+    dryRun: true,
+  })
+
+  assert.equal(result.githubActions, true)
+  assert.deepEqual(result.secrets.map((secret) => [secret.name, secret.status]), [
+    ['NETLIFY_SITE_ID', 'would-set'],
+    ['NETLIFY_AUTH_TOKEN', 'would-set'],
+  ])
+})
+
 test('enableGitHubActionsSetup creates workflow when gh auth fails and reports skipped secrets', () => {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'nax-init-test-'))
   fs.mkdirSync(path.join(tmp, '.git'))

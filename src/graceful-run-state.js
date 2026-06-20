@@ -9,9 +9,13 @@ function persistActiveRunState(reason, now = new Date()) {
   if (!activeRunState || activeRunState.status === 'completed') return null
   if (activeInterruptHandler) {
     try {
+      // onInterrupt must be synchronous here: the onAnyExit('process-exit') path
+      // runs persistActiveRunState synchronously, so async cleanup cannot complete.
       activeInterruptHandler({ runState: activeRunState, reason })
     } catch (error) {
       activeRunState.interruptCleanupWarning = error?.message || String(error)
+      activeRunState.interruptCleanupStack = error?.stack || ''
+      console.warn('interrupt cleanup failed', error)
     }
   }
   activeRunState.status = 'interrupted'

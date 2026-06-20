@@ -63,6 +63,34 @@ test('clearTrackedRunState can mark a completed run complete', () => {
   assert.equal(saved.interruptedAt, undefined)
 })
 
+test('persistActiveRunState records stack and warns when interrupt cleanup throws', () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'nax-graceful-state-throw-test-'))
+  const state = runState(tmp)
+  const warnings = []
+  const originalWarn = console.warn
+  console.warn = (...args) => warnings.push(args)
+
+  try {
+    trackRunState(state, {
+      onInterrupt() {
+        throw new Error('blob cleanup boom')
+      },
+    })
+    _private.persistActiveRunState('test-interrupt', new Date('2026-05-12T01:00:00.000Z'))
+    clearTrackedRunState(state)
+  } finally {
+    console.warn = originalWarn
+  }
+
+  const saved = readSaved(state)
+  // persistence still completes despite the cleanup failure
+  assert.equal(saved.status, 'interrupted')
+  assert.equal(saved.interruptCleanupWarning, 'blob cleanup boom')
+  assert.match(saved.interruptCleanupStack, /blob cleanup boom/)
+  assert.equal(warnings.length, 1)
+  assert.equal(warnings[0][0], 'interrupt cleanup failed')
+})
+
 test('persistActiveRunState invokes interrupt cleanup hook before saving', () => {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'nax-graceful-state-hook-test-'))
   const state = runState(tmp)

@@ -1,5 +1,6 @@
 const test = require('node:test')
 const assert = require('node:assert/strict')
+const { EventEmitter } = require('events')
 const fs = require('fs')
 const http = require('http')
 const os = require('os')
@@ -714,4 +715,119 @@ test('visualize events API replays durable event log with since filter', async (
   } finally {
     await server.close()
   }
+})
+
+function fakeReq() {
+  return Object.assign(new EventEmitter(), { setEncoding() {}, pause() {} })
+}
+
+/** @param {unknown} err @returns {{ statusCode?: number, code?: string }} */
+function asRequestError(err) {
+  return /** @type {{ statusCode?: number, code?: string }} */ (err)
+}
+
+test('htmlEscape escapes html metacharacters', () => {
+  assert.equal(_private.htmlEscape(`<a>&"'`), '&lt;a&gt;&amp;&quot;&#39;')
+})
+
+test('defaultIndexHtml escapes the initial workflow and url-encodes the token', () => {
+  const html = _private.defaultIndexHtml({ token: 'a&b<c', initialWorkflow: '<script>x</script>' })
+  assert.match(html, /&lt;script&gt;x&lt;\/script&gt;/)
+  assert.doesNotMatch(html, /<script>x<\/script>/)
+  assert.match(html, /token=a%26b%3Cc/)
+})
+
+test('readJsonBody rejects oversized bodies with a 413 instead of resetting the socket', async () => {
+  const req = fakeReq()
+  const promise = _private.readJsonBody(req, { maxBytes: 10 })
+  req.emit('data', 'x'.repeat(20))
+  await assert.rejects(promise, (err) => asRequestError(err).statusCode === 413 && asRequestError(err).code === 'payload_too_large')
+})
+
+test('readJsonBody returns a 400 for invalid JSON', async () => {
+  const req = fakeReq()
+  const promise = _private.readJsonBody(req)
+  req.emit('data', 'not json')
+  req.emit('end')
+  await assert.rejects(promise, (err) => asRequestError(err).statusCode === 400 && asRequestError(err).code === 'invalid_json')
+})
+
+test('readJsonBody parses valid JSON and treats an empty body as {}', async () => {
+  const reqA = fakeReq()
+  const parsed = _private.readJsonBody(reqA)
+  reqA.emit('data', '{"a":1}')
+  reqA.emit('end')
+  assert.deepEqual(await parsed, { a: 1 })
+
+  const reqB = fakeReq()
+  const empty = _private.readJsonBody(reqB)
+  reqB.emit('end')
+  assert.deepEqual(await empty, {})
+})
+
+test('appendBounded keeps only the most recent characters and reports dropped count', () => {
+  assert.deepEqual(_private.appendBounded('abc', 'de', 10), { text: 'abcde', dropped: 0 })
+  assert.deepEqual(_private.appendBounded('abcd', 'efgh', 6), { text: 'cdefgh', dropped: 2 })
+})
+
+test('evictFinishedRuns drops the oldest finished runs but keeps running ones', () => {
+  const runs = new Map()
+  runs.set('r1', { id: 'r1', status: 'completed', exitedAt: '2026-01-01T00:00:01.000Z' })
+  runs.set('r2', { id: 'r2', status: 'completed', exitedAt: '2026-01-01T00:00:02.000Z' })
+  runs.set('r3', { id: 'r3', status: 'running', exitedAt: '' })
+  _private.evictFinishedRuns(runs, 1)
+  assert.equal(runs.has('r1'), false)
+  assert.equal(runs.has('r2'), true)
+  assert.equal(runs.has('r3'), true)
+})
+
+test('broadcastEvent drops a client whose write throws and keeps the rest', () => {
+  const written = []
+  const bad = { write() { throw new Error('EPIPE') }, end() {} }
+  const good = { write(text) { written.push(text) }, end() {} }
+  const clients = new Set([bad, good])
+  _private.broadcastEvent(clients, 'hello')
+  assert.equal(clients.has(bad), false)
+  assert.equal(clients.has(good), true)
+  assert.deepEqual(written, ['hello'])
+})
+
+test('registerSseClient de-registers the client on error and on close', () => {
+  const run = { clients: new Set() }
+
+  const resError = new EventEmitter()
+  _private.registerSseClient(run, new EventEmitter(), resError)
+  assert.equal(run.clients.has(resError), true)
+  resError.emit('error', new Error('socket'))
+  assert.equal(run.clients.has(resError), false)
+
+  const reqClose = new EventEmitter()
+  const resClose = new EventEmitter()
+  _private.registerSseClient(run, reqClose, resClose)
+  assert.equal(run.clients.has(resClose), true)
+  reqClose.emit('close')
+  assert.equal(run.clients.has(resClose), false)
+})
+
+test('shutdownRuns cancels children, clears timers, and ends clients', () => {
+  const cancelled = []
+  const ended = []
+  const timer = setInterval(() => {}, 1000)
+  const client = { end() { ended.push(true) } }
+  const runs = new Map()
+  runs.set('r1', {
+    id: 'r1',
+    status: 'running',
+    stepStatusTimer: timer,
+    cancel: () => cancelled.push('r1'),
+    clients: new Set([client]),
+  })
+
+  _private.shutdownRuns(runs)
+
+  const run = runs.get('r1')
+  assert.deepEqual(cancelled, ['r1'])
+  assert.equal(run.stepStatusTimer, null)
+  assert.deepEqual(ended, [true])
+  assert.equal(run.clients.size, 0)
 })

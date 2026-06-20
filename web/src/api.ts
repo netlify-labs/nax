@@ -1,4 +1,4 @@
-import type { DryRunOptions, DryRunResponse, HealthResponse, RunDetailsResponse, RunGraphResponse, RunsResponse, StartRunResponse, WorkflowGraphResponse, WorkflowListResponse, VisualizeRun } from './types'
+import type { DryRunOptions, DryRunResponse, HealthResponse, RunDetailsResponse, RunFollowupRequest, RunFollowupResponse, RunGraphResponse, RunsResponse, StartRunResponse, WorkflowGraphResponse, WorkflowListResponse, VisualizeRun } from './types'
 
 async function requestJson<T>(path: string): Promise<T> {
   const response = await fetch(path, {
@@ -109,6 +109,24 @@ export function getRunGraph(id: string): Promise<RunGraphResponse> {
 
 export function getRunDetails(id: string): Promise<RunDetailsResponse> {
   return requestJson<RunDetailsResponse>(`/api/runs/${encodeURIComponent(id)}/details`)
+}
+
+export async function startRunFollowup(id: string, options: RunFollowupRequest): Promise<RunFollowupResponse> {
+  const response = await fetch(`/api/runs/${encodeURIComponent(id)}/followups`, {
+    method: 'POST',
+    headers: {
+      accept: 'application/json',
+      'content-type': 'application/json',
+      'x-nax-token': sessionToken(),
+    },
+    body: JSON.stringify(options),
+  })
+  const payload = await response.json().catch(() => null)
+  if (!response.ok) {
+    const message = payload?.error?.message || `Follow-up failed with ${response.status}`
+    throw new Error(message)
+  }
+  return payload as RunFollowupResponse
 }
 
 export async function openLocalFile(path: string): Promise<{ opened: boolean; path: string }> {

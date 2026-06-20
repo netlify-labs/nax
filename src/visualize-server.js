@@ -12,6 +12,13 @@ const { runWorkflow, workflowCommand } = require('./workflow-runner')
 const { normalizeAgentList, normalizeStepModels, selectionValidationErrors } = require('./agent-selection')
 const { buildRunDetails } = require('./visualize-run-details')
 const { eventLogPathForRunState, readEventLog } = require('./runner-event-log')
+const { formatAgentRunUrl } = require('./agent-run-results')
+const { buildFollowupContextPackage } = require('./followup-context')
+const { prepareFollowupContextDelivery } = require('./followup-delivery')
+const { buildFollowupSubmissionPlan } = require('./followup-plan')
+const { buildFollowupPrompt, submitFollowupPlan } = require('./handoff-runner')
+const { persistFreshPseudoWorkflow } = require('./followup-persistence')
+const { setBlob } = require('./netlify-blobs')
 
 function jsonResponse(res, statusCode, payload) {
   const body = `${JSON.stringify(payload, null, 2)}\n`
@@ -147,6 +154,109 @@ async function openLocalFile(filePath, { projectRoot }) {
   const openFile = (await import('open')).default
   await openFile(absoluteFilePath)
   return absoluteFilePath
+}
+
+function defaultFollowupArtifacts(details = {}, requestedArtifacts) {
+  if (Array.isArray(requestedArtifacts) && requestedArtifacts.length > 0) return requestedArtifacts
+  return (Array.isArray(details.followupArtifacts) ? details.followupArtifacts : [])
+    .filter((artifact) => artifact.defaultSelected)
+    .map((artifact) => ({ id: artifact.id, kind: artifact.kind }))
+}
+
+function followupTargetById(details = {}, targetId = '') {
+  const targets = Array.isArray(details.followupTargets) ? details.followupTargets : []
+  if (targetId) return targets.find((target) => target.id === targetId) || null
+  return targets.find((target) => target.isDefault) || targets[0] || null
+}
+
+function normalizeFollowupRequest(body = {}, details = {}, runState = {}) {
+  const prompt = String(body.prompt || body.instructions || '').trim()
+  if (!prompt) {
+    throw requestError(400, 'missing_prompt', 'Enter follow-up instructions before submitting.')
+  }
+  const target = followupTargetById(details, String(body.targetId || body.target?.id || ''))
+  if (!target) {
+    throw requestError(400, 'missing_followup_target', 'No follow-up target is available for this run.')
+  }
+  const artifacts = defaultFollowupArtifacts(details, body.artifacts)
+  const mode = String(body.mode || target.defaultMode || 'follow-up-thread')
+  const models = normalizeAgentList(body.models)
+  const targetSha = String(body.targetSha || body.target?.sha || runState.target?.sha || '')
+  const targetBranch = String(body.targetBranch || body.target?.branch || runState.branch || runState.target?.branch || '')
+  return {
+    prompt,
+    target,
+    artifacts,
+    mode,
+    models,
+    targetSha,
+    targetBranch,
+  }
+}
+
+function submissionResponseItem(result = {}) {
+  const run = result.run || {}
+  return {
+    id: result.submission?.id || '',
+    mode: result.submission?.mode || '',
+    agent: run.agent || result.submission?.agent || '',
+    runnerId: run.runnerId || result.submission?.runnerId || '',
+    sessionId: run.sessionId || result.submission?.sessionId || '',
+    status: run.status || 'submitted',
+    links: run.links || {},
+    issueUrl: run.issueUrl || '',
+    sessionArtifactPath: result.sessionArtifact?.filePath || '',
+    runnerArtifactPath: result.runnerArtifact?.filePath || '',
+    warnings: result.warnings || [],
+  }
+}
+
+function followupId(sourceRunId = '') {
+  return `followup-${String(sourceRunId || 'run')}-${Date.now().toString(36)}`
+}
+
+/** @param {{ projectRoot?: string, siteId?: string, env?: NodeJS.ProcessEnv, writeBlob?: ((input: { ref: Record<string, any>, payload: string }) => any) | null }} [input] */
+function makeFollowupBlobWriter({ projectRoot, siteId, env = process.env, writeBlob } = {}) {
+  if (typeof writeBlob === 'function') return writeBlob
+  if (!siteId) return null
+  return async ({ ref, payload }) => setBlob({
+    store: ref.store,
+    key: ref.key,
+    value: payload,
+    siteId,
+    token: env.NETLIFY_AUTH_TOKEN,
+    cwd: projectRoot,
+    env,
+  })
+}
+
+function linkSubmittedRunFactory({ siteName = '' } = {}) {
+  return (run = {}) => {
+    const agentRunUrl = formatAgentRunUrl(siteName, run.runnerId, run.sessionId)
+    if (!agentRunUrl) return run
+    return {
+      ...run,
+      issueUrl: run.issueUrl || agentRunUrl,
+      links: {
+        ...(run.links || {}),
+        agentRunUrl,
+        ...(run.sessionId ? { sessionUrl: agentRunUrl } : {}),
+      },
+    }
+  }
+}
+
+function titleCaseAgent(agent = '') {
+  const value = String(agent || '').trim()
+  if (!value) return 'Agent'
+  return `${value.slice(0, 1).toUpperCase()}${value.slice(1)}`
+}
+
+function freshFollowupTitle(sourceRun = {}, target = {}, freshResults = []) {
+  const workflowTitle = sourceRun.flowTitle || sourceRun.flowId || 'workflow'
+  const agents = freshResults.map((run) => titleCaseAgent(run.agent)).filter(Boolean)
+  const agentText = agents.length === 1 ? agents[0] : agents.length > 1 ? `${agents.length} agents` : titleCaseAgent(target.agent)
+  return `Follow-up on ${workflowTitle}${agentText ? ` (${agentText})` : ''}`
 }
 
 function assertToken(req, requestUrl, token) {
@@ -554,6 +664,12 @@ function createRequestHandler(options = {}) {
   }
   const token = options.token || crypto.randomBytes(24).toString('hex')
   const initialWorkflow = options.initialWorkflow || ''
+  const env = options.env || process.env
+  const followupSiteId = options.siteId || env.NETLIFY_SITE_ID || ''
+  const followupSiteName = options.siteName || env.NETLIFY_SITE_NAME || ''
+  const followupNetlifyFilter = options.netlifyFilter || ''
+  const followupSubmitRun = options.followupSubmitRun
+  const followupWriteBlob = options.followupWriteBlob
   const runs = new Map()
   const activeByWorkflow = new Map()
 
@@ -945,6 +1061,135 @@ function createRequestHandler(options = {}) {
           jsonResponse(res, 200, {
             run: publicRunState(durable),
             details: buildRunDetails(durable),
+          })
+          return
+        }
+
+        const runFollowupsMatch = pathname.match(/^\/api\/runs\/([^/]+)\/followups$/)
+        if (runFollowupsMatch) {
+          if (req.method !== 'POST') {
+            methodNotAllowed(res, req.method || 'UNKNOWN')
+            return
+          }
+          assertToken(req, requestUrl, token)
+          const sourceRunId = safeDecode(runFollowupsMatch[1])
+          const durable = durableRunStateForId(sourceRunId)
+          if (!durable) {
+            notFound(res, 'Unknown visualize run.')
+            return
+          }
+          const body = await readJsonBody(req)
+          const details = buildRunDetails(durable)
+          const normalized = normalizeFollowupRequest(body, details, durable)
+          const contextPackage = buildFollowupContextPackage({
+            projectRoot,
+            details,
+            artifacts: normalized.artifacts,
+          })
+          const delivery = await prepareFollowupContextDelivery({
+            contextPackage,
+            runId: durable.runId || sourceRunId,
+            stepId: 'visualizer-followup',
+            options: durable.options || {},
+            writeBlob: makeFollowupBlobWriter({
+              projectRoot,
+              siteId: followupSiteId,
+              env,
+              writeBlob: followupWriteBlob,
+            }),
+          })
+          const sourceArtifactIds = contextPackage.artifacts.map((artifact) => artifact.id)
+          const plan = buildFollowupSubmissionPlan({
+            requestedMode: normalized.mode,
+            target: normalized.target,
+            models: normalized.models,
+            fallbackModels: normalizeAgentList(durable.options?.models || durable.steps?.flatMap((step) => step.agents || []) || ['codex']),
+            sourceArtifactIds,
+            targetSha: normalized.targetSha,
+            targetBranch: normalized.targetBranch,
+          })
+          const promptText = buildFollowupPrompt({
+            instructions: normalized.prompt,
+            contextText: delivery.promptContext,
+          })
+          const id = followupId(durable.runId || sourceRunId)
+          const results = await submitFollowupPlan({
+            projectRoot,
+            promptText,
+            submissions: plan.submissions,
+            shared: {
+              branch: normalized.targetBranch,
+              siteId: followupSiteId,
+              netlifyFilter: followupNetlifyFilter,
+              env,
+              submitRun: followupSubmitRun,
+              linkRun: linkSubmittedRunFactory({ siteName: followupSiteName }),
+              source: {
+                id,
+                sourceWorkflowRunId: durable.runId || sourceRunId,
+                sourceTargetId: normalized.target.id,
+                sourceArtifactIds,
+              },
+              raw: {
+                visualizerFollowup: {
+                  id,
+                  sourceWorkflowRunId: durable.runId || sourceRunId,
+                  targetId: normalized.target.id,
+                  delivery: delivery.delivery,
+                },
+              },
+            },
+          })
+          const warnings = results.flatMap((result) => result.warnings || [])
+          const freshResults = results
+            .filter((result) => result.submission?.mode === 'fresh-runner')
+            .map((result) => result.run)
+          let persistedWorkflow = null
+          if (freshResults.length > 0) {
+            try {
+              persistedWorkflow = persistFreshPseudoWorkflow({
+                projectRoot,
+                runs: freshResults,
+                promptText,
+                target: {
+                  sha: normalized.targetSha,
+                  branch: normalized.targetBranch,
+                  sourceType: 'visualizer-followup',
+                },
+                source: {
+                  id,
+                  sourceWorkflowRunId: durable.runId || sourceRunId,
+                  sourceTargetId: normalized.target.id,
+                  sourceArtifactIds,
+                },
+                title: freshFollowupTitle(durable, normalized.target, freshResults),
+                stepTitle: freshResults.length === 1
+                  ? `${titleCaseAgent(freshResults[0].agent)} follow-up`
+                  : 'Multi-agent follow-up',
+              })
+            } catch (error) {
+              warnings.push(error?.message || String(error))
+            }
+          }
+
+          jsonResponse(res, 202, {
+            followup: {
+              id,
+              status: 'submitted',
+              sourceWorkflowRunId: durable.runId || sourceRunId,
+              target: normalized.target,
+              context: {
+                artifactCount: contextPackage.artifactCount,
+                artifacts: contextPackage.artifacts,
+                delivery: delivery.delivery,
+                bytes: delivery.bytes,
+                blobRef: delivery.blobRef || null,
+              },
+              plan,
+              submissions: results.map(submissionResponseItem),
+              persistedWorkflow: persistedWorkflow ? publicRunState(persistedWorkflow) : null,
+              warnings,
+            },
           })
           return
         }

@@ -205,6 +205,57 @@ export type RunDetailsSection = {
   markdown: string
 }
 
+export type RunFollowupTarget = {
+  id: string
+  kind: 'workflow-summary' | 'step-summary' | 'agent-result' | 'runner-summary' | 'session-result'
+  label: string
+  agent: string
+  stepId: string
+  stepNumber: number
+  stepTitle: string
+  runnerId: string
+  sessionId: string
+  status: string
+  path: string
+  absolutePath: string
+  links: {
+    sessionUrl?: string
+    agentRunUrl?: string
+    commentUrl?: string
+    issueUrl?: string
+    [key: string]: string | undefined
+  }
+  defaultMode: 'follow-up-thread' | 'fresh-runner'
+  isDefault: boolean
+}
+
+export type RunFollowupArtifact = {
+  id: string
+  kind:
+    | 'workflow-summary'
+    | 'step-summary'
+    | 'agent-result'
+    | 'runner-summary'
+    | 'session-result'
+    | 'metadata-json'
+    | 'usage-json'
+    | 'attempt-markdown'
+    | 'blob-debug'
+  label: string
+  path: string
+  absolutePath: string
+  sizeBytes: number
+  defaultSelected: boolean
+  advanced: boolean
+  stepNumber: number
+  source: {
+    stepId: string
+    stepNumber: number
+    runnerId: string
+    sessionId: string
+  }
+}
+
 export type RunDetails = {
   summaryPath: string
   summaryAbsolutePath: string
@@ -212,11 +263,61 @@ export type RunDetails = {
   finalMarkdown: string
   finalTitle: string
   sections: RunDetailsSection[]
+  followupTargets: RunFollowupTarget[]
+  followupArtifacts: RunFollowupArtifact[]
 }
 
 export type RunDetailsResponse = {
   run: VisualizeRun
   details: RunDetails
+}
+
+export type RunFollowupRequest = {
+  mode: 'follow-up-thread' | 'fresh-runner'
+  prompt: string
+  targetId: string
+  models: string[]
+  artifacts: Array<{ id: string; kind: string }>
+}
+
+export type RunFollowupSubmission = {
+  id: string
+  mode: 'continue-runner' | 'fresh-runner' | string
+  agent: string
+  runnerId: string
+  sessionId: string
+  status: string
+  links: Record<string, string>
+  issueUrl: string
+  sessionArtifactPath: string
+  runnerArtifactPath: string
+  warnings: string[]
+}
+
+export type RunFollowupResponse = {
+  followup: {
+    id: string
+    status: 'submitted' | string
+    sourceWorkflowRunId: string
+    target: RunFollowupTarget
+    context: {
+      artifactCount: number
+      artifacts: RunFollowupArtifact[]
+      delivery: 'none' | 'inline' | 'blob' | string
+      bytes: number
+      blobRef: Record<string, unknown> | null
+    }
+    plan: {
+      mode: string
+      targetId: string
+      targetAgent: string
+      submissions: Array<Record<string, unknown>>
+      summary: string[]
+    }
+    submissions: RunFollowupSubmission[]
+    persistedWorkflow: VisualizeRun | null
+    warnings: string[]
+  }
 }
 
 export type RunnerEvent = {

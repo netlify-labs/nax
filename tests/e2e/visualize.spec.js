@@ -178,3 +178,82 @@ test('visualize opens shared run details modal from runs and graph agent results
     await server.close()
   }
 })
+
+test('visualize submits a follow-up from run details composer', async ({ page }) => {
+  const projectRoot = tmpRoot()
+  const runId = writeCompletedRunFixture(projectRoot)
+  const followupRequests = []
+  const submissions = []
+  const server = await startVisualizeServer({
+    projectRoot,
+    initialWorkflow: 'review',
+    siteName: 'netlify-agent-executor',
+    followupSubmitRun: async ({ run }) => {
+      submissions.push({ ...run })
+      return {
+        ...run,
+        status: 'submitted',
+        runnerId: run.existingRunnerId || `runner-${run.agent}`,
+        sessionId: run.existingRunnerId ? `session-${run.agent}-followup` : `session-${run.agent}`,
+      }
+    },
+  })
+
+  page.on('request', (request) => {
+    if (request.method() !== 'POST' || !request.url().includes(`/api/runs/${runId}/followups`)) return
+    followupRequests.push(request.postDataJSON())
+  })
+
+  try {
+    await page.setViewportSize({ width: 1360, height: 860 })
+    await page.goto(server.url, { waitUntil: 'networkidle' })
+
+    const runItem = page.locator('.run-item').filter({ hasText: runId })
+    await expect(runItem).toBeVisible()
+    await runItem.getByText('Review').first().click()
+
+    await expect(page.getByRole('dialog', { name: /Workflow results for "Review"/ })).toBeVisible()
+    await page.getByRole('button', { name: 'Send to next agent' }).click()
+    await page.getByRole('menuitem', { name: 'Run a followup' }).click()
+
+    await expect(page.getByRole('dialog', { name: 'Send to next agent' })).toBeVisible()
+    await expect(page.getByRole('combobox', { name: 'Follow-up target' })).toBeVisible()
+    await page.getByText('Start fresh agent runner').click()
+    await expect(page.getByRole('combobox', { name: 'Follow-up target' })).toBeHidden()
+    await page.getByText('Follow up on existing thread').click()
+    await expect(page.getByRole('combobox', { name: 'Follow-up target' })).toBeVisible()
+    await page.getByRole('combobox', { name: 'Follow-up target' }).click()
+    await page.getByRole('option', { name: 'Step 1: Review · codex result' }).click()
+    await expect(page.getByText('Codex: follow-up prompt on existing thread')).toBeVisible()
+    await expect(page.getByRole('checkbox', { name: /Workflow summary/ })).toBeChecked()
+    await expect(page.getByRole('button', { name: /Open Workflow summary/ })).toBeVisible()
+    await expect(page.getByText('Show advanced artifacts')).toBeHidden()
+    await expect(page.getByRole('button', { name: 'Run follow-up' })).toBeDisabled()
+
+    await page.locator('.run-followup-model-chip').filter({ hasText: 'Gemini' }).click()
+    await expect(page.getByText('Gemini: start fresh agent runner')).toBeVisible()
+    await page.getByLabel('What should the next agent do?').fill('Verify the proposed fix and call out risk.')
+    await page.getByRole('button', { name: 'Run follow-up' }).click()
+
+    await expect(page.locator('.mantine-Notification-root').filter({ hasText: 'Follow-up submitted' })).toBeVisible()
+    await expect(page.getByRole('dialog', { name: 'Send to next agent' })).toBeHidden()
+    expect(followupRequests).toHaveLength(1)
+    expect(followupRequests[0]).toMatchObject({
+      mode: 'follow-up-thread',
+      prompt: 'Verify the proposed fix and call out risk.',
+      targetId: 'agent-result:review:runner-1:session-1:codex',
+      models: ['codex', 'gemini'],
+    })
+    expect(followupRequests[0].artifacts).toEqual([{ id: 'workflow-summary:summary.md', kind: 'workflow-summary' }])
+    expect(submissions.map((submission) => [submission.agent, submission.existingRunnerId])).toEqual([
+      ['codex', 'runner-1'],
+      ['gemini', ''],
+    ])
+
+    await page.keyboard.press('Escape')
+    await expect(page.getByRole('dialog', { name: /Workflow results for "Review"/ })).toBeHidden()
+    await expect(page.locator('.run-item').filter({ hasText: 'Follow-up on Review (Gemini)' })).toBeVisible()
+  } finally {
+    await server.close()
+  }
+})

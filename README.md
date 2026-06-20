@@ -340,8 +340,13 @@ The workbench includes:
 | Dry Run | Calls the local API to run `nax run <flow> --dry --force`; it previews the command and output without writing `.nax` artifacts. |
 | Run | Requires a browser confirmation, then starts the workflow through the local `nax` command and streams stdout/stderr plus structured run events into the UI. |
 | Recent runs | Reads durable `.nax/workflows` state, highlights resumable runs, and overlays run status on the graph. |
+| Run details actions | Opens saved workflow, step, and agent results; copies result output; and can send selected artifacts to a follow-up agent. |
 
 The browser talks only to the local visualize server. Mutating endpoints require a per-process token embedded in the opened URL, and the server binds to `127.0.0.1` by default. Real runs still use the same transport setup as the CLI, so GitHub Actions and Netlify API prerequisites are unchanged.
+
+From a completed run details modal, **Send to next agent** opens a follow-up composer. The composer requires fresh user instructions before submission, defaults to the last meaningful result artifact, and lets you choose which workflow, step, runner, session, or result artifacts to include. In **Follow up on existing thread** mode, the selected model continues the matching prior Netlify Agent Runner when one exists; extra selected models start fresh runner threads seeded with the selected artifacts. **Start fresh agent runner** always starts new runner threads.
+
+Visualizer follow-up submission returns after Netlify accepts the runner/session, not after the remote agent finishes. The notification includes remote links and any local artifact path the server could persist. Fresh runner submissions are saved as one-step pseudo-workflow runs so they can be opened from Recent runs. If Netlify accepts work but local artifact persistence fails, the API still returns success with `warnings[]` so the remote link is not lost.
 
 Live graph status is event-driven. When the visualizer starts a real run, the child `nax run` process writes JSONL lifecycle events on file descriptor 3 while stdout/stderr are captured for the UI. The visualize server relays those structured events to the browser with Server-Sent Events at `/api/runs/<id>/events`, and the UI reducer updates step cards, model pills, edges, output, and diagnostics from those events. Pass `--tail` to also stream the child workflow stdout/stderr back to the `nax visualize` terminal while debugging.
 
@@ -705,6 +710,8 @@ nax handoff --runner  <id> --agent codex
 nax handoff --workflow <id> --flow review     # chain a follow-up flow
 ```
 
+`nax visualize` offers a browser-based handoff path from Run details: choose **Send to next agent** -> **Run a followup** to submit a Netlify Agent Runner follow-up or a fresh seeded runner from selected artifacts. The CLI `nax handoff` command remains the terminal path for copying or chaining saved results.
+
 ### Browsing recents
 
 ```bash
@@ -745,6 +752,7 @@ nax run review --step <step-id>      # re-run one step from scratch
 | `nax visualize` shows the fallback HTML page | Build the packaged UI with `npm run visualize:build`, or reinstall a package that includes `web/dist`. |
 | `nax visualize --port <n>` fails with address in use | Omit `--port` to let the server choose an available port, or pass a different port. |
 | Visualize API returns `unauthorized` | Reopen the full URL printed by `nax visualize`; mutating API calls require that session's `token` query value or `x-nax-token` header. |
+| Visualize follow-up is unavailable | The browser follow-up composer currently submits through the Netlify API transport. Use CLI handoff/workflow commands for GitHub Actions transport. |
 | Visualize reports an unknown workflow | Run `nax list` and use the displayed flow id. For project flows, also verify `--project-root` and `--flows-dir`. |
 | Visualize Run fails before submission | Fix the same GitHub/Netlify transport prerequisites you would fix for `nax run`: authenticated CLIs, linked Netlify site, or initialized GitHub Actions workflow. |
 | Visualize model pills stay on `submitted` or `waiting` | The UI only shows states `nax` can prove from the active transport. Open Output diagnostics or inspect `.nax/workflows/<run-id>/events.jsonl` to see the raw event stream. |

@@ -589,6 +589,94 @@ body {
   margin-top: 2px;
 }
 
+.run-details-handoff {
+  margin: 10px 0 0 34px;
+}
+
+.run-details-handoff-heading {
+  margin: 0 0 6px;
+  text-transform: uppercase;
+}
+
+.run-details-handoff-button {
+  background: var(--mantine-color-green-7);
+  color: var(--mantine-color-white);
+  min-height: 34px;
+  padding-inline: 6px;
+}
+
+.run-details-handoff-button:hover {
+  background: var(--mantine-color-green-8);
+  color: var(--mantine-color-white);
+}
+
+.run-details-handoff-feedback {
+  display: block;
+  margin: 2px 0 0 8px;
+}
+
+.run-followup-modal-content {
+  overflow: hidden;
+}
+
+.run-followup-panel,
+.run-followup-plan {
+  border-color: color-mix(in srgb, var(--mantine-color-default-border), transparent 20%);
+  border-radius: var(--mantine-radius-sm);
+  padding: 12px;
+  background: light-dark(var(--mantine-color-white), color-mix(in srgb, var(--mantine-color-dark-6), transparent 14%));
+}
+
+.run-followup-section-label {
+  text-transform: uppercase;
+  letter-spacing: 0;
+}
+
+.run-followup-model-row {
+  align-items: center;
+}
+
+.run-followup-model-chip {
+  min-height: 30px;
+}
+
+.run-followup-artifact-label {
+  min-width: 0;
+  flex: 1;
+}
+
+.run-followup-artifact-row {
+  min-width: 0;
+  width: 100%;
+  align-items: center;
+}
+
+.run-followup-artifact-checkbox {
+  min-width: 0;
+  flex: 1;
+}
+
+.run-followup-artifact-checkbox .mantine-Checkbox-body,
+.run-followup-artifact-checkbox .mantine-Checkbox-labelWrapper,
+.run-followup-artifact-checkbox .mantine-Checkbox-label {
+  min-width: 0;
+  width: 100%;
+}
+
+.spin {
+  animation: spin 900ms linear infinite;
+}
+
+@keyframes spin {
+  from {
+    transform: rotate(0deg);
+  }
+
+  to {
+    transform: rotate(360deg);
+  }
+}
+
 .run-details-timeline-child-button {
   padding-block: 4px;
 }

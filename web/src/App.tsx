@@ -36,7 +36,7 @@ import { WorkflowList } from './components/WorkflowList'
 import { initialLiveRunState, liveRunReducer, visualStatus } from './liveRunReducer'
 import { recordValue, runId } from './run-format'
 import type { RunDetailsSelector } from './run-details-selection'
-import type { DryRunOptions, DryRunResult, RunnerEvent, VisualizeRun, Workflow, WorkflowGraph, WorkflowGraphNodeData } from './types'
+import type { DryRunOptions, DryRunResult, RunFollowupResponse, RunnerEvent, VisualizeRun, Workflow, WorkflowGraph, WorkflowGraphNodeData } from './types'
 
 type ContextModalAction = '' | 'dry-run' | 'run'
 type DetailsModalContext = {
@@ -694,6 +694,14 @@ export default function App() {
     }
   }
 
+  const handleFollowupSubmitted = async (response: RunFollowupResponse) => {
+    const latestRuns = await refreshRuns()
+    const persisted = response.followup.persistedWorkflow
+    if (!persisted?.runId) return
+    const nextRun = latestRuns.find((candidate) => candidate.runId === persisted.runId || candidate.id === persisted.runId) || persisted
+    await selectRun(nextRun)
+  }
+
   const resumeRun = async (run: VisualizeRun) => {
     const flowId = run.flowId
     if (!flowId) return
@@ -893,6 +901,7 @@ export default function App() {
                   selectedRunId={selectedRunId}
                   onSelect={selectRun}
                   onResume={resumeRun}
+                  onFollowupSubmitted={handleFollowupSubmitted}
                 />
               </Box>
             </Splitter.Pane>
@@ -1018,6 +1027,7 @@ export default function App() {
         initialSelector={detailsModalLiveContext?.selector || detailsModalContext?.selector}
         liveContext={detailsModalLiveContext}
         missingRunMessage="Load a saved workflow run before opening agent results."
+        onFollowupSubmitted={handleFollowupSubmitted}
       />
     </ReactFlowProvider>
   )

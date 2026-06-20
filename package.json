@@ -69,6 +69,7 @@
   "devDependencies": {
     "@mantine/core": "^9.3.2",
     "@mantine/hooks": "^9.3.2",
+    "@mantine/notifications": "^9.3.2",
     "@playwright/test": "^1.61.0",
     "@streamdown/code": "^1.1.1",
     "@types/node": "^25.9.1",

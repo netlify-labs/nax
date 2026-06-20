@@ -6,6 +6,7 @@ const os = require('os')
 const path = require('path')
 
 const { _private, startVisualizeServer } = require('../../src/visualize-server')
+const { buildRunDetails } = require('../../src/visualize-run-details')
 const { appendEventLog } = require('../../src/runner-event-log')
 
 function requestJson(url) {
@@ -65,6 +66,37 @@ function tmpRoot() {
   return fs.mkdtempSync(path.join(os.tmpdir(), 'nax-visualize-server-'))
 }
 
+test('run details follow-up targets are labelled by step and sorted newest first', () => {
+  const projectRoot = tmpRoot()
+  const runDir = path.join(projectRoot, '.nax', 'workflows', 'run-1')
+  const firstStepDir = path.join(runDir, 'artifacts', 'steps', '01-review')
+  const secondStepDir = path.join(runDir, 'artifacts', 'steps', '02-cross-review')
+  fs.mkdirSync(firstStepDir, { recursive: true })
+  fs.mkdirSync(secondStepDir, { recursive: true })
+  fs.writeFileSync(path.join(runDir, 'artifacts', 'summary.md'), '# Workflow\n')
+  fs.writeFileSync(path.join(firstStepDir, 'step.json'), JSON.stringify({ id: 'review', title: 'Review', status: 'completed' }))
+  fs.writeFileSync(path.join(firstStepDir, 'summary.md'), '# Review\n')
+  fs.writeFileSync(path.join(secondStepDir, 'step.json'), JSON.stringify({ id: 'cross-review', title: 'Cross Review', status: 'completed' }))
+  fs.writeFileSync(path.join(secondStepDir, 'summary.md'), '# Cross Review\n')
+
+  const details = buildRunDetails({ dir: runDir, status: 'completed' })
+
+  assert.deepEqual(details.followupTargets.map((target) => target.label), [
+    'Step 2: Cross Review step summary',
+    'Step 1: Review step summary',
+    'Workflow summary',
+  ])
+  assert.deepEqual(details.followupArtifacts.filter((artifact) => !artifact.advanced).map((artifact) => artifact.label), [
+    'Workflow summary',
+    'Step 2: Cross Review step summary',
+    'Step 1: Review step summary',
+  ])
+  assert.equal(details.followupTargets[0].stepNumber, 2)
+  assert.equal(details.followupArtifacts[0].stepNumber, 0)
+  assert.equal(details.followupArtifacts[0].defaultSelected, true)
+  assert.equal(details.followupTargets[0].isDefault, true)
+})
+
 function writeProjectFlow(projectRoot, id, { title = id } = {}) {
   const flowDir = path.join(projectRoot, '.github', 'nax-flows', id)
   fs.mkdirSync(path.join(flowDir, 'prompts'), { recursive: true })
@@ -81,6 +113,69 @@ function writeProjectFlow(projectRoot, id, { title = id } = {}) {
     '',
   ].join('\n'))
   fs.writeFileSync(path.join(flowDir, 'prompts', 'one.md'), '---\ntitle: One\n---\n\nPrompt\n')
+}
+
+function writeFollowupRunFixture(projectRoot, runId = 'fixture-followup-run') {
+  const dir = path.join(projectRoot, '.nax', 'workflows', runId)
+  fs.mkdirSync(dir, { recursive: true })
+  fs.writeFileSync(path.join(dir, 'workflow.json'), JSON.stringify({
+    schemaVersion: 1,
+    runId,
+    flowId: 'review',
+    flowTitle: 'Review',
+    status: 'completed',
+    transport: 'netlify-api',
+    branch: 'main',
+    target: {
+      branch: 'main',
+      sha: '0123456789abcdef0123456789abcdef01234567',
+      sourceType: 'current-branch',
+    },
+    options: {
+      branch: 'main',
+      transport: 'netlify-api',
+      stepModels: {
+        review: ['codex'],
+      },
+    },
+    createdAt: '2026-06-19T00:00:00.000Z',
+    updatedAt: '2026-06-19T00:01:00.000Z',
+    dir,
+    flow: {
+      id: 'review',
+      title: 'Review',
+      steps: [
+        { id: 'review', title: 'Review', agents: ['codex'], submit: 'new-run' },
+      ],
+    },
+    steps: [{
+      id: 'review',
+      title: 'Review',
+      status: 'completed',
+      agents: ['codex'],
+      runs: [{ agent: 'codex', status: 'completed', runnerId: 'runner-1', sessionId: 'session-1' }],
+    }],
+  }, null, 2))
+  const artifactsDir = path.join(dir, 'artifacts')
+  const stepDir = path.join(artifactsDir, 'steps', '01-review')
+  const runnerDir = path.join(stepDir, 'agent-runners')
+  fs.mkdirSync(runnerDir, { recursive: true })
+  fs.writeFileSync(path.join(artifactsDir, 'summary.md'), '# Review summary\n\nFinal workflow summary.\n')
+  fs.writeFileSync(path.join(stepDir, 'step.json'), JSON.stringify({
+    id: 'review',
+    title: 'Review',
+    status: 'completed',
+  }, null, 2))
+  fs.writeFileSync(path.join(stepDir, 'summary.md'), '# Review\n\nStep summary.\n')
+  fs.writeFileSync(path.join(runnerDir, 'codex.json'), JSON.stringify({
+    stepId: 'review',
+    agent: 'codex',
+    status: 'completed',
+    runnerId: 'runner-1',
+    sessionId: 'session-1',
+  }, null, 2))
+  fs.writeFileSync(path.join(runnerDir, 'codex.md'), '# Codex result\n\nFinal result text.\n')
+  return { runId, dir, artifactsDir, stepDir, runnerDir }
 }
 
 test('visualize extracts durable workflow run id from runner output', () => {
@@ -387,7 +482,11 @@ test('visualize runs API reads durable workflow state from .nax', async () => {
   const artifactsDir = path.join(dir, 'artifacts')
   const stepDir = path.join(artifactsDir, 'steps', '01-review')
   const runnerDir = path.join(stepDir, 'agent-runners')
+  const externalRunnerDir = path.join(projectRoot, '.nax', 'agent-runners', 'runner-1')
+  const externalSessionDir = path.join(projectRoot, '.nax', 'agent-sessions', 'session-1')
   fs.mkdirSync(runnerDir, { recursive: true })
+  fs.mkdirSync(externalRunnerDir, { recursive: true })
+  fs.mkdirSync(externalSessionDir, { recursive: true })
   fs.writeFileSync(path.join(artifactsDir, 'summary.md'), '# Review summary\n\nFinal workflow summary.\n')
   fs.writeFileSync(path.join(stepDir, 'step.json'), JSON.stringify({
     id: 'review',
@@ -405,6 +504,9 @@ test('visualize runs API reads durable workflow state from .nax', async () => {
     },
   }, null, 2))
   fs.writeFileSync(path.join(runnerDir, 'codex.md'), '# Codex result\n\nFinal result text.\n')
+  fs.writeFileSync(path.join(runnerDir, 'codex.attempt-1.md'), '# Codex attempt\n\nAttempt text.\n')
+  fs.writeFileSync(path.join(externalRunnerDir, 'summary.md'), '# Runner summary\n\nRunner text.\n')
+  fs.writeFileSync(path.join(externalSessionDir, 'summary.md'), '# Session summary\n\nSession text.\n')
 
   const server = await startVisualizeServer({ projectRoot })
   try {
@@ -431,6 +533,35 @@ test('visualize runs API reads durable workflow state from .nax', async () => {
       details.payload.details.sections.find((section) => section.kind === 'session' && section.agent === 'codex')?.absolutePath,
       path.join(runnerDir, 'codex.md'),
     )
+    assert.equal(details.payload.details.followupTargets[0].kind, 'step-summary')
+    assert.equal(details.payload.details.followupTargets[0].isDefault, true)
+    assert.equal(details.payload.details.followupTargets[0].stepNumber, 1)
+    assert.equal(details.payload.details.followupTargets[0].label, 'Step 1: Review step summary')
+    assert.equal(details.payload.details.followupTargets[0].absolutePath, path.join(stepDir, 'summary.md'))
+    assert.ok(details.payload.details.followupTargets.some((target) => (
+      target.kind === 'agent-result' &&
+      target.runnerId === 'runner-1' &&
+      target.sessionId === 'session-1' &&
+      target.defaultMode === 'follow-up-thread'
+    )))
+    assert.ok(details.payload.details.followupTargets.some((target) => target.kind === 'runner-summary'))
+    assert.ok(details.payload.details.followupTargets.some((target) => target.kind === 'session-result'))
+    const defaultArtifacts = details.payload.details.followupArtifacts.filter((artifact) => artifact.defaultSelected)
+    assert.equal(defaultArtifacts.length, 1)
+    assert.equal(defaultArtifacts[0].kind, 'workflow-summary')
+    assert.equal(defaultArtifacts[0].label, 'Workflow summary')
+    assert.equal(defaultArtifacts[0].stepNumber, 0)
+    assert.equal(defaultArtifacts[0].absolutePath, path.join(artifactsDir, 'summary.md'))
+    assert.ok(details.payload.details.followupArtifacts.some((artifact) => (
+      artifact.kind === 'metadata-json' &&
+      artifact.advanced === true &&
+      artifact.absolutePath === path.join(runnerDir, 'codex.json')
+    )))
+    assert.ok(details.payload.details.followupArtifacts.some((artifact) => (
+      artifact.kind === 'attempt-markdown' &&
+      artifact.advanced === true &&
+      artifact.absolutePath === path.join(runnerDir, 'codex.attempt-1.md')
+    )))
 
     const graph = await requestJson(`${base}/api/runs/${runId}/graph`)
     assert.equal(graph.statusCode, 200)
@@ -441,6 +572,102 @@ test('visualize runs API reads durable workflow state from .nax', async () => {
     assert.equal(graph.payload.graph.metadata.hasRunState, true)
     assert.deepEqual(graph.payload.graph.nodes[0].data.agents, ['claude', 'gemini', 'codex'])
     assert.deepEqual(graph.payload.graph.nodes[0].data.selectedAgents, ['codex'])
+  } finally {
+    await server.close()
+  }
+})
+
+test('visualize follow-up endpoint validates auth, prompt, artifact IDs, and run ID', async () => {
+  const projectRoot = tmpRoot()
+  const { runId } = writeFollowupRunFixture(projectRoot)
+  const server = await startVisualizeServer({
+    projectRoot,
+    followupSubmitRun: async ({ run }) => ({ ...run, status: 'submitted', runnerId: run.existingRunnerId || 'runner-new', sessionId: 'session-new' }),
+  })
+  try {
+    const base = `http://127.0.0.1:${server.port}`
+    const unauthorized = await postJson(`${base}/api/runs/${runId}/followups`, '', {
+      prompt: 'Fix this.',
+    })
+    assert.equal(unauthorized.statusCode, 401)
+    assert.equal(unauthorized.payload.error.code, 'unauthorized')
+
+    const unknown = await postJson(`${base}/api/runs/missing-run/followups`, server.token, {
+      prompt: 'Fix this.',
+    })
+    assert.equal(unknown.statusCode, 404)
+
+    const emptyPrompt = await postJson(`${base}/api/runs/${runId}/followups`, server.token, {
+      prompt: '   ',
+    })
+    assert.equal(emptyPrompt.statusCode, 400)
+    assert.equal(emptyPrompt.payload.error.code, 'missing_prompt')
+
+    const invalidArtifact = await postJson(`${base}/api/runs/${runId}/followups`, server.token, {
+      prompt: 'Fix this.',
+      artifacts: [{ id: 'missing-artifact', kind: 'step-summary' }],
+    })
+    assert.equal(invalidArtifact.statusCode, 400)
+    assert.equal(invalidArtifact.payload.error.code, 'unknown_artifact')
+  } finally {
+    await server.close()
+  }
+})
+
+test('visualize follow-up endpoint submits matching runner and fresh additional models', async () => {
+  const projectRoot = tmpRoot()
+  const { runId } = writeFollowupRunFixture(projectRoot)
+  const submissions = []
+  const server = await startVisualizeServer({
+    projectRoot,
+    siteName: 'netlify-agent-executor',
+    followupSubmitRun: async ({ run }) => {
+      submissions.push({ ...run })
+      return {
+        ...run,
+        status: 'submitted',
+        runnerId: run.existingRunnerId || `runner-${run.agent}`,
+        sessionId: run.existingRunnerId ? `session-${run.agent}-followup` : `session-${run.agent}`,
+      }
+    },
+  })
+  try {
+    const base = `http://127.0.0.1:${server.port}`
+    const response = await postJson(`${base}/api/runs/${runId}/followups`, server.token, {
+      prompt: 'Verify the proposed fix and explain any risk.',
+      mode: 'follow-up-thread',
+      targetId: 'agent-result:review:runner-1:session-1:codex',
+      models: ['codex', 'gemini'],
+    })
+
+    assert.equal(response.statusCode, 202, response.payload?.error?.message)
+    assert.equal(response.payload.followup.status, 'submitted')
+    assert.equal(response.payload.followup.sourceWorkflowRunId, runId)
+    assert.equal(response.payload.followup.context.artifactCount, 1)
+    assert.equal(response.payload.followup.context.delivery, 'inline')
+    assert.deepEqual(response.payload.followup.plan.summary, [
+      'Codex: follow-up session',
+      'Gemini: fresh runner',
+    ])
+    assert.equal(response.payload.followup.submissions.length, 2)
+    assert.equal(response.payload.followup.submissions[0].mode, 'continue-runner')
+    assert.equal(response.payload.followup.submissions[0].runnerId, 'runner-1')
+    assert.equal(response.payload.followup.submissions[0].sessionId, 'session-codex-followup')
+    assert.match(response.payload.followup.submissions[0].links.agentRunUrl, /runner-1\?session=session-codex-followup/)
+    assert.equal(response.payload.followup.submissions[1].mode, 'fresh-runner')
+    assert.equal(response.payload.followup.submissions[1].runnerId, 'runner-gemini')
+    assert.equal(response.payload.followup.persistedWorkflow.status, 'submitted')
+    assert.equal(response.payload.followup.persistedWorkflow.flowTitle, 'Follow-up on Review (Gemini)')
+
+    assert.equal(submissions.length, 2)
+    assert.equal(submissions[0].existingRunnerId, 'runner-1')
+    assert.equal(submissions[1].existingRunnerId, '')
+    assert.match(submissions[0].promptText, /# Follow-up Instructions/)
+    assert.match(submissions[0].promptText, /Verify the proposed fix/)
+    assert.match(submissions[0].promptText, /# Prior Results Context/)
+
+    const runs = await requestJson(`${base}/api/runs`)
+    assert.equal(runs.payload.durable.some((run) => run.flowTitle === 'Follow-up on Review (Gemini)'), true)
   } finally {
     await server.close()
   }

@@ -1,13 +1,14 @@
 import { useEffect, useMemo, useRef, useState, type RefObject } from 'react'
-import { ActionIcon, Alert, Anchor, Badge, Box, Code, Group, Modal, Paper, ScrollArea, Stack, Text, Timeline, Title, Tooltip, UnstyledButton } from '@mantine/core'
-import { Check, ChevronsDownUp, ChevronsUpDown, ChevronDown, ChevronRight, ExternalLink, Files } from 'lucide-react'
+import { ActionIcon, Alert, Anchor, Badge, Box, Button, Code, Group, Menu, Modal, Paper, ScrollArea, Stack, Text, Timeline, Title, Tooltip, UnstyledButton } from '@mantine/core'
+import { Check, ChevronsDownUp, ChevronsUpDown, ChevronDown, ChevronRight, ExternalLink, FileText, Files, Play } from 'lucide-react'
 import { getRunDetails, openLocalFile } from '../api'
 import { agentLabel, isDoneStatus, recordList, recordValue, runId, statusBadgeStyle, statusColor, statusLabel, workflowName } from '../run-format'
 import { extractMarkdownToc } from '../run-details-toc'
 import { selectRunDetailsSection, selectorKey, type RunDetailsSelector } from '../run-details-selection'
-import type { RunDetailsResponse, RunDetailsSection, Target, VisualizeRun } from '../types'
+import type { RunDetailsResponse, RunDetailsSection, RunFollowupResponse, Target, VisualizeRun } from '../types'
 import { AgentIcon } from './AgentIcon'
 import { MarkdownRenderer } from './MarkdownRenderer'
+import { RunFollowupModal } from './RunFollowupModal'
 
 export type RunDetailsLiveContext = {
   selector: RunDetailsSelector
@@ -27,6 +28,7 @@ type RunDetailsModalProps = {
   initialSelector?: RunDetailsSelector
   liveContext?: RunDetailsLiveContext | null
   missingRunMessage?: string
+  onFollowupSubmitted?: (response: RunFollowupResponse) => void | Promise<void>
 }
 
 type StepItem = {
@@ -229,6 +231,36 @@ function isActiveLiveStatus(status: string): boolean {
   return ['running', 'submitted', 'waiting', 'retrying', 'queued'].includes(status.toLowerCase())
 }
 
+function isSuccessfulWorkflowStatus(status: string): boolean {
+  return ['complete', 'completed'].includes(status.toLowerCase())
+}
+
+function RobotIcon({ size = 16 }: { size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 16 16" aria-hidden="true" focusable="false" fill="currentColor">
+      <path d="M5.68 9.925 4.607 8.85l-.013-.379 1.1-1.1.38.012 1.075 1.075.012.379-1.1 1.1zM9.96 9.925 8.886 8.85l-.013-.379 1.1-1.1.38.012 1.075 1.075.012.379-1.1 1.1z" />
+      <path fillRule="evenodd" d="M9.005 2.52v1.296h2.657a3.19 3.19 0 0 1 3.191 3.192v3.356a3.19 3.19 0 0 1-3.191 3.191H4.338a3.19 3.19 0 0 1-3.191-3.19V7.007a3.19 3.19 0 0 1 3.191-3.192h2.836V2.52l.229-.245h1.373zM4.338 5.316c-.934 0-1.691.758-1.691 1.692v3.356c0 .934.758 1.691 1.691 1.691h7.324c.933 0 1.69-.757 1.691-1.69V7.007c0-.934-.757-1.692-1.691-1.692z" clipRule="evenodd" />
+    </svg>
+  )
+}
+
+async function copyTextToClipboard(text: string) {
+  if (!text) return
+  if (navigator.clipboard?.writeText) {
+    await navigator.clipboard.writeText(text)
+    return
+  }
+  const textarea = document.createElement('textarea')
+  textarea.value = text
+  textarea.setAttribute('readonly', 'true')
+  textarea.style.position = 'fixed'
+  textarea.style.opacity = '0'
+  document.body.appendChild(textarea)
+  textarea.select()
+  document.execCommand('copy')
+  document.body.removeChild(textarea)
+}
+
 export function RunDetailsModal({
   opened,
   onClose,
@@ -236,14 +268,17 @@ export function RunDetailsModal({
   initialSelector,
   liveContext,
   missingRunMessage = 'Load a saved workflow run before opening agent results.',
+  onFollowupSubmitted,
 }: RunDetailsModalProps) {
   const [detailsLoading, setDetailsLoading] = useState(false)
   const [detailsError, setDetailsError] = useState('')
   const [detailsResponse, setDetailsResponse] = useState<RunDetailsResponse | null>(null)
   const [activeTimelineId, setActiveTimelineId] = useState('summary')
   const [selectionWarning, setSelectionWarning] = useState('')
+  const [followupOpened, setFollowupOpened] = useState(false)
   const details = detailsResponse?.details
   const detailRun = detailsResponse?.run
+  const followupTargets = details?.followupTargets || []
   const markdownScrollRef = useRef<HTMLDivElement>(null)
   const stepItems = useMemo(() => buildStepItems(details, detailRun), [details, detailRun])
   const timelineEntries = useMemo(
@@ -271,6 +306,12 @@ export function RunDetailsModal({
       liveContext.url || '',
     ].join('|')
     : ''
+
+  const refreshDetails = async () => {
+    if (!detailsRunId) return
+    const response = await getRunDetails(detailsRunId)
+    setDetailsResponse(response)
+  }
 
   useEffect(() => {
     if (!opened) return undefined
@@ -344,6 +385,8 @@ export function RunDetailsModal({
                 timelineEntries={timelineEntries}
                 timelineProgressIndex={timelineProgressIndex}
                 onSelect={setActiveTimelineId}
+                canRunFollowup={Boolean(detailRun?.runId && followupTargets.length > 0)}
+                onRunFollowup={() => setFollowupOpened(true)}
               />
             ) : null}
             <Box className="run-details-content">
@@ -358,6 +401,18 @@ export function RunDetailsModal({
               <RunDetailsMetadata run={detailRun} workflowName={detailWorkflowName} section={activeEntry?.section} liveContext={activeEntry?.liveContext} />
             </Stack>
           </Box>
+          {detailRun?.runId && followupTargets.length > 0 ? (
+            <RunFollowupModal
+              opened={followupOpened}
+              onClose={() => setFollowupOpened(false)}
+              run={detailRun}
+              details={details}
+              onSubmitted={async (_response: RunFollowupResponse) => {
+                await refreshDetails()
+                await onFollowupSubmitted?.(_response)
+              }}
+            />
+          ) : null}
         </Stack>
       ) : liveContext ? (
         <RunDetailsStandaloneLivePanel context={liveContext} />
@@ -374,13 +429,30 @@ function RunDetailsTimeline({
   timelineEntries,
   timelineProgressIndex,
   onSelect,
+  canRunFollowup,
+  onRunFollowup,
 }: {
   activeTimelineId: string
   parentTimelineEntries: TimelineEntry[]
   timelineEntries: TimelineEntry[]
   timelineProgressIndex: number
   onSelect: (id: string) => void
+  canRunFollowup: boolean
+  onRunFollowup: () => void
 }) {
+  const [handoffFeedback, setHandoffFeedback] = useState('')
+  const copyHandoffValue = async (value: string, label: string) => {
+    if (!value) return
+    try {
+      await copyTextToClipboard(value)
+      setHandoffFeedback(`${label} copied`)
+      window.setTimeout(() => setHandoffFeedback(''), 1800)
+    } catch (err) {
+      setHandoffFeedback(err instanceof Error ? err.message : 'Could not copy')
+    }
+  }
+  const handoffEntry = parentTimelineEntries.find((entry) => entry.kind === 'summary' && isSuccessfulWorkflowStatus(entry.status))
+
   return (
     <Box className="run-details-timeline" component="nav" aria-label="Workflow timeline">
       <Text className="run-details-timeline-heading" size="xs" fw={800} c="dimmed">Timeline</Text>
@@ -445,6 +517,47 @@ function RunDetailsTimeline({
           )
         })}
       </Timeline>
+      {handoffEntry ? (
+        <Box className="run-details-handoff">
+          <Text className="run-details-handoff-heading" size="xs" fw={800} c="dimmed">Actions</Text>
+          <Menu position="bottom-start" withinPortal>
+            <Menu.Target>
+              <Button
+                className="run-details-handoff-button"
+                fullWidth
+                justify="flex-start"
+                leftSection={<RobotIcon size={16} />}
+                size="xs"
+                variant="filled"
+              >
+                Send to next agent
+              </Button>
+            </Menu.Target>
+            <Menu.Dropdown>
+              <Menu.Item
+                disabled={!handoffEntry.absolutePath}
+                leftSection={<Files size={14} />}
+                onClick={() => copyHandoffValue(handoffEntry.absolutePath, 'Summary path')}
+              >
+                Copy file path of results output
+              </Menu.Item>
+              <Menu.Item
+                disabled={!handoffEntry.markdown}
+                leftSection={<FileText size={14} />}
+                onClick={() => copyHandoffValue(handoffEntry.markdown, 'Raw markdown')}
+              >
+                Copy results as markdown
+              </Menu.Item>
+              <Menu.Item disabled={!canRunFollowup} leftSection={<Play size={14} />} onClick={onRunFollowup}>
+                Run a followup
+              </Menu.Item>
+            </Menu.Dropdown>
+          </Menu>
+          {handoffFeedback ? (
+            <Text className="run-details-handoff-feedback" c="dimmed" size="10px">{handoffFeedback}</Text>
+          ) : null}
+        </Box>
+      ) : null}
     </Box>
   )
 }

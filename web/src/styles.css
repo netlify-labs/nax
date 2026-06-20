@@ -83,7 +83,7 @@ body {
 
 .workflow-item {
   width: 100%;
-  min-height: 64px;
+  min-height: 52px;
   border: 1px solid transparent;
   border-radius: var(--mantine-radius-sm);
   text-align: left;
@@ -446,6 +446,11 @@ body {
   height: 13px;
 }
 
+.run-details-timeline-agent-name {
+  display: inline-block;
+  min-width: 41px;
+}
+
 .run-details-timeline-children {
   margin-top: 2px;
 }
@@ -498,14 +503,31 @@ body {
   text-align: left;
 }
 
-.run-status.completed {
-  --badge-color: var(--mantine-color-green-6);
+.run-status.completed,
+.run-status.dry-run {
+  --badge-bg: color-mix(in srgb, var(--mantine-color-green-4), transparent 88%);
+  --badge-color: light-dark(var(--mantine-color-green-9), var(--mantine-color-green-1));
+  --badge-bd: calc(0.0625rem * var(--mantine-scale)) solid var(--mantine-color-green-4);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--mantine-color-green-4), transparent 72%), 0 0 18px color-mix(in srgb, var(--mantine-color-green-4), transparent 86%);
+}
+
+.run-status.running,
+.run-status.submitted,
+.run-status.interrupted {
+  --badge-bg: color-mix(in srgb, var(--mantine-color-yellow-4), transparent 88%);
+  --badge-color: light-dark(var(--mantine-color-yellow-9), var(--mantine-color-yellow-1));
+  --badge-bd: calc(0.0625rem * var(--mantine-scale)) solid var(--mantine-color-yellow-4);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--mantine-color-yellow-4), transparent 76%), 0 0 18px color-mix(in srgb, var(--mantine-color-yellow-4), transparent 84%);
 }
 
 .run-status.failed,
-.run-status.interrupted,
-.run-status.cancelled {
-  --badge-color: var(--mantine-color-red-6);
+.run-status.timeout,
+.run-status.cancelled,
+.run-status.dismissed {
+  --badge-bg: color-mix(in srgb, var(--mantine-color-red-5), transparent 88%);
+  --badge-color: light-dark(var(--mantine-color-red-9), var(--mantine-color-red-1));
+  --badge-bd: calc(0.0625rem * var(--mantine-scale)) solid var(--mantine-color-red-5);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--mantine-color-red-5), transparent 74%), 0 0 18px color-mix(in srgb, var(--mantine-color-red-5), transparent 86%);
 }
 
 .workflow-node {

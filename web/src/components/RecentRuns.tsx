@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useState, type CSSProperties } from 'react'
 import { ActionIcon, Alert, Anchor, Badge, Box, Group, Modal, Paper, ScrollArea, Stack, Text, Timeline, Title, Tooltip, UnstyledButton } from '@mantine/core'
 import { Check, Copy, ExternalLink, GitBranch, History, RotateCcw } from 'lucide-react'
 import { getRunDetails, openLocalFile } from '../api'
@@ -56,11 +56,41 @@ function agentLabel(agent: string): string {
   return agent.replace(/(^|-)([a-z])/g, (_match, prefix, char) => `${prefix}${char.toUpperCase()}`)
 }
 
+function statusLabel(status: string): string {
+  const normalized = status.toLowerCase()
+  if (!normalized || isDoneStatus(normalized)) return 'Completed'
+  return normalized.charAt(0).toUpperCase() + normalized.slice(1)
+}
+
 function statusColor(status: string): string {
   if (isDoneStatus(status)) return 'green'
-  if (['running', 'submitted'].includes(status.toLowerCase())) return 'yellow'
+  if (['running', 'submitted', 'interrupted'].includes(status.toLowerCase())) return 'yellow'
   if (['failed', 'timeout', 'cancelled', 'dismissed'].includes(status.toLowerCase())) return 'red'
   return 'gray'
+}
+
+function statusBadgeTone(status: string): 'green' | 'yellow' | 'red' | undefined {
+  if (isDoneStatus(status)) return 'green'
+  if (['running', 'submitted', 'interrupted'].includes(status.toLowerCase())) return 'yellow'
+  return ['failed', 'timeout', 'cancelled', 'dismissed'].includes(status.toLowerCase())
+    ? 'red'
+    : undefined
+}
+
+function statusBadgeStyle(status: string): CSSProperties | undefined {
+  const tone = statusBadgeTone(status)
+  if (!tone) return undefined
+
+  const color = tone === 'green' ? 'green' : tone === 'yellow' ? 'yellow' : 'red'
+  const shade = tone === 'green' ? '4' : tone === 'yellow' ? '4' : '5'
+  const mixShadow = tone === 'green' ? '72%' : tone === 'yellow' ? '76%' : '74%'
+  const mixGlow = tone === 'green' ? '86%' : tone === 'yellow' ? '84%' : '86%'
+  return {
+    '--badge-bg': `color-mix(in srgb, var(--mantine-color-${color}-${shade}), transparent 88%)`,
+    '--badge-color': `light-dark(var(--mantine-color-${color}-9), var(--mantine-color-${color}-1))`,
+    '--badge-bd': `calc(0.0625rem * var(--mantine-scale)) solid var(--mantine-color-${color}-${shade})`,
+    boxShadow: `0 0 0 1px color-mix(in srgb, var(--mantine-color-${color}-${shade}), transparent ${mixShadow}), 0 0 18px color-mix(in srgb, var(--mantine-color-${color}-${shade}), transparent ${mixGlow})`,
+  } as CSSProperties
 }
 
 function workflowName(run: VisualizeRun | undefined): string {
@@ -116,7 +146,7 @@ function buildTimelineEntries(
   const entries: TimelineEntry[] = [{
     id: 'summary',
     kind: 'summary',
-    title: run ? `"${workflowName(run)}" Workflow Completed` : 'Workflow Completed',
+    title: run ? `"${workflowName(run)}" Workflow ${statusLabel(run.status || '')}` : 'Workflow Completed',
     subtitle: 'click to view results',
     status: run?.status || 'completed',
     path: details.summaryPath || run?.summaryPath || runId(run || {}),
@@ -280,7 +310,15 @@ export function RecentRuns({ runs, selectedRunId, onSelect, onResume }: Props) {
                       void openRunDetails(run)
                     }}
                   >
-                    <Badge className={`run-status ${run.status}`} variant="light" size="xs">{run.status || 'unknown'}</Badge>
+                    <Badge
+                      className={`run-status ${run.status}`}
+                      variant="light"
+                      color={statusColor(run.status || '')}
+                      size="xs"
+                      style={statusBadgeStyle(run.status || '')}
+                    >
+                      {run.status || 'unknown'}
+                    </Badge>
                     <Text size="xs" c="dimmed" truncate>{runId(run)}</Text>
                   </UnstyledButton>
                 </Box>
@@ -345,8 +383,17 @@ export function RecentRuns({ runs, selectedRunId, onSelect, onResume }: Props) {
                                     >
                                       <Group gap={6} wrap="nowrap" className="run-details-timeline-title session">
                                         {child.section?.agent ? <AgentIcon agent={child.section.agent} /> : null}
-                                        <Text size="xs" fw={600} truncate>{child.section?.agent ? agentLabel(child.section.agent) : child.title}</Text>
-                                        {child.subtitle ? <Text size="xs" c="dimmed" truncate>- {child.subtitle}</Text> : null}
+                                        <Text size="xs" truncate>
+                                          <Text component="span" inherit fw={600} className="run-details-timeline-agent-name">
+                                            {child.section?.agent ? agentLabel(child.section.agent) : child.title}
+                                          </Text>
+                                          {child.subtitle ? (
+                                            <Text component="span" inherit c="dimmed">
+                                              {' - '}
+                                              {child.subtitle}
+                                            </Text>
+                                          ) : null}
+                                        </Text>
                                       </Group>
                                     </UnstyledButton>
                                   ))}
@@ -366,7 +413,13 @@ export function RecentRuns({ runs, selectedRunId, onSelect, onResume }: Props) {
                     <Group gap="xs" wrap="wrap">
                       <Title order={2} size="h3">{timelineContentTitle(activeEntry, detailWorkflowName)}</Title>
                       {activeEntry.status ? (
-                        <Badge className={`run-status ${activeEntry.status}`} variant="light" size="xs">
+                        <Badge
+                          className={`run-status ${activeEntry.status}`}
+                          variant="light"
+                          color={statusColor(activeEntry.status)}
+                          size="xs"
+                          style={statusBadgeStyle(activeEntry.status)}
+                        >
                           {activeEntry.status}
                         </Badge>
                       ) : null}

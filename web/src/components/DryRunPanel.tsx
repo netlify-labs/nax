@@ -30,6 +30,13 @@ function statusText(panel: OutputPanel): string {
   return result ? `${result.status} · ${result.durationMs}ms · exit ${result.exitCode ?? '-'}` : running ? 'running' : 'idle'
 }
 
+function statusClass(panel: OutputPanel): string {
+  if (panel.running) return 'running'
+  if (panel.result?.status === 'completed') return 'completed'
+  if (panel.result) return 'failed'
+  return 'idle'
+}
+
 function stripAnsi(value: string): string {
   return value.replace(
     // eslint-disable-next-line no-control-regex
@@ -41,7 +48,9 @@ function stripAnsi(value: string): string {
 function OutputBadge({ panel }: { panel: OutputPanel }) {
   return (
     <Group gap={7} wrap="nowrap">
-      <Badge variant="light" color={statusColor(panel)} size="xs">{statusText(panel)}</Badge>
+      <Badge className={`run-status ${statusClass(panel)}`} variant="light" color={statusColor(panel)} size="xs">
+        {statusText(panel)}
+      </Badge>
     </Group>
   )
 }

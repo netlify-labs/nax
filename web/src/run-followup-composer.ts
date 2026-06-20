@@ -8,7 +8,7 @@ export function defaultFollowupTarget(details: RunDetails): RunFollowupTarget | 
 }
 
 export function followupThreadTargets(details: RunDetails): RunFollowupTarget[] {
-  return details.followupTargets.filter((target) => Boolean(target.runnerId))
+  return details.followupTargets.filter((target) => target.kind === 'agent-result' && Boolean(target.runnerId))
 }
 
 export function defaultFollowupThreadTarget(details: RunDetails): RunFollowupTarget | null {

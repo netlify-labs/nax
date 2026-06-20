@@ -8,7 +8,7 @@ import { selectRunDetailsSection, selectorKey, type RunDetailsSelector } from '.
 import type { RunDetailsResponse, RunDetailsSection, RunFollowupResponse, Target, VisualizeRun } from '../types'
 import { AgentIcon } from './AgentIcon'
 import { MarkdownRenderer } from './MarkdownRenderer'
-import { RunFollowupModal } from './RunFollowupModal'
+import { RunFollowupContent } from './RunFollowupModal'
 
 export type RunDetailsLiveContext = {
   selector: RunDetailsSelector
@@ -275,7 +275,8 @@ export function RunDetailsModal({
   const [detailsResponse, setDetailsResponse] = useState<RunDetailsResponse | null>(null)
   const [activeTimelineId, setActiveTimelineId] = useState('summary')
   const [selectionWarning, setSelectionWarning] = useState('')
-  const [followupOpened, setFollowupOpened] = useState(false)
+  const [detailsView, setDetailsView] = useState<'results' | 'followup'>('results')
+  const [followupSubmitting, setFollowupSubmitting] = useState(false)
   const details = detailsResponse?.details
   const detailRun = detailsResponse?.run
   const followupTargets = details?.followupTargets || []
@@ -344,6 +345,18 @@ export function RunDetailsModal({
   }, [detailsRunId, opened, selectorIdentity])
 
   useEffect(() => {
+    if (!opened) setDetailsView('results')
+  }, [opened])
+
+  useEffect(() => {
+    setDetailsView('results')
+  }, [detailsRunId, selectorIdentity])
+
+  useEffect(() => {
+    if (detailsView !== 'followup') setFollowupSubmitting(false)
+  }, [detailsView])
+
+  useEffect(() => {
     if (!opened) return
     const resolved = resolveInitialTimelineId(details, timelineEntries, initialSelector, liveContext)
     setActiveTimelineId(resolved.id)
@@ -355,14 +368,15 @@ export function RunDetailsModal({
     : liveContext
       ? `${agentLabel(liveContext.selector.agent)} result · ${liveContext.stepTitle}`
       : 'Workflow results'
+  const modalTitle = detailsView === 'followup' ? 'Send to next agent' : title
 
   return (
     <Modal
       opened={opened}
-      onClose={onClose}
+      onClose={detailsView === 'followup' && followupSubmitting ? () => undefined : onClose}
       title={(
         <Group component="span" gap="xs" wrap="wrap" className="run-details-modal-title">
-          <Text component="span" inherit>{title}</Text>
+          <Text component="span" inherit>{modalTitle}</Text>
         </Group>
       )}
       size="90rem"
@@ -375,6 +389,18 @@ export function RunDetailsModal({
       ) : detailsError ? (
         <Alert color="red" variant="light">{detailsError}</Alert>
       ) : details ? (
+        detailsView === 'followup' && detailRun && detailRun.runId && followupTargets.length > 0 ? (
+          <RunFollowupContent
+            onClose={() => setDetailsView('results')}
+            run={detailRun}
+            details={details}
+            onSubmittingChange={setFollowupSubmitting}
+            onSubmitted={async (_response: RunFollowupResponse) => {
+              await refreshDetails()
+              await onFollowupSubmitted?.(_response)
+            }}
+          />
+        ) : (
         <Stack gap="md">
           {selectionWarning ? <Alert color="yellow" variant="light">{selectionWarning}</Alert> : null}
           <Box className="run-details-layout">
@@ -386,7 +412,7 @@ export function RunDetailsModal({
                 timelineProgressIndex={timelineProgressIndex}
                 onSelect={setActiveTimelineId}
                 canRunFollowup={Boolean(detailRun?.runId && followupTargets.length > 0)}
-                onRunFollowup={() => setFollowupOpened(true)}
+                onRunFollowup={() => setDetailsView('followup')}
               />
             ) : null}
             <Box className="run-details-content">
@@ -401,19 +427,8 @@ export function RunDetailsModal({
               <RunDetailsMetadata run={detailRun} workflowName={detailWorkflowName} section={activeEntry?.section} liveContext={activeEntry?.liveContext} />
             </Stack>
           </Box>
-          {detailRun?.runId && followupTargets.length > 0 ? (
-            <RunFollowupModal
-              opened={followupOpened}
-              onClose={() => setFollowupOpened(false)}
-              run={detailRun}
-              details={details}
-              onSubmitted={async (_response: RunFollowupResponse) => {
-                await refreshDetails()
-                await onFollowupSubmitted?.(_response)
-              }}
-            />
-          ) : null}
         </Stack>
+        )
       ) : liveContext ? (
         <RunDetailsStandaloneLivePanel context={liveContext} />
       ) : (
@@ -628,10 +643,12 @@ function MarkdownTableOfContents({
   const [activeKey, setActiveKey] = useState('')
   const [expandedKeys, setExpandedKeys] = useState<Set<string>>(() => new Set())
   const [expandAllPinned, setExpandAllPinned] = useState(false)
+  const [collapseAllPinned, setCollapseAllPinned] = useState(false)
 
   useEffect(() => {
     setActiveKey('')
     setExpandAllPinned(false)
+    setCollapseAllPinned(false)
     setExpandedKeys(tocGroups[0] ? new Set([tocGroups[0].heading.key]) : new Set())
   }, [entry?.key, tocGroups])
 
@@ -657,11 +674,11 @@ function MarkdownTableOfContents({
   }, [headings, scrollRootRef])
 
   useEffect(() => {
-    if (!activeKey || expandAllPinned || tocGroups.length === 0) return
+    if (!activeKey || expandAllPinned || collapseAllPinned || tocGroups.length === 0) return
     const activeGroup = tocGroups.find((group) => group.heading.key === activeKey || group.children.some((child) => child.key === activeKey))
     if (!activeGroup) return
     setExpandedKeys(new Set([activeGroup.heading.key]))
-  }, [activeKey, expandAllPinned, tocGroups])
+  }, [activeKey, collapseAllPinned, expandAllPinned, tocGroups])
 
   if (headings.length === 0) return null
 
@@ -669,6 +686,7 @@ function MarkdownTableOfContents({
     const root = scrollRootRef.current
     const renderedHeading = root?.querySelectorAll('h1, h2, h3, h4')[heading.headingIndex]
     if (!renderedHeading) return
+    setCollapseAllPinned(false)
     setActiveKey(heading.key)
     renderedHeading.scrollIntoView({ behavior: 'smooth', block: 'start' })
   }
@@ -676,15 +694,17 @@ function MarkdownTableOfContents({
   const toggleAll = () => {
     if (expandAllPinned) {
       setExpandAllPinned(false)
-      const activeGroup = tocGroups.find((group) => group.heading.key === activeKey || group.children.some((child) => child.key === activeKey))
-      setExpandedKeys(activeGroup ? new Set([activeGroup.heading.key]) : new Set())
+      setCollapseAllPinned(true)
+      setExpandedKeys(new Set())
       return
     }
     setExpandAllPinned(true)
+    setCollapseAllPinned(false)
     setExpandedKeys(new Set(tocGroups.map((group) => group.heading.key)))
   }
   const toggleGroup = (key: string) => {
     setExpandAllPinned(false)
+    setCollapseAllPinned(false)
     setExpandedKeys((current) => {
       const next = new Set(current)
       if (next.has(key)) next.delete(key)

@@ -8,6 +8,7 @@ import {
   defaultFollowupModels,
   defaultFollowupTarget,
   defaultFollowupThreadTarget,
+  followupThreadTargets,
   followupPlanLine,
   formatArtifactBytes,
   selectedFollowupArtifacts,
@@ -56,6 +57,40 @@ function detailsFixture(): RunDetails {
         links: {},
         defaultMode: 'follow-up-thread',
         isDefault: true,
+      },
+      {
+        id: 'runner-summary:review:runner-1:session-1:codex',
+        kind: 'runner-summary',
+        label: 'Step 1: codex runner summary',
+        agent: 'codex',
+        stepId: 'review',
+        stepNumber: 1,
+        stepTitle: 'Review',
+        runnerId: 'runner-1',
+        sessionId: 'session-1',
+        status: 'completed',
+        path: '../../agent-runners/runner-1/summary.md',
+        absolutePath: '/repo/.nax/agent-runners/runner-1/summary.md',
+        links: {},
+        defaultMode: 'follow-up-thread',
+        isDefault: false,
+      },
+      {
+        id: 'session-result:review:runner-1:session-1:codex',
+        kind: 'session-result',
+        label: 'Step 1: codex session summary',
+        agent: 'codex',
+        stepId: 'review',
+        stepNumber: 1,
+        stepTitle: 'Review',
+        runnerId: 'runner-1',
+        sessionId: 'session-1',
+        status: 'completed',
+        path: '../../agent-sessions/session-1/summary.md',
+        absolutePath: '/repo/.nax/agent-sessions/session-1/summary.md',
+        links: {},
+        defaultMode: 'follow-up-thread',
+        isDefault: false,
       },
     ],
     followupArtifacts: [
@@ -115,6 +150,11 @@ test('follow-up composer defaults mode to existing thread when a runner target e
   assert.equal(defaultFollowupTarget(details)?.id, 'step-summary:review')
   assert.equal(defaultFollowupThreadTarget(details)?.id, 'agent-result:review:runner-1:session-1:codex')
   assert.equal(defaultFollowupMode(details), 'follow-up-thread')
+})
+
+test('follow-up composer only offers actual agent results as previous agent runs', () => {
+  const targets = followupThreadTargets(detailsFixture())
+  assert.deepEqual(targets.map((target) => target.id), ['agent-result:review:runner-1:session-1:codex'])
 })
 
 test('follow-up composer shows mixed follow-up/fresh plan lines', () => {

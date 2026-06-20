@@ -282,6 +282,7 @@ body {
 
 .prompt-markdown :where(code, pre) {
   font-family: var(--mantine-font-family-monospace);
+  font-size: 11px;
 }
 
 .prompt-markdown pre {
@@ -367,13 +368,18 @@ body {
   overflow-wrap: anywhere;
 }
 
+.prompt-markdown [data-streamdown='code-block-body'] span[style*='--sdm-c'] {
+  color: light-dark(var(--sdm-c), var(--shiki-dark, var(--sdm-c)));
+}
+
 .prompt-markdown [data-streamdown='code-block-body'] code > span > span {
   white-space: inherit;
   overflow-wrap: inherit;
 }
 
 .run-details-markdown {
-  height: calc(90vh - 175px);
+  height: calc(90vh - 110px);
+  max-height: none;
   overflow: auto;
 }
 
@@ -874,6 +880,7 @@ body {
 
   .run-details-markdown {
     height: auto;
+    max-height: none;
     overflow: visible;
   }
 

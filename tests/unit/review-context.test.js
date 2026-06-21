@@ -7,6 +7,7 @@ const {
   formatReviewContract,
   formatUnverifiedTargetContract,
   formatWorkingTreeSummary,
+  isSafeGitRefName,
   resolveRemoteBranchSha,
 } = require('../../src/review-context')
 
@@ -163,6 +164,30 @@ test('resolveRemoteBranchSha uses origin for an explicit branch', () => {
   assert.equal(result.sha, 'abcdef0123456789abcdef0123456789abcdef01')
   assert.equal(result.ref, 'origin/feature/test')
   assert.deepEqual(calls.at(-1).args, ['ls-remote', '--heads', 'origin', 'feature/test'])
+})
+
+test('resolveRemoteBranchSha rejects option-like and unsafe branch names before ls-remote', () => {
+  const calls = []
+
+  assert.throws(
+    () => resolveRemoteBranchSha({
+      repoRoot: '/tmp/repo',
+      branch: '--upload-pack=touch /tmp/pwn',
+      run(command, args) {
+        calls.push({ command, args })
+        if (args[0] === 'rev-parse' && args.includes('--show-toplevel')) {
+          return { status: 0, stdout: '/tmp/repo', stderr: '', detail: '/tmp/repo' }
+        }
+        throw new Error(`unexpected command ${command} ${args.join(' ')}`)
+      },
+    }),
+    /Invalid branch/,
+  )
+
+  assert.equal(calls.some((call) => call.args[0] === 'ls-remote'), false)
+  assert.equal(isSafeGitRefName('feature/test'), true)
+  assert.equal(isSafeGitRefName('--upload-pack=bad'), false)
+  assert.equal(isSafeGitRefName('feature with spaces'), false)
 })
 
 test('formatMergeStateLedger renders a markdown table for open prs', () => {

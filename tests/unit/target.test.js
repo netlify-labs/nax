@@ -138,6 +138,32 @@ test('resolveTarget resolves PR selectors through injectable gh seam', () => {
   assert.equal(target.verified, true)
 })
 
+test('resolveTarget rejects unsafe explicit and PR branch names', () => {
+  const repo = makeRepo()
+
+  assert.throws(
+    () => resolveTarget({
+      projectRoot: repo,
+      transport: 'netlify-api',
+      options: { branch: '--upload-pack=bad' },
+      remoteResolver: remoteResolverFor({}),
+    }),
+    /Invalid branch/,
+  )
+
+  assert.throws(
+    () => resolveTarget({
+      projectRoot: repo,
+      transport: 'netlify-api',
+      options: { branch: '#42', repo: 'owner/repo' },
+      repoResolver: () => 'owner/repo',
+      prResolver: () => ({ branch: 'feature with spaces', sha: '1234567890abcdef1234567890abcdef12345678', fork: false }),
+      remoteResolver: remoteResolverFor({}),
+    }),
+    /Invalid branch/,
+  )
+})
+
 test('resolveTarget records fork PR caveat for GitHub implicit targets', () => {
   const repo = makeRepo()
 

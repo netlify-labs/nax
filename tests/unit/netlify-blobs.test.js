@@ -39,8 +39,10 @@ test('setBlob writes payload through --input tempfile and removes it after uploa
   assert.equal(calls.length, 1)
   assert.deepEqual(calls[0].args.slice(0, 5), ['blobs:set', 'nax-run', 'step-prior-results', '--input', inputPath])
   assert.equal(calls[0].args.includes('--force'), true)
-  assert.equal(calls[0].args.includes('--auth'), true)
+  assert.equal(calls[0].args.includes('--auth'), false)
+  assert.equal(calls[0].args.includes('token-1'), false)
   assert.equal(calls[0].options.env.NETLIFY_SITE_ID, 'site-1')
+  assert.equal(calls[0].options.env.NETLIFY_AUTH_TOKEN, 'token-1')
   assert.equal(fs.existsSync(path.dirname(inputPath)), false)
 })
 
@@ -98,7 +100,7 @@ test('blob commands do not retry permanent auth errors and redact token detail',
   assert.equal(calls, 1)
 })
 
-test('getBlob and deleteBlob build CLI commands with shared auth and site env', () => {
+test('getBlob and deleteBlob build CLI commands with shared auth env and no auth argv', () => {
   const calls = []
   const runCommand = (command, args, options) => {
     calls.push({ command, args, options })
@@ -108,10 +110,14 @@ test('getBlob and deleteBlob build CLI commands with shared auth and site env', 
   assert.equal(getBlob({ store: 's', key: 'k', siteId: 'site', token: 'tok', runCommand }), 'payload')
   deleteBlob({ store: 's', key: 'k', siteId: 'site', token: 'tok', runCommand })
 
-  assert.deepEqual(calls[0].args, ['blobs:get', 's', 'k', '--auth', 'tok'])
-  assert.deepEqual(calls[1].args, ['blobs:delete', 's', 'k', '--force', '--auth', 'tok'])
+  assert.deepEqual(calls[0].args, ['blobs:get', 's', 'k'])
+  assert.deepEqual(calls[1].args, ['blobs:delete', 's', 'k', '--force'])
+  assert.equal(calls[0].args.includes('tok'), false)
+  assert.equal(calls[1].args.includes('tok'), false)
   assert.equal(calls[0].options.env.NETLIFY_SITE_ID, 'site')
   assert.equal(calls[1].options.env.NETLIFY_SITE_ID, 'site')
+  assert.equal(calls[0].options.env.NETLIFY_AUTH_TOKEN, 'tok')
+  assert.equal(calls[1].options.env.NETLIFY_AUTH_TOKEN, 'tok')
 })
 
 test('retryability classifier separates transient and permanent blob failures', () => {

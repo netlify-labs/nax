@@ -23,6 +23,7 @@ const { setBlob } = require('./netlify-blobs')
 function jsonResponse(res, statusCode, payload) {
   const body = `${JSON.stringify(payload, null, 2)}\n`
   res.writeHead(statusCode, {
+    ...securityHeaders(),
     'content-type': 'application/json; charset=utf-8',
     'content-length': Buffer.byteLength(body),
   })
@@ -31,10 +32,20 @@ function jsonResponse(res, statusCode, payload) {
 
 function textResponse(res, statusCode, body, contentType = 'text/plain; charset=utf-8') {
   res.writeHead(statusCode, {
+    ...securityHeaders(),
     'content-type': contentType,
     'content-length': Buffer.byteLength(body),
   })
   res.end(body)
+}
+
+function securityHeaders() {
+  return {
+    'x-content-type-options': 'nosniff',
+    'referrer-policy': 'no-referrer',
+    'x-frame-options': 'DENY',
+    'content-security-policy': "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'",
+  }
 }
 
 function errorPayload(statusCode, code, message) {
@@ -350,10 +361,43 @@ function freshFollowupTitle(sourceRun = {}, target = {}, freshResults = []) {
   return `Follow-up on ${workflowTitle}${agentText ? ` (${agentText})` : ''}`
 }
 
-function assertToken(req, requestUrl, token) {
-  const provided = req.headers['x-nax-token'] || requestUrl.searchParams.get('token')
-  if (provided !== token) {
+function timingSafeTokenEqual(provided, expected) {
+  if (!provided || !expected) return false
+  const providedDigest = crypto.createHash('sha256').update(String(provided)).digest()
+  const expectedDigest = crypto.createHash('sha256').update(String(expected)).digest()
+  return crypto.timingSafeEqual(providedDigest, expectedDigest)
+}
+
+function tokenFromRequest(req) {
+  const raw = req.headers['x-nax-token']
+  return Array.isArray(raw) ? raw[0] : raw
+}
+
+function assertToken(req, _requestUrl, token) {
+  const provided = tokenFromRequest(req)
+  if (!timingSafeTokenEqual(provided, token)) {
     throw requestError(401, 'unauthorized', 'A valid visualize session token is required.')
+  }
+}
+
+function hostWithoutPort(hostHeader = '') {
+  const value = String(hostHeader || '').trim().toLowerCase()
+  if (!value) return ''
+  if (value.startsWith('[')) return value.slice(1, value.indexOf(']'))
+  return value.split(':')[0]
+}
+
+function allowedHostnames(bindHost = '127.0.0.1') {
+  const bind = String(bindHost || '').trim().toLowerCase()
+  const allowed = new Set(['localhost', '127.0.0.1', '::1'])
+  if (bind && bind !== '0.0.0.0' && bind !== '::') allowed.add(bind)
+  return allowed
+}
+
+function assertAllowedHost(req, bindHost) {
+  const host = hostWithoutPort(req.headers.host)
+  if (!host || !allowedHostnames(bindHost).has(host)) {
+    throw requestError(403, 'forbidden_host', 'The Host header is not allowed for this visualize server.')
   }
 }
 
@@ -380,7 +424,7 @@ function defaultIndexHtml({ token, initialWorkflow = '' } = {}) {
     '    <h1>Nax Visualize</h1>',
     '    <p>The visualize API is running. Build the web UI with <code>npm run visualize:build</code> to serve the full workbench.</p>',
     `    ${workflowText}`,
-    `    <p>API health: <a href="/api/health?token=${htmlEscape(encodeURIComponent(token))}">/api/health</a></p>`,
+    '    <p>API health: <a href="/api/health">/api/health</a></p>',
     '  </main>',
     '</body>',
     '</html>',
@@ -758,6 +802,7 @@ function staticFileForPath(distDir, pathname) {
 
 function createRequestHandler(options = {}) {
   const projectRoot = path.resolve(options.projectRoot || process.cwd())
+  const bindHost = options.host || '127.0.0.1'
   const distDir = options.distDir || path.resolve(__dirname, '..', 'web', 'dist')
   const tailOutput = options.tail === true || options.tailOutput === true
   const flowOptions = {
@@ -1011,11 +1056,12 @@ function createRequestHandler(options = {}) {
       shutdownRuns(runs)
     },
     async handle(req, res) {
-      const base = `http://${req.headers.host || '127.0.0.1'}`
-      const requestUrl = new URL(req.url || '/', base)
-      const pathname = requestUrl.pathname
-
       try {
+        assertAllowedHost(req, bindHost)
+        const base = `http://${req.headers.host || '127.0.0.1'}`
+        const requestUrl = new URL(req.url || '/', base)
+        const pathname = requestUrl.pathname
+
         if (pathname === '/api/health') {
           if (req.method !== 'GET') {
             methodNotAllowed(res, req.method || 'UNKNOWN')
@@ -1047,6 +1093,7 @@ function createRequestHandler(options = {}) {
             methodNotAllowed(res, req.method || 'UNKNOWN')
             return
           }
+          assertToken(req, requestUrl, token)
           const durable = listRunStates(projectRoot).map(publicRunState)
           jsonResponse(res, 200, {
             active: [...runs.values()].map(publicRun),
@@ -1073,6 +1120,7 @@ function createRequestHandler(options = {}) {
             methodNotAllowed(res, req.method || 'UNKNOWN')
             return
           }
+          assertToken(req, requestUrl, token)
           const runId = safeDecode(runEventsJsonMatch[1])
           const run = runs.get(runId)
           const durable = run ? null : durableRunStateForId(runId)
@@ -1104,6 +1152,7 @@ function createRequestHandler(options = {}) {
             methodNotAllowed(res, req.method || 'UNKNOWN')
             return
           }
+          assertToken(req, requestUrl, token)
           const runId = safeDecode(runEventsMatch[1])
           const run = runs.get(runId)
           const durable = run ? null : durableRunStateForId(runId)
@@ -1113,6 +1162,7 @@ function createRequestHandler(options = {}) {
           }
           const since = Number(requestUrl.searchParams.get('since') || 0)
           res.writeHead(200, {
+            ...securityHeaders(),
             'content-type': 'text/event-stream',
             'cache-control': 'no-cache',
             connection: 'keep-alive',
@@ -1148,6 +1198,7 @@ function createRequestHandler(options = {}) {
             methodNotAllowed(res, req.method || 'UNKNOWN')
             return
           }
+          assertToken(req, requestUrl, token)
           const durable = durableRunStateForId(runGraphMatch[1])
           if (!durable) {
             notFound(res, 'Unknown visualize run.')
@@ -1180,6 +1231,7 @@ function createRequestHandler(options = {}) {
             methodNotAllowed(res, req.method || 'UNKNOWN')
             return
           }
+          assertToken(req, requestUrl, token)
           const durable = durableRunStateForId(runDetailsMatch[1])
           if (!durable) {
             notFound(res, 'Unknown visualize run.')
@@ -1358,6 +1410,7 @@ function createRequestHandler(options = {}) {
             methodNotAllowed(res, req.method || 'UNKNOWN')
             return
           }
+          assertToken(req, requestUrl, token)
           const run = runs.get(safeDecode(runMatch[1]))
           if (run) {
             jsonResponse(res, 200, { run: publicRun(run) })
@@ -1446,6 +1499,7 @@ function createRequestHandler(options = {}) {
           if (staticFile) {
             const body = fs.readFileSync(staticFile)
             res.writeHead(200, {
+              ...securityHeaders(),
               'content-type': contentTypeFor(staticFile),
               'content-length': body.length,
             })
@@ -1495,7 +1549,7 @@ function startVisualizeServer(options = {}) {
       const address = server.address()
       const actualPort = typeof address === 'object' && address ? address.port : port
       const workflow = options.initialWorkflow ? `&workflow=${encodeURIComponent(options.initialWorkflow)}` : ''
-      const url = `http://${host}:${actualPort}/?token=${handler.token}${workflow}`
+      const url = `http://${host}:${actualPort}/${workflow ? `?${workflow.slice(1)}` : ''}`
       resolve({
         server,
         host,
@@ -1523,6 +1577,8 @@ module.exports = {
     extractDurableRunId,
     htmlEscape,
     readJsonBody,
+    securityHeaders,
+    timingSafeTokenEqual,
     registerSseClient,
     shutdownRuns,
     stepStatusSnapshot,

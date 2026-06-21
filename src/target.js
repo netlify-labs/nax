@@ -1,6 +1,6 @@
 const { spawnSync } = require('child_process')
 const { resolveRepo } = require('./prompts')
-const { resolveRemoteBranchSha } = require('./review-context')
+const { resolveRemoteBranchSha, validateGitRefName } = require('./review-context')
 
 /**
  * @typedef {{ cwd?: string }} CommandOptions
@@ -102,6 +102,7 @@ function resolvePullRequestTarget({ selector, repo, projectRoot, run = runComman
   }
   const branch = String(parsed.headRefName || '').trim()
   if (!branch) throw new Error(`Could not resolve PR #${number} branch.`)
+  validateGitRefName(branch, `PR #${number} branch`)
   return {
     branch,
     sha: /^[0-9a-f]{40}$/i.test(String(parsed.headRefOid || '')) ? String(parsed.headRefOid) : null,
@@ -111,10 +112,11 @@ function resolvePullRequestTarget({ selector, repo, projectRoot, run = runComman
 
 /** @param {{ branch?: string, sourceType?: string, projectRoot?: string, remoteResolver?: RemoteResolver }} [options] @returns {Target} */
 function verifiedRemoteTarget({ branch, sourceType, projectRoot, remoteResolver = resolveRemoteBranchSha } = {}) {
-  const remote = remoteResolver({ repoRoot: projectRoot, branch })
+  const safeBranch = validateGitRefName(branch)
+  const remote = remoteResolver({ repoRoot: projectRoot, branch: safeBranch })
   return normalizeTarget({
-    branch: remote.branch || branch,
-    ref: remote.ref || `origin/${branch}`,
+    branch: validateGitRefName(remote.branch || safeBranch),
+    ref: remote.ref || `origin/${safeBranch}`,
     sha: remote.sha,
     sourceType,
     verified: true,
@@ -158,7 +160,7 @@ function resolveTarget({
 
   if (dryRun) {
     const branch = requested && !isPullRequestSelector(requested)
-      ? requested
+      ? validateGitRefName(requested)
       : currentBranch(projectRoot, { run }) || requested.replace(/^#/, '') || '(dry run)'
     if (!branch || branch === '(dry run)') caveats.push('dry-run')
     return normalizeTarget({
@@ -186,6 +188,7 @@ function resolveTarget({
   }
 
   if (github) {
+    if (branch) validateGitRefName(branch)
     return advisoryGithubTarget({
       branch,
       sourceType,
@@ -200,6 +203,7 @@ function resolveTarget({
   }
 
   if (!netlify) {
+    validateGitRefName(branch)
     return normalizeTarget({
       branch,
       ref: branch,

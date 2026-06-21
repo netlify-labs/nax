@@ -287,6 +287,37 @@ function parseRemoteBranchTarget(upstream, fallbackBranch) {
   return { remote, branch: branchParts.join('/') }
 }
 
+function isSafeGitRefName(value) {
+  const ref = String(value || '').trim()
+  if (!ref) return false
+  if (ref.startsWith('-') || ref.startsWith('/') || ref.endsWith('/') || ref.endsWith('.')) return false
+  if (ref.includes('..') || ref.includes('//') || ref.includes('@{')) return false
+  if (/[\s~^:?*[\]\\\x00-\x1f\x7f]/.test(ref)) return false
+  if (ref.split('/').some((part) => !part || part.startsWith('.') || part.endsWith('.lock'))) return false
+  return /^[A-Za-z0-9._/-]+$/.test(ref)
+}
+
+function isSafeGitRemoteName(value) {
+  const remote = String(value || '').trim()
+  return /^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(remote) && !remote.startsWith('-')
+}
+
+function validateGitRefName(value, label = 'branch') {
+  const ref = String(value || '').trim()
+  if (!isSafeGitRefName(ref)) {
+    throw new Error(`Invalid ${label} "${ref || '(empty)'}". Use a plain git ref name without leading dashes, whitespace, or metacharacters.`)
+  }
+  return ref
+}
+
+function validateGitRemoteName(value) {
+  const remote = String(value || '').trim()
+  if (!isSafeGitRemoteName(remote)) {
+    throw new Error(`Invalid git remote "${remote || '(empty)'}".`)
+  }
+  return remote
+}
+
 /** @param {Record<string, any>} param0 */
 function resolveRemoteBranchSha({ repoRoot: explicitRepoRoot, branch, run = runCommand } = {}) {
   const repoRoot = resolveRepoRoot(explicitRepoRoot)
@@ -305,6 +336,8 @@ function resolveRemoteBranchSha({ repoRoot: explicitRepoRoot, branch, run = runC
   const target = upstream.status === 0
     ? parseRemoteBranchTarget(upstream.stdout, currentBranch)
     : { remote: 'origin', branch: currentBranch }
+  target.remote = validateGitRemoteName(target.remote)
+  target.branch = validateGitRefName(target.branch)
   const result = run('git', ['ls-remote', '--heads', target.remote, target.branch], { cwd: repoRoot })
   const firstLine = (result.stdout || '').split('\n').find(Boolean) || ''
   const sha = firstLine.split(/\s+/)[0] || ''
@@ -332,6 +365,7 @@ module.exports = {
   formatReviewContract,
   formatUnverifiedTargetContract,
   formatWorkingTreeSummary,
+  isSafeGitRefName,
   loadOpenPullRequests,
   readWorkingTreeStatus,
   resolveCurrentBranch,
@@ -339,4 +373,5 @@ module.exports = {
   resolveRepoRoot,
   resolveRemoteBranchSha,
   runCommand,
+  validateGitRefName,
 }

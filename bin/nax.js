@@ -80,6 +80,7 @@ const {
   workflowPickerLabel,
 } = require('../src/cli/flow-list')
 const { handleInit } = require('../src/cli/init')
+const { createIssueHandlers } = require('../src/cli/issue')
 const { handleSync } = require('../src/cli/sync')
 const {
   PROVIDER_DIRS,
@@ -571,174 +572,6 @@ function ensureGithubPlanBlobOffload({
   }
 }
 
-async function pickPromptInteractively() {
-  const clack = await loadClack()
-  const prompts = listPrompts()
-  const selected = await clack.select({
-    message: 'Choose workflow prompt',
-    options: prompts.map((prompt, i) => ({
-      value: prompt.name,
-      label: `${i + 1}. ${prompt.title}`,
-      hint: prompt.description,
-    })),
-  })
-  if (clack.isCancel(selected)) process.exit(0)
-  return selected
-}
-
-/** @param {Record<string, any>} param0 */
-async function selectIssueGroup({ clack, options, message, allowSkip = false }) {
-  let groups
-  try {
-    groups = listRecentIssueGroups({ repo: resolveRepo(options.repo) })
-  } catch (error) {
-    console.error(`Could not load recent issues for auto-discovery: ${error.message}`)
-    return null
-  }
-
-  const groupOptions = groups.slice(0, 12).map((group) => ({
-    value: group.issueNumbers.join(','),
-    label: `${group.date} ${group.promptTitle}`,
-    hint: formatGroupHint(group),
-  }))
-
-  groupOptions.push({ value: '__manual__', label: 'Enter issue numbers manually', hint: '' })
-  if (allowSkip) groupOptions.push({ value: '__skip__', label: 'Skip — no prior round results', hint: '' })
-
-  const selected = await clack.select({ message, options: groupOptions })
-  if (clack.isCancel(selected)) process.exit(0)
-
-  if (selected === '__skip__') return ''
-  if (selected === '__manual__') {
-    const text = await clack.text({
-      message: 'Issue numbers (comma-separated)',
-      placeholder: '29,30,31',
-      validate: (value) => (value && value.trim() ? undefined : 'Enter at least one issue number'),
-    })
-    if (clack.isCancel(text)) process.exit(0)
-    return text.trim()
-  }
-  return selected
-}
-
-async function chooseInteractively(initialPromptName, options) {
-  const clack = await loadClack()
-
-  const promptName = initialPromptName || (await pickPromptInteractively())
-
-  let fromIssues = options.fromIssues || options.fromIssue || ''
-  if (!fromIssues && shouldFetchResults(promptName) && options.fetchResults !== false) {
-    const message = promptName === 'summarize-consensus'
-      ? 'Choose prior round to summarize'
-      : 'Choose source round to embed'
-    fromIssues = await selectIssueGroup({
-      clack,
-      options,
-      message,
-      allowSkip: true,
-    }) || ''
-  }
-
-  const isSummarize = promptName === 'summarize-consensus'
-  const modelOrder = isSummarize
-    ? ['codex', ...DEFAULT_MODELS.filter((m) => m !== 'codex')]
-    : DEFAULT_MODELS
-  const defaultModelInitialValues = isSummarize ? ['codex'] : DEFAULT_MODELS
-
-  let models = parseCsv(options.models)
-  if (models.length === 0) {
-    const selectedModels = await clack.multiselect({
-      message: 'Choose Netlify agent models',
-      options: modelOrder.map((model) => ({
-        value: model,
-        label: titleCase(model),
-      })),
-      initialValues: defaultModelInitialValues,
-      required: true,
-    })
-    if (clack.isCancel(selectedModels)) process.exit(0)
-    models = selectedModels
-  }
-
-  const optionsWithFrom = { ...options, fromIssues }
-  const roundResultsRaw = fetchRoundResultsForOptions(optionsWithFrom, {
-    embedAll: shouldEmbedAllReplies(promptName),
-  })
-
-  let manualContext = readManualContext(options)
-  if (!manualContext && options.contextPrompt !== false) {
-    manualContext = await multiline({
-      message: 'Additional context/instructions (optional)',
-      placeholder: 'Hit enter to proceed. Ok if this is empty.',
-    })
-  }
-  const context = joinContext(readAutoContext(options), manualContext)
-
-  return {
-    promptName,
-    options: {
-      ...optionsWithFrom,
-      models: models.join(','),
-    },
-    context,
-    roundResultsRaw,
-  }
-}
-
-async function chooseCommentInteractively(initialPromptName, options) {
-  const clack = await loadClack()
-
-  const promptName = initialPromptName || (await pickPromptInteractively())
-
-  let issues = options.issues || options.issue
-  if (!issues) {
-    if (promptName === 'cross-review') {
-      issues = await selectIssueGroup({
-        clack,
-        options,
-        message: 'Choose round to comment on',
-      })
-    } else {
-      const selectedIssues = await clack.text({
-        message: 'Issue numbers (comma-separated)',
-        placeholder: '29,30,31',
-        validate: (value) => (value && value.trim() ? undefined : 'Enter at least one issue number'),
-      })
-      if (clack.isCancel(selectedIssues)) process.exit(0)
-      issues = selectedIssues.trim()
-    }
-  }
-
-  let fromIssues = options.fromIssues || options.fromIssue || ''
-  if (!fromIssues && shouldFetchResults(promptName) && options.fetchResults !== false) {
-    fromIssues = issues
-  }
-
-  const optionsWithFrom = { ...options, fromIssues }
-  const roundResultsRaw = fetchRoundResultsForOptions(optionsWithFrom, {
-    embedAll: shouldEmbedAllReplies(promptName),
-  })
-
-  let manualContext = readManualContext(options)
-  if (!manualContext && options.contextPrompt !== false) {
-    manualContext = await multiline({
-      message: 'Additional context/instructions (optional)',
-      placeholder: 'Hit enter to proceed. Ok if this is empty.',
-    })
-  }
-  const context = joinContext(readAutoContext(options), manualContext)
-
-  return {
-    promptName,
-    options: {
-      ...optionsWithFrom,
-      issues,
-    },
-    context,
-    roundResultsRaw,
-  }
-}
-
 function buildAndMaybeFallbackPlan(input, planBuilder) {
   const heading = input.options.fromIssuesHeading || ROUND_LABEL_BY_PROMPT[input.promptName] || 'Prior Round Outputs'
   const results = Array.isArray(input.roundResultsRaw) ? input.roundResultsRaw : []
@@ -869,177 +702,11 @@ function buildAndMaybeFallbackPlan(input, planBuilder) {
   return plan
 }
 
-async function handleIssue(promptName, options) {
-  const projectRoot = resolveProjectRoot(options.projectRoot, { cwd: process.cwd() })
-  const wantsInteractive = process.stdin.isTTY && (!promptName || !options.yes)
-
-  let resolvedPromptName = promptName
-  if (wantsInteractive && !resolvedPromptName) {
-    resolvedPromptName = await pickPromptInteractively()
-  }
-  resolvedPromptName = resolvedPromptName || 'review'
-
-  if (wantsInteractive && resolvedPromptName === 'cross-review') {
-    return handleComment(resolvedPromptName, options)
-  }
-
-  const input = wantsInteractive
-    ? await chooseInteractively(resolvedPromptName, options)
-    : {
-        promptName: resolvedPromptName,
-        options,
-        context: readContext(options),
-        roundResultsRaw: fetchRoundResultsForOptions(options, {
-          embedAll: shouldEmbedAllReplies(resolvedPromptName),
-        }),
-      }
-  const stepState = input.stepState || { id: input.promptName || resolvedPromptName || 'github' }
-  const runState = input.runState || {
-    runId: `github-${Date.now()}`,
-    projectRoot,
-    blobRefs: [],
-    steps: [stepState],
-    transport: 'github',
-  }
-  const enrichedInput = {
-    ...input,
-    projectRoot,
-    runState,
-    stepState,
-    step: input.step || { id: stepState.id },
-  }
-
-  if (
-    input.promptName === 'summarize-consensus' &&
-    options.skipRoundCheck !== true &&
-    Array.isArray(enrichedInput.roundResultsRaw) &&
-    enrichedInput.roundResultsRaw.length > 0
-  ) {
-    assertCrossReviewComplete(rawIssuesFromResults(enrichedInput.roundResultsRaw))
-  }
-
-  const plan = buildAndMaybeFallbackPlan(enrichedInput, buildPlan)
-  printPlan(plan, { dryRun: options.dryRun })
-
-  if (options.dryRun) {
-    for (const issue of plan.issues) {
-      console.log(`\n--- ${issue.title} ---\n${issue.body}`)
-    }
-    return
-  }
-
-  if (!options.yes && process.stdin.isTTY) {
-    const clack = await loadClack()
-    const titleList = plan.issues.map((issue) => `  • ${issue.title}`).join('\n')
-    const noun = plan.issues.length === 1 ? 'issue' : 'issues'
-    const confirmed = await clack.confirm({
-      message: `Create ${plan.issues.length} GitHub ${noun} in ${plan.repo}?\n${titleList}`,
-      initialValue: true,
-    })
-    if (clack.isCancel(confirmed) || !confirmed) {
-      console.log('Cancelled')
-      return
-    }
-  }
-
-  for (const issue of plan.issues) {
-    const url = createIssue({
-      repo: plan.repo,
-      title: issue.title,
-      body: issue.body,
-      labels: plan.labels,
-    })
-    console.log(`${issue.title}: ${url}`)
-  }
-}
-
-async function handleComment(promptName, options) {
-  const projectRoot = resolveProjectRoot(options.projectRoot, { cwd: process.cwd() })
-  const wantsInteractive = process.stdin.isTTY && (!promptName || !options.yes || !(options.issues || options.issue))
-  const resolvedPromptName = promptName || 'cross-review'
-
-  let nonInteractiveOptions = options
-  if (!wantsInteractive) {
-    const fromIssues =
-      options.fromIssues ||
-      options.fromIssue ||
-      (shouldFetchResults(resolvedPromptName) && options.fetchResults !== false
-        ? options.issues || options.issue || ''
-        : '')
-    nonInteractiveOptions = { ...options, fromIssues }
-  }
-
-  const input = wantsInteractive
-    ? await chooseCommentInteractively(promptName, options)
-    : {
-        promptName: resolvedPromptName,
-        options: nonInteractiveOptions,
-        context: readContext(nonInteractiveOptions),
-        roundResultsRaw: fetchRoundResultsForOptions(nonInteractiveOptions, {
-          embedAll: shouldEmbedAllReplies(resolvedPromptName),
-        }),
-      }
-  const stepState = input.stepState || { id: input.promptName || resolvedPromptName || 'github-comment' }
-  const runState = input.runState || {
-    runId: `github-${Date.now()}`,
-    projectRoot,
-    blobRefs: [],
-    steps: [stepState],
-    transport: 'github',
-  }
-  const enrichedInput = {
-    ...input,
-    projectRoot,
-    runState,
-    stepState,
-    step: input.step || { id: stepState.id },
-  }
-
-  const plan = buildAndMaybeFallbackPlan(enrichedInput, buildCommentPlan)
-  printCommentPlan(plan, { dryRun: options.dryRun })
-
-  if (options.dryRun) {
-    for (const issue of plan.issues) {
-      const label = issue.redirected
-        ? `#${issue.issueNumber} ${issue.issueTitle} -> PR #${issue.targetNumber} ${issue.targetTitle}`
-        : `#${issue.issueNumber} ${issue.issueTitle}`
-      console.log(`\n--- ${label} ---\n${issue.body}`)
-    }
-    return
-  }
-
-  if (!options.yes && process.stdin.isTTY) {
-    const clack = await loadClack()
-    const targetList = plan.issues
-      .map((issue) => {
-        const target = issue.targetKind === 'pr'
-          ? `PR #${issue.targetNumber} ${issue.targetTitle}`
-          : `issue #${issue.targetNumber}`
-        return `  • ${issue.model} → ${target}`
-      })
-      .join('\n')
-    const noun = plan.issues.length === 1 ? 'comment' : 'comments'
-    const confirmed = await clack.confirm({
-      message: `Create ${plan.issues.length} GitHub ${noun} in ${plan.repo}?\n${targetList}`,
-      initialValue: true,
-    })
-    if (clack.isCancel(confirmed) || !confirmed) {
-      console.log('Cancelled')
-      return
-    }
-  }
-
-  for (const issue of plan.issues) {
-    const url = createDiscussionComment({
-      repo: issue.targetRepo,
-      targetKind: issue.targetKind,
-      targetNumber: issue.targetNumber,
-      body: issue.body,
-    })
-    const targetLabel = issue.targetKind === 'pr' ? `PR #${issue.targetNumber}` : `#${issue.targetNumber}`
-    console.log(`#${issue.issueNumber} ${issue.issueTitle} -> ${targetLabel}: ${url}`)
-  }
-}
+const { handleComment, handleIssue } = createIssueHandlers({
+  buildAndMaybeFallbackPlan,
+  loadClack,
+  exit: process.exit,
+})
 
 async function handleList(options = {}) {
   const invocationDir = process.cwd()
@@ -5443,6 +5110,7 @@ async function handleSkills(subcommand = 'help', options = {}) {
 
 /** @returns {import('commander').Command} */
 function buildProgram() {
+  const issueHandlers = createIssueHandlers({ buildAndMaybeFallbackPlan, loadClack })
   return buildNaxProgram({
     actionOptions,
     collectOption,
@@ -5451,10 +5119,10 @@ function buildProgram() {
     handlers: {
       clean: handleClean,
       ci: handleCi,
-      comment: handleComment,
+      comment: issueHandlers.handleComment,
       handoff: handleHandoff,
       init: handleInit,
-      issue: handleIssue,
+      issue: issueHandlers.handleIssue,
       list: handleList,
       previewBoxes: handlePreviewBoxes,
       previewSpinner: handlePreviewSpinner,

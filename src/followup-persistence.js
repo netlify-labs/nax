@@ -398,18 +398,6 @@ function syncSubmittedFollowupRunsToWorkflow({
       candidates.push({ step, run })
     }
   }
-  if (candidates.length === 0) {
-    if (!titleNormalization.changed) return { runState, changed: false, warnings: [] }
-    return {
-      runState: saveRunState({
-        ...runState,
-        flow: updateFlowStepTitles(runState.flow, titleNormalization.titles),
-        steps,
-      }),
-      changed: true,
-      warnings: [],
-    }
-  }
 
   const warnings = []
   const sessionsByRunner = new Map()
@@ -437,8 +425,8 @@ function syncSubmittedFollowupRunsToWorkflow({
     }
   }
 
-  let changed = false
-  const nextSteps = steps.map((step) => {
+  let changed = titleNormalization.changed
+  const nextSteps = candidates.length === 0 ? steps : steps.map((step) => {
     if (step?.source?.type !== 'visualizer-followup') return step
     let stepChanged = false
     const nextRuns = (Array.isArray(step.runs) ? step.runs : []).map((run) => {
@@ -470,11 +458,11 @@ function syncSubmittedFollowupRunsToWorkflow({
     }
   })
 
-  if (!changed && !titleNormalization.changed) return { runState, changed: false, warnings }
+  if (!changed) return { runState, changed: false, warnings }
   const nextRunState = saveRunState({
     ...runState,
     flow: updateFlowStepTitles(runState.flow, titleNormalization.titles),
-    status: workflowStatusFromSteps(nextSteps, runState.status),
+    status: candidates.length > 0 ? workflowStatusFromSteps(nextSteps, runState.status) : runState.status,
     steps: nextSteps,
   })
   return { runState: nextRunState, changed: true, warnings }

@@ -114,8 +114,11 @@ function blobEnv({ env = process.env, siteId } = {}) {
   }
 }
 
-function withAuth(args, token) {
-  return token ? [...args, '--auth', token] : args
+function withAuthEnv({ env = process.env, siteId, token } = {}) {
+  return {
+    ...blobEnv({ env, siteId }),
+    ...(token ? { NETLIFY_AUTH_TOKEN: token } : {}),
+  }
 }
 
 function writeTempBlobInput(value, tmpDir = os.tmpdir()) {
@@ -149,14 +152,14 @@ function setBlob({
 } = {}) {
   const temp = writeTempBlobInput(value, tmpDir)
   try {
-    const args = withAuth(['blobs:set', store, key, '--input', temp.filePath, '--force'], token)
+    const args = ['blobs:set', store, key, '--input', temp.filePath, '--force']
     return runBlobCommand({
       operation: 'set',
       args,
       store,
       key,
       cwd,
-      env: blobEnv({ env, siteId }),
+      env: withAuthEnv({ env, siteId, token }),
       cliPath,
       runCommand,
       attempts,
@@ -187,14 +190,14 @@ function getBlob({
 } = {}) {
   // Used by the credentialed roundtrip probe and debugging paths. Hosted agent
   // prompts still fetch with the runner-local CLI command embedded in the prompt.
-  const args = withAuth(['blobs:get', store, key], token)
+  const args = ['blobs:get', store, key]
   const result = runBlobCommand({
     operation: 'get',
     args,
     store,
     key,
     cwd,
-    env: blobEnv({ env, siteId }),
+    env: withAuthEnv({ env, siteId, token }),
     cliPath,
     runCommand,
     attempts,
@@ -222,7 +225,7 @@ function deleteBlob({
   onRetry,
   allowFailure = false,
 } = {}) {
-  const args = withAuth(['blobs:delete', store, key, '--force'], token)
+  const args = ['blobs:delete', store, key, '--force']
   try {
     return runBlobCommand({
       operation: 'delete',
@@ -230,7 +233,7 @@ function deleteBlob({
       store,
       key,
       cwd,
-      env: blobEnv({ env, siteId }),
+      env: withAuthEnv({ env, siteId, token }),
       cliPath,
       runCommand,
       attempts,

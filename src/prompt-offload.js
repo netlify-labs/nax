@@ -142,7 +142,7 @@ function buildFetchInstruction({ store, key, marker, kind = 'prior-results', run
       ? 'Before you do anything else, fetch the full prompt for this run:'
       : 'Before you do anything else, fetch the full prior-round results for this run:',
     '',
-    `    NETLIFY_SITE_ID="\${NETLIFY_SITE_ID:-$SITE_ID}" ${command} blobs:get ${store} ${key} --auth "$NETLIFY_AUTH_TOKEN"`,
+    `    NETLIFY_SITE_ID="\${NETLIFY_SITE_ID:-$SITE_ID}" ${command} blobs:get ${store} ${key}`,
     '',
     fullPrompt
       ? 'Read the returned Markdown as your complete prompt, follow it exactly, then echo the context marker and the NAX-BLOB-SENTINEL line from the top of the blob so nax can verify the prompt was loaded:'

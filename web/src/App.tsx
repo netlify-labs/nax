@@ -24,7 +24,7 @@ import {
 import { useDisclosure } from '@mantine/hooks'
 import { Check, Copy, FolderGit2, GitBranch, Moon, RefreshCw, Sun } from 'lucide-react'
 import { ReactFlowProvider } from '@xyflow/react'
-import { cancelWorkflowRun, getHealth, getRunGraph, getWorkflowGraph, listRuns, listWorkflows, runEventsUrl, runWorkflowDryRun, startWorkflowRun } from './api'
+import { cancelWorkflowRun, getHealth, getRunGraph, getWorkflowGraph, listRuns, listWorkflows, runEventsStream, runWorkflowDryRun, startWorkflowRun, type RunEventStream } from './api'
 import { WorkflowOutputTabs } from './components/DryRunPanel'
 import { Inspector } from './components/Inspector'
 import { MarkdownRenderer } from './components/MarkdownRenderer'
@@ -229,7 +229,7 @@ export default function App() {
   const [promptNode, setPromptNode] = useState<WorkflowGraphNodeData | null>(null)
   const [detailsModalContext, setDetailsModalContext] = useState<DetailsModalContext | null>(null)
   const dryRunSimulationTimers = useRef<number[]>([])
-  const runEventsRef = useRef<EventSource | null>(null)
+  const runEventsRef = useRef<RunEventStream | null>(null)
   const runReconnectTimerRef = useRef<number | null>(null)
   const skipWorkflowGraphLoadRef = useRef('')
   const selectedWorkflow = useMemo(
@@ -591,50 +591,39 @@ export default function App() {
         runReconnectTimerRef.current = null
         if (terminal) return
         runEventsRef.current?.close()
-        const events = new EventSource(runEventsUrl(response.run.id, since))
-        runEventsRef.current = events
-        for (const type of [
-          'started',
-          'stdout',
-          'stderr',
-          'workflow_started',
-          'workflow_completed',
-          'workflow_failed',
-          'workflow_cancelled',
-          'step_status',
-          'agent_status',
-          'artifact_written',
-          'runner_event_error',
-          'cancel_requested',
-        ]) {
-          events.addEventListener(type, dispatchEvent)
-        }
-        events.addEventListener('exited', (event) => {
-          terminal = true
-          const data = parseRunEvent(event)
-          const cursor = Number(data.seq ?? data.id ?? 0)
-          if (Number.isFinite(cursor) && cursor > eventCursor) eventCursor = cursor
-          dispatchLiveRun({ type: 'event', event: data })
-          setActiveRun((value) => value ? {
-            ...value,
-            status: typeof data.status === 'string' ? data.status : value.status,
-            exitCode: typeof data.exitCode === 'number' ? data.exitCode : value.exitCode,
-            signal: typeof data.signal === 'string' ? data.signal : value.signal,
-            exitedAt: typeof data.at === 'string' ? data.at : value.exitedAt,
-          } : value)
-          setRunRunning(false)
-          events.close()
-          if (runEventsRef.current === events) runEventsRef.current = null
+        const events = runEventsStream(response.run.id, since, {
+          onEvent(event) {
+            if (event.type === 'exited') {
+              terminal = true
+              const data = parseRunEvent(event)
+              const cursor = Number(data.seq ?? data.id ?? 0)
+              if (Number.isFinite(cursor) && cursor > eventCursor) eventCursor = cursor
+              dispatchLiveRun({ type: 'event', event: data })
+              setActiveRun((value) => value ? {
+                ...value,
+                status: typeof data.status === 'string' ? data.status : value.status,
+                exitCode: typeof data.exitCode === 'number' ? data.exitCode : value.exitCode,
+                signal: typeof data.signal === 'string' ? data.signal : value.signal,
+                exitedAt: typeof data.at === 'string' ? data.at : value.exitedAt,
+              } : value)
+              setRunRunning(false)
+              events.close()
+              if (runEventsRef.current === events) runEventsRef.current = null
+              return
+            }
+            dispatchEvent(event)
+          },
+          onError(event) {
+            if (event instanceof MessageEvent) dispatchEvent(event)
+            events.close()
+            if (terminal) return
+            if (runEventsRef.current === events) runEventsRef.current = null
+            if (!runReconnectTimerRef.current) {
+              runReconnectTimerRef.current = window.setTimeout(() => connectEvents(eventCursor), 1200)
+            }
+          },
         })
-        events.addEventListener('error', dispatchEvent)
-        events.onerror = () => {
-          events.close()
-          if (terminal) return
-          if (runEventsRef.current === events) runEventsRef.current = null
-          if (!runReconnectTimerRef.current) {
-            runReconnectTimerRef.current = window.setTimeout(() => connectEvents(eventCursor), 1200)
-          }
-        }
+        runEventsRef.current = events
       }
       connectEvents()
     } catch (err) {

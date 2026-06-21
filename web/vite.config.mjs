@@ -116,6 +116,7 @@ function devApiPlugin() {
               projectRoot: repoRoot,
               viteDevApi: true,
               tokenRequiredForMutations: false,
+              tokenRequiredForSensitiveReads: false,
             })
             return
           }

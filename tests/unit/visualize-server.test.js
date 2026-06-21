@@ -10,9 +10,16 @@ const { _private, startVisualizeServer } = require('../../src/visualize-server')
 const { buildRunDetails } = require('../../src/visualize-run-details')
 const { appendEventLog } = require('../../src/runner-event-log')
 
-function requestJson(url) {
+/** @param {string} url @param {{ token?: string, cookie?: string, headers?: Record<string, string> }} [options] */
+function requestJson(url, { token, cookie, headers = {} } = {}) {
   return new Promise((resolve, reject) => {
-    http.get(url, (res) => {
+    http.get(url, {
+      headers: {
+        ...headers,
+        ...(token ? { 'x-nax-token': token } : {}),
+        ...(cookie ? { cookie } : {}),
+      },
+    }, (res) => {
       let body = ''
       res.setEncoding('utf8')
       res.on('data', (chunk) => { body += chunk })
@@ -24,9 +31,16 @@ function requestJson(url) {
   })
 }
 
-function requestText(url) {
+/** @param {string} url @param {{ token?: string, cookie?: string, headers?: Record<string, string> }} [options] */
+function requestText(url, { token, cookie, headers = {} } = {}) {
   return new Promise((resolve, reject) => {
-    http.get(url, (res) => {
+    http.get(url, {
+      headers: {
+        ...headers,
+        ...(token ? { 'x-nax-token': token } : {}),
+        ...(cookie ? { cookie } : {}),
+      },
+    }, (res) => {
       let body = ''
       res.setEncoding('utf8')
       res.on('data', (chunk) => { body += chunk })
@@ -243,17 +257,77 @@ test('visualize server exposes health, workflow list, and graph routes', async (
     assert.equal(health.statusCode, 200)
     assert.equal(health.payload.ok, true)
     assert.equal(health.payload.projectRoot, process.cwd())
+    assert.equal(health.payload.tokenRequiredForSensitiveReads, true)
 
     const workflows = await requestJson(`${base}/api/workflows`)
     assert.equal(workflows.statusCode, 200)
     assert.ok(workflows.payload.count >= 14)
     assert.ok(workflows.payload.items.some((workflow) => workflow.id === 'review'))
 
-    const graph = await requestJson(`${base}/api/workflows/review/graph`)
+    const unauthenticatedGraph = await requestJson(`${base}/api/workflows/review/graph`)
+    assert.equal(unauthenticatedGraph.statusCode, 401)
+
+    const graph = await requestJson(`${base}/api/workflows/review/graph`, { token: server.token })
     assert.equal(graph.statusCode, 200)
     assert.equal(graph.payload.workflow.id, 'review')
     assert.equal(graph.payload.graph.nodes.length, 3)
     assert.equal(graph.payload.graph.edges.length, 2)
+  } finally {
+    await server.close()
+  }
+})
+
+test('visualize server requires auth for sensitive run reads and rejects untrusted Host headers', async () => {
+  const projectRoot = tmpRoot()
+  const { runId } = writeFollowupRunFixture(projectRoot, 'secure-run')
+  const server = await startVisualizeServer({ projectRoot })
+  try {
+    const base = `http://127.0.0.1:${server.port}`
+    const unauthenticatedRuns = await requestJson(`${base}/api/runs`)
+    assert.equal(unauthenticatedRuns.statusCode, 401)
+
+    const authenticatedRuns = await requestJson(`${base}/api/runs`, { token: server.token })
+    assert.equal(authenticatedRuns.statusCode, 200)
+
+    const unauthenticatedDetails = await requestJson(`${base}/api/runs/${runId}/details`)
+    assert.equal(unauthenticatedDetails.statusCode, 401)
+
+    const authenticatedDetails = await requestJson(`${base}/api/runs/${runId}/details`, { token: server.token })
+    assert.equal(authenticatedDetails.statusCode, 200)
+
+    const cookie = _private.sessionCookieHeader(server.token)
+    const cookieDetails = await requestJson(`${base}/api/runs/${runId}/details`, { cookie })
+    assert.equal(cookieDetails.statusCode, 200)
+
+    const rejectedHost = await requestJson(`${base}/api/health`, { headers: { host: 'evil.example' } })
+    assert.equal(rejectedHost.statusCode, 403)
+    assert.equal(authenticatedDetails.headers['x-content-type-options'], 'nosniff')
+    assert.equal(authenticatedDetails.headers['referrer-policy'], 'no-referrer')
+  } finally {
+    await server.close()
+  }
+})
+
+test('visualize server startup url does not include the session token', async () => {
+  const server = await startVisualizeServer({ projectRoot: process.cwd(), initialWorkflow: 'review' })
+  try {
+    assert.doesNotMatch(server.url, new RegExp(server.token))
+    assert.doesNotMatch(server.url, /token=/)
+    assert.match(server.url, /workflow=review/)
+  } finally {
+    await server.close()
+  }
+})
+
+test('visualize html bootstraps auth with an httpOnly session cookie', async () => {
+  const server = await startVisualizeServer({ projectRoot: process.cwd(), initialWorkflow: 'review', distDir: path.join(os.tmpdir(), 'missing-nax-dist') })
+  try {
+    const html = await requestText(`http://127.0.0.1:${server.port}/`)
+    assert.equal(html.statusCode, 200)
+    assert.doesNotMatch(html.body, new RegExp(server.token))
+    assert.match(String(html.headers['set-cookie'] || ''), /nax_visualize_token=/)
+    assert.match(String(html.headers['set-cookie'] || ''), /HttpOnly/)
+    assert.match(String(html.headers['set-cookie'] || ''), /SameSite=Strict/)
   } finally {
     await server.close()
   }
@@ -277,7 +351,7 @@ test('visualize server discovers project workflows before bundled workflows', as
 test('visualize server returns structured 404 for unknown workflows', async () => {
   const server = await startVisualizeServer({ projectRoot: process.cwd() })
   try {
-    const response = await requestJson(`http://127.0.0.1:${server.port}/api/workflows/nope/graph`)
+    const response = await requestJson(`http://127.0.0.1:${server.port}/api/workflows/nope/graph`, { token: server.token })
     assert.equal(response.statusCode, 404)
     assert.equal(response.payload.error.code, 'not_found')
     assert.match(response.payload.error.message, /Unknown flow "nope"/)
@@ -418,11 +492,11 @@ test('visualize real-run endpoint starts a tracked process and replays events', 
     assert.notEqual(started.payload.run.command[0], process.execPath)
 
     await sleep(500)
-    const detail = await requestJson(`${base}/api/runs/${encodeURIComponent(started.payload.run.id)}`)
+    const detail = await requestJson(`${base}/api/runs/${encodeURIComponent(started.payload.run.id)}`, { token: server.token })
     assert.equal(detail.statusCode, 200)
     assert.ok(['running', 'failed', 'completed', 'cancelled'].includes(detail.payload.run.status))
 
-    const events = await requestText(`${base}/api/runs/${encodeURIComponent(started.payload.run.id)}/events`)
+    const events = await requestText(`${base}/api/runs/${encodeURIComponent(started.payload.run.id)}/events`, { token: server.token })
     assert.equal(events.statusCode, 200)
     assert.match(events.body, /event: started/)
 
@@ -528,18 +602,18 @@ test('visualize runs API reads durable workflow state from .nax', async () => {
   const server = await startVisualizeServer({ projectRoot })
   try {
     const base = `http://127.0.0.1:${server.port}`
-    const runs = await requestJson(`${base}/api/runs`)
+    const runs = await requestJson(`${base}/api/runs`, { token: server.token })
     assert.equal(runs.statusCode, 200)
     assert.equal(runs.payload.durable.some((run) => run.runId === runId), true)
     assert.equal(runs.payload.durable.find((run) => run.runId === runId)?.target.branch, 'main')
 
-    const detail = await requestJson(`${base}/api/runs/${runId}`)
+    const detail = await requestJson(`${base}/api/runs/${runId}`, { token: server.token })
     assert.equal(detail.statusCode, 200)
     assert.equal(detail.payload.run.runId, runId)
     assert.equal(detail.payload.run.status, 'completed')
     assert.equal(detail.payload.run.target.verified, true)
 
-    const details = await requestJson(`${base}/api/runs/${runId}/details`)
+    const details = await requestJson(`${base}/api/runs/${runId}/details`, { token: server.token })
     assert.equal(details.statusCode, 200)
     assert.equal(details.payload.run.runId, runId)
     assert.match(details.payload.details.summaryMarkdown, /Review summary/)
@@ -584,7 +658,7 @@ test('visualize runs API reads durable workflow state from .nax', async () => {
       artifact.absolutePath === path.join(runnerDir, 'codex.attempt-1.md')
     )))
 
-    const graph = await requestJson(`${base}/api/runs/${runId}/graph`)
+    const graph = await requestJson(`${base}/api/runs/${runId}/graph`, { token: server.token })
     assert.equal(graph.statusCode, 200)
     assert.equal(graph.payload.run.runId, runId)
     assert.deepEqual(graph.payload.run.options.stepModels, { review: ['codex'] })
@@ -687,7 +761,7 @@ test('visualize follow-up endpoint submits matching runner and fresh additional 
     assert.match(submissions[0].promptText, /Verify the proposed fix/)
     assert.match(submissions[0].promptText, /# Prior Results Context/)
 
-    const runs = await requestJson(`${base}/api/runs`)
+    const runs = await requestJson(`${base}/api/runs`, { token: server.token })
     assert.equal(runs.payload.durable.some((run) => run.flowTitle === 'Follow-up on Review (Gemini)'), true)
   } finally {
     await server.close()
@@ -720,14 +794,14 @@ test('visualize events API replays durable event log with since filter', async (
 
   const server = await startVisualizeServer({ projectRoot })
   try {
-    const events = await requestText(`http://127.0.0.1:${server.port}/api/runs/${runId}/events?since=1`)
+    const events = await requestText(`http://127.0.0.1:${server.port}/api/runs/${runId}/events?since=1`, { token: server.token })
     assert.equal(events.statusCode, 200)
     assert.doesNotMatch(events.body, /workflow_started/)
     assert.match(events.body, /event: step_started/)
     assert.match(events.body, /event: workflow_completed/)
     assert.match(events.body, /event: runner_event_error/)
 
-    const json = await requestJson(`http://127.0.0.1:${server.port}/api/runs/${runId}/events.json?since=1`)
+    const json = await requestJson(`http://127.0.0.1:${server.port}/api/runs/${runId}/events.json?since=1`, { token: server.token })
     assert.equal(json.statusCode, 200)
     assert.deepEqual(json.payload.events.map((event) => event.seq), [2, 3])
     assert.equal(json.payload.errors.length, 1)
@@ -750,11 +824,18 @@ test('htmlEscape escapes html metacharacters', () => {
   assert.equal(_private.htmlEscape(`<a>&"'`), '&lt;a&gt;&amp;&quot;&#39;')
 })
 
-test('defaultIndexHtml escapes the initial workflow and url-encodes the token', () => {
+test('defaultIndexHtml escapes the initial workflow and does not embed the token', () => {
   const html = _private.defaultIndexHtml({ token: 'a&b<c', initialWorkflow: '<script>x</script>' })
   assert.match(html, /&lt;script&gt;x&lt;\/script&gt;/)
   assert.doesNotMatch(html, /<script>x<\/script>/)
-  assert.match(html, /token=a%26b%3Cc/)
+  assert.doesNotMatch(html, /a&b<c/)
+  assert.doesNotMatch(html, /token=/)
+})
+
+test('timingSafeTokenEqual accepts only matching tokens', () => {
+  assert.equal(_private.timingSafeTokenEqual('abc', 'abc'), true)
+  assert.equal(_private.timingSafeTokenEqual('abc', 'abd'), false)
+  assert.equal(_private.timingSafeTokenEqual('', 'abc'), false)
 })
 
 test('readJsonBody rejects oversized bodies with a 413 instead of resetting the socket', async () => {

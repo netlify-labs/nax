@@ -33,7 +33,7 @@ test('opt-in probe proves local blob write is readable from a hosted agent run',
         promptText: [
           'Fetch this Netlify Blob and echo its content exactly:',
           '',
-          `NETLIFY_SITE_ID="\${NETLIFY_SITE_ID:-$SITE_ID}" /opt/buildhome/node-deps/node_modules/.bin/netlify blobs:get ${store} ${key} --auth "$NETLIFY_AUTH_TOKEN"`,
+          `NETLIFY_SITE_ID="\${NETLIFY_SITE_ID:-$SITE_ID}" /opt/buildhome/node-deps/node_modules/.bin/netlify blobs:get ${store} ${key}`,
           '',
           `Expected marker: ${payload}`,
         ].join('\n'),

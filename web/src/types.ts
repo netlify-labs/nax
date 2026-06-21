@@ -94,6 +94,7 @@ export type HealthResponse = {
   ok: boolean
   projectRoot: string
   tokenRequiredForMutations: boolean
+  tokenRequiredForSensitiveReads: boolean
 }
 
 export type WorkflowGraphResponse = {

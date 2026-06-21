@@ -20,19 +20,23 @@ const { buildFollowupPrompt, submitFollowupPlan } = require('./handoff-runner')
 const { persistFreshPseudoWorkflow } = require('./followup-persistence')
 const { setBlob } = require('./netlify-blobs')
 
-function jsonResponse(res, statusCode, payload) {
+const SESSION_COOKIE_NAME = 'nax_visualize_token'
+
+function jsonResponse(res, statusCode, payload, headers = {}) {
   const body = `${JSON.stringify(payload, null, 2)}\n`
   res.writeHead(statusCode, {
     ...securityHeaders(),
+    ...headers,
     'content-type': 'application/json; charset=utf-8',
     'content-length': Buffer.byteLength(body),
   })
   res.end(body)
 }
 
-function textResponse(res, statusCode, body, contentType = 'text/plain; charset=utf-8') {
+function textResponse(res, statusCode, body, contentType = 'text/plain; charset=utf-8', headers = {}) {
   res.writeHead(statusCode, {
     ...securityHeaders(),
+    ...headers,
     'content-type': contentType,
     'content-length': Buffer.byteLength(body),
   })
@@ -370,7 +374,9 @@ function timingSafeTokenEqual(provided, expected) {
 
 function tokenFromRequest(req) {
   const raw = req.headers['x-nax-token']
-  return Array.isArray(raw) ? raw[0] : raw
+  const headerToken = Array.isArray(raw) ? raw[0] : raw
+  if (headerToken) return headerToken
+  return cookieValue(req, SESSION_COOKIE_NAME)
 }
 
 function assertToken(req, _requestUrl, token) {
@@ -399,6 +405,28 @@ function assertAllowedHost(req, bindHost) {
   if (!host || !allowedHostnames(bindHost).has(host)) {
     throw requestError(403, 'forbidden_host', 'The Host header is not allowed for this visualize server.')
   }
+}
+
+function cookieValue(req, name) {
+  const header = String(req.headers.cookie || '')
+  for (const part of header.split(';')) {
+    const [rawKey, ...rawValue] = part.trim().split('=')
+    if (rawKey !== name) continue
+    try {
+      return decodeURIComponent(rawValue.join('='))
+    } catch (_err) {
+      return rawValue.join('=')
+    }
+  }
+  return ''
+}
+
+function sessionCookieHeader(token) {
+  return `${SESSION_COOKIE_NAME}=${encodeURIComponent(String(token || ''))}; Path=/; HttpOnly; SameSite=Strict`
+}
+
+function sessionBootstrapHeaders(token) {
+  return { 'set-cookie': sessionCookieHeader(token) }
 }
 
 /** @param {{ token?: string, initialWorkflow?: string }} [options] */
@@ -1071,6 +1099,7 @@ function createRequestHandler(options = {}) {
             ok: true,
             projectRoot,
             tokenRequiredForMutations: true,
+            tokenRequiredForSensitiveReads: true,
           })
           return
         }
@@ -1469,6 +1498,7 @@ function createRequestHandler(options = {}) {
             methodNotAllowed(res, req.method || 'UNKNOWN')
             return
           }
+          assertToken(req, requestUrl, token)
           const id = safeDecode(graphMatch[1])
           const flow = await loadFlow(id, flowOptions)
           jsonResponse(res, 200, {
@@ -1500,6 +1530,7 @@ function createRequestHandler(options = {}) {
             const body = fs.readFileSync(staticFile)
             res.writeHead(200, {
               ...securityHeaders(),
+              ...sessionBootstrapHeaders(token),
               'content-type': contentTypeFor(staticFile),
               'content-length': body.length,
             })
@@ -1513,7 +1544,7 @@ function createRequestHandler(options = {}) {
             methodNotAllowed(res, req.method || 'UNKNOWN')
             return
           }
-          textResponse(res, 200, defaultIndexHtml({ token, initialWorkflow }), 'text/html; charset=utf-8')
+          textResponse(res, 200, defaultIndexHtml({ token, initialWorkflow }), 'text/html; charset=utf-8', sessionBootstrapHeaders(token))
           return
         }
 
@@ -1578,6 +1609,7 @@ module.exports = {
     htmlEscape,
     readJsonBody,
     securityHeaders,
+    sessionCookieHeader,
     timingSafeTokenEqual,
     registerSseClient,
     shutdownRuns,

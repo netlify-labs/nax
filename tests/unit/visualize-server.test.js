@@ -10,13 +10,14 @@ const { _private, startVisualizeServer } = require('../../src/visualize-server')
 const { buildRunDetails } = require('../../src/visualize-run-details')
 const { appendEventLog } = require('../../src/runner-event-log')
 
-/** @param {string} url @param {{ token?: string, headers?: Record<string, string> }} [options] */
-function requestJson(url, { token, headers = {} } = {}) {
+/** @param {string} url @param {{ token?: string, cookie?: string, headers?: Record<string, string> }} [options] */
+function requestJson(url, { token, cookie, headers = {} } = {}) {
   return new Promise((resolve, reject) => {
     http.get(url, {
       headers: {
         ...headers,
         ...(token ? { 'x-nax-token': token } : {}),
+        ...(cookie ? { cookie } : {}),
       },
     }, (res) => {
       let body = ''
@@ -30,13 +31,14 @@ function requestJson(url, { token, headers = {} } = {}) {
   })
 }
 
-/** @param {string} url @param {{ token?: string, headers?: Record<string, string> }} [options] */
-function requestText(url, { token, headers = {} } = {}) {
+/** @param {string} url @param {{ token?: string, cookie?: string, headers?: Record<string, string> }} [options] */
+function requestText(url, { token, cookie, headers = {} } = {}) {
   return new Promise((resolve, reject) => {
     http.get(url, {
       headers: {
         ...headers,
         ...(token ? { 'x-nax-token': token } : {}),
+        ...(cookie ? { cookie } : {}),
       },
     }, (res) => {
       let body = ''
@@ -255,13 +257,17 @@ test('visualize server exposes health, workflow list, and graph routes', async (
     assert.equal(health.statusCode, 200)
     assert.equal(health.payload.ok, true)
     assert.equal(health.payload.projectRoot, process.cwd())
+    assert.equal(health.payload.tokenRequiredForSensitiveReads, true)
 
     const workflows = await requestJson(`${base}/api/workflows`)
     assert.equal(workflows.statusCode, 200)
     assert.ok(workflows.payload.count >= 14)
     assert.ok(workflows.payload.items.some((workflow) => workflow.id === 'review'))
 
-    const graph = await requestJson(`${base}/api/workflows/review/graph`)
+    const unauthenticatedGraph = await requestJson(`${base}/api/workflows/review/graph`)
+    assert.equal(unauthenticatedGraph.statusCode, 401)
+
+    const graph = await requestJson(`${base}/api/workflows/review/graph`, { token: server.token })
     assert.equal(graph.statusCode, 200)
     assert.equal(graph.payload.workflow.id, 'review')
     assert.equal(graph.payload.graph.nodes.length, 3)
@@ -289,6 +295,10 @@ test('visualize server requires auth for sensitive run reads and rejects untrust
     const authenticatedDetails = await requestJson(`${base}/api/runs/${runId}/details`, { token: server.token })
     assert.equal(authenticatedDetails.statusCode, 200)
 
+    const cookie = _private.sessionCookieHeader(server.token)
+    const cookieDetails = await requestJson(`${base}/api/runs/${runId}/details`, { cookie })
+    assert.equal(cookieDetails.statusCode, 200)
+
     const rejectedHost = await requestJson(`${base}/api/health`, { headers: { host: 'evil.example' } })
     assert.equal(rejectedHost.statusCode, 403)
     assert.equal(authenticatedDetails.headers['x-content-type-options'], 'nosniff')
@@ -304,6 +314,20 @@ test('visualize server startup url does not include the session token', async ()
     assert.doesNotMatch(server.url, new RegExp(server.token))
     assert.doesNotMatch(server.url, /token=/)
     assert.match(server.url, /workflow=review/)
+  } finally {
+    await server.close()
+  }
+})
+
+test('visualize html bootstraps auth with an httpOnly session cookie', async () => {
+  const server = await startVisualizeServer({ projectRoot: process.cwd(), initialWorkflow: 'review', distDir: path.join(os.tmpdir(), 'missing-nax-dist') })
+  try {
+    const html = await requestText(`http://127.0.0.1:${server.port}/`)
+    assert.equal(html.statusCode, 200)
+    assert.doesNotMatch(html.body, new RegExp(server.token))
+    assert.match(String(html.headers['set-cookie'] || ''), /nax_visualize_token=/)
+    assert.match(String(html.headers['set-cookie'] || ''), /HttpOnly/)
+    assert.match(String(html.headers['set-cookie'] || ''), /SameSite=Strict/)
   } finally {
     await server.close()
   }
@@ -327,7 +351,7 @@ test('visualize server discovers project workflows before bundled workflows', as
 test('visualize server returns structured 404 for unknown workflows', async () => {
   const server = await startVisualizeServer({ projectRoot: process.cwd() })
   try {
-    const response = await requestJson(`http://127.0.0.1:${server.port}/api/workflows/nope/graph`)
+    const response = await requestJson(`http://127.0.0.1:${server.port}/api/workflows/nope/graph`, { token: server.token })
     assert.equal(response.statusCode, 404)
     assert.equal(response.payload.error.code, 'not_found')
     assert.match(response.payload.error.message, /Unknown flow "nope"/)

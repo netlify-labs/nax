@@ -39,7 +39,7 @@ test('blob refs are deterministic and payload-specific', () => {
   assert.equal(first.marker, changedPayload.marker)
 })
 
-test('fetch instruction preserves shell-expanded token env vars and verification lines', () => {
+test('fetch instruction uses inherited token env and verification lines without auth argv', () => {
   const instruction = buildFetchInstruction({
     store: 'nax-run-1',
     key: 'synthesize-prior-results',
@@ -47,7 +47,8 @@ test('fetch instruction preserves shell-expanded token env vars and verification
     sentinel: 'blob-456',
   })
 
-  assert.match(instruction, /NETLIFY_SITE_ID="\$\{NETLIFY_SITE_ID:-\$SITE_ID\}" \/opt\/buildhome\/node-deps\/node_modules\/\.bin\/netlify blobs:get nax-run-1 synthesize-prior-results --auth "\$NETLIFY_AUTH_TOKEN"/)
+  assert.match(instruction, /NETLIFY_SITE_ID="\$\{NETLIFY_SITE_ID:-\$SITE_ID\}" \/opt\/buildhome\/node-deps\/node_modules\/\.bin\/netlify blobs:get nax-run-1 synthesize-prior-results/)
+  assert.doesNotMatch(instruction, /--auth/)
   assert.match(instruction, /NAX-CONTEXT-LOADED ctx-123/)
   assert.match(instruction, /NAX-BLOB-SENTINEL <the exact sentinel value from the blob>/)
   assert.doesNotMatch(instruction, /blob-456/)

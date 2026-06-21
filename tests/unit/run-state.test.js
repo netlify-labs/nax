@@ -102,6 +102,20 @@ test('hasRepairableRuns still flags in-flight submitted and running runs', () =>
   }), true)
 })
 
+test('isUnfinishedRun treats cancelled remote runner ids as terminal', () => {
+  const state = runState('/tmp/x', {
+    status: 'cancelled',
+    steps: [{
+      id: 'review',
+      status: 'cancelled',
+      runs: [{ runnerId: 'runner-1', status: 'cancelled' }],
+    }],
+  })
+
+  assert.equal(isUnfinishedRun(state), false)
+  assert.equal(isUnfinishedLocalRun(state), false)
+})
+
 test('findLatestUnfinishedLocalRun returns newest unfinished local run', () => {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'nax-run-state-test-'))
   writeRunState(runState(tmp, {

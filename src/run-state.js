@@ -1,5 +1,6 @@
 const fs = require('fs')
 const path = require('path')
+const { isTerminalRunStatus } = require('./status')
 
 const DEFAULT_STATE_LOCK_TIMEOUT_MS = 30000
 const DEFAULT_STATE_LOCK_STALE_MS = 10 * 60 * 1000
@@ -299,7 +300,7 @@ function listWorkflowStates(projectRoot) {
 function hasInFlightRuns(step) {
   return (step?.runs || []).some((run) => {
     if (!run.runnerId && !run.issueNumber) return false
-    return !['completed', 'failed', 'timeout', 'dry-run'].includes(run.status)
+    return !isTerminalRunStatus(run.status)
   })
 }
 

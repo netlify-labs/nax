@@ -217,6 +217,59 @@ test('syncSubmittedFollowupRunsToWorkflow merges completed remote sessions into 
   assert.equal(listRunStates(projectRoot)[0].steps[1].runs[0].status, 'completed')
 })
 
+test('syncSubmittedFollowupRunsToWorkflow does not use runner-wide latest session without a run session id', () => {
+  const projectRoot = tmpRoot()
+  const runDir = path.join(projectRoot, '.nax', 'workflows', 'source-run')
+  fs.mkdirSync(runDir, { recursive: true })
+  const submitted = appendFollowupRunsToWorkflow({
+    runState: {
+      runId: 'source-run',
+      flowId: 'security-audit',
+      flowTitle: 'Security Audit',
+      status: 'completed',
+      projectRoot,
+      dir: runDir,
+      flow: {
+        id: 'security-audit',
+        title: 'Security Audit',
+        steps: [
+          { id: 'synthesize', title: 'Synthesize Security Findings', agents: ['codex'], submit: 'new-run' },
+        ],
+      },
+      steps: [{
+        id: 'synthesize',
+        title: 'Synthesize Security Findings',
+        status: 'completed',
+        agents: ['codex'],
+        runs: [{ agent: 'codex', status: 'completed', runnerId: 'runner-1', sessionId: 'session-1' }],
+      }],
+    },
+    now: new Date('2026-06-20T20:00:00.000Z'),
+    target: { id: 'agent-result:synthesize:codex', stepId: 'synthesize', stepTitle: 'Synthesize Security Findings' },
+    source: { id: 'followup-1' },
+    runs: [{ agent: 'codex', status: 'submitted', runnerId: 'runner-1', sessionId: '' }],
+  })
+
+  const synced = syncSubmittedFollowupRunsToWorkflow({
+    runState: submitted,
+    projectRoot,
+    syncRunner: () => ({
+      sessions: [{
+        sessionId: 'session-1',
+        runnerId: 'runner-1',
+        agent: 'codex',
+        status: 'completed',
+        resultText: 'Older source session result.',
+        updatedAt: '2026-06-20T20:02:00.000Z',
+      }],
+    }),
+  })
+
+  assert.equal(synced.changed, false)
+  assert.equal(synced.runState.steps[1].runs[0].status, 'submitted')
+  assert.equal(synced.runState.steps[1].runs[0].resultText, '')
+})
+
 test('syncSubmittedFollowupRunsToWorkflow renumbers existing completed follow-up titles', () => {
   const projectRoot = tmpRoot()
   const runDir = path.join(projectRoot, '.nax', 'workflows', 'source-run')
@@ -305,4 +358,55 @@ test('cancelFollowupRunInWorkflow marks a submitted follow-up run cancelled', ()
 
   const listed = listRunStates(projectRoot)
   assert.equal(listed[0].steps[0].runs[0].status, 'cancelled')
+})
+
+test('cancelFollowupRunInWorkflow rejects ambiguous runner-only active matches', () => {
+  const projectRoot = tmpRoot()
+  const state = persistFreshPseudoWorkflow({
+    projectRoot,
+    now: new Date('2026-06-20T20:00:00.000Z'),
+    title: 'Follow-up Agent Run',
+    stepTitle: 'Review follow-up',
+    promptText: 'Check the fix.',
+    runs: [
+      { transport: 'netlify-api', agent: 'codex', status: 'submitted', runnerId: 'runner-1', sessionId: 'session-1' },
+      { transport: 'netlify-api', agent: 'gemini', status: 'running', runnerId: 'runner-1', sessionId: 'session-2' },
+    ],
+  })
+
+  assert.throws(() => cancelFollowupRunInWorkflow({
+    runState: state,
+    stepId: 'fresh-agent-runner',
+    runnerId: 'runner-1',
+    now: new Date('2026-06-20T20:01:00.000Z'),
+  }), /Multiple active follow-up runs matched runner runner-1/)
+
+  assert.deepEqual(state.steps[0].runs.map((run) => run.status), ['submitted', 'running'])
+})
+
+test('cancelFollowupRunInWorkflow prefers exact session matches and only cancels that run', () => {
+  const projectRoot = tmpRoot()
+  const state = persistFreshPseudoWorkflow({
+    projectRoot,
+    now: new Date('2026-06-20T20:00:00.000Z'),
+    title: 'Follow-up Agent Run',
+    stepTitle: 'Review follow-up',
+    promptText: 'Check the fix.',
+    runs: [
+      { transport: 'netlify-api', agent: 'codex', status: 'submitted', runnerId: 'runner-1', sessionId: 'session-1' },
+      { transport: 'netlify-api', agent: 'gemini', status: 'running', runnerId: 'runner-1', sessionId: 'session-2' },
+    ],
+  })
+
+  const result = cancelFollowupRunInWorkflow({
+    runState: state,
+    stepId: 'fresh-agent-runner',
+    runnerId: 'runner-1',
+    sessionId: 'session-2',
+    now: new Date('2026-06-20T20:01:00.000Z'),
+  })
+
+  assert.equal(result.changed, true)
+  assert.equal(result.run.sessionId, 'session-2')
+  assert.deepEqual(result.runState.steps[0].runs.map((run) => run.status), ['submitted', 'cancelled'])
 })

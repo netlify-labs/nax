@@ -1,7 +1,7 @@
 const test = require('node:test')
 const assert = require('node:assert/strict')
 
-const { collapseTrailingNewlines, moveCursor, rowsBelowCursor } = require('../../src/multiline')
+const { collapseTrailingNewlines, moveCursor, rowsBelowCursor } = require('../../src/utils/multiline')
 
 test('moveCursor left within a line decrements colIdx', () => {
   assert.deepEqual(

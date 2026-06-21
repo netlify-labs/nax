@@ -1,4 +1,6 @@
-const SUPPORTED_FOLLOWUP_AGENTS = ['claude', 'gemini', 'codex']
+const { DEFAULT_FOLLOWUP_MODELS, DEFAULT_MODELS } = require('./constants')
+
+const SUPPORTED_FOLLOWUP_AGENTS = DEFAULT_MODELS
 
 class FollowupPlanError extends Error {
   constructor(code, message, statusCode = 400) {
@@ -35,7 +37,7 @@ function assertSupportedModels(models, supportedAgents = SUPPORTED_FOLLOWUP_AGEN
   }
 }
 
-function defaultModelsForTarget(target = {}, fallbackModels = ['codex']) {
+function defaultModelsForTarget(target = {}, fallbackModels = DEFAULT_FOLLOWUP_MODELS) {
   const agent = normalizeAgent(target.agent)
   return agent ? [agent] : normalizeModels(fallbackModels)
 }
@@ -61,7 +63,7 @@ function buildFollowupSubmissionPlan({
   requestedMode = 'follow-up-thread',
   target = null,
   models,
-  fallbackModels = ['codex'],
+  fallbackModels = DEFAULT_FOLLOWUP_MODELS,
   supportedAgents = SUPPORTED_FOLLOWUP_AGENTS,
   sourceArtifactIds = [],
   targetSha = '',

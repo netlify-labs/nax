@@ -1221,8 +1221,8 @@ test('stopWorkflowRunners stops cancellable workflow runners and reports warning
     stopRun: async ({ runnerId }) => {
       calls.push(runnerId)
       return runnerId === 'runner-ok'
-        ? { stopped: true, error: '' }
-        : { stopped: false, error: 'nope' }
+        ? { stopped: true, accepted: true, error: '', commandError: false }
+        : { stopped: false, accepted: false, error: 'nope', commandError: false }
     },
   })
 

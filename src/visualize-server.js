@@ -22,6 +22,7 @@ const { cancelHumanReviewGate, findReviewStep } = require('./human-review')
 const { archiveAgentRun, stopAgentRun } = require('./local-runner')
 const { setBlob } = require('./netlify-blobs')
 const { readLinkedSiteId } = require('./init')
+const { isCancelledRunStatus, isFailedRunStatus, isTerminalRunStatus } = require('./status')
 
 const SESSION_COOKIE_NAME = 'nax_visualize_token'
 
@@ -767,9 +768,10 @@ function inferRunStateStatus(runState = {}) {
   if (steps.length === 0) return ''
 
   const statuses = steps.map((step) => String(step?.status || '').toLowerCase()).filter(Boolean)
-  if (statuses.some((status) => ['failed', 'timeout', 'cancelled', 'canceled'].includes(status))) {
+  if (statuses.some((status) => isFailedRunStatus(status))) {
     return 'failed'
   }
+  if (statuses.some((status) => isCancelledRunStatus(status))) return 'cancelled'
   if (runState?.status === 'awaiting_review' || statuses.some((status) => status === 'awaiting_review')) {
     return 'awaiting_review'
   }
@@ -865,7 +867,6 @@ function hydrateWorkflowRunsFromEvents(runState = {}) {
 function cancellableWorkflowRunnerIds(runState = {}) {
   hydrateWorkflowRunsFromEvents(runState)
   const runnerIds = []
-  const terminal = new Set(['completed', 'failed', 'timeout', 'cancelled', 'canceled', 'dry-run'])
   const terminalStepAgents = new Set()
   const add = (runnerId) => {
     const normalized = String(runnerId || '').trim()
@@ -875,23 +876,24 @@ function cancellableWorkflowRunnerIds(runState = {}) {
     const stepId = String(step?.id || '').trim()
     for (const run of Array.isArray(step.runs) ? step.runs : []) {
       const status = String(run.status || '').toLowerCase()
-      if (stepId && run.agent && terminal.has(status)) terminalStepAgents.add(`${stepId}\0${run.agent}`)
+      if (stepId && run.agent && isTerminalRunStatus(status)) terminalStepAgents.add(`${stepId}\0${run.agent}`)
       const runnerId = String(run.runnerId || '').trim()
       if (!runnerId || run.existingRunnerId) continue
-      if (terminal.has(status)) continue
+      if (isTerminalRunStatus(status)) continue
       add(runnerId)
     }
   }
 
   for (const snapshot of workflowAgentEventSnapshots(runState)) {
     const status = String(snapshot.status || '').toLowerCase()
-    if (terminal.has(status)) continue
+    if (isTerminalRunStatus(status)) continue
     if (terminalStepAgents.has(`${snapshot.stepId}\0${snapshot.agent}`)) continue
     add(snapshot.runnerId)
   }
   return [...new Set(runnerIds)]
 }
 
+/** @param {Record<string, any>} param0 */
 async function stopWorkflowRunners({ runState, projectRoot, env, stopRun = stopAgentRun } = {}) {
   const runnerIds = cancellableWorkflowRunnerIds(runState)
   const stopped = []
@@ -942,7 +944,6 @@ function applyRemoteCancelToWorkflow(runState = {}, remoteCancel = {}, { reason 
   const stopped = new Set(Array.isArray(remoteCancel.stopped) ? remoteCancel.stopped : Array.isArray(remoteCancel.archived) ? remoteCancel.archived : [])
   const runnerIds = Array.isArray(remoteCancel.runnerIds) ? remoteCancel.runnerIds : []
   const attempted = new Set(runnerIds)
-  const terminal = new Set(['completed', 'failed', 'timeout', 'cancelled', 'canceled', 'dry-run'])
   const cancelledAt = new Date().toISOString()
   let changed = false
   for (const step of Array.isArray(runState.steps) ? runState.steps : []) {
@@ -950,7 +951,7 @@ function applyRemoteCancelToWorkflow(runState = {}, remoteCancel = {}, { reason 
     for (const run of Array.isArray(step.runs) ? step.runs : []) {
       const runnerId = String(run.runnerId || '').trim()
       const status = String(run.status || '').toLowerCase()
-      if (terminal.has(status)) continue
+      if (isTerminalRunStatus(status)) continue
       if (runnerId && attempted.has(runnerId) && !stopped.has(runnerId)) continue
       run.status = 'cancelled'
       run.cancelledAt = cancelledAt
@@ -959,7 +960,7 @@ function applyRemoteCancelToWorkflow(runState = {}, remoteCancel = {}, { reason 
       stepChanged = true
     }
     const runs = Array.isArray(step.runs) ? step.runs : []
-    const hasActiveRun = runs.some((run) => !terminal.has(String(run.status || '').toLowerCase()))
+    const hasActiveRun = runs.some((run) => !isTerminalRunStatus(run.status))
     if (stepChanged && !hasActiveRun) {
       step.status = 'cancelled'
     }

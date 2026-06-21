@@ -1,9 +1,9 @@
 const fs = require('fs')
 const path = require('path')
 const { renderPromptMarker } = require('./comment-markers')
+const { DEFAULT_MODELS } = require('./constants')
 const { runGh } = require('./gh-cli')
 
-const DEFAULT_MODELS = ['claude', 'gemini', 'codex']
 const PROMPTS_DIR = path.join(__dirname, 'flows', 'review', 'prompts')
 const PROMPT_ORDER = ['review', 'cross-review', 'summarize-consensus']
 

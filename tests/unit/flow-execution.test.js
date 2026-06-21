@@ -1393,7 +1393,7 @@ test('cancelLocalWorkflowRunnersForInterrupt stops active fresh Netlify runners 
     reason: 'test interrupt',
     stopRun({ runnerId }) {
       calls.push(runnerId)
-      return { stopped: true, error: '' }
+      return { stopped: true, accepted: true, error: '', commandError: false }
     },
   })
 

@@ -8,8 +8,8 @@ const { spawnSync } = require('child_process')
 const { Command, Option } = require('commander')
 const { makeBox, makeHorizontalBoxes, makeStackedBoxes } = require('@davidwells/box-logger')
 const flavorMessages = require('../src/flavor-messages.json')
+const { DEFAULT_MODEL_CSV, DEFAULT_MODELS } = require('../src/constants')
 const {
-  DEFAULT_MODELS,
   buildIssueBody,
   buildIssueTitle,
   getLocalDate,
@@ -39,7 +39,7 @@ const {
   usageSummariesForRunState,
 } = require('../src/agent-run-results')
 const { runGh } = require('../src/gh-cli')
-const { multiline } = require('../src/multiline')
+const { multiline } = require('../src/utils/multiline')
 const { WAIT_FOR_AGENT_RESULTS, isHumanReviewStep, listFlows, loadFlow, loadStepPrompt } = requireWithoutArgvFlag('--verbose', () => require('../src/flows'))
 const { createRunState, dismissRunState, isUnfinishedRun, listRunStates, saveRunState, workflowStatePath } = require('../src/run-state')
 const { AWAITING_REVIEW, approveHumanReviewGate, createHumanReviewStepState } = require('../src/human-review')
@@ -2140,7 +2140,7 @@ async function handlePreviewSpinner(options) {
   const tickMs = Number.parseInt(options.tickMs || '10000', 10)
   const stepTitle = options.label || 'Review'
   const parsed = parseCsv(options.agents)
-  const agents = parsed.length > 0 ? parsed : ['claude', 'gemini', 'codex']
+  const agents = parsed.length > 0 ? parsed : DEFAULT_MODELS
   const flavorMinMs = Number.parseInt(options.flavorMinMs || '10000', 10)
   const flavorMaxMs = Number.parseInt(options.flavorMaxMs || '15000', 10)
   console.log(`TTY: ${process.stdout.isTTY ? 'yes (spinner + flavor)' : 'no (plain logs)'}`)
@@ -4199,6 +4199,7 @@ function cancellableLocalRunnerIds(runState = {}) {
   return [...new Set(ids)]
 }
 
+/** @param {Record<string, any>} param0 */
 function cancelLocalWorkflowRunnersForInterrupt({ runState, projectRoot, options = {}, reason = 'interrupted workflow', stopRun = stopAgentRun } = {}) {
   if (!isNetlifyApiTransport(runState?.transport)) return { runnerIds: [], stopped: [], warnings: [] }
   const runnerIds = cancellableLocalRunnerIds(runState)
@@ -7451,7 +7452,7 @@ function buildProgram() {
     .option('--flavor-min-ms <ms>', 'Minimum delay between flavor rotations', '10000')
     .option('--flavor-max-ms <ms>', 'Maximum delay between flavor rotations', '15000')
     .option('--label <label>', 'Step title to display', 'Review')
-    .option('--agents <list>', 'Comma-separated agent names', 'claude,gemini,codex')
+    .option('--agents <list>', 'Comma-separated agent names', DEFAULT_MODEL_CSV)
     .option('--orchestrator <name>', 'Orchestrator label prefixed to agent', DEFAULT_ORCHESTRATOR)
     .action((options, command) => handlePreviewSpinner(actionOptions(options, command)))
 

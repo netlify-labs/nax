@@ -222,6 +222,7 @@ function resolveNetlifyFilter({ projectRoot, filter } = {}) {
   return { filter: uniqueFilters[0], source: matches[0].source }
 }
 
+/** @param {Record<string, any>} param0 */
 function findNetlifyTargetCandidate({ projectRoot, filter, netlifyConfig } = {}) {
   const root = path.resolve(projectRoot || process.cwd())
   const candidates = listNetlifyFilterCandidates(root)

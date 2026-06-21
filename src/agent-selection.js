@@ -1,4 +1,4 @@
-const { DEFAULT_MODELS } = require('./prompts')
+const { DEFAULT_MODELS } = require('./constants')
 
 function normalizeAgentList(value) {
   const raw = Array.isArray(value)

@@ -1,7 +1,20 @@
+/**
+ * Netlify runtime classification derived from process environment markers.
+ * @typedef {{
+ *   label: string,
+ *   isNetlify: boolean,
+ *   isNetlifyBuild: boolean,
+ *   isAgentRunner: boolean,
+ *   reason: string,
+ * }} NetlifyRuntimeClassification
+ */
+
+/** @param {unknown} value @returns {boolean} */
 function isTruthy(value) {
   return value === true || value === 'true' || value === '1'
 }
 
+/** @param {NodeJS.ProcessEnv} [env] @returns {NetlifyRuntimeClassification} */
 function classifyNetlifyRuntime(env = process.env) {
   const isNetlify = isTruthy(env.NETLIFY)
   const context = env.CONTEXT || ''
@@ -46,6 +59,7 @@ function classifyNetlifyRuntime(env = process.env) {
   }
 }
 
+/** @param {NodeJS.ProcessEnv} [env] @returns {boolean} */
 function isNetlifyAgentRunner(env = process.env) {
   return classifyNetlifyRuntime(env).isAgentRunner
 }

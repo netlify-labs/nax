@@ -119,7 +119,7 @@ function listHandoffSources(projectRoot) {
   })
 }
 
-/** @param {any} projectRoot @param {Record<string, any>} param1 */
+/** @param {string} projectRoot @param {{ id?: string, kind?: string }} param1 */
 function findLatestHandoffSource(projectRoot, { id, kind } = {}) {
   const sources = listHandoffSources(projectRoot)
   if (id || kind) {
@@ -132,7 +132,7 @@ function findLatestHandoffSource(projectRoot, { id, kind } = {}) {
   return sources[0] || null
 }
 
-/** @param {any} projectRoot @param {Record<string, any>} param1 */
+/** @param {string} projectRoot @param {{ id?: string, kind?: string }} param1 */
 function readHandoffSource(projectRoot, { id, kind } = {}) {
   const source = findLatestHandoffSource(projectRoot, { id, kind })
   if (!source) {

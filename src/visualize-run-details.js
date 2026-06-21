@@ -3,6 +3,155 @@ const path = require('path')
 
 const { loadStepPrompt } = require('./flows')
 
+/**
+ * File-name predicate used while scanning artifact directories.
+ * @callback FileNamePredicate
+ * @param {string} name
+ * @returns {boolean}
+ */
+
+/**
+ * Step metadata persisted beside visualizer step artifacts.
+ * @typedef {import('./types').JsonMap & {
+ *   id?: string,
+ *   title?: string,
+ *   status?: string,
+ *   usage?: import('./types').UsageSummary,
+ * }} StepArtifactMetadata
+ *
+ * Agent metadata persisted beside visualizer result artifacts.
+ * @typedef {import('./types').JsonMap & {
+ *   agent?: string,
+ *   stepId?: string,
+ *   status?: string,
+ *   runnerId?: string,
+ *   sessionId?: string,
+ *   links?: import('./types').StringMap,
+ *   usage?: import('./types').UsageSummary,
+ * }} AgentArtifactMetadata
+ *
+ * Prompt details associated with a workflow step.
+ * @typedef {{
+ *   promptMarkdown: string,
+ *   promptPath: string,
+ *   promptTitle: string,
+ * }} PromptDetails
+ */
+
+/**
+ * Input for constructing a selectable follow-up target.
+ * @typedef {{
+ *   kind: string,
+ *   label: string,
+ *   filePath: string,
+ *   runDir: string,
+ *   status?: string,
+ *   agent?: string,
+ *   stepId?: string,
+ *   stepNumber?: number,
+ *   stepTitle?: string,
+ *   runnerId?: string,
+ *   sessionId?: string,
+ *   links?: import('./types').StringMap,
+ *   defaultMode?: string,
+ * }} FollowupTargetInput
+ *
+ * Selectable follow-up target shown in the visualizer.
+ * @typedef {import('./types').FollowupTarget & {
+ *   id: string,
+ *   kind: string,
+ *   label: string,
+ *   agent: string,
+ *   stepId: string,
+ *   stepNumber: number,
+ *   stepTitle: string,
+ *   runnerId: string,
+ *   sessionId: string,
+ *   status: string,
+ *   path: string,
+ *   absolutePath: string,
+ *   links: import('./types').StringMap,
+ *   defaultMode: string,
+ *   isDefault: boolean,
+ * }} RunDetailFollowupTarget
+ */
+
+/**
+ * Input for constructing a selectable follow-up artifact.
+ * @typedef {{
+ *   kind: string,
+ *   label: string,
+ *   filePath: string,
+ *   runDir: string,
+ *   defaultSelected?: boolean,
+ *   advanced?: boolean,
+ *   stepId?: string,
+ *   stepNumber?: number,
+ *   runnerId?: string,
+ *   sessionId?: string,
+ * }} FollowupArtifactInput
+ *
+ * Selectable follow-up artifact shown in the visualizer.
+ * @typedef {{
+ *   id: string,
+ *   kind: string,
+ *   label: string,
+ *   path: string,
+ *   absolutePath: string,
+ *   sizeBytes: number,
+ *   defaultSelected: boolean,
+ *   advanced: boolean,
+ *   stepNumber: number,
+ *   source: {
+ *     stepId: string,
+ *     stepNumber: number,
+ *     runnerId: string,
+ *     sessionId: string,
+ *   },
+ * }} RunDetailFollowupArtifact
+ */
+
+/**
+ * Markdown section displayed in visualizer run details.
+ * @typedef {{
+ *   id: string,
+ *   kind: string,
+ *   title: string,
+ *   stepId: string,
+ *   stepTitle: string,
+ *   agent: string,
+ *   status: string,
+ *   runnerId: string,
+ *   sessionId: string,
+ *   path: string,
+ *   absolutePath: string,
+ *   links: import('./types').StringMap,
+ *   usage: import('./types').UsageSummary | null,
+ *   markdown: string,
+ *   promptMarkdown?: string,
+ *   promptPath?: string,
+ *   promptTitle?: string,
+ * }} RunDetailSection
+ *
+ * Options for building visualizer run details.
+ * @typedef {{
+ *   flow?: import('./types').WorkflowFlow | null,
+ * }} BuildRunDetailsOptions
+ *
+ * Visualizer run detail payload.
+ * @typedef {{
+ *   summaryPath: string,
+ *   summaryAbsolutePath: string,
+ *   summaryMarkdown: string,
+ *   finalMarkdown: string,
+ *   finalTitle: string,
+ *   sections: RunDetailSection[],
+ *   followupTargets: RunDetailFollowupTarget[],
+ *   followupArtifacts: RunDetailFollowupArtifact[],
+ * }} RunDetails
+ */
+
+/** @param {string} filePath @returns {string} */
 function readText(filePath) {
   try {
     if (!filePath || !fs.existsSync(filePath) || !fs.statSync(filePath).isFile()) return ''
@@ -12,6 +161,7 @@ function readText(filePath) {
   }
 }
 
+/** @param {string} filePath @returns {import('./types').JsonMap | null} */
 function readJson(filePath) {
   try {
     const text = readText(filePath)
@@ -21,6 +171,7 @@ function readJson(filePath) {
   }
 }
 
+/** @param {string} filePath @returns {number} */
 function fileSize(filePath) {
   try {
     if (!filePath || !fs.existsSync(filePath) || !fs.statSync(filePath).isFile()) return 0
@@ -30,6 +181,7 @@ function fileSize(filePath) {
   }
 }
 
+/** @param {string} dir @returns {string[]} */
 function listDirectories(dir) {
   try {
     if (!fs.existsSync(dir)) return []
@@ -43,6 +195,7 @@ function listDirectories(dir) {
   }
 }
 
+/** @param {string} dir @param {FileNamePredicate} [predicate] @returns {string[]} */
 function listFiles(dir, predicate = (_name) => true) {
   try {
     if (!fs.existsSync(dir)) return []
@@ -56,6 +209,7 @@ function listFiles(dir, predicate = (_name) => true) {
   }
 }
 
+/** @param {string} dir @returns {string[]} */
 function listMarkdownFiles(dir) {
   try {
     if (!fs.existsSync(dir)) return []
@@ -69,31 +223,43 @@ function listMarkdownFiles(dir) {
   }
 }
 
+/** @param {string} fromDir @param {string} filePath @returns {string} */
 function relativePath(fromDir, filePath) {
   return filePath ? path.relative(fromDir, filePath) : ''
 }
 
+/** @param {string} filePath @returns {string} */
 function absolutePath(filePath) {
   return filePath ? path.resolve(filePath) : ''
 }
 
+/** @param {string} kind @param {...unknown} parts @returns {string} */
 function artifactId(kind, ...parts) {
   return [kind, ...parts.map((part) => String(part || '').replace(/:/g, '-')).filter(Boolean)].join(':')
 }
 
+/** @param {unknown} status @returns {boolean} */
 function completed(status) {
   return String(status || '').toLowerCase() === 'completed'
 }
 
+/** @param {{ id?: string }} [a] @param {{ id?: string }} [b] @returns {boolean} */
 function sameTarget(a = {}, b = {}) {
   return a.id && b.id && a.id === b.id
 }
 
+/**
+ * @template {{ id?: string }} T
+ * @param {T[]} items
+ * @param {T | null} item
+ * @returns {void}
+ */
 function addUnique(items, item) {
   if (!item?.id || items.some((candidate) => candidate.id === item.id)) return
   items.push(item)
 }
 
+/** @param {FollowupTargetInput} input @returns {RunDetailFollowupTarget | null} */
 function followupTargetFromArtifact({
   kind,
   label,
@@ -129,6 +295,7 @@ function followupTargetFromArtifact({
   }
 }
 
+/** @param {FollowupArtifactInput} input @returns {RunDetailFollowupArtifact | null} */
 function followupArtifact({
   kind,
   label,
@@ -161,26 +328,41 @@ function followupArtifact({
   }
 }
 
+/**
+ * @param {string} runDir
+ * @param {string} collection
+ * @param {string} id
+ * @param {string} [fileName]
+ * @returns {string}
+ */
 function externalAgentArtifactPath(runDir, collection, id, fileName = 'summary.md') {
   if (!runDir || !id) return ''
   return path.resolve(runDir, '..', '..', collection, id, fileName)
 }
 
+/**
+ * @param {RunDetailFollowupTarget[]} items
+ * @param {RunDetailFollowupTarget | null} defaultItem
+ * @returns {RunDetailFollowupTarget[]}
+ */
 function orderWithDefault(items, defaultItem) {
   return items.map((item) => ({ ...item, isDefault: Boolean(defaultItem && sameTarget(item, defaultItem)) }))
 }
 
+/** @param {string} stepDir @param {StepArtifactMetadata} meta @returns {string} */
 function stepTitleFromDir(stepDir, meta) {
   if (meta?.title) return meta.title
   if (meta?.id) return meta.id
   return path.basename(stepDir).replace(/^\d+-/, '').replace(/-/g, ' ')
 }
 
+/** @param {string} stepDir @returns {number} */
 function stepNumberFromDir(stepDir) {
   const match = path.basename(stepDir).match(/^(\d+)-/)
   return match ? Number.parseInt(match[1], 10) : 0
 }
 
+/** @param {import('./types').WorkflowRunState} [runState] @returns {Map<string, number>} */
 function stepNumberLookup(runState = {}) {
   const lookup = new Map()
   const steps = Array.isArray(runState.steps) && runState.steps.length > 0
@@ -194,16 +376,28 @@ function stepNumberLookup(runState = {}) {
   return lookup
 }
 
+/**
+ * @param {string} stepDir
+ * @param {StepArtifactMetadata} stepMeta
+ * @param {Map<string, number>} lookup
+ * @returns {number}
+ */
 function stepNumberFor(stepDir, stepMeta, lookup) {
   const fromId = lookup.get(String(stepMeta?.id || ''))
   if (fromId) return fromId
   return stepNumberFromDir(stepDir)
 }
 
+/** @param {number} stepNumber @param {string} label @returns {string} */
 function stepLabel(stepNumber, label) {
   return stepNumber > 0 ? `Step ${stepNumber}: ${label}` : label
 }
 
+/**
+ * @param {import('./types').WorkflowFlow | null} flow
+ * @param {StepArtifactMetadata} [stepMeta]
+ * @returns {PromptDetails | null}
+ */
 function promptDetailsForStep(flow, stepMeta = {}) {
   const stepId = String(stepMeta.id || '')
   if (!flow || !Array.isArray(flow.steps) || !stepId) return null
@@ -221,10 +415,12 @@ function promptDetailsForStep(flow, stepMeta = {}) {
   }
 }
 
+/** @param {{ stepNumber?: number }} [target] @returns {number} */
 function targetSortRank(target = {}) {
   return target.stepNumber || 0
 }
 
+/** @param {string} kind @returns {number} */
 function targetKindPriority(kind) {
   switch (kind) {
     case 'step-summary':
@@ -242,6 +438,7 @@ function targetKindPriority(kind) {
   }
 }
 
+/** @param {RunDetailFollowupTarget[]} [targets] @returns {RunDetailFollowupTarget[]} */
 function sortTargetsNewestFirst(targets = []) {
   return [...targets].sort((left, right) => {
     const rankDiff = targetSortRank(right) - targetSortRank(left)
@@ -252,6 +449,7 @@ function sortTargetsNewestFirst(targets = []) {
   })
 }
 
+/** @param {string} kind @returns {number} */
 function artifactKindPriority(kind) {
   switch (kind) {
     case 'workflow-summary':
@@ -275,6 +473,7 @@ function artifactKindPriority(kind) {
   }
 }
 
+/** @param {RunDetailFollowupArtifact[]} [artifacts] @returns {RunDetailFollowupArtifact[]} */
 function sortArtifactsNewestFirst(artifacts = []) {
   return [...artifacts].sort((left, right) => {
     if (left.kind === 'workflow-summary' && right.kind !== 'workflow-summary') return -1
@@ -287,6 +486,11 @@ function sortArtifactsNewestFirst(artifacts = []) {
   })
 }
 
+/**
+ * @param {import('./types').WorkflowRunState} [runState]
+ * @param {BuildRunDetailsOptions} [options]
+ * @returns {RunDetails}
+ */
 function buildRunDetails(runState = {}, options = {}) {
   const runDir = runState.dir || ''
   const artifactsDir = runDir ? path.join(runDir, 'artifacts') : ''
@@ -321,6 +525,7 @@ function buildRunDetails(runState = {}, options = {}) {
   }
 
   for (const stepDir of listDirectories(path.join(artifactsDir, 'steps'))) {
+    /** @type {StepArtifactMetadata} */
     const stepMeta = readJson(path.join(stepDir, 'step.json')) || {}
     const stepNumber = stepNumberFor(stepDir, stepMeta, stepNumbers)
     const stepTitle = stepTitleFromDir(stepDir, stepMeta)
@@ -380,6 +585,7 @@ function buildRunDetails(runState = {}, options = {}) {
 
     for (const markdownPath of listMarkdownFiles(path.join(stepDir, 'agent-runners'))) {
       const metadataPath = markdownPath.replace(/\.md$/, '.json')
+      /** @type {AgentArtifactMetadata} */
       const metadata = readJson(metadataPath) || {}
       const agent = metadata.agent || path.basename(markdownPath, '.md')
       const markdown = readText(markdownPath)

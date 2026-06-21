@@ -2,16 +2,71 @@ const fs = require('fs')
 
 const { appendEventLog } = require('./runner-event-log')
 
+/**
+ * Callback used when event emission cannot write to a sink.
+ * @callback RunnerEventErrorHandler
+ * @param {unknown} error
+ * @returns {void}
+ *
+ * Clock used to stamp runner events.
+ * @callback RunnerEventClock
+ * @returns {Date}
+ */
+
+/**
+ * Mutable runner event context copied onto emitted events.
+ * @typedef {{
+ *   runId?: string,
+ *   flowId?: string,
+ *   visualizeRunId?: string,
+ *   logPath?: string,
+ * }} RunnerEventContext
+ *
+ * Options for creating a durable runner event emitter.
+ * @typedef {{
+ *   runId?: string,
+ *   flowId?: string,
+ *   visualizeRunId?: string,
+ *   logPath?: string,
+ *   seqStart?: number,
+ *   env?: NodeJS.ProcessEnv,
+ *   stream?: import('stream').Writable,
+ *   fd?: number | string,
+ *   now?: RunnerEventClock,
+ *   onError?: RunnerEventErrorHandler,
+ * }} RunnerEventEmitterOptions
+ *
+ * Sanitized runner event payload with common inspected fields.
+ * @typedef {Record<string, unknown> & {
+ *   token?: string,
+ *   nested?: Record<string, string>,
+ *   promptText?: string,
+ *   message?: string,
+ * }} SanitizedRunnerEventPayload
+ *
+ * Runner event emitter returned to workflow code.
+ * @typedef {{
+ *   readonly enabled: boolean,
+ *   readonly seq: number,
+ *   emit: (type: string, payload?: import('./types').JsonMap) => import('./types').JsonMap,
+ *   emitAsync: (type: string, payload?: import('./types').JsonMap) => Promise<import('./types').JsonMap>,
+ *   setContext: (context?: RunnerEventContext) => void,
+ *   close: () => void,
+ * }} RunnerEventEmitter
+ */
+
 const SCHEMA_VERSION = 1
 const LARGE_STRING_LIMIT = 16 * 1024
 const REDACTED = '[redacted]'
 const SECRET_KEY_PATTERN = /(?:token|secret|password|authorization|apikey|api_key|auth)/i
 const LARGE_TEXT_KEY_PATTERN = /(?:prompt|markdown|body|resultText|text)$/i
 
+/** @param {NodeJS.ProcessEnv} [env] @returns {boolean} */
 function isRunnerEventEnabled(env = process.env) {
   return Boolean(env.NAX_EVENT_FD || env.NAX_EVENT_STREAM)
 }
 
+/** @param {unknown} value @param {string} [key] @returns {string} */
 function redactString(value, key = '') {
   const text = String(value)
   if (SECRET_KEY_PATTERN.test(key)) return REDACTED
@@ -21,18 +76,37 @@ function redactString(value, key = '') {
   return text
 }
 
+/**
+ * @param {unknown} value
+ * @param {string} [key]
+ * @param {WeakSet<object>} [seen]
+ * @returns {SanitizedRunnerEventPayload}
+ */
 function sanitizeEventPayload(value, key = '', seen = new WeakSet()) {
-  if (value === null || value === undefined) return value
-  if (typeof value === 'string') return redactString(value, key)
-  if (typeof value === 'number' || typeof value === 'boolean') return value
-  if (typeof value !== 'object') return String(value)
-  if (seen.has(value)) return '[circular]'
+  if (value === null || value === undefined) {
+    return /** @type {SanitizedRunnerEventPayload} */ (/** @type {unknown} */ (value))
+  }
+  if (typeof value === 'string') {
+    return /** @type {SanitizedRunnerEventPayload} */ (/** @type {unknown} */ (redactString(value, key)))
+  }
+  if (typeof value === 'number' || typeof value === 'boolean') {
+    return /** @type {SanitizedRunnerEventPayload} */ (/** @type {unknown} */ (value))
+  }
+  if (typeof value !== 'object') {
+    return /** @type {SanitizedRunnerEventPayload} */ (/** @type {unknown} */ (String(value)))
+  }
+  if (seen.has(value)) {
+    return /** @type {SanitizedRunnerEventPayload} */ (/** @type {unknown} */ ('[circular]'))
+  }
   seen.add(value)
 
   if (Array.isArray(value)) {
-    return value.map((item) => sanitizeEventPayload(item, key, seen))
+    return /** @type {SanitizedRunnerEventPayload} */ (
+      /** @type {unknown} */ (value.map((item) => sanitizeEventPayload(item, key, seen)))
+    )
   }
 
+  /** @type {SanitizedRunnerEventPayload} */
   const out = {}
   for (const [childKey, childValue] of Object.entries(value)) {
     out[childKey] = sanitizeEventPayload(childValue, childKey, seen)
@@ -40,8 +114,20 @@ function sanitizeEventPayload(value, key = '', seen = new WeakSet()) {
   return out
 }
 
+/**
+ * @param {RunnerEventContext} base
+ * @param {string} type
+ * @param {import('./types').JsonMap} payload
+ * @param {number} seq
+ * @param {Date} [now]
+ * @returns {import('./types').JsonMap}
+ */
 function normalizeRunnerEvent(base = {}, type, payload = {}, seq, now = new Date()) {
-  const sanitized = sanitizeEventPayload(payload) || {}
+  const sanitizedValue = sanitizeEventPayload(payload)
+  /** @type {import('./types').JsonMap} */
+  const sanitized = sanitizedValue && typeof sanitizedValue === 'object' && !Array.isArray(sanitizedValue)
+    ? /** @type {import('./types').JsonMap} */ (sanitizedValue)
+    : {}
   const runId = sanitized.runId || base.runId || ''
   const flowId = sanitized.flowId || base.flowId || ''
   return {
@@ -57,12 +143,18 @@ function normalizeRunnerEvent(base = {}, type, payload = {}, seq, now = new Date
   }
 }
 
+/** @param {number | string | undefined} fd @returns {import('fs').WriteStream | null} */
 function createFdStream(fd) {
   const numericFd = Number(fd)
   if (!Number.isInteger(numericFd) || numericFd < 0) return null
   return fs.createWriteStream(null, { fd: numericFd, autoClose: false })
 }
 
+/**
+ * @param {import('stream').Writable} stream
+ * @param {string} line
+ * @returns {Promise<void>}
+ */
 function writeLine(stream, line) {
   return new Promise((resolve, reject) => {
     const flushed = stream.write(line, (error) => {
@@ -73,6 +165,7 @@ function writeLine(stream, line) {
   })
 }
 
+/** @param {RunnerEventEmitterOptions} [options] @returns {RunnerEventEmitter} */
 function createRunnerEventEmitter(options = {}) {
   let runId = options.runId || ''
   let flowId = options.flowId || ''

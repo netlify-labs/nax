@@ -16,6 +16,12 @@ const ALLOWED_STEP_SUBMITS = ['new-run', 'follow-up', HUMAN_REVIEW_SUBMIT]
 /**
  * @typedef {{ stepId: string, code: string, message: string, hint: string }} FlowDiagnostic
  * @typedef {{ errors: FlowDiagnostic[], warnings: FlowDiagnostic[] }} FlowValidation
+ * @typedef {{
+ *   type?: string,
+ *   dir?: string,
+ *   configuredPath?: string,
+ *   priority?: number,
+ * }} FlowSource
  */
 const FLOW_PICKER_ORDER = [
   'review',
@@ -92,7 +98,17 @@ async function readNaxConfig(projectRoot) {
   return {}
 }
 
-/** @param {Record<string, any>} param0 */
+/**
+ * Project flow directory resolution options.
+ * @typedef {{
+ *   projectRoot?: string,
+ *   flowsDir?: string | string[],
+ *   flowsDirs?: string | string[],
+ *   env?: NodeJS.ProcessEnv,
+ * }} ProjectFlowDirsOptions
+ */
+
+/** @param {ProjectFlowDirsOptions} param0 */
 async function projectFlowDirs({ projectRoot, flowsDir, flowsDirs, env = process.env } = {}) {
   const root = projectRoot ? path.resolve(projectRoot) : ''
   if (!root) return []
@@ -342,7 +358,17 @@ function assertValidFlowStructure(flow, options = {}) {
   return validation
 }
 
-/** @param {any} raw @param {Record<string, any>} param1 */
+/**
+ * Normalized flow metadata from a flow source.
+ * @typedef {{
+ *   id: string,
+ *   dir: string,
+ *   file: string,
+ *   source?: FlowSource,
+ * }} NormalizeFlowMetadata
+ */
+
+/** @param {import('./types').WorkflowFlow} raw @param {NormalizeFlowMetadata} param1 */
 function normalizeFlow(raw, { id, dir, file, source = {} }) {
   const flowId = String(raw.id || id || path.basename(dir))
   const defaults = raw.defaults && typeof raw.defaults === 'object' ? raw.defaults : {}

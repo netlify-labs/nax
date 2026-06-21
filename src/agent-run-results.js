@@ -2,6 +2,40 @@ const ID_FORMAT = /^[A-Za-z0-9_-]{1,128}$/
 const TERMINAL_STATUSES = new Set(['completed', 'failed', 'timeout', 'cancelled', 'canceled', 'dry-run'])
 const NETLIFY_CREDITS_PER_USD = 180
 
+/**
+ * Raw Netlify Agent Runner payload fields used while normalizing artifacts.
+ * @typedef {Record<string, unknown> & {
+ *   id?: string,
+ *   agent_runner_id?: string,
+ *   agent_config?: { agent?: string },
+ *   result?: string,
+ *   deploy_url?: string,
+ *   pr_url?: string,
+ *   pull_request_url?: string,
+ *   has_result_diff?: boolean | string,
+ *   has_diff?: boolean | string,
+ *   has_cumulative_diff?: boolean | string,
+ *   hasSessionDiff?: boolean,
+ *   hasRunnerDiff?: boolean,
+ *   hasCumulativeDiff?: boolean,
+ *   commit_sha?: string,
+ *   commitSha?: string,
+ *   attached_file_keys?: string[],
+ *   attachedFileKeys?: string[],
+ *   result_zip_file_name?: string,
+ *   resultZipFileName?: string,
+ *   usage?: import('./types').UsageSummary,
+ *   steps_count?: number | string,
+ *   credit_limit_exceeded?: boolean,
+ * }} NetlifyRunPayload
+ *
+ * Usage formatting options.
+ * @typedef {{
+ *   includeCost?: boolean,
+ *   env?: NodeJS.ProcessEnv,
+ * }} UsageFormatOptions
+ */
+
 function finiteNumber(value) {
   const number = typeof value === 'number' ? value : Number(value)
   return Number.isFinite(number) && number >= 0 ? number : null
@@ -165,11 +199,11 @@ function aggregateFileChanges(records = []) {
 }
 
 function addUsage(a = {}, b = {}) {
-  /** @type {Record<string, any>} */
+  /** @type {import('./types').UsageSummary} */
   const result = { ...a }
   for (const [key, value] of Object.entries(b || {})) {
     if (typeof value === 'number' && Number.isFinite(value)) {
-      result[key] = (result[key] || 0) + value
+      result[key] = (Number(result[key] || 0)) + value
     } else if (key === 'creditLimitExceeded' && typeof value === 'boolean') {
       result.creditLimitExceeded = Boolean(result.creditLimitExceeded || value)
     }
@@ -303,7 +337,9 @@ function netlifyAgentRunUrlFromBody(body) {
   return match ? match[0] : ''
 }
 
+/** @returns {import('./types').StringMap} */
 function normalizeLinks(links = {}) {
+  /** @type {import('./types').StringMap} */
   const out = {}
   for (const key of ['agentRunUrl', 'sessionUrl', 'deployUrl', 'prUrl', 'issueUrl', 'commentUrl']) {
     if (links[key]) out[key] = String(links[key])
@@ -326,7 +362,7 @@ function statusIsTerminal(status) {
   return TERMINAL_STATUSES.has(String(status || '').toLowerCase())
 }
 
-/** @param {Record<string, any>} param0 */
+/** @param {{ sessionId?: string, agent?: string, createdAt?: string, updatedAt?: string }} param0 */
 function sessionArtifactId({ sessionId, agent, createdAt, updatedAt } = {}) {
   if (sessionId && ID_FORMAT.test(String(sessionId))) return String(sessionId)
   const stamp = String(updatedAt || createdAt || new Date().toISOString()).replace(/[:.]/g, '-')
@@ -493,7 +529,20 @@ function buildAgentRunnerMarkdown(input = {}) {
   return lines.join('\n')
 }
 
-/** @param {Record<string, any>} param0 */
+/**
+ * @param {{
+ *   run?: import('./types').AgentRun,
+ *   runner?: NetlifyRunPayload,
+ *   session?: NetlifyRunPayload,
+ *   status?: string,
+ *   resultText?: string,
+ *   usage?: import('./types').UsageSummary | null,
+ *   fileChanges?: import('./types').FileChangesSummary | null,
+ *   links?: import('./types').StringMap,
+ *   rawResult?: import('./types').JsonMap | null,
+ * }} param0
+ * @returns {import('./types').AgentRun}
+ */
 function normalizeAgentRunResult({
   run = {},
   runner = {},
@@ -538,7 +587,15 @@ function normalizeAgentRunResult({
   }
 }
 
-/** @param {Record<string, any>} param0 */
+/**
+ * @param {{
+ *   run?: import('./types').AgentRun,
+ *   result?: ({ issueUrl?: string, model?: string } & import('./types').JsonMap) | null,
+ *   reply?: import('./types').GitHubComment | null,
+ *   status?: string,
+ *   marker?: ({ runnerId?: string, sessionId?: string, usage?: import('./types').UsageSummary } & import('./types').JsonMap) | null,
+ * }} param0
+ */
 function normalizeGithubRunResult({ run = {}, result = null, reply = null, status, marker = null }) {
   const commentUrl = reply?.url || run.commentUrl || ''
   const issueUrl = result?.issueUrl || run.issueUrl || ''

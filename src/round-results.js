@@ -21,7 +21,45 @@ const CHAINING_NOISE_SECTION_NAMES = new Set([
   'idea selection rationale',
 ])
 
-/** @param {Record<string, any>} param0 */
+/**
+ * Round result summary assembled from one GitHub issue.
+ * @typedef {{
+ *   issueNumber?: string | number,
+ *   issueTitle?: string,
+ *   issueUrl?: string,
+ *   model?: string | null,
+ *   replies?: import('./types').GitHubComment[],
+ *   reply?: import('./types').GitHubComment,
+ *   comments?: import('./types').GitHubComment[],
+ * }} RoundResult
+ *
+ * Fetch progress event for round-result loading.
+ * @typedef {{
+ *   phase?: string,
+ *   issueNumber?: string | number,
+ *   index?: number,
+ *   total?: number,
+ *   replyCount?: number,
+ *   message?: string,
+ * }} RoundResultProgress
+ *
+ * Loader for one GitHub issue with comments.
+ * @callback RoundIssueLoader
+ * @param {{ repo?: string, issueNumber?: string | number }} input
+ * @returns {import('./types').GitHubIssue}
+ *
+ * Fetch prior round result options.
+ * @typedef {{
+ *   repo?: string,
+ *   issueNumbers: Array<string | number>,
+ *   embedAll?: boolean,
+ *   requireResultMarker?: boolean,
+ *   loader?: RoundIssueLoader,
+ *   onProgress?: ((event: RoundResultProgress) => void) | null,
+ * }} FetchRoundResultsInput
+ */
+
+/** @param {{ repo?: string, issueNumber?: string | number }} param0 */
 function loadIssueWithComments({ repo, issueNumber }) {
   const result = spawnSync(
     'gh',
@@ -45,7 +83,7 @@ function loadIssueWithComments({ repo, issueNumber }) {
   return JSON.parse(result.stdout)
 }
 
-/** @param {any} comments @param {Record<string, any>} param1 */
+/** @param {unknown} comments @param {{ all?: boolean, requireResultMarker?: boolean }} param1 */
 function pickAgentReplyComments(comments, { all = false, requireResultMarker = false } = {}) {
   if (!Array.isArray(comments)) return []
 
@@ -97,7 +135,7 @@ function modelLabel(model) {
   return model.charAt(0).toUpperCase() + model.slice(1)
 }
 
-/** @param {Record<string, any>} param0 */
+/** @param {FetchRoundResultsInput} param0 */
 function fetchRoundResults({
   repo,
   issueNumbers,
@@ -220,7 +258,7 @@ function sanitizeAgentReplyBody(body) {
   return withoutNoise || withoutWrapper || original
 }
 
-/** @param {any} body @param {Record<string, any>} param1 */
+/** @param {unknown} body @param {{ structuredOnly?: boolean, sanitize?: boolean }} param1 */
 function renderReplyBody(body, { structuredOnly, sanitize = true } = {}) {
   const trimmed = sanitize ? sanitizeAgentReplyBody(body) : String(body || '').trim()
   if (!structuredOnly) return trimmed
@@ -240,7 +278,17 @@ function renderReplyBody(body, { structuredOnly, sanitize = true } = {}) {
   ].join('\n')
 }
 
-/** @param {Record<string, any>} param0 */
+/**
+ * Prior round result formatting options.
+ * @typedef {{
+ *   heading?: string,
+ *   results?: RoundResult[],
+ *   structuredOnly?: boolean,
+ *   sanitizeReplies?: boolean,
+ * }} FormatRoundResultsInput
+ */
+
+/** @param {FormatRoundResultsInput} param0 */
 function formatRoundResults({ heading = 'Prior Round Outputs', results, structuredOnly = false, sanitizeReplies = true }) {
   if (!Array.isArray(results) || results.length === 0) return ''
 

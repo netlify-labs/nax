@@ -4,6 +4,21 @@ const { syncAgentRunner } = require('./agent-runner-sync')
 const { createRunState, saveRunState } = require('./run-state')
 const { isCancelledRunStatus, isFailedRunStatus, isTerminalRunStatus } = require('./status')
 
+/**
+ * Source metadata attached to visualizer follow-up runs.
+ * @typedef {Record<string, unknown> & {
+ *   id?: string,
+ *   type?: string,
+ *   mode?: string,
+ * }} FollowupSource
+ *
+ * Visualizer target fields used while naming and linking follow-up steps.
+ * @typedef {import('./types').TargetLike & {
+ *   stepId?: string,
+ *   stepTitle?: string,
+ * }} FollowupPersistenceTarget
+ */
+
 function uniqueAgents(runs = []) {
   const seen = new Set()
   const agents = []
@@ -137,9 +152,9 @@ function runChanged(left = {}, right = {}) {
 
 /**
  * @param {{
- *   run?: Record<string, any>,
+ *   run?: import('./types').AgentRun,
  *   promptText?: string,
- *   source?: Record<string, any>,
+ *   source?: FollowupSource,
  *   timestamp?: string,
  * }} input
  */
@@ -170,9 +185,9 @@ function normalizeFollowupRun({ run = {}, promptText = '', source = {}, timestam
 
 /**
  * @param {{
- *   runState?: Record<string, any>,
- *   target?: Record<string, any> | null,
- *   source?: Record<string, any>,
+ *   runState?: import('./types').WorkflowRunState,
+ *   target?: FollowupPersistenceTarget | null,
+ *   source?: FollowupSource,
  * }} input
  */
 function followupSource({ runState = {}, target = null, source = {} } = {}) {
@@ -189,11 +204,11 @@ function followupSource({ runState = {}, target = null, source = {} } = {}) {
  * run-details modal retain the accepted runner/session links after the modal closes.
  *
  * @param {{
- *   runState: Record<string, any>,
- *   runs: Array<Record<string, any>>,
- *   source?: Record<string, any>,
+ *   runState: import('./types').WorkflowRunState,
+ *   runs: Array<import('./types').AgentRun>,
+ *   source?: FollowupSource,
  *   promptText?: string,
- *   target?: Record<string, any> | null,
+ *   target?: FollowupPersistenceTarget | null,
  *   now?: Date,
  * }} input
  */
@@ -288,10 +303,10 @@ function freshAgentFlow({ title = 'Agent Run', stepTitle = 'Fresh Agent Runner' 
 /**
  * @param {{
  *   projectRoot: string,
- *   runs: Array<Record<string, any>>,
- *   source?: Record<string, any>,
+ *   runs: Array<import('./types').AgentRun>,
+ *   source?: FollowupSource,
  *   promptText?: string,
- *   target?: Record<string, any> | null,
+ *   target?: FollowupPersistenceTarget | null,
  *   now?: Date,
  *   title?: string,
  *   stepTitle?: string,
@@ -311,7 +326,7 @@ function persistFreshPseudoWorkflow({
   const status = submittedStepStatus(runs)
   const flow = freshAgentFlow({ title, stepTitle })
   flow.steps[0].agents = agents
-  /** @type {any} */
+  /** @type {import('./types').WorkflowRunState} */
   const state = createRunState({
     projectRoot,
     flow,
@@ -367,11 +382,11 @@ function persistFreshPseudoWorkflow({
  * merge terminal remote state back into the durable workflow graph state.
  *
  * @param {{
- *   runState?: Record<string, any>,
+ *   runState?: import('./types').WorkflowRunState,
  *   projectRoot?: string,
- *   env?: Record<string, string>,
- *   runCommand?: Function,
- *   syncRunner?: Function,
+ *   env?: NodeJS.ProcessEnv,
+ *   runCommand?: import('./types').RunCommand,
+ *   syncRunner?: (input: { projectRoot?: string, runner?: import('./types').AgentRunner, env?: NodeJS.ProcessEnv, runCommand?: import('./types').RunCommand }) => { sessions?: import('./types').AgentSession[] },
  * }} input
  */
 function syncSubmittedFollowupRunsToWorkflow({
@@ -464,7 +479,7 @@ function syncSubmittedFollowupRunsToWorkflow({
 
 /**
  * @param {{
- *   runState: Record<string, any>,
+ *   runState: import('./types').WorkflowRunState,
  *   stepId?: string,
  *   runnerId?: string,
  *   sessionId?: string,

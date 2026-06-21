@@ -5,23 +5,92 @@ const { resolveRemoteBranchSha, validateGitRefName } = require('./review-context
 /**
  * @typedef {{ cwd?: string }} CommandOptions
  * @typedef {{ status: number, stdout: string, stderr: string, detail: string }} CommandResult
+ *
  * @callback RunCommand
  * @param {string} command
  * @param {string[]} args
  * @param {CommandOptions} [options]
  * @returns {CommandResult}
- * @typedef {{ branch: string, ref: string, sha: string | null, sourceType: string, verified: boolean, caveats: string[] }} Target
- * @typedef {{ branch: string, sha: string | null, fork: boolean }} PullRequestTarget
- * @typedef {{ branch?: string | number, dryRun?: boolean, repo?: string }} TargetOptions
+ *
+ * @typedef {{
+ *   branch: string,
+ *   ref: string,
+ *   sha: string | null,
+ *   sourceType: string,
+ *   verified: boolean,
+ *   caveats: string[],
+ * }} Target
+ *
+ * @typedef {{
+ *   branch: string,
+ *   sha: string | null,
+ *   fork: boolean,
+ * }} PullRequestTarget
+ *
+ * @typedef {{
+ *   branch?: string | number,
+ *   dryRun?: boolean,
+ *   repo?: string,
+ * }} TargetOptions
+ *
  * @callback RemoteResolver
  * @param {{ repoRoot?: string, branch?: string }} input
  * @returns {{ sha: string, remote?: string, branch?: string, ref?: string }}
+ *
  * @callback PrResolver
- * @param {{ selector?: string | number, repo?: string, projectRoot?: string, run?: RunCommand }} input
+ * @param {PullRequestTargetOptions} input
  * @returns {PullRequestTarget}
+ *
  * @callback RepoResolver
  * @param {string | undefined} explicitRepo
  * @returns {string}
+ *
+ * @typedef {{
+ *   selector?: string | number,
+ *   repo?: string,
+ *   projectRoot?: string,
+ *   run?: RunCommand,
+ * }} PullRequestTargetOptions
+ *
+ * @typedef {{
+ *   branch?: string,
+ *   sourceType?: string,
+ *   projectRoot?: string,
+ *   remoteResolver?: RemoteResolver,
+ * }} VerifiedRemoteTargetOptions
+ *
+ * @typedef {{
+ *   branch?: string,
+ *   sourceType?: string,
+ *   sha?: string | null,
+ *   fork?: boolean,
+ *   caveats?: string[],
+ * }} AdvisoryGithubTargetOptions
+ *
+ * @typedef {{
+ *   options?: TargetOptions,
+ *   projectRoot?: string,
+ *   transport?: string,
+ *   run?: RunCommand,
+ *   remoteResolver?: RemoteResolver,
+ *   prResolver?: PrResolver,
+ *   repoResolver?: RepoResolver,
+ * }} ResolveTargetInput
+ *
+ * @typedef {{
+ *   runId?: string,
+ *   target?: Partial<Target>,
+ *   branch?: string,
+ *   branchSource?: string,
+ *   options?: {
+ *     branch?: string,
+ *     branchSource?: string,
+ *     pinnedSha?: string,
+ *   },
+ *   context?: {
+ *     pinnedSha?: string,
+ *   },
+ * }} LegacyTargetRunState
  */
 
 /** @param {string} command @param {string[]} args @param {CommandOptions} [options] @returns {CommandResult} */
@@ -78,7 +147,7 @@ function headSha(projectRoot, { run = runCommand } = {}) {
   return result.status === 0 && /^[0-9a-f]{40}$/i.test(sha) ? sha : null
 }
 
-/** @param {{ selector?: string | number, repo?: string, projectRoot?: string, run?: RunCommand }} [options] @returns {PullRequestTarget} */
+/** @param {PullRequestTargetOptions} [options] @returns {PullRequestTarget} */
 function resolvePullRequestTarget({ selector, repo, projectRoot, run = runCommand } = {}) {
   const number = String(selector || '').trim().replace(/^#/, '')
   const result = run('gh', [
@@ -110,7 +179,7 @@ function resolvePullRequestTarget({ selector, repo, projectRoot, run = runComman
   }
 }
 
-/** @param {{ branch?: string, sourceType?: string, projectRoot?: string, remoteResolver?: RemoteResolver }} [options] @returns {Target} */
+/** @param {VerifiedRemoteTargetOptions} [options] @returns {Target} */
 function verifiedRemoteTarget({ branch, sourceType, projectRoot, remoteResolver = resolveRemoteBranchSha } = {}) {
   const safeBranch = validateGitRefName(branch)
   const remote = remoteResolver({ repoRoot: projectRoot, branch: safeBranch })
@@ -124,7 +193,7 @@ function verifiedRemoteTarget({ branch, sourceType, projectRoot, remoteResolver 
   })
 }
 
-/** @param {{ branch?: string, sourceType?: string, sha?: string | null, fork?: boolean, caveats?: string[] }} [options] @returns {Target} */
+/** @param {AdvisoryGithubTargetOptions} [options] @returns {Target} */
 function advisoryGithubTarget({ branch, sourceType, sha = null, fork = false, caveats = [] } = {}) {
   return normalizeTarget({
     branch,
@@ -142,7 +211,7 @@ function advisoryGithubTarget({ branch, sourceType, sha = null, fork = false, ca
   })
 }
 
-/** @param {{ options?: TargetOptions, projectRoot?: string, transport?: string, run?: RunCommand, remoteResolver?: RemoteResolver, prResolver?: PrResolver, repoResolver?: RepoResolver }} [input] @returns {Target} */
+/** @param {ResolveTargetInput} [input] @returns {Target} */
 function resolveTarget({
   options = {},
   projectRoot = process.cwd(),
@@ -227,7 +296,7 @@ function resolveTarget({
   }
 }
 
-/** @param {{ runId?: string, target?: Partial<Target>, branch?: string, branchSource?: string, options?: { branch?: string, branchSource?: string, pinnedSha?: string }, context?: { pinnedSha?: string } }} [runState] @returns {Target | null} */
+/** @param {LegacyTargetRunState} [runState] @returns {Target | null} */
 function legacyTargetFromRunState(runState = {}) {
   if (runState.target) return normalizeTarget(runState.target)
   if (!runState.branch && !runState.options?.branch) return null
@@ -241,7 +310,7 @@ function legacyTargetFromRunState(runState = {}) {
   })
 }
 
-/** @param {{ runId?: string, target?: Partial<Target>, branch?: string, branchSource?: string, options?: { branch?: string, branchSource?: string, pinnedSha?: string }, context?: { pinnedSha?: string } }} [runState] @param {{ required?: boolean }} [options] */
+/** @param {LegacyTargetRunState} [runState] @param {{ required?: boolean }} [options] */
 function targetBranch(runState = {}, { required = false } = {}) {
   const target = legacyTargetFromRunState(runState)
   const branch = target?.branch || ''

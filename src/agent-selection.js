@@ -1,5 +1,42 @@
 const { DEFAULT_MODELS } = require('./constants')
 
+/**
+ * Parsed model override for one workflow step.
+ * @typedef {{
+ *   error: string,
+ *   stepId?: never,
+ *   agents?: never,
+ * } | {
+ *   error?: undefined,
+ *   stepId: string,
+ *   agents: string[],
+ * }} StepModelParseResult
+ *
+ * Agent lists keyed by workflow step id.
+ * @typedef {Record<string, string[]>} StepModelMap
+ *
+ * Raw step model override input accepted from CLI flags and config.
+ * @typedef {string | string[] | Record<string, unknown>} StepModelInput
+ *
+ * User-selected agent filters for a workflow run.
+ * @typedef {{
+ *   models?: unknown,
+ *   stepModels?: StepModelInput,
+ * }} AgentSelection
+ *
+ * Agent names that are valid for flow declarations.
+ * @typedef {{
+ *   knownAgents?: unknown,
+ * }} AgentSelectionValidationOptions
+ *
+ * Structured validation failure for agent selection.
+ * @typedef {{
+ *   code: string,
+ *   message: string,
+ * }} AgentSelectionValidationError
+ */
+
+/** @param {unknown} value @returns {string[]} */
 function normalizeAgentList(value) {
   const raw = Array.isArray(value)
     ? value
@@ -17,6 +54,7 @@ function normalizeAgentList(value) {
   return out
 }
 
+/** @param {unknown} entry @returns {StepModelParseResult} */
 function parseStepModelEntry(entry) {
   const text = String(entry || '')
   const index = text.indexOf('=')
@@ -37,8 +75,14 @@ function parseStepModelEntry(entry) {
   }
 }
 
+/** @param {unknown} value @returns {StepModelMap} */
 function normalizeStepModels(value) {
-  if (!value) return {}
+  if (!value) {
+    /** @type {StepModelMap} */
+    const empty = {}
+    return empty
+  }
+  /** @type {StepModelMap} */
   const out = {}
   if (typeof value === 'string') {
     const parsed = parseStepModelEntry(value)
@@ -62,11 +106,13 @@ function normalizeStepModels(value) {
   return out
 }
 
+/** @param {unknown} entries @returns {StepModelMap} */
 function parseStepModelsEntries(entries) {
   if (entries && typeof entries === 'object' && !Array.isArray(entries)) {
     return normalizeStepModels(entries)
   }
   const values = Array.isArray(entries) ? entries : entries ? [entries] : []
+  /** @type {StepModelMap} */
   const out = {}
   for (const entry of values) {
     const parsed = parseStepModelEntry(entry)
@@ -76,11 +122,13 @@ function parseStepModelsEntries(entries) {
   return out
 }
 
+/** @param {unknown} stepModels @returns {string[]} */
 function stepModelsToEntries(stepModels) {
   return Object.entries(normalizeStepModels(stepModels))
     .map(([stepId, agents]) => `${stepId}=${agents.join(',')}`)
 }
 
+/** @param {import('./types').WorkflowFlow} [flow] @returns {Set<string>} */
 function flowAgentSet(flow = {}) {
   const agents = new Set()
   for (const agent of normalizeAgentList(flow.defaults?.agents)) agents.add(agent)
@@ -90,6 +138,11 @@ function flowAgentSet(flow = {}) {
   return agents
 }
 
+/**
+ * @param {import('./types').WorkflowFlow} [flow]
+ * @param {AgentSelectionValidationOptions} [options]
+ * @returns {AgentSelectionValidationError[]}
+ */
 function flowDeclaredAgentValidationErrors(flow = {}, { knownAgents = DEFAULT_MODELS } = {}) {
   const errors = []
   const known = new Set(normalizeAgentList(knownAgents))
@@ -115,6 +168,12 @@ function flowDeclaredAgentValidationErrors(flow = {}, { knownAgents = DEFAULT_MO
   return errors
 }
 
+/**
+ * @param {import('./types').WorkflowFlow} [flow]
+ * @param {AgentSelection} [selection]
+ * @param {AgentSelectionValidationOptions} [options]
+ * @returns {AgentSelectionValidationError[]}
+ */
 function selectionValidationErrors(flow = {}, selection = {}, options = {}) {
   const errors = flowDeclaredAgentValidationErrors(flow, options)
   const flowAgents = flowAgentSet(flow)
@@ -144,6 +203,12 @@ function selectionValidationErrors(flow = {}, selection = {}, options = {}) {
   return errors
 }
 
+/**
+ * @param {import('./types').WorkflowFlow} flow
+ * @param {AgentSelection} [selection]
+ * @param {AgentSelectionValidationOptions} [options]
+ * @returns {void}
+ */
 function assertValidAgentSelection(flow, selection = {}, options = {}) {
   const errors = selectionValidationErrors(flow, selection, options)
   if (errors.length > 0) {
@@ -154,6 +219,11 @@ function assertValidAgentSelection(flow, selection = {}, options = {}) {
   }
 }
 
+/**
+ * @param {import('./types').WorkflowFlow} [flow]
+ * @param {AgentSelection} [selection]
+ * @returns {import('./types').WorkflowFlow}
+ */
 function applyAgentSelection(flow = {}, selection = {}) {
   const globalAgents = normalizeAgentList(selection.models)
   const globalSelected = globalAgents.length > 0 ? new Set(globalAgents) : null

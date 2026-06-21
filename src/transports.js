@@ -51,7 +51,7 @@ function hasLocalNetlifySite(projectRoot, env = process.env) {
   return Boolean(readLinkedSiteId(projectRoot, env))
 }
 
-/** @param {Record<string, any>} param0 */
+/** @param {{ projectRoot?: string, env?: NodeJS.ProcessEnv }} param0 */
 function detectTransports({ projectRoot = process.cwd(), env = process.env } = {}) {
   const githubReady = hasAgentRunnerAction(projectRoot)
   const localCliReady = hasNetlifyCli()

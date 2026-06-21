@@ -50,7 +50,7 @@ function submissionLabel(agent, mode) {
 /**
  * @param {{
  *   requestedMode?: 'follow-up-thread' | 'fresh-runner' | string,
- *   target?: Record<string, any> | null,
+ *   target?: import('./types').JsonMap | null,
  *   models?: string[],
  *   fallbackModels?: string[],
  *   supportedAgents?: string[],

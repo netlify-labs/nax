@@ -1,7 +1,7 @@
-// @ts-nocheck
 const fs = require('fs')
 const path = require('path')
 
+/** @param {unknown} value */
 function safeBlobFileName(value) {
   return String(value || 'blob')
     .replace(/[^a-zA-Z0-9._-]+/g, '-')
@@ -9,6 +9,15 @@ function safeBlobFileName(value) {
     .replace(/^-+|-+$/g, '') || 'blob'
 }
 
+/**
+ * Options for resolving the local blob debug directory.
+ * @typedef {{
+ *   runState?: import('./types').WorkflowRunState,
+ *   projectRoot?: string,
+ * }} WorkflowBlobDebugDirInput
+ */
+
+/** @param {WorkflowBlobDebugDirInput} param0 */
 function workflowBlobDebugDir({ runState, projectRoot } = {}) {
   const root = projectRoot || runState?.projectRoot || ''
   if (!runState?.dir && (!root || !runState?.runId)) return ''
@@ -16,6 +25,7 @@ function workflowBlobDebugDir({ runState, projectRoot } = {}) {
   return path.join(runDir, 'blobs')
 }
 
+/** @param {string} filePath @param {string} [projectRoot] */
 function relativeIfPossible(filePath, projectRoot) {
   if (!projectRoot) return filePath
   const relative = path.relative(projectRoot, filePath)
@@ -24,6 +34,19 @@ function relativeIfPossible(filePath, projectRoot) {
     : filePath
 }
 
+/**
+ * Options for writing a local copy of an offloaded blob payload.
+ * @typedef {{
+ *   runState?: import('./types').WorkflowRunState,
+ *   stepState?: import('./types').WorkflowStep,
+ *   ref?: import('./types').BlobRef,
+ *   payload?: unknown,
+ *   kind?: string,
+ *   projectRoot?: string,
+ * }} WriteLocalBlobDebugPayloadInput
+ */
+
+/** @param {WriteLocalBlobDebugPayloadInput} param0 */
 function writeLocalBlobDebugPayload({
   runState,
   stepState,

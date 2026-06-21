@@ -327,7 +327,23 @@ function followupId(sourceRunId = '') {
   return `followup-${String(sourceRunId || 'run')}-${Date.now().toString(36)}`
 }
 
-/** @param {{ projectRoot?: string, siteId?: string, env?: NodeJS.ProcessEnv, writeBlob?: ((input: { ref: Record<string, any>, payload: string }) => any) | null, setBlobCommand?: typeof setBlob }} [input] */
+/**
+ * Follow-up blob write callback.
+ * @callback FollowupBlobWriter
+ * @param {{ ref: import('./types').BlobRef, payload: string }} input
+ * @returns {unknown}
+ *
+ * Options for creating a follow-up blob writer.
+ * @typedef {{
+ *   projectRoot?: string,
+ *   siteId?: string,
+ *   env?: NodeJS.ProcessEnv,
+ *   writeBlob?: FollowupBlobWriter | null,
+ *   setBlobCommand?: typeof setBlob,
+ * }} MakeFollowupBlobWriterInput
+ */
+
+/** @param {MakeFollowupBlobWriterInput} [input] */
 function makeFollowupBlobWriter({ projectRoot, siteId, env = process.env, writeBlob, setBlobCommand = setBlob } = {}) {
   if (typeof writeBlob === 'function') return writeBlob
   if (!siteId) return null
@@ -529,11 +545,18 @@ function runDryRunCommand({ flowId, projectRoot, options, tailOutput = false }) 
 /**
  * @typedef {(event: Record<string, unknown>) => void} VisualizeEventSink
  * @typedef {{ code?: string, message: string, line?: number, text?: string }} RunnerEventParseError
+ *
+ * Child-process workflow run options.
+ * @typedef {{
+ *   flowId: string,
+ *   projectRoot: string,
+ *   options?: import('./workflow-runner').WorkflowCommandOptions,
+ *   eventSink?: VisualizeEventSink,
+ *   tailOutput?: boolean,
+ * }} RunWorkflowChildInput
  */
 
-/**
- * @param {{ flowId: string, projectRoot: string, options?: Record<string, unknown>, eventSink?: VisualizeEventSink, tailOutput?: boolean }} input
- */
+/** @param {RunWorkflowChildInput} input */
 function runWorkflowChild({ flowId, projectRoot, options = {}, eventSink = () => {}, tailOutput = false }) {
   const command = workflowCommand({ flowId, projectRoot, options })
   const args = [path.resolve(__dirname, '..', 'bin', 'nax.js'), ...command.slice(1)]
@@ -562,17 +585,20 @@ function runWorkflowChild({ flowId, projectRoot, options = {}, eventSink = () =>
     env: childEnv,
     stdio: ['ignore', 'pipe', 'pipe', 'pipe'],
   })
+  const stdoutStream = child.stdout
+  const stderrStream = child.stderr
+  if (!stdoutStream || !stderrStream) throw new Error('Could not attach workflow runner output streams.')
 
-  if (child.stdout) child.stdout.setEncoding('utf8')
-  if (child.stderr) child.stderr.setEncoding('utf8')
-  child.stdout.on('data', (text) => {
+  stdoutStream.setEncoding('utf8')
+  stderrStream.setEncoding('utf8')
+  stdoutStream.on('data', (text) => {
     const bounded = appendBounded(stdout, text)
     stdout = bounded.text
     stdoutDropped += bounded.dropped
     if (tailOutput) process.stdout.write(text)
     eventSink({ type: 'stdout', text })
   })
-  child.stderr.on('data', (text) => {
+  stderrStream.on('data', (text) => {
     const bounded = appendBounded(stderr, text)
     stderr = bounded.text
     stderrDropped += bounded.dropped
@@ -680,7 +706,13 @@ function runWorkflowChild({ flowId, projectRoot, options = {}, eventSink = () =>
 }
 
 /**
- * @param {{ onEvent?: (event: Record<string, unknown>) => void, onError?: (error: RunnerEventParseError) => void }} [handlers]
+ * Runner event parser handlers.
+ * @typedef {{
+ *   onEvent?: (event: Record<string, unknown>) => void,
+ *   onError?: (error: RunnerEventParseError) => void,
+ * }} RunnerEventParserHandlers
+ *
+ * @param {RunnerEventParserHandlers} [handlers]
  */
 function createRunnerEventParser({ onEvent = () => {}, onError = () => {} } = {}) {
   let buffer = ''
@@ -893,7 +925,35 @@ function cancellableWorkflowRunnerIds(runState = {}) {
   return [...new Set(runnerIds)]
 }
 
-/** @param {Record<string, any>} param0 */
+/**
+ * Stop-runner callback result.
+ * @typedef {{
+ *   stopped?: boolean,
+ *   error?: string,
+ * }} StopWorkflowRunnerResult
+ *
+ * Stop-runner callback input.
+ * @typedef {{
+ *   projectRoot?: string,
+ *   runnerId?: string,
+ *   env?: NodeJS.ProcessEnv,
+ * }} StopWorkflowRunnerInput
+ *
+ * Stop-runner callback used by visualizer cancellation.
+ * @callback StopWorkflowRunner
+ * @param {StopWorkflowRunnerInput} input
+ * @returns {StopWorkflowRunnerResult | Promise<StopWorkflowRunnerResult>}
+ *
+ * Options for cancelling active workflow Agent Runners.
+ * @typedef {{
+ *   runState?: import('./types').WorkflowRunState,
+ *   projectRoot?: string,
+ *   env?: NodeJS.ProcessEnv,
+ *   stopRun?: StopWorkflowRunner,
+ * }} StopWorkflowRunnersInput
+ */
+
+/** @param {StopWorkflowRunnersInput} param0 */
 async function stopWorkflowRunners({ runState, projectRoot, env, stopRun = stopAgentRun } = {}) {
   const runnerIds = cancellableWorkflowRunnerIds(runState)
   const stopped = []

@@ -1,4 +1,3 @@
-// @ts-nocheck
 const fs = require('fs')
 const os = require('os')
 const path = require('path')
@@ -7,11 +6,51 @@ const { spawnSync } = require('child_process')
 const DEFAULT_BLOB_RETRY_ATTEMPTS = 3
 const DEFAULT_BLOB_RETRY_DELAY_MS = 750
 
+/**
+ * Synchronous process runner compatible with child_process.spawnSync.
+ * @callback SpawnSyncStringCommand
+ * @param {string} command
+ * @param {string[]} args
+ * @param {import('child_process').SpawnSyncOptionsWithStringEncoding} [options]
+ * @returns {import('./types').CommandResult}
+ *
+ * Retry event emitted for Netlify Blob CLI operations.
+ * @typedef {{
+ *   operation?: string,
+ *   store?: string,
+ *   key?: string,
+ *   attempt: number,
+ *   nextAttempt: number,
+ *   attempts: number,
+ *   delayMs: number,
+ *   error: Error,
+ * }} BlobRetryEvent
+ *
+ * Options shared by Netlify Blob get/set/delete helpers.
+ * @typedef {{
+ *   store?: string,
+ *   key?: string,
+ *   siteId?: string,
+ *   token?: string,
+ *   cwd?: string,
+ *   env?: NodeJS.ProcessEnv,
+ *   cliPath?: string,
+ *   runCommand?: SpawnSyncStringCommand,
+ *   attempts?: string | number,
+ *   delayMs?: number,
+ *   sleep?: (ms: number) => void,
+ *   jitter?: () => number,
+ *   onRetry?: (event: BlobRetryEvent) => void,
+ * }} BlobCommandOptions
+ */
+
+/** @param {number} ms */
 function sleepSync(ms) {
   if (!ms) return
   Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms)
 }
 
+/** @param {Partial<import('./types').CommandResult>} [result] */
 function normalizeResult(result = {}) {
   return {
     status: result.status,
@@ -22,6 +61,7 @@ function normalizeResult(result = {}) {
   }
 }
 
+/** @param {unknown} value */
 function sanitizeDetail(value) {
   return String(value || '')
     .replace(/(--auth\s+)(\S+)/gi, '$1[redacted]')
@@ -29,10 +69,12 @@ function sanitizeDetail(value) {
     .replace(/(Authorization:\s*Bearer\s+)(\S+)/gi, '$1[redacted]')
 }
 
+/** @param {Partial<import('./types').CommandResult>} [result] */
 function resultDetail(result = {}) {
   return sanitizeDetail(result.stderr || result.stdout || result.error?.message || result.signal || '')
 }
 
+/** @param {Partial<import('./types').CommandResult>} [result] */
 function isRetryableBlobResult(result = {}) {
   const detail = resultDetail(result)
   const code = String(result.error?.code || '').toUpperCase()
@@ -42,26 +84,53 @@ function isRetryableBlobResult(result = {}) {
   return /timed?\s*out|timeout|econnreset|etimedout|econnrefused|eai_again|network|socket hang up|connection reset|rate limit|temporar/i.test(detail)
 }
 
+/**
+ * @param {string | undefined} operation
+ * @param {string | undefined} store
+ * @param {string | undefined} key
+ * @param {Partial<import('./types').CommandResult>} result
+ */
 function blobError(operation, store, key, result) {
   const detail = resultDetail(result)
   const message = `Netlify blob ${operation} failed for ${store}/${key}${detail ? `: ${detail}` : ''}`
+  /** @type {Error & { result?: Partial<import('./types').CommandResult>, retryable?: boolean }} */
   const error = new Error(message)
   error.result = result
   error.retryable = isRetryableBlobResult(result)
   return error
 }
 
+/** @param {string | number | undefined} value */
 function retryAttempts(value) {
-  const parsed = Number.parseInt(value || process.env.NAX_BLOB_RETRY_ATTEMPTS || `${DEFAULT_BLOB_RETRY_ATTEMPTS}`, 10)
+  const parsed = Number.parseInt(String(value || process.env.NAX_BLOB_RETRY_ATTEMPTS || DEFAULT_BLOB_RETRY_ATTEMPTS), 10)
   return Number.isFinite(parsed) ? Math.max(1, parsed) : DEFAULT_BLOB_RETRY_ATTEMPTS
 }
 
+/** @param {number} baseDelayMs @param {number} attempt @param {() => number} [jitter] */
 function retryDelay(baseDelayMs, attempt, jitter = Math.random) {
   const base = Math.max(0, Number(baseDelayMs) || 0) * (2 ** Math.max(0, attempt - 1))
   if (!base) return 0
   return Math.round(base + Math.floor(jitter() * Math.max(1, base * 0.25)))
 }
 
+/**
+ * @param {{
+ *   operation?: string,
+ *   args?: string[],
+ *   store?: string,
+ *   key?: string,
+ *   cwd?: string,
+ *   env?: NodeJS.ProcessEnv,
+ *   timeout?: number,
+ *   attempts?: string | number,
+ *   delayMs?: number,
+ *   sleep?: (ms: number) => void,
+ *   jitter?: () => number,
+ *   onRetry?: (event: BlobRetryEvent) => void,
+ *   runCommand?: SpawnSyncStringCommand,
+ *   cliPath?: string,
+ * }} param0
+ */
 function runBlobCommand({
   operation,
   args,
@@ -107,6 +176,7 @@ function runBlobCommand({
   throw blobError(operation, store, key, last || {})
 }
 
+/** @param {{ env?: NodeJS.ProcessEnv, siteId?: string }} param0 */
 function blobEnv({ env = process.env, siteId } = {}) {
   return {
     ...env,
@@ -114,6 +184,7 @@ function blobEnv({ env = process.env, siteId } = {}) {
   }
 }
 
+/** @param {{ env?: NodeJS.ProcessEnv, siteId?: string, token?: string }} param0 */
 function withAuthEnv({ env = process.env, siteId, token } = {}) {
   return {
     ...blobEnv({ env, siteId }),
@@ -121,6 +192,7 @@ function withAuthEnv({ env = process.env, siteId, token } = {}) {
   }
 }
 
+/** @param {unknown} value @param {string} [tmpDir] */
 function writeTempBlobInput(value, tmpDir = os.tmpdir()) {
   const dir = fs.mkdtempSync(path.join(tmpDir, 'nax-blob-'))
   const filePath = path.join(dir, 'payload.md')
@@ -128,11 +200,13 @@ function writeTempBlobInput(value, tmpDir = os.tmpdir()) {
   return { dir, filePath }
 }
 
+/** @param {string | undefined} dir */
 function removeTempDir(dir) {
   if (!dir) return
   fs.rmSync(dir, { recursive: true, force: true })
 }
 
+/** @param {BlobCommandOptions & { value?: unknown, tmpDir?: string }} param0 */
 function setBlob({
   store,
   key,
@@ -173,6 +247,7 @@ function setBlob({
   }
 }
 
+/** @param {BlobCommandOptions} param0 */
 function getBlob({
   store,
   key,
@@ -209,6 +284,7 @@ function getBlob({
   return result.stdout
 }
 
+/** @param {BlobCommandOptions & { allowFailure?: boolean }} param0 */
 function deleteBlob({
   store,
   key,

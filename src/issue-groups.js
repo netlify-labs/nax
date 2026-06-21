@@ -2,6 +2,42 @@ const { spawnSync } = require('child_process')
 
 const TITLE_PATTERN = /^(\d{4}-\d{2}-\d{2})\s+(Claude|Gemini|Codex)\s+(.+)$/i
 
+/**
+ * GitHub issue row used for workflow grouping.
+ * @typedef {{
+ *   number: number,
+ *   title: string,
+ *   url?: string,
+ *   state?: string,
+ *   createdAt?: string,
+ * }} IssueListItem
+ *
+ * Grouped issue member with parsed model metadata.
+ * @typedef {IssueListItem & { model: string }} IssueGroupMember
+ *
+ * Workflow issue group.
+ * @typedef {{
+ *   date: string,
+ *   promptTitle: string,
+ *   members: IssueGroupMember[],
+ *   models?: string[],
+ *   issueNumbers?: number[],
+ * }} IssueGroup
+ *
+ * Issue list loader callback used by issue grouping.
+ * @callback IssueListLoader
+ * @param {{ repo?: string, limit?: number, state?: string }} input
+ * @returns {IssueListItem[]}
+ *
+ * Recent issue group list options.
+ * @typedef {{
+ *   repo?: string,
+ *   limit?: number,
+ *   state?: string,
+ *   loader?: IssueListLoader,
+ * }} ListRecentIssueGroupsInput
+ */
+
 function parseWorkflowTitle(title) {
   const match = String(title || '').match(TITLE_PATTERN)
   if (!match) return null
@@ -12,7 +48,7 @@ function parseWorkflowTitle(title) {
   }
 }
 
-/** @param {Record<string, any>} param0 */
+/** @param {{ repo?: string, limit?: number, state?: string }} param0 */
 function listRepoIssues({ repo, limit = 60, state = 'all' }) {
   const result = spawnSync(
     'gh',
@@ -72,7 +108,7 @@ function buildGroups(issues) {
   })
 }
 
-/** @param {Record<string, any>} param0 */
+/** @param {ListRecentIssueGroupsInput} param0 */
 function listRecentIssueGroups({ repo, limit = 60, state = 'all', loader = listRepoIssues }) {
   return buildGroups(loader({ repo, limit, state }))
 }

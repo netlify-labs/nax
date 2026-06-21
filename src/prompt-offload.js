@@ -1,31 +1,43 @@
-// @ts-nocheck
 const crypto = require('crypto')
 
 const DEFAULT_SAFE_PROMPT_BYTES = 16384
 const MIN_ESSENTIAL_EXCERPT_BYTES = 240
 const RUNNER_NETLIFY_CLI_PATH = '/opt/buildhome/node-deps/node_modules/.bin/netlify'
 
+/**
+ * Agent run data rendered into offloaded prompt/context snippets.
+ * @typedef {import('./types').AgentRun & {
+ *   sourceStep?: string,
+ * }} PromptOffloadRun
+ */
+
+/** @param {unknown} value */
 function utf8ByteLength(value) {
   return Buffer.byteLength(String(value || ''), 'utf8')
 }
 
+/** @param {string} name @param {number} fallback */
 function envInt(name, fallback) {
   const parsed = Number.parseInt(process.env[name] || '', 10)
   return Number.isFinite(parsed) ? parsed : fallback
 }
 
+/** @param {{ safePromptBytes?: number }} [options] */
 function safePromptBytes(options = {}) {
   return Math.max(1024, Number(options.safePromptBytes || envInt('NAX_SAFE_PROMPT_BYTES', DEFAULT_SAFE_PROMPT_BYTES)))
 }
 
+/** @param {unknown} value @param {number} [length] */
 function stableDigest(value, length = 12) {
   return crypto.createHash('sha256').update(String(value || '')).digest('hex').slice(0, length)
 }
 
+/** @param {unknown[]} parts @param {string} prefix @param {number} [length] */
 function stableToken(parts, prefix, length = 12) {
   return `${prefix}-${stableDigest(parts.filter(Boolean).join(':'), length)}`
 }
 
+/** @param {unknown} value @param {number} maxBytes */
 function sliceUtf8(value, maxBytes) {
   const text = String(value || '')
   if (utf8ByteLength(text) <= maxBytes) return text
@@ -40,6 +52,7 @@ function sliceUtf8(value, maxBytes) {
   return out
 }
 
+/** @param {unknown} text @param {number} maxBytes @param {string} [label] */
 function compactTextByBytes(text, maxBytes, label = 'content') {
   const value = String(text || '').trim()
   if (!value || utf8ByteLength(value) <= maxBytes) return value
@@ -55,6 +68,7 @@ function compactTextByBytes(text, maxBytes, label = 'content') {
   return `${head}${note}${tail}`.trim()
 }
 
+/** @param {unknown} rendered */
 function realStructuredSection(rendered) {
   const text = String(rendered || '').trim()
   if (!text) return ''
@@ -62,12 +76,22 @@ function realStructuredSection(rendered) {
   return text
 }
 
+/** @param {PromptOffloadRun} [run] */
 function runTitle(run = {}) {
   const source = run.sourceStep ? ` from ${run.sourceStep}` : ''
   const agent = String(run.agent || 'agent')
   return `${agent.charAt(0).toUpperCase()}${agent.slice(1)}${source}`
 }
 
+/**
+ * Bounded essential result rendering options.
+ * @typedef {{
+ *   renderStructured?: (text: string) => string,
+ *   perRunBytes?: number,
+ * }} BuildBoundedEssentialOptions
+ */
+
+/** @param {PromptOffloadRun} run @param {BuildBoundedEssentialOptions} [options] */
 function buildBoundedEssential(run, {
   renderStructured,
   perRunBytes = 1800,
@@ -102,7 +126,16 @@ function buildBoundedEssential(run, {
   ].join('\n')
 }
 
-/** @param {Array<Record<string, unknown>>} runs @param {{ renderStructured?: (text: string) => string, totalBytes?: number, perRunBytes?: number }} [options] */
+/**
+ * Inline essentials rendering options.
+ * @typedef {{
+ *   renderStructured?: (text: string) => string,
+ *   totalBytes?: number,
+ *   perRunBytes?: number,
+ * }} BuildInlineEssentialsOptions
+ */
+
+/** @param {PromptOffloadRun[]} runs @param {BuildInlineEssentialsOptions} [options] */
 function buildInlineEssentials(runs, {
   renderStructured,
   totalBytes = 9000,
@@ -126,12 +159,32 @@ function buildInlineEssentials(runs, {
   return compactTextByBytes(parts.join('\n').trim(), totalBytes, 'Bounded prior results')
 }
 
+/** @param {{ cliPath?: string, fallbackToPath?: boolean }} [options] */
 function runnerNetlifyCliCommand({ cliPath = RUNNER_NETLIFY_CLI_PATH, fallbackToPath = false } = {}) {
   const normalized = String(cliPath || '').trim() || RUNNER_NETLIFY_CLI_PATH
   if (!fallbackToPath || normalized === 'netlify') return normalized
   return `$(if [ -x "${normalized}" ]; then printf %s "${normalized}"; else printf %s netlify; fi)`
 }
 
+/**
+ * Runner-local Netlify CLI command options.
+ * @typedef {{
+ *   cliPath?: string,
+ *   fallbackToPath?: boolean,
+ * }} RunnerNetlifyCliCommandOptions
+ *
+ * Fetch-instruction build options.
+ * @typedef {{
+ *   store?: string,
+ *   key?: string,
+ *   marker?: string,
+ *   kind?: string,
+ *   runner?: RunnerNetlifyCliCommandOptions,
+ *   fetchCommand?: string,
+ * }} BuildFetchInstructionInput
+ */
+
+/** @param {BuildFetchInstructionInput} param0 */
 function buildFetchInstruction({ store, key, marker, kind = 'prior-results', runner = {}, fetchCommand = '' }) {
   const fullPrompt = kind === 'full-prompt'
   const command = fetchCommand || runnerNetlifyCliCommand(runner)
@@ -157,6 +210,7 @@ function buildFetchInstruction({ store, key, marker, kind = 'prior-results', run
   ].join('\n')
 }
 
+/** @param {{ fullResults?: string, sentinel?: string }} param0 */
 function buildBlobPayload({ fullResults, sentinel }) {
   return [
     `NAX-BLOB-SENTINEL ${sentinel}`,
@@ -165,6 +219,7 @@ function buildBlobPayload({ fullResults, sentinel }) {
   ].join('\n').trim()
 }
 
+/** @param {{ runId?: string, stepId?: string, payloadSeed?: string, kind?: string }} param0 */
 function blobRefForStep({ runId, stepId, payloadSeed = '', kind = 'prior-results' }) {
   const store = `nax-${runId}`
   const key = `${stepId}-${kind === 'full-prompt' ? 'full-prompt' : 'prior-results'}`
@@ -173,7 +228,21 @@ function blobRefForStep({ runId, stepId, payloadSeed = '', kind = 'prior-results
   return { store, key, marker, sentinel }
 }
 
-/** @param {{ reply?: string, transcript?: string, commandOutput?: string, fetchExitCode?: number | null, fetchError?: string, marker?: string, sentinel?: string, inlineOnlyNeedles?: string[] }} [options] */
+/**
+ * Context-fetch classifier input.
+ * @typedef {{
+ *   reply?: string,
+ *   transcript?: string,
+ *   commandOutput?: string,
+ *   fetchExitCode?: number | null,
+ *   fetchError?: string,
+ *   marker?: string,
+ *   sentinel?: string,
+ *   inlineOnlyNeedles?: string[],
+ * }} ClassifyContextFetchInput
+ */
+
+/** @param {ClassifyContextFetchInput} [options] */
 function classifyContextFetch({
   reply,
   transcript,

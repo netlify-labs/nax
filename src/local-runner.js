@@ -27,6 +27,236 @@ const NETLIFY_CONFIG_SCAN_SKIP_DIRS = new Set([
   'node_modules',
 ])
 
+/**
+ * Netlify config candidate discovered from netlify.toml and .netlify/state.json.
+ * @typedef {{
+ *   configPath: string,
+ *   configDir: string,
+ *   source: string,
+ *   dir: string,
+ *   siteId: string,
+ *   statePath: string,
+ *   stateSource: string,
+ *   filter: string,
+ *   buildCommand: string,
+ * }} NetlifyTargetCandidate
+ *
+ * Raw Netlify Agent Runner API payload fields used by polling and normalization.
+ * @typedef {Record<string, unknown> & {
+ *   id?: string,
+ *   state?: string,
+ *   latest_session?: NetlifyRunnerSessionPayload,
+ *   latest_session_state?: string,
+ *   done_at?: string,
+ *   current_task?: string,
+ *   currentTask?: string,
+ *   result?: string,
+ *   error?: string,
+ *   error_message?: string,
+ * }} NetlifyRunnerPayload
+ *
+ * Raw Netlify Agent Runner session payload fields used by polling and normalization.
+ * @typedef {Record<string, unknown> & {
+ *   id?: string,
+ *   state?: string,
+ *   result?: string,
+ *   error?: string,
+ *   error_message?: string,
+ * }} NetlifyRunnerSessionPayload
+ *
+ * Result from a Netlify runner create/session call.
+ * @typedef {{
+ *   runnerId: string,
+ *   state: string,
+ *   raw: NetlifyRunnerPayload | NetlifyRunnerSessionPayload,
+ * }} NetlifySubmitResult
+ *
+ * Options passed to local command runner callbacks.
+ * @typedef {{
+ *   cwd?: string,
+ *   env?: NodeJS.ProcessEnv,
+ *   allowFailure?: boolean,
+ *   timeout?: number,
+ * }} LocalRunCommandOptions
+ *
+ * Synchronous local command runner.
+ * @callback SyncRunCommand
+ * @param {string} command
+ * @param {string[]} args
+ * @param {LocalRunCommandOptions} [options]
+ * @returns {import('./types').CommandResult}
+ *
+ * Asynchronous local command runner.
+ * @callback AsyncRunCommand
+ * @param {string} command
+ * @param {string[]} args
+ * @param {LocalRunCommandOptions} [options]
+ * @returns {import('./types').CommandResult | Promise<import('./types').CommandResult>}
+ *
+ * Retry event emitted while submitting Netlify Agent Runner commands.
+ * @typedef {{
+ *   error: Error,
+ *   attempt: number,
+ *   nextAttempt: number,
+ *   attempts: number,
+ *   delayMs: number,
+ * }} SubmissionRetryEvent
+ *
+ * Build-info result used for JavaScript workspace detection.
+ * @typedef {{
+ *   jsWorkspaces?: unknown,
+ *   packageManager?: unknown,
+ * }} BuildInfoResult
+ *
+ * Options for JavaScript workspace detection.
+ * @typedef {{
+ *   projectRoot?: string,
+ *   projectDir?: string,
+ *   getBuildInfo?: (input: { projectDir: string, rootDir: string }) => Promise<BuildInfoResult>,
+ * }} DetectJavascriptWorkspaceOptions
+ *
+ * Netlify project/filter target lookup options.
+ * @typedef {{
+ *   projectRoot?: string,
+ *   filter?: string,
+ *   netlifyConfig?: string,
+ * }} NetlifyTargetOptions
+ *
+ * Netlify project environment resolution options.
+ * @typedef {NetlifyTargetOptions & {
+ *   siteId?: string,
+ *   env?: NodeJS.ProcessEnv,
+ * }} NetlifyProjectTargetOptions
+ *
+ * Netlify environment build options.
+ * @typedef {{
+ *   env?: NodeJS.ProcessEnv,
+ *   projectRoot?: string,
+ *   siteId?: string,
+ * }} NetlifyEnvOptions
+ *
+ * Retry policy for submitting Agent Runner commands.
+ * @typedef {{
+ *   retryAttempts?: number,
+ *   retryDelayMs?: number,
+ *   onRetry?: (event: SubmissionRetryEvent) => void,
+ *   sleepFn?: (ms: number) => Promise<unknown>,
+ * }} SubmissionRetryOptions
+ *
+ * Options for creating a fresh Netlify Agent Runner.
+ * @typedef {{
+ *   projectRoot?: string,
+ *   promptText?: string,
+ *   agent?: string,
+ *   branch?: string,
+ *   siteId?: string,
+ *   netlifyFilter?: string,
+ *   env?: NodeJS.ProcessEnv,
+ *   runCommand?: SyncRunCommand,
+ * }} CreateAgentRunOptions
+ *
+ * Options for creating a fresh Netlify Agent Runner asynchronously.
+ * @typedef {Omit<CreateAgentRunOptions, 'runCommand'> & SubmissionRetryOptions & {
+ *   runCommand?: AsyncRunCommand,
+ * }} CreateAgentRunAsyncOptions
+ *
+ * Options for creating a follow-up Agent Runner session.
+ * @typedef {{
+ *   projectRoot?: string,
+ *   runnerId?: string,
+ *   promptText?: string,
+ *   agent?: string,
+ *   env?: NodeJS.ProcessEnv,
+ *   runCommand?: SyncRunCommand,
+ * }} CreateAgentSessionOptions
+ *
+ * Options for creating a follow-up Agent Runner session asynchronously.
+ * @typedef {Omit<CreateAgentSessionOptions, 'runCommand'> & SubmissionRetryOptions & {
+ *   runCommand?: AsyncRunCommand,
+ * }} CreateAgentSessionAsyncOptions
+ *
+ * Submitted local run options.
+ * @typedef {SubmissionRetryOptions & {
+ *   run: import('./types').AgentRun,
+ *   projectRoot?: string,
+ *   branch?: string,
+ *   siteId?: string,
+ *   netlifyFilter?: string,
+ *   env?: NodeJS.ProcessEnv,
+ *   runCommand?: AsyncRunCommand,
+ * }} SubmitLocalAgentRunOptions
+ *
+ * Agent Runner query command options.
+ * @typedef {{
+ *   projectRoot?: string,
+ *   runnerId?: string,
+ *   siteId?: string,
+ *   netlifyFilter?: string,
+ *   env?: NodeJS.ProcessEnv,
+ *   runCommand?: SyncRunCommand,
+ * }} ShowAgentRunOptions
+ *
+ * Agent Runner session list command options.
+ * @typedef {{
+ *   projectRoot?: string,
+ *   runnerId?: string,
+ *   env?: NodeJS.ProcessEnv,
+ *   runCommand?: SyncRunCommand,
+ * }} AgentRunnerCommandOptions
+ *
+ * Poll response returned by agents:show.
+ * @typedef {{
+ *   state?: string,
+ *   raw?: NetlifyRunnerPayload,
+ *   error?: string,
+ *   commandError?: boolean,
+ * }} AgentRunPollResult
+ *
+ * Session list response returned by listAgentSessions.
+ * @typedef {{
+ *   raw?: NetlifyRunnerSessionPayload[] | { sessions?: NetlifyRunnerSessionPayload[] } | null,
+ *   latest?: NetlifyRunnerSessionPayload,
+ *   error?: string,
+ *   commandError?: boolean,
+ * }} AgentSessionListResult
+ *
+ * Completed/failed run normalization input.
+ * @typedef {{
+ *   run: import('./types').AgentRun,
+ *   shown: AgentRunPollResult,
+ *   sessions?: AgentSessionListResult,
+ * }} NormalizeLocalRunInput
+ *
+ * Options for waiting on submitted local Agent Runner runs.
+ * @typedef {{
+ *   projectRoot?: string,
+ *   runs?: import('./types').AgentRun[],
+ *   siteId?: string,
+ *   netlifyFilter?: string,
+ *   env?: NodeJS.ProcessEnv,
+ *   timeoutMinutes?: number,
+ *   initialDelayMs?: number,
+ *   pollIntervalMs?: number,
+ *   onProgress?: (event: LocalRunProgressEvent) => void,
+ *   onTerminalRun?: (run: import('./types').AgentRun) => void,
+ *   runCommand?: SyncRunCommand,
+ * }} WaitForLocalAgentRunsOptions
+ *
+ * Polling progress event for Agent Runner execution.
+ * @typedef {Record<string, unknown> & {
+ *   message?: string,
+ *   run?: import('./types').AgentRun,
+ *   state?: string,
+ *   currentTask?: string,
+ *   error?: string,
+ *   terminal?: boolean,
+ *   terminalSuccess?: boolean,
+ *   terminalFailure?: boolean,
+ *   retry?: boolean,
+ *   retryReason?: string,
+ * }} LocalRunProgressEvent
+ */
+
 let buildInfoModulePromise
 
 async function loadBuildInfoModule() {
@@ -117,7 +347,7 @@ function filterOutGitignored(paths, cwd) {
   return paths.filter((candidate) => !ignored.has(candidate))
 }
 
-/** @param {any} projectRoot @param {Record<string, any>} param1 */
+/** @param {string} projectRoot @param {{ maxDepth?: number }} param1 */
 function findNetlifyConfigPaths(projectRoot, { maxDepth = 6 } = {}) {
   const root = path.resolve(projectRoot || process.cwd())
   const configs = []
@@ -166,7 +396,7 @@ function listNetlifyFilterCandidates(projectRoot) {
     })
 }
 
-/** @param {Record<string, any>} param0 */
+/** @param {DetectJavascriptWorkspaceOptions} param0 */
 async function detectJavascriptWorkspace({ projectRoot, projectDir, getBuildInfo } = {}) {
   const root = path.resolve(projectRoot || process.cwd())
   const baseDir = path.resolve(projectDir || root)
@@ -211,7 +441,7 @@ function inferNetlifyFilterFromCommand(command) {
   return unique.length === 1 ? unique[0] : ''
 }
 
-/** @param {Record<string, any>} param0 */
+/** @param {NetlifyTargetOptions} param0 */
 function resolveNetlifyFilter({ projectRoot, filter } = {}) {
   if (filter) return { filter: String(filter), source: 'option' }
   const root = path.resolve(projectRoot || process.cwd())
@@ -222,7 +452,7 @@ function resolveNetlifyFilter({ projectRoot, filter } = {}) {
   return { filter: uniqueFilters[0], source: matches[0].source }
 }
 
-/** @param {Record<string, any>} param0 */
+/** @param {NetlifyTargetOptions} param0 @returns {NetlifyTargetCandidate | null} */
 function findNetlifyTargetCandidate({ projectRoot, filter, netlifyConfig } = {}) {
   const root = path.resolve(projectRoot || process.cwd())
   const candidates = listNetlifyFilterCandidates(root)
@@ -263,7 +493,7 @@ function nestedNetlifySiteError(projectRoot, candidate) {
   ].join(' ')
 }
 
-/** @param {Record<string, any>} param0 */
+/** @param {NetlifyProjectTargetOptions} param0 */
 function resolveNetlifyProjectTarget({
   projectRoot,
   filter,
@@ -355,7 +585,11 @@ function resultDetail(command, args, result) {
   return redactCommandDetail(command, args, [detail, timeoutDetail, signalDetail].filter(Boolean).join('; '))
 }
 
-/** @param {any} command @param {any} args @param {Record<string, any>} param2 */
+/**
+ * @param {string} command
+ * @param {string[]} args
+ * @param {{ cwd?: string, env?: NodeJS.ProcessEnv, allowFailure?: boolean, timeout?: number }} param2
+ */
 function run(command, args, { cwd, env = process.env, allowFailure = false, timeout = 30000 } = {}) {
   const result = spawnSync(command, args, {
     cwd,
@@ -371,7 +605,11 @@ function run(command, args, { cwd, env = process.env, allowFailure = false, time
   return result
 }
 
-/** @param {any} command @param {any} args @param {Record<string, any>} param2 */
+/**
+ * @param {string} command
+ * @param {string[]} args
+ * @param {{ cwd?: string, env?: NodeJS.ProcessEnv, allowFailure?: boolean, timeout?: number }} param2
+ */
 function runAsync(command, args, { cwd, env = process.env, allowFailure = false, timeout = 30000 } = {}) {
   return new Promise((resolve, reject) => {
     execFile(command, args, {
@@ -439,7 +677,21 @@ function isRetryableSubmissionError(error) {
   ].some((needle) => text.includes(needle))
 }
 
-/** @param {any} fn @param {Record<string, any>} param1 */
+/**
+ * Retry policy used by withSubmissionRetry.
+ * @typedef {{
+ *   attempts?: number,
+ *   delayMs?: number,
+ *   onRetry?: (event: SubmissionRetryEvent) => void,
+ *   sleepFn?: (ms: number) => Promise<unknown>,
+ * }} WithSubmissionRetryOptions
+ */
+
+/**
+ * @template T
+ * @param {() => Promise<T>} fn
+ * @param {WithSubmissionRetryOptions} param1
+ */
 async function withSubmissionRetry(fn, {
   attempts = DEFAULT_SUBMISSION_RETRY_ATTEMPTS,
   delayMs = DEFAULT_SUBMISSION_RETRY_DELAY_MS,
@@ -467,7 +719,7 @@ async function withSubmissionRetry(fn, {
   throw new Error('Submission retry failed unexpectedly.')
 }
 
-/** @param {Record<string, any>} param0 */
+/** @param {NetlifyEnvOptions} param0 */
 function buildNetlifyEnv({ env = process.env, projectRoot, siteId: explicitSiteId } = {}) {
   const token = readNetlifyCliToken({ env })
   const siteId = explicitSiteId || readLinkedSiteId(projectRoot, env)
@@ -529,7 +781,19 @@ function compactPromptForArgumentLimitRetry(runState) {
   return compactPromptText
 }
 
-/** @param {any} runState @param {any} rawRetry @param {Record<string, any>} param2 */
+/**
+ * Auto-retry metadata to attach to a submitted run.
+ * @typedef {{
+ *   autoRetryCount?: number,
+ *   promptShrinkRetryCount?: number,
+ *   promptText?: string,
+ *   retryReason?: string,
+ * }} AutoRetryMetadataInput
+ *
+ * @param {import('./types').AgentRun} runState
+ * @param {NetlifyRunnerSessionPayload | NetlifyRunnerPayload} rawRetry
+ * @param {AutoRetryMetadataInput} param2
+ */
 function appendAutoRetryMetadata(runState, rawRetry, {
   autoRetryCount,
   promptShrinkRetryCount,
@@ -558,7 +822,7 @@ function appendAutoRetryMetadata(runState, rawRetry, {
   }
 }
 
-/** @param {Record<string, any>} param0 */
+/** @param {CreateAgentRunOptions} param0 */
 function createAgentRun({
   projectRoot,
   promptText,
@@ -587,7 +851,7 @@ function createAgentRun({
   }
 }
 
-/** @param {Record<string, any>} param0 */
+/** @param {CreateAgentRunAsyncOptions} param0 */
 async function createAgentRunAsync({
   projectRoot,
   promptText,
@@ -627,7 +891,7 @@ async function createAgentRunAsync({
   })
 }
 
-/** @param {Record<string, any>} param0 */
+/** @param {CreateAgentSessionOptions} param0 */
 function createAgentSession({
   projectRoot,
   runnerId,
@@ -660,7 +924,7 @@ function createAgentSession({
   }
 }
 
-/** @param {Record<string, any>} param0 */
+/** @param {CreateAgentSessionAsyncOptions} param0 */
 async function createAgentSessionAsync({
   projectRoot,
   runnerId,
@@ -705,7 +969,7 @@ async function createAgentSessionAsync({
   })
 }
 
-/** @param {Record<string, any>} param0 */
+/** @param {SubmitLocalAgentRunOptions} param0 */
 async function submitLocalAgentRun({
   run,
   projectRoot,
@@ -759,7 +1023,7 @@ async function submitLocalAgentRun({
   }
 }
 
-/** @param {Record<string, any>} param0 */
+/** @param {ShowAgentRunOptions} param0 */
 function showAgentRun({ projectRoot, runnerId, siteId, netlifyFilter, env, runCommand = run } = {}) {
   const args = ['agents:show', runnerId, '--json', '--project', siteId]
   if (netlifyFilter) args.push('--filter', netlifyFilter)
@@ -795,7 +1059,7 @@ function showAgentRun({ projectRoot, runnerId, siteId, netlifyFilter, env, runCo
   }
 }
 
-/** @param {Record<string, any>} param0 */
+/** @param {AgentRunnerCommandOptions} param0 */
 function listAgentSessions({ projectRoot, runnerId, env, runCommand = run } = {}) {
   const data = JSON.stringify({ agent_runner_id: runnerId })
   const result = runCommand('netlify', ['api', 'listAgentRunnerSessions', '--data', data], {
@@ -831,7 +1095,7 @@ function listAgentSessions({ projectRoot, runnerId, env, runCommand = run } = {}
   }
 }
 
-/** @param {Record<string, any>} param0 */
+/** @param {AgentRunnerCommandOptions} param0 */
 function stopAgentRun({ projectRoot, runnerId, env, runCommand = run } = {}) {
   if (!runnerId) throw new Error('Netlify agent runner ID is required to stop a run.')
   const data = JSON.stringify({ agent_runner_id: runnerId })
@@ -863,7 +1127,7 @@ function stopAgentRun({ projectRoot, runnerId, env, runCommand = run } = {}) {
   }
 }
 
-/** @param {Record<string, any>} param0 */
+/** @param {AgentRunnerCommandOptions} param0 */
 function archiveAgentRun({ projectRoot, runnerId, env, runCommand = run } = {}) {
   if (!runnerId) throw new Error('Netlify agent runner ID is required to archive a run.')
   const data = JSON.stringify({ agent_runner_id: runnerId })
@@ -895,7 +1159,7 @@ function archiveAgentRun({ projectRoot, runnerId, env, runCommand = run } = {}) 
   }
 }
 
-/** @param {Record<string, any>} param0 */
+/** @param {NormalizeLocalRunInput} param0 @returns {import('./types').AgentRun} */
 function normalizeCompletedRun({ run, shown, sessions }) {
   const session = sessions.latest && Object.keys(sessions.latest).length > 0
     ? sessions.latest
@@ -932,7 +1196,7 @@ function normalizeCompletedRun({ run, shown, sessions }) {
   })
 }
 
-/** @param {Record<string, any>} param0 */
+/** @param {NormalizeLocalRunInput} param0 @returns {import('./types').AgentRun} */
 function normalizeFailedRun({ run, shown, sessions }) {
   const session = sessions?.latest && Object.keys(sessions.latest).length > 0
     ? sessions.latest
@@ -953,7 +1217,7 @@ function normalizeFailedRun({ run, shown, sessions }) {
   })
 }
 
-/** @param {Record<string, any>} param0 */
+/** @param {WaitForLocalAgentRunsOptions} param0 */
 async function waitForLocalAgentRuns({
   projectRoot,
   runs,

@@ -36,7 +36,20 @@ function installGracefulRunStateHandlers() {
   })
 }
 
-/** @param {Record<string, unknown>} runState @param {{ onInterrupt?: (event: { runState: Record<string, unknown>, reason: string }) => void }} [options] */
+/**
+ * Graceful run-state interrupt event.
+ * @typedef {{
+ *   runState: Record<string, unknown>,
+ *   reason: string,
+ * }} RunStateInterruptEvent
+ *
+ * Graceful run-state tracking options.
+ * @typedef {{
+ *   onInterrupt?: (event: RunStateInterruptEvent) => void,
+ * }} TrackRunStateOptions
+ */
+
+/** @param {Record<string, unknown>} runState @param {TrackRunStateOptions} [options] */
 function trackRunState(runState, { onInterrupt } = {}) {
   installGracefulRunStateHandlers()
   activeRunState = runState

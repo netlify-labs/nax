@@ -9,7 +9,101 @@ const WORKFLOWS_DIR = path.join('.github', 'workflows')
 const WORKFLOW_TEMPLATE_PATH = path.join(__dirname, 'templates', 'netlify-agents.yml')
 const AGENT_RUNNER_MARKER = 'netlify-labs/agent-runner-action'
 
-/** @param {any} command @param {any} args @param {Record<string, any>} param2 */
+/**
+ * Options for running one synchronous init command.
+ * @typedef {{
+ *   cwd?: string,
+ *   input?: string | Buffer,
+ *   env?: NodeJS.ProcessEnv,
+ *   allowFailure?: boolean,
+ *   stdio?: import('child_process').SpawnSyncOptions['stdio'],
+ * }} InitRunOptions
+ *
+ * Synchronous command runner used by init helpers.
+ * @callback InitRunCommand
+ * @param {string} command
+ * @param {string[]} args
+ * @param {InitRunOptions} [options]
+ * @returns {import('./types').CommandResult}
+ *
+ * GitHub CLI command runner used by secret helpers.
+ * @callback InitGitHubRunCommand
+ * @param {string} command
+ * @param {string[]} args
+ * @param {import('child_process').SpawnSyncOptionsWithStringEncoding} [options]
+ * @returns {import('./types').CommandResult}
+ *
+ * Netlify project metadata resolved from local CLI state.
+ * @typedef {{
+ *   siteId?: string,
+ *   siteName?: string,
+ *   siteUrl?: string,
+ *   adminUrl?: string,
+ *   accountName?: string,
+ *   accountEmail?: string,
+ *   accountTeams?: unknown[],
+ *   status?: string,
+ * }} NetlifyProjectInfo
+ *
+ * GitHub secret setup result.
+ * @typedef {{
+ *   name: string,
+ *   status: string,
+ *   reason?: string,
+ * }} GitHubSecretResult
+ *
+ * Options for ensuring a Netlify project exists locally.
+ * @typedef {{
+ *   projectRoot?: string,
+ *   repo?: string,
+ *   siteId?: string,
+ *   siteName?: string,
+ *   create?: boolean,
+ *   dryRun?: boolean,
+ *   env?: NodeJS.ProcessEnv,
+ *   runCommand?: InitRunCommand,
+ *   readProject?: (projectRoot: string, env?: NodeJS.ProcessEnv) => NetlifyProjectInfo | null,
+ *   initNotice?: (projectRoot: string) => void,
+ * }} EnsureNetlifyProjectOptions
+ *
+ * Options for listing GitHub secret names.
+ * @typedef {{
+ *   projectRoot?: string,
+ *   repo?: string,
+ *   runCommand?: InitGitHubRunCommand,
+ * }} ListGitHubSecretNamesOptions
+ *
+ * Options for creating or checking a GitHub secret.
+ * @typedef {{
+ *   projectRoot?: string,
+ *   repo?: string,
+ *   name?: string,
+ *   value?: string,
+ *   dryRun?: boolean,
+ *   existingSecrets?: Set<string>,
+ *   runCommand?: InitGitHubRunCommand,
+ * }} SetGitHubSecretOptions
+ *
+ * Init command option bag.
+ * @typedef {{
+ *   projectRoot?: string,
+ *   repo?: string,
+ *   siteId?: string,
+ *   siteName?: string,
+ *   create?: boolean,
+ *   force?: boolean,
+ *   dryRun?: boolean,
+ *   skipSecrets?: boolean,
+ *   githubActions?: boolean,
+ *   env?: NodeJS.ProcessEnv,
+ * }} InitOptions
+ */
+
+/**
+ * @param {string} command
+ * @param {string[]} args
+ * @param {InitRunOptions} param2
+ */
 function run(command, args, { cwd, input, env = process.env, allowFailure = false, stdio } = {}) {
   const spawnOptions = {
     cwd,
@@ -28,7 +122,13 @@ function run(command, args, { cwd, input, env = process.env, allowFailure = fals
     const detail = (result.stderr || result.stdout || result.error?.message || '').toString().trim()
     throw new Error(`${command} ${args.join(' ')} failed${detail ? `: ${detail}` : ''}`)
   }
-  return result
+  return {
+    status: result.status,
+    stdout: (result.stdout || '').toString(),
+    stderr: (result.stderr || '').toString(),
+    error: result.error || null,
+    signal: result.signal || null,
+  }
 }
 
 function commandExists(command) {
@@ -86,7 +186,7 @@ function readNetlifyProject(projectRoot, env = process.env) {
   return siteId ? { ...project, siteId } : null
 }
 
-/** @param {Record<string, any>} param0 */
+/** @param {{ projectRoot?: string, repo?: string }} param0 */
 function resolveGitHubRepo({ projectRoot, repo }) {
   if (repo) return repo
   const result = runGh(['repo', 'view', '--json', 'nameWithOwner', '--jq', '.nameWithOwner'], {
@@ -104,7 +204,7 @@ function defaultSiteName(projectRoot, repo) {
     .replace(/^-+|-+$/g, '')
 }
 
-/** @param {Record<string, any>} param0 */
+/** @param {{ env?: NodeJS.ProcessEnv, home?: string }} param0 */
 function readNetlifyCliToken({ env = process.env, home = os.homedir() } = {}) {
   if (env.NETLIFY_AUTH_TOKEN) {
     return { token: env.NETLIFY_AUTH_TOKEN, source: 'NETLIFY_AUTH_TOKEN' }
@@ -164,7 +264,7 @@ function findExistingAgentRunnerWorkflow(projectRoot) {
   return null
 }
 
-/** @param {Record<string, any>} param0 */
+/** @param {{ projectRoot?: string, force?: boolean, dryRun?: boolean }} param0 */
 function ensureWorkflow({ projectRoot, force = false, dryRun = false } = {}) {
   const detected = findExistingAgentRunnerWorkflow(projectRoot)
   if (detected) {
@@ -185,7 +285,7 @@ function ensureWorkflow({ projectRoot, force = false, dryRun = false } = {}) {
   return { path: workflowPath, status: exists ? 'replaced' : 'created' }
 }
 
-/** @param {Record<string, any>} param0 */
+/** @param {{ projectRoot?: string, dryRun?: boolean }} param0 */
 function ensureNaxGitignore({ projectRoot, dryRun = false } = {}) {
   const gitignorePath = path.join(projectRoot, '.gitignore')
   const entryPattern = /^\.nax\/?$/m
@@ -218,7 +318,7 @@ function defaultInitNotice(projectRoot) {
   console.log(`No netlify project detected in ${projectRoot}\n`)
 }
 
-/** @param {Record<string, any>} param0 */
+/** @param {EnsureNetlifyProjectOptions} param0 */
 function ensureNetlifyProject({ projectRoot, repo, siteId, siteName, create = false, dryRun = false, env = process.env, runCommand = run, readProject = readNetlifyProject, initNotice = defaultInitNotice } = {}) {
   const linked = dryRun ? null : readProject(projectRoot, env)
   if (linked?.siteId) {
@@ -258,7 +358,7 @@ function ensureNetlifyProject({ projectRoot, repo, siteId, siteName, create = fa
   return { siteId: '', status: 'would-init' }
 }
 
-/** @param {Record<string, any>} param0 */
+/** @param {ListGitHubSecretNamesOptions} param0 */
 function listGitHubSecretNames({ projectRoot, repo, runCommand } = {}) {
   const result = runGh(['secret', 'list', '--repo', repo, '--json', 'name'], {
     cwd: projectRoot,
@@ -273,7 +373,7 @@ function listGitHubSecretNames({ projectRoot, repo, runCommand } = {}) {
   }
 }
 
-/** @param {Record<string, any>} param0 */
+/** @param {SetGitHubSecretOptions} param0 */
 function setGitHubSecret({ projectRoot, repo, name, value, dryRun = false, existingSecrets, runCommand }) {
   if (!value) throw new Error(`Cannot set ${name}: missing value.`)
   if (dryRun) return { name, status: 'would-set' }
@@ -304,7 +404,7 @@ function assertGitRepository(root) {
   if (result.status !== 0) throw new Error(`Not inside a git repository: ${root}`)
 }
 
-/** @param {Record<string, any>} param0 */
+/** @param {InitOptions} param0 */
 function initSite({
   projectRoot = process.cwd(),
   repo,
@@ -339,7 +439,16 @@ function initSite({
   }
 }
 
-/** @param {Record<string, any>} param0 */
+/**
+ * GitHub Actions setup options for nax init.
+ * @typedef {InitOptions & {
+ *   netlify?: NetlifyProjectInfo,
+ *   hasGitHubCli?: () => boolean,
+ *   checkGitHubAuth?: (input: { cwd?: string }) => void,
+ * }} EnableGitHubActionsSetupOptions
+ */
+
+/** @param {EnableGitHubActionsSetupOptions} param0 */
 function enableGitHubActionsSetup({
   projectRoot,
   repo,
@@ -426,7 +535,7 @@ function enableGitHubActionsSetup({
   }
 }
 
-/** @param {Record<string, any>} param0 */
+/** @param {InitOptions} param0 */
 function initProject({
   projectRoot = process.cwd(),
   repo,

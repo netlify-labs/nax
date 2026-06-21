@@ -3,7 +3,70 @@ const { spawnSync } = require('child_process')
 const { runGh } = require('./gh-cli')
 
 /**
- * @typedef {{ branch?: string, ref?: string, sha?: string | null, sourceType?: string, verified?: boolean, caveats?: string[] }} TargetSnapshot
+ * Repository target snapshot embedded in review prompts.
+ * @typedef {{
+ *   branch?: string,
+ *   ref?: string,
+ *   sha?: string | null,
+ *   sourceType?: string,
+ *   verified?: boolean,
+ *   caveats?: string[],
+ * }} TargetSnapshot
+ *
+ * Open pull request row included in the merge-state ledger.
+ * @typedef {{
+ *   number?: number,
+ *   title?: string,
+ *   url?: string,
+ *   headRefName?: string,
+ *   headRefOid?: string,
+ *   baseRefName?: string,
+ *   isDraft?: boolean,
+ *   mergeStateStatus?: string,
+ * }} PullRequestLedgerEntry
+ *
+ * Git command options used by review context helpers.
+ * @typedef {{
+ *   cwd?: string,
+ *   errorMessage?: string,
+ * }} GitRunOptions
+ *
+ * Git command runner used by review context helpers.
+ * @callback GitRunCommand
+ * @param {string} command
+ * @param {string[]} args
+ * @param {GitRunOptions} [options]
+ * @returns {import('./types').CommandResult}
+ *
+ * Repository snapshot formatting input.
+ * @typedef {{
+ *   repoRoot?: string,
+ *   branch?: string,
+ *   pinnedSha?: string,
+ *   pinnedSource?: string,
+ *   generatedAt?: string,
+ *   target?: TargetSnapshot | null,
+ * }} RepositorySnapshotInput
+ *
+ * Merge-state ledger formatting input.
+ * @typedef {{
+ *   repoRoot?: string,
+ *   pinnedSha?: string,
+ *   pullRequests?: PullRequestLedgerEntry[] | null,
+ *   error?: string,
+ * }} MergeStateLedgerInput
+ *
+ * Automatic review context build options.
+ * @typedef {{
+ *   repo?: string,
+ *   repoRoot?: string,
+ *   sha?: string,
+ *   pinnedSha?: string,
+ *   pinnedSource?: string,
+ *   target?: TargetSnapshot | null,
+ *   generatedAt?: string,
+ *   prLimit?: number,
+ * }} AutomaticContextOptions
  */
 
 function runCommand(command, args, options = {}) {
@@ -43,7 +106,7 @@ function resolveRepoRoot(explicitRepoRoot) {
   )
 }
 
-/** @param {Record<string, any>} param0 */
+/** @param {{ repoRoot?: string, sha?: string }} param0 */
 function resolvePinnedSha({ repoRoot, sha }) {
   const rev = sha || 'HEAD'
   return requireCommand(
@@ -92,7 +155,7 @@ function formatWorkingTreeSummary(lines) {
   return `dirty\n${preview.join('\n')}`
 }
 
-/** @param {Record<string, any>} param0 */
+/** @param {{ pinnedSha?: string }} param0 */
 function formatReviewContract({ pinnedSha }) {
   return [
     '## Review Contract',
@@ -131,7 +194,7 @@ function formatUnverifiedTargetContract({ target = {} }) {
   return lines.join('\n')
 }
 
-/** @param {Record<string, any>} param0 */
+/** @param {RepositorySnapshotInput} param0 */
 function formatRepositorySnapshot({ repoRoot, branch, pinnedSha, pinnedSource, generatedAt, target }) {
   const lines = [
     '## Repository Snapshot',
@@ -164,7 +227,7 @@ function containsCommit(repoRoot, ancestorSha, descendantSha) {
   return 'unknown'
 }
 
-/** @param {Record<string, any>} param0 */
+/** @param {{ repo?: string, limit?: number }} param0 */
 function loadOpenPullRequests({ repo, limit = 10 }) {
   const result = runGh([
     'pr',
@@ -199,7 +262,7 @@ function loadOpenPullRequests({ repo, limit = 10 }) {
   }
 }
 
-/** @param {Record<string, any>} param0 */
+/** @param {MergeStateLedgerInput} param0 */
 function formatMergeStateLedger({ repoRoot, pinnedSha, pullRequests, error }) {
   if (error) {
     return [
@@ -241,7 +304,7 @@ function formatMergeStateLedger({ repoRoot, pinnedSha, pullRequests, error }) {
   return lines.join('\n')
 }
 
-/** @param {Record<string, any>} param0 */
+/** @param {AutomaticContextOptions} param0 */
 function buildAutomaticContext({
   repo,
   repoRoot: explicitRepoRoot,
@@ -318,7 +381,7 @@ function validateGitRemoteName(value) {
   return remote
 }
 
-/** @param {Record<string, any>} param0 */
+/** @param {{ repoRoot?: string, branch?: string, run?: GitRunCommand }} param0 */
 function resolveRemoteBranchSha({ repoRoot: explicitRepoRoot, branch, run = runCommand } = {}) {
   const repoRoot = resolveRepoRoot(explicitRepoRoot)
   const hasExplicitBranch = Boolean(branch)

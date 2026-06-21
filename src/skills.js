@@ -20,6 +20,21 @@ const PROVIDER_DIRS = [
 const DEFAULT_SKILLS = ['nax-workflows']
 const SUBSTITUTABLE_EXTENSIONS = new Set(['.md'])
 
+/**
+ * Options shared by skill install/check commands.
+ * @typedef {{
+ *   projectRoot?: string,
+ *   providers?: string | string[],
+ *   allProviders?: boolean,
+ *   skill?: string | string[],
+ *   allSkills?: boolean,
+ *   dryRun?: boolean,
+ *   force?: boolean,
+ *   skillsDir?: string,
+ *   version?: string,
+ * }} SkillCommandOptions
+ */
+
 function packageVersion() {
   try {
     return JSON.parse(fs.readFileSync(PACKAGE_JSON_PATH, 'utf8')).version || 'unknown'
@@ -53,7 +68,7 @@ function parseList(value) {
     .filter(Boolean)
 }
 
-/** @param {Record<string, any>} param0 */
+/** @param {{ skillsDir?: string }} param0 */
 function listBundledSkills({ skillsDir = BUNDLED_SKILLS_DIR } = {}) {
   if (!fs.existsSync(skillsDir)) return []
   return fs
@@ -64,7 +79,7 @@ function listBundledSkills({ skillsDir = BUNDLED_SKILLS_DIR } = {}) {
     .sort((a, b) => a.localeCompare(b))
 }
 
-/** @param {Record<string, any>} param0 */
+/** @param {{ skill?: string | string[], allSkills?: boolean, skillsDir?: string }} param0 */
 function resolveSkillNames({ skill, allSkills = false, skillsDir = BUNDLED_SKILLS_DIR } = {}) {
   const bundled = listBundledSkills({ skillsDir })
   if (allSkills) return bundled
@@ -82,7 +97,7 @@ function findExistingProviders(projectRoot) {
   return PROVIDER_DIRS.filter((provider) => fs.existsSync(path.join(projectRoot, provider)))
 }
 
-/** @param {Record<string, any>} param0 */
+/** @param {{ projectRoot?: string, providers?: string | string[], allProviders?: boolean }} param0 */
 function resolveProviders({ projectRoot, providers, allProviders = false } = {}) {
   if (allProviders) return PROVIDER_DIRS
   const requested = parseList(providers).map(normalizeProvider).filter(Boolean)
@@ -123,7 +138,18 @@ function readInstalledVersion(skillRoot) {
   return content.match(/^version:\s*(.+)$/m)?.[1]?.trim().replace(/^["']|["']$/g, '') || null
 }
 
-/** @param {Record<string, any>} param0 */
+/**
+ * Skill directory copy options.
+ * @typedef {{
+ *   src?: string,
+ *   dest?: string,
+ *   substitutions?: import('./types').StringMap,
+ *   version?: string,
+ *   dryRun?: boolean,
+ * }} CopySkillDirOptions
+ */
+
+/** @param {CopySkillDirOptions} param0 */
 function copySkillDir({ src, dest, substitutions = {}, version, dryRun = false }) {
   if (dryRun) return
   fs.mkdirSync(dest, { recursive: true })
@@ -145,7 +171,7 @@ function copySkillDir({ src, dest, substitutions = {}, version, dryRun = false }
   }
 }
 
-/** @param {Record<string, any>} param0 */
+/** @param {SkillCommandOptions} param0 */
 function installSkills({
   projectRoot = findProjectRoot(),
   providers,
@@ -195,7 +221,7 @@ function updateSkills(options = {}) {
   return installSkills(options)
 }
 
-/** @param {Record<string, any>} param0 */
+/** @param {SkillCommandOptions} param0 */
 function checkSkills({
   projectRoot = findProjectRoot(),
   providers,

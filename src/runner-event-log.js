@@ -1,21 +1,52 @@
 const fs = require('fs')
 const path = require('path')
 
+/**
+ * Parse or validation error for one JSONL event log line.
+ * @typedef {{
+ *   line: number,
+ *   code: string,
+ *   message: string,
+ *   text: string,
+ * }} EventLogParseError
+ *
+ * Result from parsing one event log line.
+ * @typedef {{
+ *   event: import('./types').JsonMap | null,
+ *   error: EventLogParseError | null,
+ * }} EventLogLineResult
+ *
+ * Options for replaying a runner event log.
+ * @typedef {{
+ *   since?: number,
+ * }} EventLogReadOptions
+ *
+ * Events and line-level errors read from a runner event log.
+ * @typedef {{
+ *   events: import('./types').JsonMap[],
+ *   errors: EventLogParseError[],
+ * }} EventLogReadResult
+ */
+
+/** @param {string} runDir @returns {string} */
 function eventLogPathForRunDir(runDir) {
   return path.join(runDir, 'events.jsonl')
 }
 
+/** @param {import('./types').WorkflowRunState} [runState] @returns {string} */
 function eventLogPathForRunState(runState = {}) {
   if (!runState.dir) throw new Error('Cannot resolve event log path without runState.dir.')
   return eventLogPathForRunDir(runState.dir)
 }
 
+/** @param {string} filePath @param {import('./types').JsonMap} event @returns {void} */
 function appendEventLog(filePath, event) {
   if (!filePath) return
   fs.mkdirSync(path.dirname(filePath), { recursive: true })
   fs.appendFileSync(filePath, `${JSON.stringify(event)}\n`)
 }
 
+/** @param {string} line @param {number} lineNumber @returns {EventLogLineResult} */
 function parseEventLine(line, lineNumber) {
   try {
     const event = JSON.parse(line)
@@ -44,6 +75,7 @@ function parseEventLine(line, lineNumber) {
   }
 }
 
+/** @param {string} filePath @param {EventLogReadOptions} [options] @returns {EventLogReadResult} */
 function readEventLog(filePath, { since = 0 } = {}) {
   if (!filePath || !fs.existsSync(filePath)) return { events: [], errors: [] }
   const text = fs.readFileSync(filePath, 'utf8')
@@ -65,6 +97,12 @@ function readEventLog(filePath, { since = 0 } = {}) {
   return { events, errors }
 }
 
+/**
+ * @param {string} filePath
+ * @param {import('./types').JsonMap} event
+ * @param {EventLogReadOptions} [options]
+ * @returns {EventLogReadResult}
+ */
 function appendAndReplay(filePath, event, options = {}) {
   appendEventLog(filePath, event)
   return readEventLog(filePath, options)

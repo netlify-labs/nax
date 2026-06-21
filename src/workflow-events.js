@@ -2,6 +2,106 @@ const { eventLogPathForRunState } = require('./runner-event-log')
 const { createRunnerEventEmitter } = require('./runner-events')
 const { createNotificationDispatcher } = require('./notifications')
 
+/**
+ * Sink called with each workflow event after emission.
+ * @callback WorkflowEventSink
+ * @param {import('./types').JsonMap} event
+ * @returns {void}
+ */
+
+/**
+ * Workflow command options safe to include in emitted events.
+ * @typedef {import('./types').JsonMap & {
+ *   branch?: string,
+ *   branchSource?: string,
+ *   target?: import('./types').TargetLike | null,
+ *   transport?: string,
+ *   models?: unknown,
+ *   stepModels?: unknown,
+ *   context?: unknown,
+ *   fromStep?: string,
+ *   step?: string,
+ * }} WorkflowSafeOptionInput
+ *
+ * Sanitized workflow command options included in event payloads.
+ * @typedef {{
+ *   branch: string,
+ *   branchSource: string,
+ *   target: import('./types').TargetLike | null,
+ *   transport: string,
+ *   models: unknown,
+ *   stepModels: unknown,
+ *   context?: unknown,
+ *   fromStep: string,
+ *   step: string,
+ * }} WorkflowSafeOptions
+ *
+ * Dependencies and sinks for a workflow event context.
+ * @typedef {{
+ *   sink?: WorkflowEventSink,
+ *   notifications?: import('./notifications').NotificationDispatcher,
+ *   notify?: import('./notifications').NotificationDispatcherOptions,
+ *   emitter?: import('./runner-events').RunnerEventEmitter,
+ *   env?: NodeJS.ProcessEnv,
+ *   stream?: import('stream').Writable,
+ *   fd?: number | string,
+ *   now?: import('./runner-events').RunnerEventClock,
+ *   onError?: import('./runner-events').RunnerEventErrorHandler,
+ * }} WorkflowEventContextOptions
+ *
+ * Workflow event context returned to workflow runners.
+ * @typedef {{
+ *   readonly enabled: boolean,
+ *   emit: (type: string, payload?: import('./types').JsonMap) => import('./types').JsonMap,
+ *   setRunState: (nextRunState?: import('./types').WorkflowRunState) => void,
+ *   workflowStarted: (input?: WorkflowStartedInput) => import('./types').JsonMap,
+ *   workflowStatus: (status: string, payload?: import('./types').JsonMap) => import('./types').JsonMap,
+ *   stepStatus: WorkflowStepStatusEmitter,
+ *   agentStatus: WorkflowAgentStatusEmitter,
+ *   artifactWritten: WorkflowArtifactEmitter,
+ *   close: () => Promise<void>,
+ * }} WorkflowEventContext
+ */
+
+/**
+ * Agent run shape accepted by workflow event emitters.
+ * @typedef {import('./types').AgentRun & {
+ *   attempt?: number,
+ *   attempts?: number,
+ * }} WorkflowEventAgentRun
+ *
+ * Workflow start command payload.
+ * @typedef {{
+ *   command?: string[],
+ *   options?: WorkflowSafeOptionInput,
+ * }} WorkflowStartedInput
+ *
+ * Emits a workflow step status event.
+ * @callback WorkflowStepStatusEmitter
+ * @param {string} status
+ * @param {import('./types').WorkflowStep} [stepState]
+ * @param {import('./types').WorkflowStep} [step]
+ * @param {import('./types').JsonMap} [payload]
+ * @returns {import('./types').JsonMap}
+ *
+ * Emits a workflow agent status event.
+ * @callback WorkflowAgentStatusEmitter
+ * @param {string} status
+ * @param {WorkflowEventAgentRun} [run]
+ * @param {import('./types').WorkflowStep} [stepState]
+ * @param {import('./types').WorkflowStep} [step]
+ * @param {import('./types').JsonMap} [payload]
+ * @returns {import('./types').JsonMap}
+ *
+ * Emits an artifact-written workflow event.
+ * @callback WorkflowArtifactEmitter
+ * @param {string} kind
+ * @param {string} filePath
+ * @param {import('./types').JsonMap} [payload]
+ * @returns {import('./types').JsonMap}
+ */
+
+/** @param {WorkflowSafeOptionInput} [options] @returns {WorkflowSafeOptions} */
 function safeOptions(options = {}) {
   return {
     branch: options.branch || '',
@@ -15,6 +115,7 @@ function safeOptions(options = {}) {
   }
 }
 
+/** @param {WorkflowEventContextOptions} [options] @returns {WorkflowEventContext} */
 function createWorkflowEventContext(options = {}) {
   const sink = typeof options.sink === 'function' ? options.sink : null
   const notifications = options.notifications || createNotificationDispatcher({
@@ -28,8 +129,10 @@ function createWorkflowEventContext(options = {}) {
     now: options.now,
     onError: options.onError,
   })
+  /** @type {import('./types').WorkflowRunState | null} */
   let runState = null
 
+  /** @param {string} type @param {import('./types').JsonMap} [payload] */
   function emit(type, payload = {}) {
     const event = emitter.emit(type, payload)
     if (sink) sink(event)
@@ -37,6 +140,7 @@ function createWorkflowEventContext(options = {}) {
     return event
   }
 
+  /** @param {import('./types').WorkflowRunState} [nextRunState] */
   function setRunState(nextRunState = {}) {
     runState = nextRunState
     emitter.setContext({
@@ -46,6 +150,7 @@ function createWorkflowEventContext(options = {}) {
     })
   }
 
+  /** @returns {import('./types').JsonMap} */
   function baseRunPayload() {
     return {
       runId: runState?.runId || '',
@@ -58,6 +163,7 @@ function createWorkflowEventContext(options = {}) {
     }
   }
 
+  /** @param {WorkflowStartedInput} [input] */
   function workflowStarted({ command = [], options: runOptions = {} } = {}) {
     return emit('workflow_started', {
       ...baseRunPayload(),
@@ -67,6 +173,7 @@ function createWorkflowEventContext(options = {}) {
     })
   }
 
+  /** @param {string} status @param {import('./types').JsonMap} [payload] */
   function workflowStatus(status, payload = {}) {
     return emit(`workflow_${status}`, {
       ...baseRunPayload(),
@@ -75,6 +182,7 @@ function createWorkflowEventContext(options = {}) {
     })
   }
 
+  /** @type {WorkflowStepStatusEmitter} */
   function stepStatus(status, stepState = {}, step = {}, payload = {}) {
     return emit('step_status', {
       ...baseRunPayload(),
@@ -86,6 +194,7 @@ function createWorkflowEventContext(options = {}) {
     })
   }
 
+  /** @type {WorkflowAgentStatusEmitter} */
   function agentStatus(status, run = {}, stepState = {}, step = {}, payload = {}) {
     return emit('agent_status', {
       ...baseRunPayload(),
@@ -103,6 +212,7 @@ function createWorkflowEventContext(options = {}) {
     })
   }
 
+  /** @type {WorkflowArtifactEmitter} */
   function artifactWritten(kind, filePath, payload = {}) {
     return emit('artifact_written', {
       ...baseRunPayload(),

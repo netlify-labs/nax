@@ -2,6 +2,43 @@ const { listAgentRunnerArtifacts, persistAgentRunnerArtifact } = require('./agen
 const { persistAgentSessionArtifact } = require('./agent-session-artifacts')
 const { listAgentSessions } = require('./local-runner')
 
+/**
+ * Remote Agent Runner session payload fields used for local artifact sync.
+ * @typedef {Record<string, unknown> & {
+ *   id?: string,
+ *   sessionId?: string,
+ *   session_id?: string,
+ *   state?: string,
+ *   status?: string,
+ *   result?: string,
+ *   error_message?: string,
+ *   error?: string,
+ *   agent_config?: { agent?: string },
+ *   created_at?: string,
+ *   createdAt?: string,
+ *   updated_at?: string,
+ *   updatedAt?: string,
+ *   completed_at?: string,
+ *   completedAt?: string,
+ * }} RemoteAgentSession
+ *
+ * Persist one remote Agent Runner session locally.
+ * @typedef {{
+ *   projectRoot: string,
+ *   runner: import('./types').AgentRunner,
+ *   session: RemoteAgentSession,
+ *   source?: import('./types').JsonMap,
+ * }} PersistRemoteSessionInput
+ *
+ * Synchronize remote sessions for one local Agent Runner artifact.
+ * @typedef {{
+ *   projectRoot?: string,
+ *   runner?: import('./types').AgentRunner,
+ *   env?: NodeJS.ProcessEnv,
+ *   runCommand?: import('./types').RunCommand,
+ * }} SyncAgentRunnerInput
+ */
+
 function sessionsFromListPayload(payload) {
   if (Array.isArray(payload)) return payload
   if (Array.isArray(payload?.sessions)) return payload.sessions
@@ -29,7 +66,7 @@ function sessionUrl(agentRunUrl, id) {
   return agentRunUrl.includes('?') ? `${agentRunUrl}&session=${id}` : `${agentRunUrl}?session=${id}`
 }
 
-/** @param {Record<string, any>} param0 */
+/** @param {PersistRemoteSessionInput} param0 */
 function persistRemoteSession({ projectRoot, runner, session, source }) {
   const id = sessionId(session)
   if (!id) return null
@@ -56,7 +93,7 @@ function persistRemoteSession({ projectRoot, runner, session, source }) {
   })
 }
 
-/** @param {Record<string, any>} param0 */
+/** @param {SyncAgentRunnerInput} param0 */
 function syncAgentRunner({ projectRoot, runner, env, runCommand } = {}) {
   if (!projectRoot) throw new Error('Project root is required to sync Agent Runner artifacts.')
   if (!runner?.runnerId) throw new Error('Agent Runner ID is required to sync remote sessions.')
@@ -100,7 +137,7 @@ function syncAgentRunner({ projectRoot, runner, env, runCommand } = {}) {
   }
 }
 
-/** @param {Record<string, any>} param0 */
+/** @param {{ projectRoot?: string, env?: NodeJS.ProcessEnv, runCommand?: import('./types').RunCommand }} param0 */
 function syncLastAgentRunner({ projectRoot, env, runCommand } = {}) {
   const [runner] = listAgentRunnerArtifacts(projectRoot)
   if (!runner) {

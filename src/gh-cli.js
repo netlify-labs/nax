@@ -4,6 +4,29 @@ const DEFAULT_GH_RETRY_ATTEMPTS = 5
 const DEFAULT_GH_RETRY_DELAY_MS = 5000
 let ghAuthValidated = false
 
+/**
+ * Synchronous process runner compatible with child_process.spawnSync.
+ * @callback SpawnSyncStringCommand
+ * @param {string} command
+ * @param {string[]} args
+ * @param {import('child_process').SpawnSyncOptionsWithStringEncoding} [options]
+ * @returns {import('./types').CommandResult}
+ *
+ * GitHub CLI command options.
+ * @typedef {{
+ *   cwd?: string,
+ *   input?: string | Buffer,
+ *   env?: NodeJS.ProcessEnv,
+ *   allowFailure?: boolean,
+ *   timeout?: number,
+ *   attempts?: number,
+ *   delayMs?: number,
+ *   sleep?: (ms: number) => void,
+ *   runCommand?: SpawnSyncStringCommand,
+ *   errorPrefix?: string,
+ * }} GhRunOptions
+ */
+
 function sleepSync(ms) {
   if (!ms) return
   Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms)
@@ -44,7 +67,7 @@ function formatGhError(args, result, prefix) {
   return `${base}${detail ? `: ${detail}` : ''}`
 }
 
-/** @param {any} args @param {Record<string, any>} param1 */
+/** @param {string[]} args @param {GhRunOptions} param1 */
 function runGh(args, {
   cwd,
   input,
@@ -82,7 +105,7 @@ function runGh(args, {
   throw new Error(formatGhError(args, lastResult, errorPrefix))
 }
 
-/** @param {Record<string, any>} param0 */
+/** @param {{ cwd?: string, env?: NodeJS.ProcessEnv, runCommand?: SpawnSyncStringCommand, force?: boolean }} param0 */
 function assertGhAuthenticated({ cwd, env = process.env, runCommand = spawnSync, force = false } = {}) {
   if (ghAuthValidated && !force) return
   runGh(['auth', 'status'], {

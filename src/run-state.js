@@ -363,7 +363,7 @@ function isUnfinishedLocalRun(state) {
   return isUnfinishedRun(state)
 }
 
-/** @param {any} projectRoot @param {Record<string, any>} param1 */
+/** @param {string} projectRoot @param {{ flowId?: string, transport?: string }} param1 */
 function findLatestUnfinishedRun(projectRoot, { flowId, transport } = {}) {
   return listRunStates(projectRoot).find((state) => {
     if (flowId && state.flowId !== flowId) return false
@@ -372,12 +372,24 @@ function findLatestUnfinishedRun(projectRoot, { flowId, transport } = {}) {
   }) || null
 }
 
-/** @param {any} projectRoot @param {Record<string, any>} param1 */
+/** @param {string} projectRoot @param {{ flowId?: string }} param1 */
 function findLatestUnfinishedLocalRun(projectRoot, { flowId } = {}) {
   return findLatestUnfinishedRun(projectRoot, { flowId, transport: 'netlify-api' })
 }
 
-/** @param {Record<string, any>} param0 */
+/**
+ * Create a durable workflow run state.
+ * @typedef {{
+ *   projectRoot: string,
+ *   flow: import('./types').WorkflowFlow,
+ *   transport?: string,
+ *   options?: import('./types').JsonMap,
+ *   target?: import('./types').TargetLike | null,
+ *   now?: Date,
+ * }} CreateRunStateInput
+ */
+
+/** @param {CreateRunStateInput} param0 */
 function createRunState({ projectRoot, flow, transport, options = {}, target = null, now = new Date() }) {
   const runId = createRunId(flow.id, now)
   cleanupLegacyRunsDir(projectRoot)
@@ -434,7 +446,7 @@ function saveRunState(state) {
   return next
 }
 
-/** @param {any} state @param {Record<string, any>} param1 */
+/** @param {import('./types').WorkflowRunState} state @param {{ reason?: string, now?: Date }} param1 */
 function dismissRunState(state, { reason = 'user-declined-resume', now = new Date() } = {}) {
   return saveRunState({
     ...state,

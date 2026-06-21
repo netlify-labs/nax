@@ -56,7 +56,37 @@ function baseRun({ agent, promptText, raw = {}, existingRunnerId = '' }) {
   }
 }
 
-/** @param {Record<string, any>} [input] */
+/**
+ * Persisted agent session artifact returned by artifact writers.
+ * @typedef {{
+ *   session?: import('./types').JsonMap,
+ *   filePath?: string,
+ * }} HandoffSessionArtifact
+ *
+ * Persisted agent runner artifact returned by artifact writers.
+ * @typedef {{
+ *   runner?: import('./types').JsonMap,
+ *   filePath?: string,
+ * }} HandoffRunnerArtifact
+ *
+ * Agent session artifact writer used by handoff persistence.
+ * @typedef {(input: import('./types').JsonMap) => HandoffSessionArtifact | null} HandoffPersistSession
+ *
+ * Agent runner artifact writer used by handoff persistence.
+ * @typedef {(input: import('./types').JsonMap) => HandoffRunnerArtifact | null} HandoffPersistRunner
+ *
+ * Submitted artifact persistence options for one handoff run.
+ * @typedef {{
+ *   projectRoot?: string,
+ *   run?: import('./types').AgentRun,
+ *   source?: import('./types').JsonMap,
+ *   now?: () => string,
+ *   persistSession?: HandoffPersistSession,
+ *   persistRunner?: HandoffPersistRunner,
+ * }} HandoffPersistSubmittedArtifactsInput
+ */
+
+/** @param {HandoffPersistSubmittedArtifactsInput} [input] */
 function persistSubmittedArtifacts({
   projectRoot,
   run,
@@ -98,7 +128,50 @@ function persistSubmittedArtifacts({
 }
 
 /**
- * @param {Record<string, any>} input
+ * Logger accepted by handoff submission helpers.
+ * @typedef {{
+ *   info?: (message: string) => void,
+ *   warn?: (message: string) => void,
+ * }} HandoffLogger
+ *
+ * Input passed to local Agent Runner submit callback.
+ * @typedef {{
+ *   run: import('./types').AgentRun,
+ *   projectRoot?: string,
+ *   branch?: string,
+ *   siteId?: string,
+ *   netlifyFilter?: string,
+ *   env?: NodeJS.ProcessEnv,
+ * }} HandoffSubmitRunInput
+ *
+ * Local Agent Runner submit callback used by handoff workflows.
+ * @typedef {(input: HandoffSubmitRunInput) => Promise<import('./types').AgentRun>} HandoffSubmitRun
+ *
+ * Submitted run linker callback used after Netlify submission.
+ * @typedef {(run: import('./types').AgentRun) => import('./types').AgentRun} HandoffLinkRun
+ *
+ * Shared options for submitting one Netlify handoff run.
+ * @typedef {{
+ *   projectRoot?: string,
+ *   agent?: string,
+ *   promptText?: string,
+ *   source?: import('./types').JsonMap,
+ *   raw?: import('./types').JsonMap,
+ *   existingRunnerId?: string,
+ *   branch?: string,
+ *   siteId?: string,
+ *   netlifyFilter?: string,
+ *   env?: NodeJS.ProcessEnv,
+ *   submitRun?: HandoffSubmitRun,
+ *   linkRun?: HandoffLinkRun,
+ *   logger?: HandoffLogger,
+ *   persist?: boolean,
+ *   now?: () => string,
+ *   persistSession?: HandoffPersistSession,
+ *   persistRunner?: HandoffPersistRunner,
+ * }} HandoffSubmitOptions
+ *
+ * @param {HandoffSubmitOptions} input
  */
 async function submitAgentRun({
   projectRoot,
@@ -172,7 +245,26 @@ function submitFollowupSession(options = {}) {
   })
 }
 
-/** @param {Record<string, any>} [input] */
+/**
+ * One visualizer handoff plan submission.
+ * @typedef {{
+ *   mode?: string,
+ *   agent?: string,
+ *   runnerId?: string,
+ *   sourceTargetId?: string,
+ *   sourceArtifactIds?: string[],
+ * }} HandoffSubmission
+ *
+ * Follow-up plan submission request.
+ * @typedef {{
+ *   submissions?: HandoffSubmission[],
+ *   promptText?: string,
+ *   projectRoot?: string,
+ *   shared?: HandoffSubmitOptions,
+ * }} HandoffFollowupPlanInput
+ */
+
+/** @param {HandoffFollowupPlanInput} [input] */
 async function submitFollowupPlan({
   submissions = [],
   promptText = '',

@@ -75,7 +75,20 @@ function normalizeRequestedArtifacts(artifacts = []) {
 }
 
 /**
- * @param {{ projectRoot?: string, details?: Record<string, any>, artifacts?: Array<{ id?: string, kind?: string }> }} [options]
+ * Requested follow-up artifact descriptor.
+ * @typedef {{
+ *   id?: string,
+ *   kind?: string,
+ * }} FollowupArtifactRequest
+ *
+ * Follow-up context artifact options.
+ * @typedef {{
+ *   projectRoot?: string,
+ *   details?: import('./types').JsonMap,
+ *   artifacts?: FollowupArtifactRequest[],
+ * }} FollowupContextArtifactOptions
+ *
+ * @param {FollowupContextArtifactOptions} [options]
  */
 function resolveFollowupArtifacts({ projectRoot, details, artifacts = [] } = {}) {
   const requested = normalizeRequestedArtifacts(artifacts)
@@ -111,7 +124,7 @@ function formatArtifactSection(projectRoot, artifact = {}) {
 }
 
 /**
- * @param {{ projectRoot?: string, details?: Record<string, any>, artifacts?: Array<{ id?: string, kind?: string }> }} [options]
+ * @param {FollowupContextArtifactOptions} [options]
  */
 function buildFollowupContextPackage({ projectRoot, details, artifacts = [] } = {}) {
   const resolved = resolveFollowupArtifacts({ projectRoot, details, artifacts })

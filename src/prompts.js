@@ -7,6 +7,44 @@ const { runGh } = require('./gh-cli')
 const PROMPTS_DIR = path.join(__dirname, 'flows', 'review', 'prompts')
 const PROMPT_ORDER = ['review', 'cross-review', 'summarize-consensus']
 
+/**
+ * Prompt file loaded from markdown frontmatter and body.
+ * @typedef {{
+ *   name: string,
+ *   path?: string,
+ *   title: string,
+ *   description?: string,
+ *   instruction: string,
+ *   body: string,
+ * }} PromptDefinition
+ *
+ * Prompt fields needed to build an issue title.
+ * @typedef {{
+ *   name: string,
+ *   title: string,
+ * }} PromptTitleDefinition
+ *
+ * Issue title build options.
+ * @typedef {{
+ *   date?: string,
+ *   model?: string,
+ *   prompt: PromptTitleDefinition,
+ *   title?: string,
+ *   sourceModels?: string[],
+ * }} BuildIssueTitleInput
+ *
+ * Issue body build options.
+ * @typedef {{
+ *   runner?: string,
+ *   model?: string,
+ *   prompt: PromptDefinition,
+ *   context?: string,
+ *   roundResults?: string,
+ *   date?: string,
+ *   resolves?: Array<string | number>,
+ * }} BuildIssueBodyInput
+ */
+
 function stripPromptOrderPrefix(name) {
   return String(name).replace(/^\d+_/, '')
 }
@@ -110,7 +148,7 @@ function listPromptNames(promptsDir = PROMPTS_DIR) {
     .sort()
 }
 
-/** @param {Record<string, any>} param0 */
+/** @param {BuildIssueTitleInput} param0 */
 function buildIssueTitle({ date, model, prompt, title, sourceModels = [] }) {
   if (title && title.trim()) {
     return `${date} ${titleCase(model)} ${title.trim()}`
@@ -122,7 +160,7 @@ function buildIssueTitle({ date, model, prompt, title, sourceModels = [] }) {
   return `${date} ${titleCase(model)} ${prompt.title}`
 }
 
-/** @param {Record<string, any>} param0 */
+/** @param {BuildIssueBodyInput} param0 */
 function buildIssueBody({ runner, model, prompt, context, roundResults, date, resolves = [] }) {
   const summaryLabel = `${titleCase(prompt.name)} instructions`
   const parts = [

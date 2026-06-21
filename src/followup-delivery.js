@@ -27,8 +27,8 @@ function promptIntro() {
  *   contextPackage?: { markdown?: string, artifactCount?: number },
  *   runId?: string,
  *   stepId?: string,
- *   options?: Record<string, any>,
- *   writeBlob?: (input: { ref: Record<string, any>, payload: string }) => Promise<any> | any,
+ *   options?: import('./types').JsonMap,
+ *   writeBlob?: (input: { ref: import('./types').BlobRef, payload: string }) => Promise<unknown> | unknown,
  * }} [input]
  */
 async function prepareFollowupContextDelivery({

@@ -10,6 +10,36 @@ const { listAgentSessionArtifacts, persistAgentSessionArtifact } = require('./ag
 const NAX_ARTIFACT_PREFIX = 'nax-'
 const NAX_ARTIFACT_DIRS = ['workflows', 'agent-runners', 'agent-sessions']
 
+/**
+ * GitHub Actions artifact descriptor returned by the REST API.
+ * @typedef {Record<string, unknown> & {
+ *   name?: string,
+ *   expired?: boolean,
+ *   created_at?: string,
+ *   createdAt?: string,
+ *   size_in_bytes?: number,
+ *   sizeInBytes?: number,
+ * }} GithubArtifact
+ *
+ * Command callback accepted by GitHub CLI helpers.
+ * @callback GithubRunCommand
+ * @param {string} command
+ * @param {string[]} args
+ * @param {import('child_process').SpawnSyncOptionsWithStringEncoding} [options]
+ * @returns {import('./types').CommandResult}
+ *
+ * Options used while syncing a GitHub Actions run artifact.
+ * @typedef {{
+ *   projectRoot?: string,
+ *   repo?: string,
+ *   runId?: string,
+ *   artifactName?: string,
+ *   cwd?: string,
+ *   env?: NodeJS.ProcessEnv,
+ *   runCommand?: GithubRunCommand,
+ * }} GithubActionsSyncOptions
+ */
+
 function parseGithubActionsRunTarget(target) {
   const value = String(target || '').trim()
   if (!value) return null
@@ -25,7 +55,7 @@ function parseArtifactsPayload(payload) {
   return []
 }
 
-/** @param {Record<string, any>} param0 */
+/** @param {GithubActionsSyncOptions} param0 */
 function listGithubRunArtifacts({ repo, runId, cwd, env, runCommand } = {}) {
   if (!repo) throw new Error('GitHub repo is required to sync a GitHub Actions run.')
   if (!runId) throw new Error('GitHub Actions run ID is required.')
@@ -50,7 +80,7 @@ function artifactCreatedAt(artifact = {}) {
   return artifact.created_at || artifact.createdAt || ''
 }
 
-/** @param {Array<Record<string, any>>} artifacts @param {Record<string, any>} param1 */
+/** @param {GithubArtifact[]} artifacts @param {{ artifactName?: string, runId?: string }} param1 */
 function selectNaxArtifact(artifacts = [], { artifactName, runId } = {}) {
   const available = artifacts.filter((artifact) => !artifact.expired)
   if (artifactName) {
@@ -73,7 +103,7 @@ function selectNaxArtifact(artifacts = [], { artifactName, runId } = {}) {
   throw new Error('No unexpired NAX artifact found for this GitHub Actions run.')
 }
 
-/** @param {Record<string, any>} param0 */
+/** @param {GithubActionsSyncOptions & { dir?: string }} param0 */
 function downloadGithubRunArtifact({ repo, runId, artifactName, dir, cwd, env, runCommand } = {}) {
   runGh([
     'run',
@@ -197,7 +227,7 @@ function refreshMaterializedArtifacts(projectRoot) {
   }
 }
 
-/** @param {Record<string, any>} param0 */
+/** @param {{ projectRoot?: string, artifactDir?: string }} param0 */
 function materializeNaxArtifactTree({ projectRoot, artifactDir } = {}) {
   if (!projectRoot) throw new Error('Project root is required to materialize a NAX artifact.')
   if (!artifactDir) throw new Error('Artifact directory is required.')
@@ -211,7 +241,7 @@ function materializeNaxArtifactTree({ projectRoot, artifactDir } = {}) {
   }
 }
 
-/** @param {Record<string, any>} param0 */
+/** @param {GithubActionsSyncOptions} param0 */
 function syncGithubActionsRun({ projectRoot, repo, runId, artifactName, cwd, env, runCommand } = {}) {
   if (!projectRoot) throw new Error('Project root is required to sync a GitHub Actions run.')
   const artifacts = listGithubRunArtifacts({ repo, runId, cwd, env, runCommand })

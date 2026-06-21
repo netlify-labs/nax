@@ -7,26 +7,55 @@ const {
 } = require('./agent-run-results')
 const { agentSessionDir } = require('./agent-session-artifacts')
 
+/**
+ * Persisted Agent Runner artifact result.
+ * @typedef {{
+ *   dir: string,
+ *   runner: import('./types').AgentRunner,
+ *   sessions: import('./types').AgentSession[],
+ * }} AgentRunnerArtifactResult
+ *
+ * Agent Runner artifact write options.
+ * @typedef {{
+ *   projectRoot?: string,
+ *   dryRun?: boolean,
+ * }} AgentRunnerArtifactOptions
+ *
+ * Agent Runner artifact input.
+ * @typedef {import('./types').AgentRunner & {
+ *   projectRoot?: string,
+ *   run?: import('./types').AgentRun,
+ *   session?: import('./types').AgentSession,
+ *   sessionId?: string,
+ * }} AgentRunnerArtifactInput
+ */
+
+/** @param {string} dir */
 function ensureDir(dir) {
   fs.mkdirSync(dir, { recursive: true })
 }
 
+/** @param {string} projectRoot */
 function agentRunnersRoot(projectRoot) {
   return path.join(projectRoot, '.nax', 'agent-runners')
 }
 
+/** @param {string} projectRoot @param {string} runnerId */
 function agentRunnerDir(projectRoot, runnerId) {
   return path.join(agentRunnersRoot(projectRoot), runnerId)
 }
 
+/** @param {string} target @param {unknown} value */
 function writeJson(target, value) {
   writeAtomic(target, `${JSON.stringify(value, null, 2)}\n`)
 }
 
+/** @param {string} filePath */
 function readFileIfExists(filePath) {
   return fs.existsSync(filePath) ? fs.readFileSync(filePath, 'utf8') : ''
 }
 
+/** @param {string} target @param {unknown} content */
 function writeAtomic(target, content) {
   ensureDir(path.dirname(target))
   const next = String(content)
@@ -37,6 +66,7 @@ function writeAtomic(target, content) {
   return true
 }
 
+/** @param {string} filePath */
 function readJsonIfExists(filePath) {
   if (!fs.existsSync(filePath)) return null
   try {
@@ -46,6 +76,7 @@ function readJsonIfExists(filePath) {
   }
 }
 
+/** @param {string} projectRoot @param {string} runnerId */
 function updateLatestAgentRunnerSymlink(projectRoot, runnerId) {
   if (!runnerId) return false
   const root = agentRunnersRoot(projectRoot)
@@ -71,12 +102,18 @@ function updateLatestAgentRunnerSymlink(projectRoot, runnerId) {
   }
 }
 
+/** @param {string} projectRoot @param {string} sessionId */
 function sessionSummary(projectRoot, sessionId) {
   const dir = agentSessionDir(projectRoot, sessionId)
   const session = readJsonIfExists(path.join(dir, 'agent-session.json'))
   return session ? { ...session, dir } : null
 }
 
+/**
+ * @param {AgentRunnerArtifactInput} [input]
+ * @param {AgentRunnerArtifactOptions} [options]
+ * @returns {AgentRunnerArtifactResult | null}
+ */
 function persistAgentRunnerArtifact(input = {}, options = {}) {
   const projectRoot = input.projectRoot || options.projectRoot
   const runnerId = input.runnerId || input.run?.runnerId || input.session?.runnerId
@@ -120,6 +157,7 @@ function persistAgentRunnerArtifact(input = {}, options = {}) {
   return { dir, runner, sessions }
 }
 
+/** @param {string} dir @returns {import('./types').AgentRunner | null} */
 function readAgentRunnerArtifact(dir) {
   const filePath = path.join(dir, 'agent-runner.json')
   if (!fs.existsSync(filePath)) return null
@@ -130,6 +168,7 @@ function readAgentRunnerArtifact(dir) {
   }
 }
 
+/** @param {string} projectRoot */
 function listAgentRunnerArtifacts(projectRoot) {
   const root = agentRunnersRoot(projectRoot)
   if (!fs.existsSync(root)) return []

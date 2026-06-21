@@ -1,21 +1,37 @@
-// @ts-nocheck
 const fs = require('fs')
 const path = require('path')
 
+/**
+ * Callback that deletes one Netlify Blob reference.
+ * @typedef {(input: {
+ *   store?: string,
+ *   key?: string,
+ *   siteId?: string,
+ *   token?: string,
+ *   env?: NodeJS.ProcessEnv,
+ *   cwd?: string,
+ *   allowFailure?: boolean,
+ * }) => unknown} DeleteBlob
+ */
+
+/** @param {string} projectRoot */
 function registryPath(projectRoot) {
   return path.join(projectRoot, '.nax', 'blob-refs.jsonl')
 }
 
+/** @param {string} projectRoot */
 function ensureRegistryDir(projectRoot) {
   fs.mkdirSync(path.dirname(registryPath(projectRoot)), { recursive: true })
 }
 
+/** @param {string} projectRoot @param {import('./types').BlobRef} ref */
 function appendBlobRef(projectRoot, ref) {
   ensureRegistryDir(projectRoot)
   fs.appendFileSync(registryPath(projectRoot), `${JSON.stringify(ref)}\n`)
   return ref
 }
 
+/** @param {string} projectRoot @returns {Array<import('./types').BlobRef>} */
 function readBlobRefs(projectRoot) {
   const filePath = registryPath(projectRoot)
   if (!fs.existsSync(filePath)) return []
@@ -33,6 +49,7 @@ function readBlobRefs(projectRoot) {
     .filter(Boolean)
 }
 
+/** @param {string} projectRoot @returns {Array<import('./types').BlobRef>} */
 function latestBlobRefs(projectRoot) {
   const byId = new Map()
   for (const ref of readBlobRefs(projectRoot)) {
@@ -42,6 +59,7 @@ function latestBlobRefs(projectRoot) {
   return [...byId.values()]
 }
 
+/** @param {string} projectRoot */
 function compactBlobRefs(projectRoot) {
   const filePath = registryPath(projectRoot)
   if (!fs.existsSync(filePath)) return []
@@ -53,10 +71,16 @@ function compactBlobRefs(projectRoot) {
   return refs
 }
 
+/** @param {import('./types').BlobRef} [ref] */
 function blobRefId(ref = {}) {
   return ref.id || `${ref.runId || ''}:${ref.store || ''}:${ref.key || ''}`
 }
 
+/**
+ * @param {string} projectRoot
+ * @param {import('./types').BlobRef} ref
+ * @param {Partial<import('./types').BlobRef>} patch
+ */
 function markBlobRef(projectRoot, ref, patch) {
   return appendBlobRef(projectRoot, {
     ...ref,
@@ -66,6 +90,11 @@ function markBlobRef(projectRoot, ref, patch) {
   })
 }
 
+/**
+ * @param {import('./types').WorkflowRunState} runState
+ * @param {import('./types').WorkflowStep} stepState
+ * @param {import('./types').BlobRef} ref
+ */
 function addRunBlobRef(runState, stepState, ref) {
   const now = new Date().toISOString()
   const entry = {
@@ -91,15 +120,18 @@ function addRunBlobRef(runState, stepState, ref) {
   return entry
 }
 
+/** @param {import('./types').BlobRef} ref */
 function isBlobRefActive(ref) {
   return ref && !['cleaned', 'deleted'].includes(ref.status)
 }
 
+/** @param {import('./types').BlobRef} ref @param {Map<string, import('./types').BlobRef>} replacements */
 function replaceBlobRef(ref, replacements) {
   const next = replacements.get(blobRefId(ref))
   return next ? { ...ref, ...next } : ref
 }
 
+/** @param {import('./types').WorkflowRunState} runState @param {Map<string, import('./types').BlobRef>} replacements */
 function updateNestedBlobRefs(runState, replacements) {
   if (!runState || !Array.isArray(runState.steps)) return
   for (const step of runState.steps) {
@@ -112,6 +144,20 @@ function updateNestedBlobRefs(runState, replacements) {
   }
 }
 
+/**
+ * Options for cleaning active blob refs attached to one workflow run.
+ * @typedef {{
+ *   runState?: import('./types').WorkflowRunState,
+ *   projectRoot?: string,
+ *   siteId?: string,
+ *   token?: string,
+ *   env?: NodeJS.ProcessEnv,
+ *   deleteBlob?: DeleteBlob,
+ *   log?: (message: string) => void,
+ * }} CleanupRunBlobRefsInput
+ */
+
+/** @param {CleanupRunBlobRefsInput} param0 */
 function cleanupRunBlobRefs({
   runState,
   projectRoot = runState?.projectRoot,
@@ -160,6 +206,22 @@ function cleanupRunBlobRefs({
   return results
 }
 
+/**
+ * Options for sweeping stale blob refs from the registry.
+ * @typedef {{
+ *   projectRoot?: string,
+ *   siteId?: string,
+ *   token?: string,
+ *   env?: NodeJS.ProcessEnv,
+ *   deleteBlob?: DeleteBlob,
+ *   ttlHours?: number,
+ *   now?: Date,
+ *   dryRun?: boolean,
+ *   log?: (message: string) => void,
+ * }} SweepBlobRefsInput
+ */
+
+/** @param {SweepBlobRefsInput} param0 */
 function sweepBlobRefs({
   projectRoot,
   siteId,

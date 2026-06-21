@@ -9,7 +9,24 @@ function normalizeModels(models) {
 }
 
 /**
- * @param {{ flowId: string, projectRoot?: string, options?: Record<string, any>, dryRun?: boolean }} input
+ * Workflow CLI option subset used to build and run internal commands.
+ * @typedef {import('./types').JsonMap & {
+ *   projectRoot?: string,
+ *   transport?: string,
+ *   branch?: string,
+ *   context?: string,
+ *   notifyUrl?: string,
+ *   notifyEvents?: string | string[],
+ *   step?: string,
+ *   fromStep?: string,
+ *   models?: string | string[],
+ *   stepModels?: unknown,
+ *   dryRun?: boolean,
+ * }} WorkflowCommandOptions
+ */
+
+/**
+ * @param {{ flowId: string, projectRoot?: string, options?: WorkflowCommandOptions, dryRun?: boolean }} input
  */
 function workflowCommand(input) {
   const { flowId, options = {}, dryRun = false } = input
@@ -98,13 +115,13 @@ function patchConsole({ onStdout = noop, onStderr = noop, passthrough = false })
  * @param {{
  *   flowId: string,
  *   projectRoot?: string,
- *   options?: Record<string, any>,
+ *   options?: WorkflowCommandOptions,
  *   dryRun?: boolean,
  *   passthrough?: boolean,
  *   forceNonInteractive?: boolean,
- *   engine?: (flowId: string, options: Record<string, any>) => Promise<any>,
- *   eventSink?: (event: Record<string, any>) => void,
- *   runnerEventSink?: (event: Record<string, any>) => void,
+ *   engine?: (flowId: string, options: WorkflowCommandOptions) => Promise<unknown>,
+ *   eventSink?: (event: import('./types').JsonMap) => void,
+ *   runnerEventSink?: (event: import('./types').JsonMap) => void,
  * }} input
  */
 async function runWorkflow(input) {

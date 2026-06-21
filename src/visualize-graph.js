@@ -148,7 +148,13 @@ function reduceTransitiveEdges(edges = []) {
 /**
  * Convert a Nax workflow definition into React Flow nodes and edges.
  *
- * @param {{ flow?: any, selectedAgents?: string[] | null, runState?: any }} [options]
+ * @typedef {{
+ *   flow?: import('./types').WorkflowFlow,
+ *   selectedAgents?: string[] | null,
+ *   runState?: import('./types').WorkflowRunState | null,
+ * }} FlowToGraphOptions
+ *
+ * @param {FlowToGraphOptions} [options]
  */
 function flowToGraph(options = {}) {
   const { flow = {}, selectedAgents, runState = null } = options

@@ -1,11 +1,37 @@
 const PASTE_START = '\x1b[200~'
 const PASTE_END = '\x1b[201~'
 
+/**
+ * Cursor position inside the multiline prompt buffer.
+ * @typedef {{
+ *   lines: string[],
+ *   lineIdx: number,
+ *   colIdx: number,
+ * }} CursorState
+ *
+ * Direction command accepted by the prompt cursor mover.
+ * @typedef {'left' | 'right' | 'up' | 'down' | 'home' | 'end'} CursorDirection
+ *
+ * Cursor position after applying a movement command.
+ * @typedef {{
+ *   lineIdx: number,
+ *   colIdx: number,
+ * }} CursorPosition
+ *
+ * Options for the interactive multiline prompt.
+ * @typedef {{
+ *   message?: string,
+ *   placeholder?: string,
+ *   initialValue?: string,
+ * }} MultilinePromptOptions
+ */
+
+/** @param {unknown} text @returns {string} */
 function collapseTrailingNewlines(text) {
   return String(text ?? '').replace(/\n{2,}$/, '\n')
 }
 
-/** @param {Record<string, any>} param0 @param {any} columns */
+/** @param {CursorState} state @param {number | undefined} columns @returns {number} */
 function rowsBelowCursor({ lines, lineIdx, colIdx }, columns) {
   const cols = Number(columns) || 0
   if (cols <= 0) return lines.length - 1 - lineIdx
@@ -19,7 +45,7 @@ function rowsBelowCursor({ lines, lineIdx, colIdx }, columns) {
   return rows
 }
 
-/** @param {Record<string, any>} param0 @param {any} direction */
+/** @param {CursorState} state @param {CursorDirection | string} direction @returns {CursorPosition} */
 function moveCursor({ lines, lineIdx, colIdx }, direction) {
   switch (direction) {
     case 'left':
@@ -49,7 +75,7 @@ function moveCursor({ lines, lineIdx, colIdx }, direction) {
   }
 }
 
-/** @param {Record<string, any>} param0 */
+/** @param {MultilinePromptOptions} options @returns {Promise<string>} */
 function multiline({ message, placeholder = '', initialValue = '' }) {
   return new Promise((resolve) => {
     if (!process.stdin.isTTY || !process.stdin.setRawMode) {

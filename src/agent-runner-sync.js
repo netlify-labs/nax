@@ -94,6 +94,7 @@ function syncAgentRunner({ projectRoot, runner, env, runCommand } = {}) {
     remoteSessionCount: remoteSessions.length,
     syncedSessionCount: persisted.length,
     sessionIds: persisted.map((entry) => entry.session.sessionId),
+    sessions: persisted.map((entry) => entry.session),
     runner: runnerArtifact?.runner || null,
     dir: runnerArtifact?.dir || '',
   }

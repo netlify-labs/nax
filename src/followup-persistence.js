@@ -1,3 +1,6 @@
+const path = require('path')
+const { normalizeAgentRunResult } = require('./agent-run-results')
+const { syncAgentRunner } = require('./agent-runner-sync')
 const { createRunState, saveRunState } = require('./run-state')
 
 function uniqueAgents(runs = []) {
@@ -56,8 +59,86 @@ function followupStepTitle(target = {}, runs = [], ordinal = 1) {
   return `Follow-up ${Math.max(1, Number(ordinal) || 1)}: ${base}${suffix}`
 }
 
+function normalizeFollowupStepTitles(steps = []) {
+  let ordinal = 0
+  let changed = false
+  const titles = new Map()
+  const nextSteps = steps.map((step) => {
+    if (step?.source?.type !== 'visualizer-followup') return step
+    ordinal += 1
+    const title = followupStepTitle({ stepTitle: step.title || step.id || 'Follow-up' }, step.runs || [], ordinal)
+    if (title === step.title) return step
+    changed = true
+    if (step.id) titles.set(step.id, title)
+    return { ...step, title }
+  })
+  return { steps: nextSteps, titles, changed }
+}
+
+function updateFlowStepTitles(flow, titles) {
+  if (!flow || !Array.isArray(flow.steps) || !titles?.size) return flow
+  let changed = false
+  const steps = flow.steps.map((step) => {
+    const title = titles.get(step.id)
+    if (!title || step.title === title) return step
+    changed = true
+    return { ...step, title }
+  })
+  return changed ? { ...flow, steps } : flow
+}
+
 function isActiveFollowupStatus(status = '') {
   return ['pending', 'queued', 'running', 'submitted', 'submitting', 'waiting', 'retrying'].includes(String(status || '').toLowerCase())
+}
+
+function workflowStatusFromSteps(steps = [], fallback = 'submitted') {
+  const statuses = steps.map((step) => String(step?.status || '').toLowerCase()).filter(Boolean)
+  if (statuses.length === 0) return fallback || 'submitted'
+  if (statuses.some((status) => ['failed', 'timeout'].includes(status))) return 'failed'
+  if (statuses.some((status) => isActiveFollowupStatus(status))) return 'submitted'
+  if (statuses.every((status) => ['cancelled', 'canceled'].includes(status))) return 'cancelled'
+  if (statuses.every((status) => status === 'completed')) return 'completed'
+  return fallback || statuses[statuses.length - 1] || 'submitted'
+}
+
+function followupProjectRoot(runState = {}) {
+  if (runState.projectRoot) return runState.projectRoot
+  if (!runState.dir) return ''
+  return path.resolve(runState.dir, '..', '..', '..')
+}
+
+function sessionUpdatedAt(session = {}) {
+  return String(session.updatedAt || session.createdAt || '')
+}
+
+function latestSession(sessions = []) {
+  return [...sessions].sort((left, right) => sessionUpdatedAt(left).localeCompare(sessionUpdatedAt(right))).at(-1) || null
+}
+
+function sessionForRun(sessions = [], run = {}) {
+  const id = String(run.sessionId || '')
+  if (id) {
+    const exact = sessions.find((session) => String(session.sessionId || '') === id)
+    if (exact) return exact
+  }
+  return latestSession(sessions)
+}
+
+function runChanged(left = {}, right = {}) {
+  return [
+    'status',
+    'resultText',
+    'sessionId',
+    'runnerId',
+    'deployUrl',
+    'prUrl',
+    'issueUrl',
+    'commentUrl',
+    'updatedAt',
+  ].some((key) => JSON.stringify(left[key] ?? null) !== JSON.stringify(right[key] ?? null)) ||
+    JSON.stringify(left.links || {}) !== JSON.stringify(right.links || {}) ||
+    JSON.stringify(left.usage || null) !== JSON.stringify(right.usage || null) ||
+    JSON.stringify(left.fileChanges || null) !== JSON.stringify(right.fileChanges || null)
 }
 
 /**
@@ -288,6 +369,118 @@ function persistFreshPseudoWorkflow({
 }
 
 /**
+ * Refresh submitted visualizer follow-ups from Netlify Agent Runner sessions and
+ * merge terminal remote state back into the durable workflow graph state.
+ *
+ * @param {{
+ *   runState?: Record<string, any>,
+ *   projectRoot?: string,
+ *   env?: Record<string, string>,
+ *   runCommand?: Function,
+ *   syncRunner?: Function,
+ * }} input
+ */
+function syncSubmittedFollowupRunsToWorkflow({
+  runState,
+  projectRoot = followupProjectRoot(runState),
+  env = process.env,
+  runCommand,
+  syncRunner = syncAgentRunner,
+} = {}) {
+  if (!runState?.dir || !projectRoot) return { runState, changed: false, warnings: [] }
+  const titleNormalization = normalizeFollowupStepTitles(Array.isArray(runState.steps) ? runState.steps : [])
+  const steps = titleNormalization.steps
+  const candidates = []
+  for (const step of steps) {
+    if (step?.source?.type !== 'visualizer-followup') continue
+    for (const run of Array.isArray(step.runs) ? step.runs : []) {
+      if (!isActiveFollowupStatus(run?.status) || !run?.runnerId) continue
+      candidates.push({ step, run })
+    }
+  }
+  if (candidates.length === 0) {
+    if (!titleNormalization.changed) return { runState, changed: false, warnings: [] }
+    return {
+      runState: saveRunState({
+        ...runState,
+        flow: updateFlowStepTitles(runState.flow, titleNormalization.titles),
+        steps,
+      }),
+      changed: true,
+      warnings: [],
+    }
+  }
+
+  const warnings = []
+  const sessionsByRunner = new Map()
+  for (const runnerId of [...new Set(candidates.map(({ run }) => String(run.runnerId || '')).filter(Boolean))]) {
+    const candidate = candidates.find(({ run }) => String(run.runnerId || '') === runnerId)
+    try {
+      const synced = syncRunner({
+        projectRoot,
+        env,
+        runCommand,
+        runner: {
+          runnerId,
+          agent: candidate?.run?.agent || '',
+          status: candidate?.run?.status || '',
+          source: candidate?.step?.source || null,
+          links: candidate?.run?.links || {},
+          createdAt: candidate?.run?.createdAt || '',
+          updatedAt: candidate?.run?.updatedAt || '',
+          fileChanges: candidate?.run?.fileChanges || null,
+        },
+      })
+      sessionsByRunner.set(runnerId, Array.isArray(synced.sessions) ? synced.sessions : [])
+    } catch (error) {
+      warnings.push(error?.message || String(error))
+    }
+  }
+
+  let changed = false
+  const nextSteps = steps.map((step) => {
+    if (step?.source?.type !== 'visualizer-followup') return step
+    let stepChanged = false
+    const nextRuns = (Array.isArray(step.runs) ? step.runs : []).map((run) => {
+      if (!isActiveFollowupStatus(run?.status) || !run?.runnerId) return run
+      const session = sessionForRun(sessionsByRunner.get(String(run.runnerId || '')) || [], run)
+      if (!session?.sessionId) return run
+      const nextRun = {
+        ...normalizeAgentRunResult({
+          run,
+          session,
+          status: session.status || run.status || 'submitted',
+          resultText: session.resultText !== undefined ? session.resultText : run.resultText,
+          usage: session.usage || run.usage,
+          fileChanges: session.fileChanges || run.fileChanges,
+          links: session.links || run.links || {},
+        }),
+        updatedAt: session.updatedAt || run.updatedAt || '',
+      }
+      if (!runChanged(run, nextRun)) return run
+      changed = true
+      stepChanged = true
+      return nextRun
+    })
+    if (!stepChanged) return step
+    return {
+      ...step,
+      status: submittedStepStatus(nextRuns),
+      runs: nextRuns,
+    }
+  })
+
+  if (!changed && !titleNormalization.changed) return { runState, changed: false, warnings }
+  const nextRunState = saveRunState({
+    ...runState,
+    flow: updateFlowStepTitles(runState.flow, titleNormalization.titles),
+    status: workflowStatusFromSteps(nextSteps, runState.status),
+    steps: nextSteps,
+  })
+  return { runState: nextRunState, changed: true, warnings }
+}
+
+/**
  * @param {{
  *   runState: Record<string, any>,
  *   stepId?: string,
@@ -381,5 +574,6 @@ module.exports = {
   persistFreshPseudoWorkflow,
   safeStepId,
   submittedStepStatus,
+  syncSubmittedFollowupRunsToWorkflow,
   uniqueAgents,
 }

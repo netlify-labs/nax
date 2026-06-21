@@ -149,6 +149,26 @@ function isTerminalRunStatus(status: string): boolean {
   return ['completed', 'failed', 'timeout', 'cancelled', 'canceled', 'dry-run'].includes(status.toLowerCase())
 }
 
+function isActiveRemoteStatus(status: string): boolean {
+  return ['pending', 'queued', 'running', 'submitted', 'submitting', 'waiting', 'retrying'].includes(status.toLowerCase())
+}
+
+function graphHasActiveRemoteRuns(graph: WorkflowGraph | null): boolean {
+  return Boolean(graph?.nodes.some((node) => (
+    (node.data.runs || []).some((run) => (
+      isActiveRemoteStatus(runValue(run, 'status')) &&
+      Boolean(runValue(run, 'runnerId') || runValue(run, 'sessionId'))
+    ))
+  )))
+}
+
+function replaceRunInList(runs: VisualizeRun[], nextRun: VisualizeRun): VisualizeRun[] {
+  const nextId = nextRun.runId || nextRun.id
+  if (!nextId) return runs
+  const filtered = runs.filter((candidate) => candidate.runId !== nextId && candidate.id !== nextId)
+  return [nextRun, ...filtered]
+}
+
 function sameRun(left: Partial<VisualizeRun>, right: Partial<VisualizeRun>): boolean {
   const leftIds = [left.id, left.runId].filter(Boolean)
   const rightIds = [right.id, right.runId].filter(Boolean)
@@ -682,6 +702,37 @@ export default function App() {
       setLoadingGraph(false)
     }
   }
+
+  useEffect(() => {
+    if (!selectedRunId || !graphHasActiveRemoteRuns(graph)) return undefined
+    let stopped = false
+    let polling = false
+    const poll = async () => {
+      if (polling) return
+      polling = true
+      try {
+        const response = await getRunGraph(selectedRunId)
+        if (stopped) return
+        if (response.workflow.id !== selectedWorkflowId) {
+          skipWorkflowGraphLoadRef.current = response.workflow.id
+          setSelectedWorkflowId(response.workflow.id)
+        }
+        setGraph(response.graph)
+        setRuns((current) => replaceRunInList(current, response.run))
+      } catch {
+        // Keep the last rendered graph if remote sync is temporarily unavailable.
+      } finally {
+        polling = false
+      }
+    }
+    const timer = window.setInterval(() => {
+      void poll()
+    }, 7000)
+    return () => {
+      stopped = true
+      window.clearInterval(timer)
+    }
+  }, [graph, selectedRunId, selectedWorkflowId])
 
   const handleRunUpdated = async (updated: VisualizeRun) => {
     const latestRuns = await refreshRuns()

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type RefObject } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type RefObject } from 'react'
 import { ActionIcon, Alert, Anchor, Badge, Box, Button, Code, Group, Menu, Modal, Paper, ScrollArea, Stack, Text, Timeline, Title, Tooltip, UnstyledButton } from '@mantine/core'
 import { Ban, Check, ChevronsDownUp, ChevronsUpDown, ChevronDown, ChevronRight, ExternalLink, FileText, Files, Play } from 'lucide-react'
 import { cancelFollowupRun, getRunDetails, openLocalFile } from '../api'
@@ -428,11 +428,12 @@ export function RunDetailsModal({
   const detailWorkflowName = workflowName(detailRun)
   const selectorIdentity = selectorKey(initialSelector)
 
-  const refreshDetails = async () => {
+  const refreshDetails = useCallback(async () => {
     if (!detailsRunId) return
     const response = await getRunDetails(detailsRunId)
     setDetailsResponse(response)
-  }
+    return response
+  }, [detailsRunId])
 
   const cancelFollowupEntry = async (entry: TimelineEntry) => {
     const target = cancelTargetForEntry(entry)
@@ -477,6 +478,32 @@ export function RunDetailsModal({
   useEffect(() => {
     if (!opened) setDetailsView('results')
   }, [opened])
+
+  useEffect(() => {
+    if (!opened || !detailsRunId || detailsView !== 'results') return undefined
+    if (!timelineEntries.some((entry) => cancelTargetForEntry(entry))) return undefined
+    let stopped = false
+    let polling = false
+    const poll = async () => {
+      if (polling) return
+      polling = true
+      try {
+        const response = await refreshDetails()
+        if (!stopped && response?.run) await onRunUpdated?.(response.run)
+      } catch {
+        // Keep the visible stale state rather than interrupting the modal while Netlify polling fails.
+      } finally {
+        polling = false
+      }
+    }
+    const timer = window.setInterval(() => {
+      void poll()
+    }, 7000)
+    return () => {
+      stopped = true
+      window.clearInterval(timer)
+    }
+  }, [detailsRunId, detailsView, onRunUpdated, opened, refreshDetails, timelineEntries])
 
   useEffect(() => {
     setDetailsView('results')

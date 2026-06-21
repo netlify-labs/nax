@@ -14,6 +14,7 @@ const {
   freshAgentFlow,
   persistFreshPseudoWorkflow,
   submittedStepStatus,
+  syncSubmittedFollowupRunsToWorkflow,
   uniqueAgents,
 } = require('../../src/followup-persistence')
 
@@ -154,6 +155,117 @@ test('appendFollowupRunsToWorkflow numbers repeated follow-ups without duplicati
   })
 
   assert.deepEqual(second.steps.slice(1).map((step) => step.title), [
+    'Follow-up 1: Synthesize Security Findings (codex)',
+    'Follow-up 2: Synthesize Security Findings (codex)',
+  ])
+})
+
+test('syncSubmittedFollowupRunsToWorkflow merges completed remote sessions into workflow state', () => {
+  const projectRoot = tmpRoot()
+  const runDir = path.join(projectRoot, '.nax', 'workflows', 'source-run')
+  fs.mkdirSync(runDir, { recursive: true })
+  const submitted = appendFollowupRunsToWorkflow({
+    runState: {
+      runId: 'source-run',
+      flowId: 'security-audit',
+      flowTitle: 'Security Audit',
+      status: 'completed',
+      projectRoot,
+      dir: runDir,
+      flow: {
+        id: 'security-audit',
+        title: 'Security Audit',
+        steps: [
+          { id: 'synthesize', title: 'Synthesize Security Findings', agents: ['codex'], submit: 'new-run' },
+        ],
+      },
+      steps: [{
+        id: 'synthesize',
+        title: 'Synthesize Security Findings',
+        status: 'completed',
+        agents: ['codex'],
+        runs: [{ agent: 'codex', status: 'completed', runnerId: 'runner-1', sessionId: 'session-1' }],
+      }],
+    },
+    now: new Date('2026-06-20T20:00:00.000Z'),
+    target: { id: 'agent-result:synthesize:codex', stepId: 'synthesize', stepTitle: 'Synthesize Security Findings' },
+    source: { id: 'followup-1' },
+    runs: [{ agent: 'codex', status: 'submitted', runnerId: 'runner-1', sessionId: 'session-2' }],
+  })
+
+  const synced = syncSubmittedFollowupRunsToWorkflow({
+    runState: submitted,
+    projectRoot,
+    syncRunner: () => ({
+      sessions: [{
+        sessionId: 'session-2',
+        runnerId: 'runner-1',
+        agent: 'codex',
+        status: 'completed',
+        resultText: 'Remote result text.',
+        updatedAt: '2026-06-20T20:02:00.000Z',
+        links: { sessionUrl: 'https://app.netlify.com/projects/site/agent-runs/runner-1?session=session-2' },
+      }],
+    }),
+  })
+
+  assert.equal(synced.changed, true)
+  assert.equal(synced.runState.status, 'completed')
+  assert.equal(synced.runState.steps[1].status, 'completed')
+  assert.equal(synced.runState.steps[1].runs[0].status, 'completed')
+  assert.equal(synced.runState.steps[1].runs[0].resultText, 'Remote result text.')
+  assert.equal(listRunStates(projectRoot)[0].steps[1].runs[0].status, 'completed')
+})
+
+test('syncSubmittedFollowupRunsToWorkflow renumbers existing completed follow-up titles', () => {
+  const projectRoot = tmpRoot()
+  const runDir = path.join(projectRoot, '.nax', 'workflows', 'source-run')
+  fs.mkdirSync(runDir, { recursive: true })
+  const state = {
+    runId: 'source-run',
+    flowId: 'security-audit',
+    flowTitle: 'Security Audit',
+    status: 'completed',
+    projectRoot,
+    dir: runDir,
+    flow: {
+      id: 'security-audit',
+      title: 'Security Audit',
+      steps: [
+        { id: 'synthesize', title: 'Synthesize Security Findings', agents: ['codex'], submit: 'new-run' },
+        { id: 'visualizer-followup-1', title: 'Follow up: Synthesize Security Findings (codex)', agents: ['codex'], submit: 'follow-up' },
+        { id: 'visualizer-followup-2', title: 'Follow up: Synthesize Security Findings (codex) follow-up (codex)', agents: ['codex'], submit: 'follow-up' },
+      ],
+    },
+    steps: [
+      { id: 'synthesize', title: 'Synthesize Security Findings', status: 'completed', agents: ['codex'], runs: [] },
+      {
+        id: 'visualizer-followup-1',
+        title: 'Follow up: Synthesize Security Findings (codex)',
+        status: 'completed',
+        source: { type: 'visualizer-followup' },
+        agents: ['codex'],
+        runs: [{ agent: 'codex', status: 'completed', runnerId: 'runner-1', sessionId: 'session-2' }],
+      },
+      {
+        id: 'visualizer-followup-2',
+        title: 'Follow up: Synthesize Security Findings (codex) follow-up (codex)',
+        status: 'completed',
+        source: { type: 'visualizer-followup' },
+        agents: ['codex'],
+        runs: [{ agent: 'codex', status: 'completed', runnerId: 'runner-1', sessionId: 'session-3' }],
+      },
+    ],
+  }
+
+  const synced = syncSubmittedFollowupRunsToWorkflow({ runState: state, projectRoot })
+
+  assert.equal(synced.changed, true)
+  assert.deepEqual(synced.runState.steps.slice(1).map((step) => step.title), [
+    'Follow-up 1: Synthesize Security Findings (codex)',
+    'Follow-up 2: Synthesize Security Findings (codex)',
+  ])
+  assert.deepEqual(synced.runState.flow.steps.slice(1).map((step) => step.title), [
     'Follow-up 1: Synthesize Security Findings (codex)',
     'Follow-up 2: Synthesize Security Findings (codex)',
   ])

@@ -8,6 +8,7 @@ const path = require('path')
 
 const { _private, startVisualizeServer } = require('../../src/visualize-server')
 const { buildRunDetails } = require('../../src/visualize-run-details')
+const { appendFollowupRunsToWorkflow } = require('../../src/followup-persistence')
 const { appendEventLog } = require('../../src/runner-event-log')
 
 /** @param {string} url @param {{ token?: string, cookie?: string, headers?: Record<string, string> }} [options] */
@@ -730,6 +731,21 @@ test('visualize follow-up endpoint submits matching runner and fresh additional 
       archived.push(runnerId)
       return { archived: true, error: '', commandError: false }
     },
+    followupSyncRunCommand: (_command, args) => {
+      const data = JSON.parse(args[args.indexOf('--data') + 1] || '{}')
+      const runnerId = data.agent_runner_id
+      return {
+        status: 0,
+        stdout: JSON.stringify({
+          sessions: [{
+            id: runnerId === 'runner-gemini' ? 'session-gemini' : 'session-codex-followup',
+            state: 'submitted',
+            result: '',
+          }],
+        }),
+        stderr: '',
+      }
+    },
   })
   try {
     const base = `http://127.0.0.1:${server.port}`
@@ -792,6 +808,56 @@ test('visualize follow-up endpoint submits matching runner and fresh additional 
     const cancelledNode = cancelledGraph.payload.graph.nodes.find((node) => node.id === followupNode.id)
     assert.equal(cancelledNode.data.status, 'submitted')
     assert.deepEqual(cancelledNode.data.runs.map((run) => run.status), ['submitted', 'cancelled'])
+  } finally {
+    await server.close()
+  }
+})
+
+test('visualize run graph syncs completed remote follow-up sessions', async () => {
+  const projectRoot = tmpRoot()
+  const { runId, dir } = writeFollowupRunFixture(projectRoot)
+  const state = JSON.parse(fs.readFileSync(path.join(dir, 'workflow.json'), 'utf8'))
+  appendFollowupRunsToWorkflow({
+    runState: state,
+    now: new Date('2026-06-20T20:00:00.000Z'),
+    target: { id: 'agent-result:review:codex', stepId: 'review', stepTitle: 'Review' },
+    source: { id: 'followup-sync' },
+    runs: [{
+      agent: 'codex',
+      status: 'submitted',
+      runnerId: 'runner-1',
+      sessionId: 'session-followup',
+      links: { sessionUrl: 'https://app.netlify.com/projects/site/agent-runs/runner-1?session=session-followup' },
+    }],
+  })
+  const server = await startVisualizeServer({
+    projectRoot,
+    followupSyncRunCommand: (_command, args) => {
+      const data = JSON.parse(args[args.indexOf('--data') + 1] || '{}')
+      assert.equal(data.agent_runner_id, 'runner-1')
+      return {
+        status: 0,
+        stdout: JSON.stringify({
+          sessions: [{
+            id: 'session-followup',
+            state: 'completed',
+            result: 'Remote follow-up result.',
+            updated_at: '2026-06-20T20:05:00.000Z',
+          }],
+        }),
+        stderr: '',
+      }
+    },
+  })
+  try {
+    const base = `http://127.0.0.1:${server.port}`
+    const graph = await requestJson(`${base}/api/runs/${runId}/graph`, { token: server.token })
+    assert.equal(graph.statusCode, 200, graph.payload?.error?.message)
+    const followupNode = graph.payload.graph.nodes.find((node) => node.id.startsWith('visualizer-followup-sync'))
+    assert.ok(followupNode)
+    assert.equal(followupNode.data.status, 'completed')
+    assert.equal(followupNode.data.runs[0].status, 'completed')
+    assert.equal(followupNode.data.runs[0].resultText, 'Remote follow-up result.')
   } finally {
     await server.close()
   }

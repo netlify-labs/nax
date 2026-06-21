@@ -17,7 +17,7 @@ const { buildFollowupContextPackage } = require('./followup-context')
 const { prepareFollowupContextDelivery } = require('./followup-delivery')
 const { buildFollowupSubmissionPlan } = require('./followup-plan')
 const { buildFollowupPrompt, submitFollowupPlan } = require('./handoff-runner')
-const { appendFollowupRunsToWorkflow, cancelFollowupRunInWorkflow, persistFreshPseudoWorkflow } = require('./followup-persistence')
+const { appendFollowupRunsToWorkflow, cancelFollowupRunInWorkflow, persistFreshPseudoWorkflow, syncSubmittedFollowupRunsToWorkflow } = require('./followup-persistence')
 const { archiveAgentRun } = require('./local-runner')
 const { setBlob } = require('./netlify-blobs')
 const { readLinkedSiteId } = require('./init')
@@ -855,6 +855,7 @@ function createRequestHandler(options = {}) {
   const followupWriteBlob = options.followupWriteBlob
   const followupSetBlob = options.followupSetBlob || setBlob
   const followupArchiveRun = options.followupArchiveRun || archiveAgentRun
+  const followupSyncRunCommand = options.followupSyncRunCommand
   const runs = new Map()
   const activeByWorkflow = new Map()
 
@@ -1085,6 +1086,17 @@ function createRequestHandler(options = {}) {
     return states.find((state) => state.runId === durableRunId) || null
   }
 
+  function syncDurableFollowups(durable) {
+    if (!durable) return durable
+    const synced = syncSubmittedFollowupRunsToWorkflow({
+      runState: durable,
+      projectRoot,
+      env,
+      runCommand: followupSyncRunCommand,
+    })
+    return synced.runState || durable
+  }
+
   return {
     token,
     // Cancels every active workflow child, ends SSE clients, and clears timers so
@@ -1237,7 +1249,7 @@ function createRequestHandler(options = {}) {
             return
           }
           assertToken(req, requestUrl, token)
-          const durable = durableRunStateForId(runGraphMatch[1])
+          const durable = syncDurableFollowups(durableRunStateForId(runGraphMatch[1]))
           if (!durable) {
             notFound(res, 'Unknown visualize run.')
             return
@@ -1270,7 +1282,7 @@ function createRequestHandler(options = {}) {
             return
           }
           assertToken(req, requestUrl, token)
-          const durable = durableRunStateForId(runDetailsMatch[1])
+          const durable = syncDurableFollowups(durableRunStateForId(runDetailsMatch[1]))
           if (!durable) {
             notFound(res, 'Unknown visualize run.')
             return

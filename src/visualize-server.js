@@ -17,7 +17,7 @@ const { buildFollowupContextPackage } = require('./followup-context')
 const { prepareFollowupContextDelivery } = require('./followup-delivery')
 const { buildFollowupSubmissionPlan } = require('./followup-plan')
 const { buildFollowupPrompt, submitFollowupPlan } = require('./handoff-runner')
-const { persistFreshPseudoWorkflow } = require('./followup-persistence')
+const { appendFollowupRunsToWorkflow, persistFreshPseudoWorkflow } = require('./followup-persistence')
 const { setBlob } = require('./netlify-blobs')
 const { readLinkedSiteId } = require('./init')
 
@@ -1366,6 +1366,24 @@ function createRequestHandler(options = {}) {
           const freshResults = results
             .filter((result) => result.submission?.mode === 'fresh-runner')
             .map((result) => result.run)
+          let persistedSourceWorkflow = null
+          try {
+            persistedSourceWorkflow = appendFollowupRunsToWorkflow({
+              runState: durable,
+              runs: results.map((result) => result.run),
+              promptText,
+              target: normalized.target,
+              source: {
+                id,
+                sourceWorkflowRunId: durable.runId || sourceRunId,
+                sourceTargetId: normalized.target.id,
+                sourceArtifactIds,
+                delivery: delivery.delivery,
+              },
+            })
+          } catch (error) {
+            warnings.push(error?.message || String(error))
+          }
           let persistedWorkflow = null
           if (freshResults.length > 0) {
             try {
@@ -1409,6 +1427,7 @@ function createRequestHandler(options = {}) {
               },
               plan,
               submissions: results.map(submissionResponseItem),
+              sourceWorkflow: persistedSourceWorkflow ? publicRunState(persistedSourceWorkflow) : null,
               persistedWorkflow: persistedWorkflow ? publicRunState(persistedWorkflow) : null,
               warnings,
             },

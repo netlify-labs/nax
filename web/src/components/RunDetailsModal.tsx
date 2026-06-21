@@ -35,6 +35,7 @@ type StepItem = {
   id: string
   title: string
   status: string
+  sourceType: string
   agents: string[]
   agentRuns: Record<string, {
     status: string
@@ -53,6 +54,7 @@ type TimelineEntry = {
   title: string
   subtitle: string
   status: string
+  sourceType?: string
   path: string
   absolutePath: string
   markdown: string
@@ -145,6 +147,9 @@ function buildStepItems(details: RunDetailsResponse['details'] | undefined, run:
       id,
       title: recordValue(step, 'title') || section?.stepTitle || section?.title || id || `Step ${index + 1}`,
       status: recordValue(step, 'status') || section?.status || 'unknown',
+      sourceType: step.source && typeof step.source === 'object' && !Array.isArray(step.source)
+        ? recordValue(step.source as Record<string, unknown>, 'type')
+        : '',
       agents,
       agentRuns,
       section,
@@ -159,6 +164,7 @@ function buildStepItems(details: RunDetailsResponse['details'] | undefined, run:
       id,
       title: section.stepTitle || section.title,
       status: section.status || 'unknown',
+      sourceType: '',
       agents: [],
       agentRuns: {},
       section,
@@ -230,6 +236,7 @@ function buildTimelineEntries(
       title: step.title,
       subtitle: stepDescription(step, sessions),
       status: step.status,
+      sourceType: step.sourceType,
       path: step.section?.path || '',
       absolutePath: step.section?.absolutePath || '',
       markdown: step.section?.markdown || '',
@@ -392,7 +399,11 @@ export function RunDetailsModal({
   const parentTimelineEntries = useMemo(() => {
     const summaryEntry = timelineEntries.find((entry) => entry.kind === 'summary')
     const stepEntries = timelineEntries.filter((entry) => entry.kind === 'step')
-    return summaryEntry ? [...stepEntries, summaryEntry] : stepEntries
+    if (!summaryEntry) return stepEntries
+    const followupSteps = stepEntries.filter((entry) => entry.sourceType === 'visualizer-followup')
+    if (followupSteps.length === 0) return [...stepEntries, summaryEntry]
+    const regularSteps = stepEntries.filter((entry) => entry.sourceType !== 'visualizer-followup')
+    return [...regularSteps, summaryEntry, ...followupSteps]
   }, [timelineEntries])
   const activeTimelineIndex = Math.max(0, timelineEntries.findIndex((entry) => entry.id === activeTimelineId))
   const timelineProgressIndex = Math.max(0, parentTimelineEntries.length - 1)

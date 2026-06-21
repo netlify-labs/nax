@@ -116,3 +116,40 @@ test('flowToGraph keeps available agents visible when overlaying filtered run st
   assert.deepEqual(graph.nodes[0].data.agents, ['claude', 'gemini', 'codex'])
   assert.deepEqual(graph.nodes[0].data.selectedAgents, ['claude'])
 })
+
+test('flowToGraph renders saved visualizer follow-up steps not present in the flow definition', () => {
+  const flow = {
+    id: 'stateful',
+    title: 'Stateful',
+    steps: [
+      { id: 'review', title: 'Review', agents: ['codex'], submit: 'new-run' },
+    ],
+  }
+  const runState = {
+    steps: [
+      {
+        id: 'review',
+        status: 'completed',
+        runs: [{ agent: 'codex', status: 'completed', runnerId: 'runner-1', sessionId: 'session-1' }],
+      },
+      {
+        id: 'visualizer-followup-1',
+        title: 'Review follow-up',
+        action: 'agent-run',
+        submit: 'follow-up',
+        status: 'submitted',
+        input: [{ step: 'review', results: 'selected' }],
+        runs: [{ agent: 'codex', status: 'submitted', runnerId: 'runner-1', sessionId: 'session-2' }],
+      },
+    ],
+  }
+
+  const graph = flowToGraph({ flow, runState })
+
+  assert.deepEqual(graph.nodes.map((node) => node.id), ['review', 'visualizer-followup-1'])
+  assert.equal(graph.nodes[1].data.status, 'submitted')
+  assert.deepEqual(graph.nodes[1].data.agents, ['codex'])
+  assert.equal(graph.nodes[1].data.runs[0].sessionId, 'session-2')
+  assert.deepEqual(graph.edges.map((edge) => edge.id), ['edge:review:visualizer-followup-1'])
+  assert.equal(graph.edges[0].data.kind, 'follow-up')
+})

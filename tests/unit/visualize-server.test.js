@@ -751,6 +751,8 @@ test('visualize follow-up endpoint submits matching runner and fresh additional 
     assert.match(response.payload.followup.submissions[0].links.agentRunUrl, /runner-1\?session=session-codex-followup/)
     assert.equal(response.payload.followup.submissions[1].mode, 'fresh-runner')
     assert.equal(response.payload.followup.submissions[1].runnerId, 'runner-gemini')
+    assert.equal(response.payload.followup.sourceWorkflow.runId, runId)
+    assert.equal(response.payload.followup.sourceWorkflow.status, 'submitted')
     assert.equal(response.payload.followup.persistedWorkflow.status, 'submitted')
     assert.equal(response.payload.followup.persistedWorkflow.flowTitle, 'Follow-up on Review (Gemini)')
 
@@ -763,6 +765,12 @@ test('visualize follow-up endpoint submits matching runner and fresh additional 
 
     const runs = await requestJson(`${base}/api/runs`, { token: server.token })
     assert.equal(runs.payload.durable.some((run) => run.flowTitle === 'Follow-up on Review (Gemini)'), true)
+    const graph = await requestJson(`${base}/api/runs/${runId}/graph`, { token: server.token })
+    const followupNode = graph.payload.graph.nodes.find((node) => node.id.startsWith('visualizer-followup-'))
+    assert.ok(followupNode)
+    assert.equal(followupNode.data.status, 'submitted')
+    assert.deepEqual(followupNode.data.runs.map((run) => run.sessionId), ['session-codex-followup', 'session-gemini'])
+    assert.ok(graph.payload.graph.edges.some((edge) => edge.source === 'review' && edge.target === followupNode.id))
   } finally {
     await server.close()
   }

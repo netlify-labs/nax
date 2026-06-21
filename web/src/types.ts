@@ -319,6 +319,7 @@ export type RunFollowupResponse = {
       summary: string[]
     }
     submissions: RunFollowupSubmission[]
+    sourceWorkflow: VisualizeRun | null
     persistedWorkflow: VisualizeRun | null
     warnings: string[]
   }

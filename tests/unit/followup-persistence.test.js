@@ -8,6 +8,7 @@ const { buildRunDetails } = require('../../src/visualize-run-details')
 const { flowToGraph } = require('../../src/visualize-graph')
 const { listRunStates, workflowStatePath } = require('../../src/run-state')
 const {
+  followupStepTitle,
   freshAgentFlow,
   persistFreshPseudoWorkflow,
   submittedStepStatus,
@@ -32,6 +33,17 @@ test('submittedStepStatus summarizes submitted run statuses', () => {
   assert.equal(submittedStepStatus([{ status: 'submitted' }, { status: 'running' }]), 'submitted')
   assert.equal(submittedStepStatus([{ status: 'completed' }]), 'completed')
   assert.equal(submittedStepStatus([{ status: 'completed' }, { status: 'failed' }]), 'failed')
+})
+
+test('followupStepTitle prefixes visualizer follow-up steps', () => {
+  assert.equal(
+    followupStepTitle({ stepTitle: 'Synthesize Security Findings' }, [{ agent: 'codex' }]),
+    'Follow up: Synthesize Security Findings (codex)',
+  )
+  assert.equal(
+    followupStepTitle({ stepTitle: 'Audit Security' }, [{ agent: 'codex' }, { agent: 'gemini' }]),
+    'Follow up: Audit Security (2 agents)',
+  )
 })
 
 test('freshAgentFlow creates a one-step visualizer flow definition', () => {

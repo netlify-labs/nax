@@ -685,7 +685,7 @@ export default function App() {
 
   const handleFollowupSubmitted = async (response: RunFollowupResponse) => {
     const latestRuns = await refreshRuns()
-    const persisted = response.followup.persistedWorkflow
+    const persisted = response.followup.sourceWorkflow || response.followup.persistedWorkflow
     if (!persisted?.runId) return
     const nextRun = latestRuns.find((candidate) => candidate.runId === persisted.runId || candidate.id === persisted.runId) || persisted
     await selectRun(nextRun)

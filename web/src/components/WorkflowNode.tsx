@@ -32,7 +32,7 @@ export const WorkflowNode = memo(function WorkflowNode({ data, selected }: NodeP
     <div className={`workflow-node${statusClass}${selected ? ' selected' : ''}`}>
       <Handle className="hidden-handle" type="target" position={Position.Top} />
       <div className="node-header">
-        <div>
+        <div className="node-header-top">
           <div className="node-kicker-row">
             <span className="node-kicker">Step {node.number}</span>
             {node.promptMarkdown ? (
@@ -50,11 +50,11 @@ export const WorkflowNode = memo(function WorkflowNode({ data, selected }: NodeP
               </button>
             ) : null}
           </div>
-          <h3>{node.title}</h3>
+          <span className={`action-badge ${node.submit === 'follow-up' ? 'follow-up' : 'new-run'}`}>
+            {node.submitLabel || node.submit || node.action}
+          </span>
         </div>
-        <span className={`action-badge ${node.submit === 'follow-up' ? 'follow-up' : 'new-run'}`}>
-          {node.submitLabel || node.submit || node.action}
-        </span>
+        <h3>{node.title}</h3>
       </div>
       {node.description ? <p className="node-description">{node.description}</p> : null}
       <div className="agent-row">

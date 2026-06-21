@@ -94,7 +94,7 @@ function notifyFollowupSubmitted(response: RunFollowupResponse) {
       <Stack gap={6}>
         <Text size="sm">
           {response.followup.submissions.length} submission{response.followup.submissions.length === 1 ? '' : 's'} accepted.
-          {response.followup.persistedWorkflow ? ' Opening fresh run view.' : ''}
+          {response.followup.sourceWorkflow ? ' Updating source workflow.' : response.followup.persistedWorkflow ? ' Opening fresh run view.' : ''}
         </Text>
         {warnings.length > 0 ? <Text size="xs" c="dimmed">{warnings.join(' · ')}</Text> : null}
         <Group gap="xs">
@@ -195,7 +195,6 @@ export function RunFollowupContent({ onClose, run, details, onSubmitted, closeLa
       setSuccess(response)
       notifyFollowupSubmitted(response)
       await onSubmitted(response)
-      onClose()
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err))
     } finally {

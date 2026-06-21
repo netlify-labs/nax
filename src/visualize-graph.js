@@ -117,6 +117,20 @@ function flowAgents(steps = []) {
   return agents
 }
 
+function agentsForSavedStep(step = {}) {
+  const declared = filteredAgents(step.agents)
+  if (declared.length > 0) return declared
+  const seen = new Set()
+  const agents = []
+  for (const run of Array.isArray(step.runs) ? step.runs : []) {
+    const agent = String(run?.agent || '').trim()
+    if (!agent || seen.has(agent)) continue
+    seen.add(agent)
+    agents.push(agent)
+  }
+  return agents
+}
+
 function hasPath(edges, source, target, ignoredEdgeId, visited = new Set()) {
   if (source === target) return true
   if (visited.has(source)) return false
@@ -140,8 +154,29 @@ function reduceTransitiveEdges(edges = []) {
 function flowToGraph(options = {}) {
   const { flow = {}, selectedAgents, runState = null } = options
   const steps = Array.isArray(flow.steps) ? flow.steps : []
+  const definedStepIds = new Set(steps.map((step) => String(step?.id || '')).filter(Boolean))
+  const savedOnlySteps = Array.isArray(runState?.steps)
+    ? runState.steps
+        .filter((step) => {
+          const id = String(step?.id || '')
+          return id && !definedStepIds.has(id)
+        })
+        .map((step) => ({
+          id: step.id || '',
+          title: step.title || step.id || '',
+          description: step.description || '',
+          action: step.action || 'agent-run',
+          submit: step.submit || '',
+          waitFor: step.waitFor || '',
+          agents: agentsForSavedStep(step),
+          input: Array.isArray(step.input) ? step.input.map((input) => ({ ...input })) : [],
+          source: step.source || null,
+          savedOnly: true,
+        }))
+    : []
   const selected = normalizeSelectedAgents(selectedAgents)
-  const runnableSteps = steps
+  const graphSteps = [...steps, ...savedOnlySteps]
+  const runnableSteps = graphSteps
     .map((step, index) => ({
       step,
       index,

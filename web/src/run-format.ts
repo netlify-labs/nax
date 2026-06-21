@@ -27,13 +27,14 @@ export function statusLabel(status: string): string {
   const normalized = status.toLowerCase()
   if (!normalized) return 'Unknown'
   if (isDoneStatus(normalized)) return 'Completed'
-  return normalized.charAt(0).toUpperCase() + normalized.slice(1)
+  const label = normalized.replace(/_/g, ' ')
+  return label.charAt(0).toUpperCase() + label.slice(1)
 }
 
 export function statusBadgeTone(status: string): 'green' | 'yellow' | 'red' | undefined {
   const normalized = status.toLowerCase()
   if (isDoneStatus(normalized)) return 'green'
-  if (['pending', 'running', 'submitted', 'submitting', 'waiting', 'retrying', 'queued', 'interrupted'].includes(normalized)) return 'yellow'
+  if (['pending', 'running', 'submitted', 'submitting', 'waiting', 'retrying', 'queued', 'interrupted', 'awaiting_review'].includes(normalized)) return 'yellow'
   return ['failed', 'timeout', 'cancelled', 'canceled', 'dismissed', 'error', 'abandoned'].includes(normalized)
     ? 'red'
     : undefined

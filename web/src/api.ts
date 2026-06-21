@@ -77,8 +77,8 @@ export async function startWorkflowRun(id: string, options: DryRunOptions): Prom
   })
 }
 
-export async function cancelWorkflowRun(id: string): Promise<{ run: VisualizeRun; cancelled: boolean }> {
-  return fetchJson<{ run: VisualizeRun; cancelled: boolean }>(`/api/runs/${encodeURIComponent(id)}/cancel`, {
+export async function cancelWorkflowRun(id: string): Promise<{ run: VisualizeRun; cancelled: boolean; remoteStopped?: number; remoteStopAttempted?: number; warnings?: string[] }> {
+  return fetchJson<{ run: VisualizeRun; cancelled: boolean; remoteStopped?: number; remoteStopAttempted?: number; warnings?: string[] }>(`/api/runs/${encodeURIComponent(id)}/cancel`, {
     method: 'POST',
     headers: {
     },
@@ -88,9 +88,41 @@ export async function cancelWorkflowRun(id: string): Promise<{ run: VisualizeRun
 export async function cancelFollowupRun(
   id: string,
   target: { stepId?: string; agent?: string; runnerId?: string; sessionId?: string },
-): Promise<{ run: VisualizeRun; cancelled: boolean; remoteArchived: boolean; warnings: string[] }> {
-  return fetchJson<{ run: VisualizeRun; cancelled: boolean; remoteArchived: boolean; warnings: string[] }>(
+): Promise<{ run: VisualizeRun; cancelled: boolean; remoteStopped?: boolean; warnings: string[] }> {
+  return fetchJson<{ run: VisualizeRun; cancelled: boolean; remoteStopped?: boolean; warnings: string[] }>(
     `/api/runs/${encodeURIComponent(id)}/followups/cancel`,
+    {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify(target),
+    },
+  )
+}
+
+export async function approveHumanReviewGate(
+  id: string,
+  target: { stepId?: string },
+): Promise<{ run: VisualizeRun; approved: boolean; stepId: string }> {
+  return fetchJson<{ run: VisualizeRun; approved: boolean; stepId: string }>(
+    `/api/runs/${encodeURIComponent(id)}/review/approve`,
+    {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify(target),
+    },
+  )
+}
+
+export async function cancelHumanReviewGate(
+  id: string,
+  target: { stepId?: string; reason?: string },
+): Promise<{ run: VisualizeRun; cancelled: boolean }> {
+  return fetchJson<{ run: VisualizeRun; cancelled: boolean }>(
+    `/api/runs/${encodeURIComponent(id)}/review/cancel`,
     {
       method: 'POST',
       headers: {

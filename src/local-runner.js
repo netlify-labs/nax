@@ -222,6 +222,103 @@ function resolveNetlifyFilter({ projectRoot, filter } = {}) {
   return { filter: uniqueFilters[0], source: matches[0].source }
 }
 
+function findNetlifyTargetCandidate({ projectRoot, filter, netlifyConfig } = {}) {
+  const root = path.resolve(projectRoot || process.cwd())
+  const candidates = listNetlifyFilterCandidates(root)
+  const requestedConfig = String(netlifyConfig || '').trim()
+  if (requestedConfig) {
+    const requestedPath = path.isAbsolute(requestedConfig)
+      ? path.resolve(requestedConfig)
+      : path.resolve(root, requestedConfig)
+    const byConfig = candidates.filter((candidate) =>
+      candidate.source === requestedConfig ||
+      path.resolve(candidate.configPath) === requestedPath ||
+      path.resolve(candidate.configDir) === requestedPath)
+    if (byConfig.length === 1) return byConfig[0]
+  }
+
+  const requestedFilter = String(filter || '').trim()
+  if (requestedFilter) {
+    const byFilter = candidates.filter((candidate) => candidate.filter === requestedFilter)
+    if (byFilter.length === 1) return byFilter[0]
+  }
+
+  const inferred = resolveNetlifyFilter({ projectRoot: root })
+  if (inferred.source) {
+    const bySource = candidates.filter((candidate) => candidate.source === inferred.source)
+    if (bySource.length === 1) return bySource[0]
+  }
+
+  return candidates.length === 1 ? candidates[0] : null
+}
+
+function nestedNetlifySiteError(projectRoot, candidate) {
+  const root = path.resolve(projectRoot || process.cwd())
+  const stateSource = path.relative(root, candidate.statePath || path.join(candidate.configDir, '.netlify', 'state.json'))
+  return [
+    `Selected Netlify config ${candidate.source} is nested, but no linked Netlify site was found at ${stateSource}.`,
+    'Refusing to use root .netlify/state.json because it may point to a different Netlify site.',
+    `Run "cd ${candidate.dir} && netlify link" or pass "--site-id <site-id>" explicitly.`,
+  ].join(' ')
+}
+
+/** @param {Record<string, any>} param0 */
+function resolveNetlifyProjectTarget({
+  projectRoot,
+  filter,
+  netlifyConfig,
+  siteId: explicitSiteId,
+  env = process.env,
+} = {}) {
+  const root = path.resolve(projectRoot || process.cwd())
+  const candidate = findNetlifyTargetCandidate({ projectRoot: root, filter, netlifyConfig })
+  const requestedFilter = String(filter || '').trim()
+  const resolvedFilter = requestedFilter
+    ? { filter: requestedFilter, source: 'option' }
+    : (candidate?.filter
+        ? { filter: candidate.filter, source: candidate.source }
+        : resolveNetlifyFilter({ projectRoot: root }))
+  const selectedSiteId = String(explicitSiteId || env.NETLIFY_SITE_ID || '').trim()
+  if (selectedSiteId) {
+    return {
+      ...buildNetlifyEnv({ projectRoot: root, siteId: selectedSiteId, env }),
+      filter: resolvedFilter.filter,
+      filterSource: resolvedFilter.source,
+      netlifyFilter: resolvedFilter,
+      configDir: candidate?.configDir || '',
+      configSource: candidate?.source || String(netlifyConfig || ''),
+      siteSource: explicitSiteId ? 'option' : 'env',
+    }
+  }
+
+  if (candidate?.siteId) {
+    return {
+      ...buildNetlifyEnv({ projectRoot: root, siteId: candidate.siteId, env }),
+      filter: resolvedFilter.filter,
+      filterSource: resolvedFilter.source,
+      netlifyFilter: resolvedFilter,
+      configDir: candidate.configDir,
+      configSource: candidate.source,
+      siteSource: candidate.stateSource,
+    }
+  }
+
+  if (candidate && candidate.dir && candidate.dir !== '.') {
+    throw new Error(nestedNetlifySiteError(root, candidate))
+  }
+
+  const netlify = buildNetlifyEnv({ projectRoot: root, env })
+  return {
+    ...netlify,
+    filter: resolvedFilter.filter,
+    filterSource: resolvedFilter.source,
+    netlifyFilter: resolvedFilter,
+    configDir: candidate?.configDir || '',
+    configSource: candidate?.source || String(netlifyConfig || ''),
+    siteSource: readNetlifyState(root).siteId ? path.join('.netlify', 'state.json') : '',
+  }
+}
+
 function formatCommandForError(command, args) {
   const redacted = []
   for (let index = 0; index < args.length; index += 1) {
@@ -734,6 +831,38 @@ function listAgentSessions({ projectRoot, runnerId, env, runCommand = run } = {}
 }
 
 /** @param {Record<string, any>} param0 */
+function stopAgentRun({ projectRoot, runnerId, env, runCommand = run } = {}) {
+  if (!runnerId) throw new Error('Netlify agent runner ID is required to stop a run.')
+  const data = JSON.stringify({ agent_runner_id: runnerId })
+  const result = runCommand('netlify', ['api', 'deleteAgentRunner', '--data', data], {
+    cwd: projectRoot,
+    env,
+    allowFailure: true,
+  })
+  if (result.status === 0) {
+    return {
+      stopped: true,
+      error: '',
+      commandError: false,
+    }
+  }
+  const detail = (result.stderr || result.stdout || result.error?.message || '').toString().replace(/\x1b\[[0-9;]*m/g, '').trim()
+  if (/TextHTTPError:\s*Accepted/i.test(detail) || /^Accepted$/i.test(detail)) {
+    return {
+      stopped: true,
+      accepted: true,
+      error: '',
+      commandError: false,
+    }
+  }
+  return {
+    stopped: false,
+    error: detail,
+    commandError: true,
+  }
+}
+
+/** @param {Record<string, any>} param0 */
 function archiveAgentRun({ projectRoot, runnerId, env, runCommand = run } = {}) {
   if (!runnerId) throw new Error('Netlify agent runner ID is required to archive a run.')
   const data = JSON.stringify({ agent_runner_id: runnerId })
@@ -743,9 +872,18 @@ function archiveAgentRun({ projectRoot, runnerId, env, runCommand = run } = {}) 
     allowFailure: true,
   })
   if (result.status !== 0) {
+    const detail = (result.stderr || result.stdout || result.error?.message || '').toString().replace(/\x1b\[[0-9;]*m/g, '').trim()
+    if (/TextHTTPError:\s*Accepted/i.test(detail) || /^Accepted$/i.test(detail)) {
+      return {
+        archived: true,
+        accepted: true,
+        error: '',
+        commandError: false,
+      }
+    }
     return {
       archived: false,
-      error: (result.stderr || result.stdout || result.error?.message || '').trim(),
+      error: detail,
       commandError: true,
     }
   }
@@ -1025,6 +1163,7 @@ module.exports = {
   createAgentSessionAsync,
   compactPromptForArgumentLimitRetry,
   currentGitBranch,
+  stopAgentRun,
   detectJavascriptWorkspace,
   formatCommandForError,
   findNetlifyConfigPaths,
@@ -1039,6 +1178,7 @@ module.exports = {
   readNetlifyState,
   readRootNetlifyBuildCommand,
   resolveNetlifyFilter,
+  resolveNetlifyProjectTarget,
   run,
   runAsync,
   showAgentRun,

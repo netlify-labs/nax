@@ -509,6 +509,117 @@ test('visualize real-run endpoint starts a tracked process and replays events', 
   }
 })
 
+test('visualize cancel endpoint stops durable workflow runners without a live run', async () => {
+  const projectRoot = tmpRoot()
+  const runId = 'fixture-durable-cancel'
+  const dir = path.join(projectRoot, '.nax', 'workflows', runId)
+  fs.mkdirSync(dir, { recursive: true })
+  fs.writeFileSync(path.join(dir, 'workflow.json'), JSON.stringify({
+    schemaVersion: 1,
+    runId,
+    flowId: 'review',
+    flowTitle: 'Review',
+    projectRoot,
+    status: 'running',
+    transport: 'netlify-api',
+    branch: 'main',
+    target: {
+      branch: 'main',
+      sha: '0123456789abcdef0123456789abcdef01234567',
+      sourceType: 'explicit-branch',
+      verified: true,
+      caveats: [],
+    },
+    options: {
+      branch: 'main',
+      transport: 'netlify-api',
+    },
+    createdAt: '2026-06-21T00:00:00.000Z',
+    updatedAt: '2026-06-21T00:01:00.000Z',
+    dir,
+    flow: {
+      id: 'review',
+      title: 'Review',
+      steps: [
+        { id: 'review', title: 'Review', agents: ['claude', 'gemini', 'codex'], submit: 'new-run' },
+      ],
+    },
+    steps: [{
+      id: 'review',
+      title: 'Review',
+      status: 'running',
+      agents: ['claude', 'gemini', 'codex'],
+      runs: [
+        { agent: 'claude', status: 'pending' },
+        { agent: 'gemini', status: 'submitted', runnerId: '' },
+        { agent: 'codex', status: 'completed', runnerId: 'runner-codex' },
+        { agent: 'claude-followup', status: 'submitted', runnerId: 'runner-source', existingRunnerId: 'runner-source' },
+      ],
+    }],
+  }, null, 2))
+  fs.writeFileSync(path.join(dir, 'events.jsonl'), [
+    JSON.stringify({
+      schemaVersion: 1,
+      seq: 1,
+      eventId: `${runId}:1`,
+      type: 'agent_status',
+      at: '2026-06-21T00:00:30.000Z',
+      runId,
+      flowId: 'review',
+      flowTitle: 'Review',
+      projectRoot,
+      transport: 'netlify-api',
+      branch: 'main',
+      stepId: 'review',
+      stepTitle: 'Review',
+      agent: 'gemini',
+      status: 'submitted',
+      runnerId: 'runner-gemini',
+      sessionId: '',
+      links: {
+        agentRunUrl: 'https://app.netlify.com/projects/example/agent-runs/runner-gemini',
+        sessionUrl: 'https://app.netlify.com/projects/example/agent-runs/runner-gemini',
+      },
+      submittedAfterSeconds: 11,
+    }),
+    '',
+  ].join('\n'))
+
+  const stopped = []
+  const server = await startVisualizeServer({
+    projectRoot,
+    cancelStopRun: async ({ runnerId }) => {
+      stopped.push(runnerId)
+      return { stopped: true, error: '' }
+    },
+  })
+  try {
+    const response = await postJson(`http://127.0.0.1:${server.port}/api/runs/${runId}/cancel`, server.token, {})
+    assert.equal(response.statusCode, 200, response.payload?.error?.message)
+    assert.equal(response.payload.cancelled, true)
+    assert.equal(response.payload.remoteStopped, 1)
+    assert.equal(response.payload.remoteStopAttempted, 1)
+    assert.deepEqual(stopped, ['runner-gemini'])
+
+    const state = JSON.parse(fs.readFileSync(path.join(dir, 'workflow.json'), 'utf8'))
+    assert.equal(state.status, 'cancelled')
+    assert.equal(state.steps[0].status, 'cancelled')
+    assert.deepEqual(state.steps[0].runs.map((run) => run.status), ['cancelled', 'cancelled', 'completed', 'cancelled'])
+    assert.equal(state.steps[0].runs[1].runnerId, 'runner-gemini')
+    assert.equal(state.steps[0].runs[1].submittedAfterSeconds, 11)
+    assert.deepEqual(state.remoteCancel.runnerIds, ['runner-gemini'])
+    assert.deepEqual(state.remoteCancel.stopped, ['runner-gemini'])
+
+    const eventTypes = fs.readFileSync(path.join(dir, 'events.jsonl'), 'utf8')
+      .trim()
+      .split('\n')
+      .map((line) => JSON.parse(line).type)
+    assert.deepEqual(eventTypes.slice(-2), ['remote_cancel_requested', 'workflow_cancelled'])
+  } finally {
+    await server.close()
+  }
+})
+
 test('visualize runs API reads durable workflow state from .nax', async () => {
   const projectRoot = tmpRoot()
   const flowDir = path.join(projectRoot, '.github', 'nax-flows', 'review')
@@ -714,7 +825,7 @@ test('visualize follow-up endpoint submits matching runner and fresh additional 
   const projectRoot = tmpRoot()
   const { runId } = writeFollowupRunFixture(projectRoot)
   const submissions = []
-  const archived = []
+  const stopped = []
   const server = await startVisualizeServer({
     projectRoot,
     siteName: 'netlify-agent-executor',
@@ -727,9 +838,9 @@ test('visualize follow-up endpoint submits matching runner and fresh additional 
         sessionId: run.existingRunnerId ? `session-${run.agent}-followup` : `session-${run.agent}`,
       }
     },
-    followupArchiveRun: async ({ runnerId }) => {
-      archived.push(runnerId)
-      return { archived: true, error: '', commandError: false }
+    followupStopRun: async ({ runnerId }) => {
+      stopped.push(runnerId)
+      return { stopped: true, error: '', commandError: false }
     },
     followupSyncRunCommand: (_command, args) => {
       const data = JSON.parse(args[args.indexOf('--data') + 1] || '{}')
@@ -801,8 +912,8 @@ test('visualize follow-up endpoint submits matching runner and fresh additional 
     })
     assert.equal(cancel.statusCode, 200, cancel.payload?.error?.message)
     assert.equal(cancel.payload.cancelled, true)
-    assert.equal(cancel.payload.remoteArchived, true)
-    assert.deepEqual(archived, ['runner-gemini'])
+    assert.equal(cancel.payload.remoteStopped, true)
+    assert.deepEqual(stopped, ['runner-gemini'])
 
     const cancelledGraph = await requestJson(`${base}/api/runs/${runId}/graph`, { token: server.token })
     const cancelledNode = cancelledGraph.payload.graph.nodes.find((node) => node.id === followupNode.id)
@@ -1078,4 +1189,45 @@ test('shutdownRuns cancels children, clears timers, and ends clients', () => {
   assert.equal(run.stepStatusTimer, null)
   assert.deepEqual(ended, [true])
   assert.equal(run.clients.size, 0)
+})
+
+test('cancellableWorkflowRunnerIds selects submitted fresh runners only', () => {
+  assert.deepEqual(_private.cancellableWorkflowRunnerIds({
+    steps: [{
+      runs: [
+        { runnerId: 'runner-1', status: 'submitted' },
+        { runnerId: 'runner-1', status: 'running' },
+        { runnerId: 'runner-2', status: 'completed' },
+        { runnerId: 'runner-3', status: 'submitted', existingRunnerId: 'source-runner' },
+        { runnerId: '', status: 'submitted' },
+      ],
+    }],
+  }), ['runner-1'])
+})
+
+test('stopWorkflowRunners stops cancellable workflow runners and reports warnings', async () => {
+  const calls = []
+  const result = await _private.stopWorkflowRunners({
+    projectRoot: '/tmp/project',
+    env: { NETLIFY_AUTH_TOKEN: 'token' },
+    runState: {
+      steps: [{
+        runs: [
+          { runnerId: 'runner-ok', status: 'submitted' },
+          { runnerId: 'runner-fail', status: 'running' },
+        ],
+      }],
+    },
+    stopRun: async ({ runnerId }) => {
+      calls.push(runnerId)
+      return runnerId === 'runner-ok'
+        ? { stopped: true, error: '' }
+        : { stopped: false, error: 'nope' }
+    },
+  })
+
+  assert.deepEqual(calls, ['runner-ok', 'runner-fail'])
+  assert.deepEqual(result.stopped, ['runner-ok'])
+  assert.deepEqual(result.runnerIds, ['runner-ok', 'runner-fail'])
+  assert.deepEqual(result.warnings, ['runner-fail: nope'])
 })

@@ -1,5 +1,6 @@
 const { eventLogPathForRunState } = require('./runner-event-log')
 const { createRunnerEventEmitter } = require('./runner-events')
+const { createNotificationDispatcher } = require('./notifications')
 
 function safeOptions(options = {}) {
   return {
@@ -16,6 +17,10 @@ function safeOptions(options = {}) {
 
 function createWorkflowEventContext(options = {}) {
   const sink = typeof options.sink === 'function' ? options.sink : null
+  const notifications = options.notifications || createNotificationDispatcher({
+    ...(options.notify || {}),
+    env: options.env,
+  })
   const emitter = options.emitter || createRunnerEventEmitter({
     env: options.env,
     stream: options.stream,
@@ -28,6 +33,7 @@ function createWorkflowEventContext(options = {}) {
   function emit(type, payload = {}) {
     const event = emitter.emit(type, payload)
     if (sink) sink(event)
+    notifications.notify(event)
     return event
   }
 
@@ -117,7 +123,10 @@ function createWorkflowEventContext(options = {}) {
     stepStatus,
     agentStatus,
     artifactWritten,
-    close: () => emitter.close(),
+    close: async () => {
+      await notifications.flush()
+      emitter.close()
+    },
   }
 }
 

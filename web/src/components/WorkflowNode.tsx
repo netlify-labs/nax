@@ -1,6 +1,6 @@
 import { memo } from 'react'
 import { Handle, Position, type NodeProps } from '@xyflow/react'
-import { Info } from 'lucide-react'
+import { Info, UserCheck } from 'lucide-react'
 import type { WorkflowGraphNodeData } from '../types'
 import { AgentIcon } from './AgentIcon'
 
@@ -28,6 +28,7 @@ export const WorkflowNode = memo(function WorkflowNode({ data, selected }: NodeP
   const node = data as WorkflowGraphNodeData
   const selectedAgents = new Set(node.selectedAgents || node.agents)
   const statusClass = node.status ? ` status-${node.status}` : ''
+  const humanReview = node.action === 'human-review' || node.submit === 'human-review'
   return (
     <div className={`workflow-node${statusClass}${selected ? ' selected' : ''}`}>
       <Handle className="hidden-handle" type="target" position={Position.Top} />
@@ -50,7 +51,7 @@ export const WorkflowNode = memo(function WorkflowNode({ data, selected }: NodeP
               </button>
             ) : null}
           </div>
-          <span className={`action-badge ${node.submit === 'follow-up' ? 'follow-up' : 'new-run'}`}>
+          <span className={`action-badge ${humanReview ? 'human-review' : node.submit === 'follow-up' ? 'follow-up' : 'new-run'}`}>
             {node.submitLabel || node.submit || node.action}
           </span>
         </div>
@@ -58,7 +59,12 @@ export const WorkflowNode = memo(function WorkflowNode({ data, selected }: NodeP
       </div>
       {node.description ? <p className="node-description">{node.description}</p> : null}
       <div className="agent-row">
-        {node.agents.map((agent) => {
+        {humanReview ? (
+          <span className={`agent-chip human-review-chip agent-${node.status || 'pending'}`}>
+            <UserCheck size={14} />
+            <span>{node.status === 'awaiting_review' ? 'Awaiting review' : 'Human review'}</span>
+          </span>
+        ) : node.agents.map((agent) => {
           const active = selectedAgents.has(agent)
           const agentStatus = active ? node.agentStatuses?.[agent] || '' : ''
           const hasResult = hasCompletedRun(node, agent)

@@ -104,6 +104,32 @@ function runForAgent(node: WorkflowGraphNodeData, agent: string): Record<string,
   return undefined
 }
 
+function liveStatusMapsFromRun(run: VisualizeRun): {
+  stepStatuses: Record<string, string>
+  agentStatuses: Record<string, Record<string, string>>
+} {
+  const stepStatuses: Record<string, string> = {}
+  const agentStatuses: Record<string, Record<string, string>> = {}
+  for (const step of run.steps || []) {
+    const stepId = recordValue(step, 'id')
+    if (!stepId) continue
+    const stepStatus = recordValue(step, 'status')
+    if (stepStatus) stepStatuses[stepId] = visualStatus(stepStatus)
+    const runs = Array.isArray(step.runs) ? step.runs : []
+    for (const runRecord of runs) {
+      if (!runRecord || typeof runRecord !== 'object' || Array.isArray(runRecord)) continue
+      const agent = recordValue(runRecord as Record<string, unknown>, 'agent')
+      const status = recordValue(runRecord as Record<string, unknown>, 'status')
+      if (!agent || !status) continue
+      agentStatuses[stepId] = {
+        ...(agentStatuses[stepId] || {}),
+        [agent]: visualStatus(status),
+      }
+    }
+  }
+  return { stepStatuses, agentStatuses }
+}
+
 function latestAgentEvent(events: RunnerEvent[], node: WorkflowGraphNodeData, agent: string): RunnerEvent | null {
   for (let index = events.length - 1; index >= 0; index -= 1) {
     const event = events[index]
@@ -659,6 +685,18 @@ export default function App() {
     try {
       const response = await cancelWorkflowRun(activeRun.id)
       setActiveRun(response.run)
+      const statusMaps = liveStatusMapsFromRun(response.run)
+      setLiveStepStatuses((current) => ({ ...current, ...statusMaps.stepStatuses }))
+      setLiveAgentStatuses((current) => {
+        const next = { ...current }
+        for (const [stepId, statuses] of Object.entries(statusMaps.agentStatuses)) {
+          next[stepId] = {
+            ...(next[stepId] || {}),
+            ...statuses,
+          }
+        }
+        return next
+      })
       if (!response.cancelled) {
         setRunError('This run is no longer cancellable.')
       }

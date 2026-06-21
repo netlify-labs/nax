@@ -40,8 +40,9 @@ const {
 } = require('../src/agent-run-results')
 const { runGh } = require('../src/gh-cli')
 const { multiline } = require('../src/multiline')
-const { WAIT_FOR_AGENT_RESULTS, listFlows, loadFlow, loadStepPrompt } = requireWithoutArgvFlag('--verbose', () => require('../src/flows'))
+const { WAIT_FOR_AGENT_RESULTS, isHumanReviewStep, listFlows, loadFlow, loadStepPrompt } = requireWithoutArgvFlag('--verbose', () => require('../src/flows'))
 const { createRunState, dismissRunState, isUnfinishedRun, listRunStates, saveRunState, workflowStatePath } = require('../src/run-state')
+const { AWAITING_REVIEW, approveHumanReviewGate, createHumanReviewStepState } = require('../src/human-review')
 const {
   artifactsRootForRunState,
   persistRunArtifact,
@@ -96,9 +97,11 @@ const {
   archiveAgentRun,
   buildNetlifyEnv,
   currentGitBranch,
+  stopAgentRun,
   detectJavascriptWorkspace,
   listNetlifyFilterCandidates,
   resolveNetlifyFilter,
+  resolveNetlifyProjectTarget,
   submitLocalAgentRun,
   waitForLocalAgentRuns,
 } = require('../src/local-runner')
@@ -315,6 +318,23 @@ function maybeReportNetlifySite(options = {}) {
   console.log(`Netlify site ID: ${options.netlifySiteId}${source}`)
 }
 
+function netlifyOptionsFromTarget(options = {}, target = {}) {
+  return {
+    ...options,
+    ...(target.siteId ? { netlifySiteId: target.siteId } : {}),
+    ...(target.siteSource ? { netlifySiteSource: target.siteSource } : {}),
+    ...(target.configSource ? { netlifyConfig: target.configSource } : {}),
+    ...(target.filter ? { filter: target.filter } : {}),
+  }
+}
+
+function configDirForNetlifyOptions(projectRoot, options = {}) {
+  const source = String(options.netlifyConfig || options.configSource || '').trim()
+  if (!source) return projectRoot
+  const configPath = path.isAbsolute(source) ? source : path.join(projectRoot, source)
+  return path.basename(configPath) === 'netlify.toml' ? path.dirname(configPath) : configPath
+}
+
 function netlifyProjectChoiceLabel(candidate = {}) {
   const dir = candidate.dir || candidate.source || 'netlify.toml'
   if (candidate.siteId) return `${dir} (${candidate.siteId})`
@@ -378,7 +398,15 @@ function formatNetlifyWorkspaceFilterError(selectedSource, workspaceDetection = 
 async function chooseNetlifyFilterOption({ projectRoot, invocationDir = process.cwd(), options = {}, detectWorkspace = detectJavascriptWorkspace } = {}) {
   if (options.filter) return options
   const candidates = listNetlifyFilterCandidates(projectRoot)
-  if (candidates.length <= 1) return options
+  if (candidates.length === 0) return options
+  if (candidates.length === 1) {
+    const [selected] = candidates
+    return {
+      ...options,
+      ...(selected.filter ? { filter: selected.filter, netlifyConfig: selected.source } : {}),
+      ...(selected.siteId ? { netlifySiteId: selected.siteId, netlifySiteSource: selected.stateSource } : {}),
+    }
+  }
   const workspaceDetection = await detectWorkspace({ projectRoot, projectDir: projectRoot })
 
   if (!process.stdin.isTTY || options.yes) {
@@ -624,6 +652,9 @@ function optionWasSet(command, name) {
 function normalizeOptionAliases(resolved) {
   if (resolved.dry && resolved.dryRun !== true) {
     resolved.dryRun = true
+  }
+  if (resolved.siteId && !resolved.netlifySiteId) {
+    resolved.netlifySiteId = resolved.siteId
   }
   if (resolved.force && resolved.yes !== true) {
     resolved.yes = true
@@ -992,7 +1023,12 @@ function buildGithubFullPromptWrapper({ runner = '@netlify', model, blobRef }) {
 /** @param {Record<string, any>} param0 */
 function optionalNetlifyForBlobOffload({ projectRoot, options = {} } = {}) {
   try {
-    return buildNetlifyEnv({ projectRoot, siteId: options.netlifySiteId })
+    return resolveNetlifyProjectTarget({
+      projectRoot,
+      siteId: options.netlifySiteId,
+      filter: options.filter,
+      netlifyConfig: options.netlifyConfig,
+    })
   } catch {
     return null
   }
@@ -2150,8 +2186,13 @@ async function runSingleNetlifyAgent({
   startLabel,
 } = {}) {
   const branch = options.branch || currentGitBranch(projectRoot)
-  const netlify = buildNetlifyEnv({ projectRoot, siteId: options.netlifySiteId })
-  const netlifyFilter = resolveNetlifyFilter({ projectRoot, filter: options.filter })
+  const netlify = resolveNetlifyProjectTarget({
+    projectRoot,
+    siteId: options.netlifySiteId,
+    filter: options.filter,
+    netlifyConfig: options.netlifyConfig,
+  })
+  const netlifyFilter = netlify.netlifyFilter
   const runTitle = title || 'Agent Run'
   const run = {
     transport: NETLIFY_API_TRANSPORT,
@@ -2173,7 +2214,7 @@ async function runSingleNetlifyAgent({
   }
 
   if (typeof beforeSubmit === 'function') beforeSubmit()
-  maybeReportNetlifySite(options)
+  maybeReportNetlifySite(netlifyOptionsFromTarget(options, netlify))
   maybeReportNetlifyFilter(netlifyFilter)
   console.log(`\nStarting ${titleCase(agent)} ${startLabel || runTitle.toLowerCase()}...`)
   const startedAt = Date.now()
@@ -2190,7 +2231,7 @@ async function runSingleNetlifyAgent({
     },
   })
   submitted.submittedAfterSeconds = Math.round((Date.now() - startedAt) / 1000)
-  addLocalRunLinks(submitted, projectRoot)
+  addLocalRunLinks(submitted, projectRoot, options)
   const boxes = formatSubmittedLocalRunBoxes({
     runs: [submitted],
     prompt: { title: runTitle },
@@ -2221,11 +2262,11 @@ async function runSingleNetlifyAgent({
         reporter.updateRun(event)
       },
       onTerminalRun: (terminalRun) => {
-        addLocalRunLinks(terminalRun, projectRoot)
+        addLocalRunLinks(terminalRun, projectRoot, options)
         reportTerminalLocalRun(reporter, terminalRun, projectRoot)
       },
     })
-    addLocalRunLinks(completed, projectRoot)
+    addLocalRunLinks(completed, projectRoot, options)
     const artifactSource = source || { type: 'ad-hoc' }
     const sessionArtifact = persistAgentSessionArtifact({
       projectRoot,
@@ -2872,7 +2913,7 @@ function withSelectedStepModels(flow, options = {}) {
 }
 
 function runnableSteps(flow, options) {
-  return findStepRange(flow, options).filter((step) => normalizeArray(step.agents).length > 0)
+  return findStepRange(flow, options).filter((step) => isHumanReviewStep(step) || normalizeArray(step.agents).length > 0)
 }
 
 function resolveStepDescription(flow, step) {
@@ -3186,10 +3227,14 @@ function finalRunForRunState(runState) {
 }
 
 /** @param {Record<string, any>} param0 */
-function localAgentRunUrl({ projectRoot, runnerId, sessionId }) {
+function localAgentRunUrl({ projectRoot, runnerId, sessionId, options = {} }) {
   if (!runnerId) return ''
+  const expectedSiteId = String(options.netlifySiteId || options.siteId || '').trim()
   try {
-    const project = /** @type {Record<string, any> | null} */ (readNetlifyProject(projectRoot))
+    const statusRoot = configDirForNetlifyOptions(projectRoot, options)
+    const env = expectedSiteId ? { ...process.env, NETLIFY_SITE_ID: expectedSiteId } : process.env
+    const project = /** @type {Record<string, any> | null} */ (readNetlifyProject(statusRoot, env))
+    if (expectedSiteId && project?.siteId && project.siteId !== expectedSiteId) return ''
     if (project?.adminUrl) {
       return formatAgentRunUrlFromAdminUrl(project.adminUrl, runnerId, sessionId)
     }
@@ -3201,7 +3246,7 @@ function localAgentRunUrl({ projectRoot, runnerId, sessionId }) {
 }
 
 /** @param {Record<string, any>} param0 */
-function formatSubmittedLocalRunBoxes({ runs = [], prompt = {}, projectRoot }) {
+function formatSubmittedLocalRunBoxes({ runs = [], prompt = {}, projectRoot, options = {} }) {
   if (runs.length === 0) return ''
   const teal = '#0d9488'
   const terminalWidth = process.stdout.columns || 120
@@ -3211,7 +3256,7 @@ function formatSubmittedLocalRunBoxes({ runs = [], prompt = {}, projectRoot }) {
     const titleRight = run.sessionId || run.runnerId || ''
     const runUrl = run.links?.sessionUrl ||
       run.links?.agentRunUrl ||
-      (projectRoot ? localAgentRunUrl({ projectRoot, runnerId: run.runnerId, sessionId: run.sessionId }) : '')
+      (projectRoot ? localAgentRunUrl({ projectRoot, runnerId: run.runnerId, sessionId: run.sessionId, options }) : '')
     const content = [
       `Status: ${run.status || 'submitted'}`,
       run.existingRunnerId ? 'Type: follow-up session' : 'Type: new agent run',
@@ -4131,8 +4176,80 @@ function cleanupLocalWorkflowBlobs({ runState, projectRoot, netlify, reason = 'f
 /** @param {Record<string, any>} param0 */
 function cleanupWorkflowBlobsForRun({ runState, projectRoot, options = {}, reason = 'flow-terminal' } = {}) {
   if (!Array.isArray(runState?.blobRefs) || runState.blobRefs.length === 0) return []
-  const netlify = buildNetlifyEnv({ projectRoot, siteId: options.netlifySiteId })
+  const netlify = resolveNetlifyProjectTarget({
+    projectRoot,
+    siteId: options.netlifySiteId,
+    filter: options.filter,
+    netlifyConfig: options.netlifyConfig,
+  })
   return cleanupLocalWorkflowBlobs({ runState, projectRoot, netlify, reason })
+}
+
+function cancellableLocalRunnerIds(runState = {}) {
+  const terminal = new Set(['completed', 'failed', 'timeout', 'cancelled', 'canceled', 'dry-run'])
+  const ids = []
+  for (const step of Array.isArray(runState.steps) ? runState.steps : []) {
+    for (const run of Array.isArray(step.runs) ? step.runs : []) {
+      const runnerId = String(run.runnerId || '').trim()
+      if (!runnerId || run.existingRunnerId) continue
+      if (terminal.has(String(run.status || '').toLowerCase())) continue
+      ids.push(runnerId)
+    }
+  }
+  return [...new Set(ids)]
+}
+
+function cancelLocalWorkflowRunnersForInterrupt({ runState, projectRoot, options = {}, reason = 'interrupted workflow', stopRun = stopAgentRun } = {}) {
+  if (!isNetlifyApiTransport(runState?.transport)) return { runnerIds: [], stopped: [], warnings: [] }
+  const runnerIds = cancellableLocalRunnerIds(runState)
+  if (runnerIds.length === 0) return { runnerIds, stopped: [], warnings: [] }
+  let env = process.env
+  try {
+    env = resolveNetlifyProjectTarget({
+      projectRoot,
+      siteId: options.netlifySiteId || runState.options?.netlifySiteId,
+      filter: options.filter || runState.options?.filter,
+      netlifyConfig: options.netlifyConfig || runState.options?.netlifyConfig,
+    }).env
+  } catch (_err) {
+    env = process.env
+  }
+  const stopped = []
+  const warnings = []
+  for (const runnerId of runnerIds) {
+    try {
+      const result = stopRun({ projectRoot, runnerId, env })
+      if (result?.stopped === true) stopped.push(runnerId)
+      else warnings.push(`${runnerId}: ${result?.error || 'stop request did not report success'}`)
+    } catch (error) {
+      warnings.push(`${runnerId}: ${error?.message || String(error)}`)
+    }
+  }
+  const stoppedSet = new Set(stopped)
+  const cancelledAt = new Date().toISOString()
+  for (const step of Array.isArray(runState.steps) ? runState.steps : []) {
+    for (const run of Array.isArray(step.runs) ? step.runs : []) {
+      if (!stoppedSet.has(String(run.runnerId || '').trim())) continue
+      run.status = 'cancelled'
+      run.cancelledAt = cancelledAt
+      run.cancelReason = reason
+    }
+    const runs = Array.isArray(step.runs) ? step.runs : []
+    if (runs.length > 0 && runs.every((run) => ['cancelled', 'canceled'].includes(String(run.status || '').toLowerCase()))) {
+      step.status = 'cancelled'
+    }
+  }
+  runState.remoteCancel = {
+    reason,
+    requestedAt: cancelledAt,
+    runnerIds,
+    stopped,
+    warnings,
+  }
+  if (warnings.length > 0) {
+    runState.remoteCancelWarning = `${warnings.length} remote ${warnings.length === 1 ? 'runner' : 'runners'} could not be stopped on interrupt.`
+  }
+  return { runnerIds, stopped, warnings }
 }
 
 function handleClean(target = '', options = {}) {
@@ -4223,6 +4340,38 @@ function localStepStatus(stepState) {
   return stepState.runs.every((run) => run.status === 'completed' || run.status === 'dry-run')
     ? 'completed'
     : 'failed'
+}
+
+function humanReviewPauseError(runState, stepState) {
+  const error = /** @type {Error & { code?: string, runId?: string, stepId?: string }} */ (new Error(`Workflow "${runState.flowTitle || runState.flowId}" is awaiting human review at step "${stepState.title || stepState.id}".`))
+  error.code = AWAITING_REVIEW
+  error.runId = runState.runId
+  error.stepId = stepState.id
+  return error
+}
+
+function requireHumanReview({ runState, step, runtimeEvents }) {
+  const existing = (runState.steps || []).find((candidate) => candidate.id === step.id)
+  const stepState = existing || createHumanReviewStepState(step)
+  if (!existing) runState.steps.push(stepState)
+  stepState.status = AWAITING_REVIEW
+  stepState.review = {
+    ...(stepState.review || {}),
+    status: AWAITING_REVIEW,
+    requestedAt: stepState.review?.requestedAt || new Date().toISOString(),
+  }
+  runState.status = AWAITING_REVIEW
+  saveRunState(runState)
+  runtimeEvents?.stepStatus(AWAITING_REVIEW, stepState, step, {
+    review: stepState.review,
+  })
+  runtimeEvents?.workflowStatus(AWAITING_REVIEW, {
+    stepId: stepState.id,
+    stepTitle: stepState.title || stepState.id,
+  })
+  console.log(`\nAwaiting human review: ${stepState.title || stepState.id}`)
+  console.log(`State: ${workflowStatePath(runState.dir)}`)
+  throw humanReviewPauseError(runState, stepState)
 }
 
 function visualAgentStatusFromPoll(event = {}) {
@@ -5599,6 +5748,9 @@ async function executeGithubFlow({ flow, steps, options, runState, completedStep
 
   for (let stepIndex = 0; stepIndex < steps.length; stepIndex += 1) {
     const step = steps[stepIndex]
+    if (isHumanReviewStep(step)) {
+      requireHumanReview({ runState, step, runtimeEvents })
+    }
     const prompt = loadStepPrompt(flow, step)
     const stepState = {
       id: step.id,
@@ -5777,9 +5929,9 @@ async function executeGithubFlow({ flow, steps, options, runState, completedStep
   }
 }
 
-function addLocalRunLinks(run, projectRoot) {
-  const runUrl = localAgentRunUrl({ projectRoot, runnerId: run.runnerId, sessionId: run.sessionId })
-  const baseRunUrl = localAgentRunUrl({ projectRoot, runnerId: run.runnerId })
+function addLocalRunLinks(run, projectRoot, options = {}) {
+  const runUrl = localAgentRunUrl({ projectRoot, runnerId: run.runnerId, sessionId: run.sessionId, options })
+  const baseRunUrl = localAgentRunUrl({ projectRoot, runnerId: run.runnerId, options })
   run.links = {
     ...(run.links || {}),
     ...(baseRunUrl ? { agentRunUrl: baseRunUrl } : {}),
@@ -5788,8 +5940,8 @@ function addLocalRunLinks(run, projectRoot) {
   return run
 }
 
-function reportTerminalLocalRun(reporter, run, projectRoot) {
-  addLocalRunLinks(run, projectRoot)
+function reportTerminalLocalRun(reporter, run, projectRoot, options = {}) {
+  addLocalRunLinks(run, projectRoot, options)
   reporter.updateRun({
     run,
     state: run.status,
@@ -5835,7 +5987,7 @@ async function completeLocalStep({ runState, stepState, step, options, projectRo
         },
         onTerminalRun: (run) => {
           const classifiedRun = applyContextFetchClassification(run)
-          addLocalRunLinks(classifiedRun, projectRoot)
+          addLocalRunLinks(classifiedRun, projectRoot, options)
           const index = stepState.runs.findIndex((candidate) => candidate.runnerId === classifiedRun.runnerId)
           if (index !== -1) stepState.runs[index] = classifiedRun
           const artifactResult = persistRunArtifact(runState, stepState, classifiedRun)
@@ -5852,7 +6004,7 @@ async function completeLocalStep({ runState, stepState, step, options, projectRo
       })
       const classifiedRuns = completedRuns.map((run) => {
         const classifiedRun = applyContextFetchClassification(run)
-        addLocalRunLinks(classifiedRun, projectRoot)
+        addLocalRunLinks(classifiedRun, projectRoot, options)
         return classifiedRun
       })
       stepState.runs = classifiedRuns
@@ -5895,12 +6047,29 @@ async function executeLocalFlow({ flow, steps, options, runState, projectRoot, c
   const date = options.date || getLocalDate()
   const baseContext = contextForRunState(runState, options)
   const branch = options.branch || currentGitBranch(projectRoot)
-  const netlify = buildNetlifyEnv({ projectRoot, siteId: options.netlifySiteId })
-  const netlifyFilter = resolveNetlifyFilter({ projectRoot, filter: options.filter })
-  maybeReportNetlifySite(options)
+  const netlify = resolveNetlifyProjectTarget({
+    projectRoot,
+    siteId: options.netlifySiteId,
+    filter: options.filter,
+    netlifyConfig: options.netlifyConfig,
+  })
+  const netlifyFilter = netlify.netlifyFilter
+  const resolvedNetlifyOptions = netlifyOptionsFromTarget(options, netlify)
+  Object.assign(options, resolvedNetlifyOptions)
+  if (runState?.options) {
+    runState.options = {
+      ...runState.options,
+      ...resolvedNetlifyOptions,
+    }
+    saveRunState(runState)
+  }
+  maybeReportNetlifySite(resolvedNetlifyOptions)
   maybeReportNetlifyFilter(netlifyFilter)
 
   for (const [stepIndex, step] of steps.entries()) {
+    if (isHumanReviewStep(step)) {
+      requireHumanReview({ runState, step, runtimeEvents })
+    }
     const prompt = loadStepPrompt(flow, step)
     const stepState = {
       id: step.id,
@@ -6023,7 +6192,7 @@ async function executeLocalFlow({ flow, steps, options, runState, projectRoot, c
           })
           const elapsedSeconds = Math.round((Date.now() - startedAt) / 1000)
           submitted.submittedAfterSeconds = elapsedSeconds
-          addLocalRunLinks(submitted, projectRoot)
+          addLocalRunLinks(submitted, projectRoot, options)
           stepState.runs[index] = submitted
           saveRunState(runState)
           runtimeEvents?.agentStatus('submitted', submitted, stepState, step, {
@@ -6070,7 +6239,7 @@ async function executeLocalFlow({ flow, steps, options, runState, projectRoot, c
     if (failedSubmissions.length > 0) {
       throw new Error(submissionFailureSummary(failedSubmissions))
     }
-    const submissionBoxes = formatSubmittedLocalRunBoxes({ runs: submittedRuns, prompt, projectRoot })
+    const submissionBoxes = formatSubmittedLocalRunBoxes({ runs: submittedRuns, prompt, projectRoot, options })
     if (submissionBoxes) {
       console.log('\nSubmitted Netlify agent runs:')
       console.log(submissionBoxes)
@@ -6109,7 +6278,17 @@ async function resumeLocalFlow({ flow, runState, projectRoot }) {
     branch,
   }
   saveRunState(runState)
-  const netlify = buildNetlifyEnv({ projectRoot, siteId: options.netlifySiteId })
+  const netlify = resolveNetlifyProjectTarget({
+    projectRoot,
+    siteId: options.netlifySiteId,
+    filter: options.filter,
+    netlifyConfig: options.netlifyConfig,
+  })
+  runState.options = {
+    ...runState.options,
+    ...netlifyOptionsFromTarget(options, netlify),
+  }
+  saveRunState(runState)
   const completedStepStates = completedStepMapFromRunState(runState)
   const startIndex = firstRunnableStepIndex(flow, runState)
   if (startIndex >= flow.steps.length) {
@@ -6125,7 +6304,7 @@ async function resumeLocalFlow({ flow, runState, projectRoot }) {
     console.log(`Flow: ${flow.title}`)
     console.log(`State: ${workflowStatePath(runState.dir)}`)
     console.log(`Repair and continue: ${step.title}`)
-    await completeLocalStep({ runState, stepState, step, options, projectRoot, netlify, initialDelayMs: 0 })
+    await completeLocalStep({ runState, stepState, step, options: runState.options, projectRoot, netlify, netlifyFilter: netlify.filter, initialDelayMs: 0 })
     archiveEligibleCompletedLocalRuns({
       runState,
       flowSteps: flow.steps,
@@ -6142,7 +6321,7 @@ async function resumeLocalFlow({ flow, runState, projectRoot }) {
     await executeLocalFlow({
       flow,
       steps: flow.steps.slice(startIndex + 1),
-      options,
+      options: runState.options,
       runState,
       projectRoot,
       completedStepStates,
@@ -6154,7 +6333,7 @@ async function resumeLocalFlow({ flow, runState, projectRoot }) {
   await executeLocalFlow({
     flow,
     steps: flow.steps.slice(startIndex),
-    options,
+    options: runState.options,
     runState,
     projectRoot,
     completedStepStates,
@@ -6295,15 +6474,21 @@ async function handleRetry(runId, options) {
       filter: options.filter || runState.options?.filter || '',
     },
   })
-  const netlify = buildNetlifyEnv({ projectRoot, siteId: retryOptions.netlifySiteId })
+  const netlify = resolveNetlifyProjectTarget({
+    projectRoot,
+    siteId: retryOptions.netlifySiteId,
+    filter: retryOptions.filter,
+    netlifyConfig: retryOptions.netlifyConfig,
+  })
+  const resolvedRetryOptions = netlifyOptionsFromTarget(retryOptions, netlify)
   runState.options = {
     ...(runState.options || {}),
-    ...(retryOptions.filter ? { filter: retryOptions.filter } : {}),
-    ...(retryOptions.netlifyConfig ? { netlifyConfig: retryOptions.netlifyConfig } : {}),
-    ...(retryOptions.netlifySiteId ? { netlifySiteId: retryOptions.netlifySiteId } : {}),
-    ...(retryOptions.netlifySiteSource ? { netlifySiteSource: retryOptions.netlifySiteSource } : {}),
+    ...(resolvedRetryOptions.filter ? { filter: resolvedRetryOptions.filter } : {}),
+    ...(resolvedRetryOptions.netlifyConfig ? { netlifyConfig: resolvedRetryOptions.netlifyConfig } : {}),
+    ...(resolvedRetryOptions.netlifySiteId ? { netlifySiteId: resolvedRetryOptions.netlifySiteId } : {}),
+    ...(resolvedRetryOptions.netlifySiteSource ? { netlifySiteSource: resolvedRetryOptions.netlifySiteSource } : {}),
   }
-  const netlifyFilter = resolveNetlifyFilter({ projectRoot, filter: retryOptions.filter })
+  const netlifyFilter = netlify.netlifyFilter
   const compactPromptText = buildCompactLocalPromptForRetry({ flow, step: flowStep, runState, run })
   if (!compactPromptText || compactPromptText.length >= String(run.promptText || '').length) {
     throw new Error(`Could not build a shorter prompt for ${run.agent} ${step.id}.`)
@@ -6313,6 +6498,7 @@ async function handleRetry(runId, options) {
   console.log(`Run: ${runState.runId}`)
   console.log(`Runner: ${run.runnerId}`)
   console.log(`Prompt: ${String(run.promptText || '').length} -> ${compactPromptText.length} chars`)
+  maybeReportNetlifySite(resolvedRetryOptions)
   maybeReportNetlifyFilter(netlifyFilter)
 
   const retryRun = {
@@ -6363,14 +6549,14 @@ async function handleRetry(runId, options) {
     initialDelayMs: 0,
     onProgress: (event) => reporter.updateRun(event),
     onTerminalRun: (terminalRun) => {
-      addLocalRunLinks(terminalRun, projectRoot)
+      addLocalRunLinks(terminalRun, projectRoot, resolvedRetryOptions)
       step.runs[runIndex] = terminalRun
       persistRunArtifact(runState, step, terminalRun)
       reportTerminalLocalRun(reporter, terminalRun, projectRoot)
     },
   })
   const completedRun = completed[0]
-  addLocalRunLinks(completedRun, projectRoot)
+  addLocalRunLinks(completedRun, projectRoot, resolvedRetryOptions)
   step.runs[runIndex] = completedRun
   step.status = localStepStatus(step)
   persistStepArtifacts(runState, step)
@@ -6524,11 +6710,36 @@ async function maybeResumeUnfinishedRun({ projectRoot, options = {}, flow = null
   return true
 }
 
+async function resumeRunById(runId, options = {}) {
+  const projectRoot = resolveProjectRoot(options.projectRoot, { cwd: process.cwd() })
+  const runState = listRunStates(projectRoot).find((state) => state.runId === runId)
+  if (!runState) throw new Error(`Could not find workflow run "${runId}".`)
+  const flow = flowFromRunState(runState) || await loadFlow(runState.flowId, flowLoadOptions({ ...(runState.options || {}), ...options }, projectRoot))
+  if (options.approveReview !== false) {
+    approveHumanReviewGate({
+      runState,
+      stepId: options.stepId || '',
+      reviewer: options.reviewer || 'visualizer',
+    })
+  }
+  const refreshed = listRunStates(projectRoot).find((state) => state.runId === runId) || runState
+  if (refreshed.transport === 'github') {
+    await resumeGithubFlow({ flow, runState: refreshed, projectRoot })
+  } else {
+    await resumeLocalFlow({ flow, runState: refreshed, projectRoot })
+  }
+  return refreshed
+}
+
 async function handleRunEngine(flowId, options) {
   const invocationDir = path.resolve(process.cwd())
   const projectRoot = resolveProjectRoot(options.projectRoot, { cwd: invocationDir })
   const runtimeEvents = createWorkflowEventContext({
     sink: options.runnerEventSink,
+    notify: {
+      notifyUrl: options.notifyUrl,
+      notifyEvents: options.notifyEvents,
+    },
   })
   if (flowId === 'ls' || flowId === 'list') {
     await handleList({ ...options, projectRoot })
@@ -6621,6 +6832,12 @@ async function handleRunEngine(flowId, options) {
         options: configuredOptions,
         reason: `interrupted workflow (${reason})`,
       })
+      cancelLocalWorkflowRunnersForInterrupt({
+        runState: activeRunState,
+        projectRoot,
+        options: configuredOptions,
+        reason: `interrupted workflow (${reason})`,
+      })
     },
   })
   runState.context = runContext
@@ -6661,6 +6878,13 @@ async function handleRunEngine(flowId, options) {
     printSuccessBox({ flow: configuredFlow, runState, transport, projectRoot })
     printPostSuccessHandoffHint(runState, projectRoot)
   } catch (error) {
+    if (error?.code === AWAITING_REVIEW) {
+      persistWorkflowArtifacts(runState, { summaryOnly: true })
+      emitWorkflowArtifacts(runtimeEvents, runState)
+      writeGithubStepSummary(runState)
+      console.log(`Workflow paused for human review. Resume it from the visualizer after approval.`)
+      return AWAITING_REVIEW
+    }
     runState.status = 'failed'
     try {
       cleanupWorkflowBlobsForRun({
@@ -6680,7 +6904,7 @@ async function handleRunEngine(flowId, options) {
     printPartialArtifactHint(runState)
     throw error
   } finally {
-    runtimeEvents.close()
+    await runtimeEvents.close()
   }
 
   if (configuredOptions.notify) {
@@ -6700,7 +6924,7 @@ async function handleRun(flowId, options = {}) {
     passthrough: true,
     forceNonInteractive: false,
   })
-  if (result.status !== 'completed') {
+  if (result.status !== 'completed' && result.status !== AWAITING_REVIEW) {
     const message = result.stderr.trim().split('\n').filter(Boolean).pop() || `Workflow "${flowId || 'review'}" failed.`
     throw new Error(message)
   }
@@ -6966,6 +7190,7 @@ function buildProgram() {
     .option('--branch <branch-or-pr>', 'Git branch or PR number to run in Netlify agent runners')
     .option('--agent <name>', 'Agent for a Netlify agent run, e.g. codex')
     .option('--prompt <text>', 'Prompt text for a Netlify agent run')
+    .option('--site-id <id>', 'Netlify site ID for local Netlify API runs')
     .option('--filter <app>', 'Netlify CLI monorepo app filter for local Netlify agent runs')
     .option('--transport <transport>', 'Where to run: auto, github, netlify-api', 'auto')
     .addOption(new Option('--where <place>', 'Hidden compatibility alias for --transport').hideHelp())
@@ -6976,6 +7201,8 @@ function buildProgram() {
     .option('--force', 'Skip confirmation prompts')
     .addOption(new Option('--yes', 'Hidden compatibility alias for --force').hideHelp())
     .option('--notify', 'Show a desktop notification when the flow finishes')
+    .option('--notify-url <url>', 'POST workflow and step notifications to a webhook URL')
+    .option('--notify-events <list>', 'Comma-separated notification events to send')
     .action((workflow, options, command) => {
       const resolvedOptions = actionOptions(options, command)
       return handleRun(workflow || null, resolvedOptions)
@@ -7009,6 +7236,7 @@ function buildProgram() {
     .option('--step-models <step=models>', 'Agent models for one workflow step; repeatable', collectOption, [])
     .option('--agent <name>', 'Agent for a Netlify agent run, e.g. codex')
     .option('--prompt <text>', 'Prompt text for a Netlify agent run')
+    .option('--site-id <id>', 'Netlify site ID for local Netlify API runs')
     .option('--filter <app>', 'Netlify CLI monorepo app filter for local Netlify agent runs')
     .option('--transport <transport>', 'Where to run: auto, github, netlify-api', 'auto')
     .addOption(new Option('--where <place>', 'Hidden compatibility alias for --transport').hideHelp())
@@ -7033,6 +7261,8 @@ function buildProgram() {
     .option('--force', 'Skip confirmation prompts')
     .addOption(new Option('--yes', 'Hidden compatibility alias for --force').hideHelp())
     .option('--notify', 'Show a desktop notification when the flow finishes')
+    .option('--notify-url <url>', 'POST workflow and step notifications to a webhook URL')
+    .option('--notify-events <list>', 'Comma-separated notification events to send')
     .option('--no-auto-context', 'Do not inject the automatic review contract, pinned SHA snapshot, or PR ledger')
     .option('--no-fetch-results', 'Do not fetch round results from prior steps')
     .action((flow, options, command) => handleRun(flow, actionOptions(options, command)))))
@@ -7052,6 +7282,8 @@ function buildProgram() {
     .option('--flow <id>', 'Flow id filter when run id is omitted')
     .option('--step <id>', 'Failed step id to retry')
     .option('--agent <name>', 'Failed agent to retry, e.g. claude')
+    .option('--site-id <id>', 'Netlify site ID for local Netlify API runs')
+    .option('--filter <app>', 'Netlify CLI monorepo app filter for local Netlify agent runs')
     .option('--timeout-minutes <count>', 'Minutes to wait for the retried run', '25')
     .addOption(hiddenCostOption())
     .action((runId, options, command) => handleRetry(runId || '', actionOptions(options, command)))
@@ -7268,7 +7500,10 @@ module.exports = {
     compactTextForRetry,
     compactLocalTextByBytes,
     contextWithOutputBudget,
+    cancelLocalWorkflowRunnersForInterrupt,
+    cancellableLocalRunnerIds,
     cleanupLocalWorkflowBlobs,
+    cleanupWorkflowBlobsForRun,
     enforceGithubActionPromptBudget,
     copyToClipboard,
     findGithubRunnerFailures,
@@ -7310,6 +7545,7 @@ module.exports = {
     resolveProjectRoot,
     nextLocalStepMessage,
     localRetryCandidates,
+    localAgentRunUrl,
     sortNetlifyConfigChoices,
     agentStepCompletionSummary,
     applyContextFetchClassification,
@@ -7347,6 +7583,7 @@ module.exports = {
     relativeHandoffPath,
     formatResumeRunDetails,
     resumeLastStepTitle,
+    resumeRunById,
     resumeRunDetailsTitle,
     resumeStatusColor,
     resumeStepDecorations,

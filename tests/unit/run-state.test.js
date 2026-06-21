@@ -14,6 +14,7 @@ const {
   isUnfinishedLocalRun,
   listRunStates,
   saveRunState,
+  workflowStatePath,
 } = require('../../src/run-state')
 
 function runState(tmp, overrides = {}) {
@@ -227,4 +228,51 @@ test('saveRunState refreshes workflow artifact summaries', () => {
 
   assert.equal(fs.existsSync(path.join(state.dir, 'artifacts', 'summary.md')), true)
   assert.equal(fs.existsSync(path.join(state.dir, 'artifacts', 'usage.json')), true)
+})
+
+test('saveRunState preserves durable runner metadata from newer state snapshots', () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'nax-run-state-merge-test-'))
+  const current = saveRunState(runState(tmp, {
+    runId: 'merge-run',
+    status: 'running',
+    steps: [{
+      id: 'review',
+      status: 'running',
+      runs: [{
+        agent: 'gemini',
+        status: 'submitted',
+        runnerId: 'runner-gemini',
+        sessionId: 'session-gemini',
+        submittedAfterSeconds: 11,
+        links: { agentRunUrl: 'https://app.netlify.com/projects/site/agent-runs/runner-gemini' },
+        raw: { create: { id: 'runner-gemini' } },
+      }],
+    }],
+  }))
+
+  saveRunState({
+    ...current,
+    status: 'cancelled',
+    steps: [{
+      id: 'review',
+      status: 'cancelled',
+      runs: [{
+        agent: 'gemini',
+        status: 'cancelled',
+        runnerId: '',
+        sessionId: '',
+      }],
+    }],
+  })
+
+  const saved = JSON.parse(fs.readFileSync(workflowStatePath(current.dir), 'utf8'))
+  assert.equal(saved.status, 'cancelled')
+  assert.equal(saved.steps[0].runs[0].status, 'cancelled')
+  assert.equal(saved.steps[0].runs[0].runnerId, 'runner-gemini')
+  assert.equal(saved.steps[0].runs[0].sessionId, 'session-gemini')
+  assert.equal(saved.steps[0].runs[0].submittedAfterSeconds, 11)
+  assert.equal(saved.steps[0].runs[0].links.agentRunUrl, 'https://app.netlify.com/projects/site/agent-runs/runner-gemini')
+  assert.deepEqual(saved.steps[0].runs[0].raw.create, { id: 'runner-gemini' })
+  assert.equal(fs.existsSync(`${workflowStatePath(current.dir)}.lock`), false)
+  assert.equal(fs.readdirSync(current.dir).some((entry) => entry.includes('.tmp')), false)
 })

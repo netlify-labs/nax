@@ -1,4 +1,4 @@
-const { loadStepPrompt } = require('./flows')
+const { isHumanReviewStep, loadStepPrompt } = require('./flows')
 
 function normalizeSelectedAgents(selectedAgents) {
   if (!Array.isArray(selectedAgents)) return null
@@ -67,12 +67,14 @@ function stepPrompt(step = {}, flow = {}) {
 }
 
 function edgeKind(step = {}) {
+  if (isHumanReviewStep(step)) return 'human-review'
   if (step.submit === 'follow-up') return 'follow-up'
   if (step.action === 'comment') return 'comment'
   return 'sequence'
 }
 
 function edgeLabel(step = {}) {
+  if (isHumanReviewStep(step)) return 'human review'
   if (step.submit === 'follow-up') return 'follow-up session'
   if (step.submit === 'new-run') return 'new agent run'
   return step.submit || ''
@@ -179,7 +181,7 @@ function flowToGraph(options = {}) {
       index,
       agents: filteredAgents(step.agents, selected),
     }))
-    .filter((item) => item.agents.length > 0)
+    .filter((item) => isHumanReviewStep(item.step) || item.agents.length > 0)
   const runnableIds = new Set(runnableSteps.map((item) => item.step.id))
 
   const nodes = runnableSteps.map(({ step, index, agents }, graphIndex) => {

@@ -27,6 +27,8 @@ function workflowCommand(input) {
   if (dryRun) args.push('--dry')
   if (options.branch) args.push('--branch', options.branch)
   if (options.context) args.push('--context', options.context)
+  if (options.notifyUrl) args.push('--notify-url', options.notifyUrl)
+  if (options.notifyEvents) args.push('--notify-events', Array.isArray(options.notifyEvents) ? options.notifyEvents.join(',') : options.notifyEvents)
   if (options.step) args.push('--step', options.step)
   if (options.fromStep) args.push('--from-step', options.fromStep)
   if (options.models?.length) args.push('--models', Array.isArray(options.models) ? options.models.join(',') : options.models)
@@ -43,6 +45,15 @@ function loadCliRunner() {
     throw new Error('Internal workflow runner is unavailable.')
   }
   return handleRun
+}
+
+function loadCliResumeRunner() {
+  const cli = require(path.resolve(__dirname, '..', 'bin', 'nax.js'))
+  const resumeRun = cli?._private?.resumeRunById
+  if (typeof resumeRun !== 'function') {
+    throw new Error('Internal workflow resume runner is unavailable.')
+  }
+  return resumeRun
 }
 
 /** @param {{ onStdout?: (text: string) => void, onStderr?: (text: string) => void, passthrough?: boolean }} param0 */
@@ -137,7 +148,91 @@ async function runWorkflow(input) {
   try {
     if (projectRoot) process.chdir(projectRoot)
     const handleRun = input.engine || loadCliRunner()
-    await handleRun(flowId, options)
+    const status = await handleRun(flowId, options)
+    const resultStatus = status === 'awaiting_review' ? 'awaiting_review' : 'completed'
+    const result = {
+      status: resultStatus,
+      command,
+      startedAt,
+      exitedAt: new Date().toISOString(),
+      durationMs: Date.now() - started,
+      exitCode: 0,
+      signal: null,
+      stdout,
+      stderr,
+    }
+    eventSink({ type: 'exited', status: result.status, exitCode: result.exitCode, signal: null, durationMs: result.durationMs })
+    return result
+  } catch (error) {
+    if (error?.code === 'awaiting_review') {
+      const result = {
+        status: 'awaiting_review',
+        command,
+        startedAt,
+        exitedAt: new Date().toISOString(),
+        durationMs: Date.now() - started,
+        exitCode: 0,
+        signal: null,
+        stdout,
+        stderr,
+      }
+      eventSink({ type: 'exited', status: result.status, exitCode: result.exitCode, signal: null, durationMs: result.durationMs })
+      return result
+    }
+    const message = error?.message || String(error)
+    if (!stderr.includes(message)) {
+      stderr += `${message}\n`
+      eventSink({ type: 'stderr', text: `${message}\n` })
+    }
+    const result = {
+      status: 'failed',
+      command,
+      startedAt,
+      exitedAt: new Date().toISOString(),
+      durationMs: Date.now() - started,
+      exitCode: 1,
+      signal: null,
+      stdout,
+      stderr,
+    }
+    eventSink({ type: 'error', message })
+    eventSink({ type: 'exited', status: result.status, exitCode: result.exitCode, signal: null, durationMs: result.durationMs })
+    return result
+  } finally {
+    if (process.cwd() !== cwd) process.chdir(cwd)
+    restoreConsole()
+  }
+}
+
+async function resumeWorkflow(input) {
+  const {
+    runId,
+    projectRoot,
+    eventSink = noop,
+  } = input
+  const command = ['nax', 'resume', runId, '--project-root', projectRoot || process.cwd()]
+  const startedAt = new Date().toISOString()
+  const started = Date.now()
+  let stdout = ''
+  let stderr = ''
+  eventSink({ type: 'started', command, runId })
+
+  const restoreConsole = patchConsole({
+    onStdout: (text) => {
+      stdout += text
+      eventSink({ type: 'stdout', text })
+    },
+    onStderr: (text) => {
+      stderr += text
+      eventSink({ type: 'stderr', text })
+    },
+    passthrough: input.passthrough === true,
+  })
+  const cwd = process.cwd()
+  try {
+    if (projectRoot) process.chdir(projectRoot)
+    const resumeRun = input.engine || loadCliResumeRunner()
+    await resumeRun(runId, input.options || {})
     const result = {
       status: 'completed',
       command,
@@ -152,6 +247,21 @@ async function runWorkflow(input) {
     eventSink({ type: 'exited', status: result.status, exitCode: result.exitCode, signal: null, durationMs: result.durationMs })
     return result
   } catch (error) {
+    if (error?.code === 'awaiting_review') {
+      const result = {
+        status: 'awaiting_review',
+        command,
+        startedAt,
+        exitedAt: new Date().toISOString(),
+        durationMs: Date.now() - started,
+        exitCode: 0,
+        signal: null,
+        stdout,
+        stderr,
+      }
+      eventSink({ type: 'exited', status: result.status, exitCode: result.exitCode, signal: null, durationMs: result.durationMs })
+      return result
+    }
     const message = error?.message || String(error)
     if (!stderr.includes(message)) {
       stderr += `${message}\n`
@@ -178,6 +288,7 @@ async function runWorkflow(input) {
 }
 
 module.exports = {
+  resumeWorkflow,
   runWorkflow,
   workflowCommand,
 }

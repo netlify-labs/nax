@@ -3,11 +3,13 @@ export type WorkflowStep = {
   title: string
   description: string
   prompt: string
+  type?: string
   action: string
   submit: string
   agents: string[]
   input: Array<Record<string, unknown>>
   waitFor: string
+  review?: Record<string, unknown> | null
   autoArchive: boolean | null
   isArchivable: boolean
 }

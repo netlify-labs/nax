@@ -1042,7 +1042,8 @@ body {
 
 .run-status.running,
 .run-status.submitted,
-.run-status.interrupted {
+.run-status.interrupted,
+.run-status.awaiting_review {
   --badge-bg: color-mix(in srgb, var(--mantine-color-yellow-4), transparent 88%);
   --badge-color: light-dark(var(--mantine-color-yellow-9), var(--mantine-color-yellow-1));
   --badge-bd: calc(0.0625rem * var(--mantine-scale)) solid var(--mantine-color-yellow-4);
@@ -1083,7 +1084,8 @@ body {
 .workflow-node.status-submitted,
 .workflow-node.status-waiting,
 .workflow-node.status-retrying,
-.workflow-node.status-queued {
+.workflow-node.status-queued,
+.workflow-node.status-awaiting_review {
   border-color: var(--mantine-color-yellow-4);
   box-shadow: 0 0 0 2px color-mix(in srgb, var(--mantine-color-yellow-4), transparent 72%), 0 16px 34px rgba(0, 0, 0, 0.3);
 }
@@ -1188,6 +1190,10 @@ body {
   color: var(--mantine-color-text);
 }
 
+.action-badge.human-review {
+  color: light-dark(var(--mantine-color-yellow-8), var(--mantine-color-yellow-2));
+}
+
 .node-description {
   margin: 0;
   padding: 12px 12px 0;
@@ -1226,7 +1232,8 @@ body {
 .agent-chip.agent-submitted,
 .agent-chip.agent-waiting,
 .agent-chip.agent-retrying,
-.agent-chip.agent-queued {
+.agent-chip.agent-queued,
+.agent-chip.agent-awaiting_review {
   border-color: var(--mantine-color-yellow-4);
   background:
     linear-gradient(
@@ -1241,6 +1248,10 @@ body {
   color: light-dark(var(--mantine-color-yellow-9), var(--mantine-color-yellow-1));
   box-shadow: 0 0 0 1px color-mix(in srgb, var(--mantine-color-yellow-4), transparent 76%), 0 0 20px color-mix(in srgb, var(--mantine-color-yellow-4), transparent 84%);
   animation: agent-chip-progress 4.5s linear infinite;
+}
+
+.human-review-chip {
+  cursor: default;
 }
 
 .agent-chip.agent-completed,

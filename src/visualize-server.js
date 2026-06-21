@@ -6,19 +6,20 @@ const path = require('path')
 const { URL } = require('url')
 
 const { listFlows, loadFlow } = require('./flows')
-const { isUnfinishedRun, listRunStates } = require('./run-state')
+const { isUnfinishedRun, listRunStates, saveRunState } = require('./run-state')
 const { flowToGraph } = require('./visualize-graph')
-const { runWorkflow, workflowCommand } = require('./workflow-runner')
+const { resumeWorkflow, runWorkflow, workflowCommand } = require('./workflow-runner')
 const { normalizeAgentList, normalizeStepModels, selectionValidationErrors } = require('./agent-selection')
 const { buildRunDetails } = require('./visualize-run-details')
-const { eventLogPathForRunState, readEventLog } = require('./runner-event-log')
+const { appendEventLog, eventLogPathForRunState, readEventLog } = require('./runner-event-log')
 const { formatAgentRunUrl } = require('./agent-run-results')
 const { buildFollowupContextPackage } = require('./followup-context')
 const { prepareFollowupContextDelivery } = require('./followup-delivery')
 const { buildFollowupSubmissionPlan } = require('./followup-plan')
 const { buildFollowupPrompt, submitFollowupPlan } = require('./handoff-runner')
 const { appendFollowupRunsToWorkflow, cancelFollowupRunInWorkflow, persistFreshPseudoWorkflow, syncSubmittedFollowupRunsToWorkflow } = require('./followup-persistence')
-const { archiveAgentRun } = require('./local-runner')
+const { cancelHumanReviewGate, findReviewStep } = require('./human-review')
+const { archiveAgentRun, stopAgentRun } = require('./local-runner')
 const { setBlob } = require('./netlify-blobs')
 const { readLinkedSiteId } = require('./init')
 
@@ -185,11 +186,13 @@ function publicFlow(flow = {}) {
         title: step.title || '',
         description: step.description || '',
         prompt: step.prompt || '',
+        type: step.type || '',
         action: step.action || '',
         submit: step.submit || '',
         agents: Array.isArray(step.agents) ? step.agents : [],
         input: Array.isArray(step.input) ? step.input : [],
         waitFor: step.waitFor || '',
+        review: step.review || null,
         autoArchive: step.autoArchive,
         isArchivable: step.isArchivable,
       }))
@@ -488,6 +491,11 @@ function normalizeDryRunOptions(raw = {}, flow = {}) {
     if (raw[key] === undefined || raw[key] === null) continue
     out[key] = String(raw[key])
   }
+  const siteId = raw.siteId || raw.netlifySiteId
+  if (siteId !== undefined && siteId !== null && String(siteId).trim()) {
+    out.siteId = String(siteId).trim()
+    out.netlifySiteId = String(siteId).trim()
+  }
 
   const stepIds = new Set((flow.steps || []).map((step) => step.id))
   if (out.step && !stepIds.has(out.step)) {
@@ -536,6 +544,7 @@ function runWorkflowChild({ flowId, projectRoot, options = {}, eventSink = () =>
   let stderrDropped = 0
   let cancelRequested = false
   let settled = false
+  let runnerTerminalStatus = ''
   let forceKillTimer = null
   /** @type {NodeJS.ProcessEnv} */
   const childEnv = {
@@ -570,7 +579,10 @@ function runWorkflowChild({ flowId, projectRoot, options = {}, eventSink = () =>
     eventSink({ type: 'stderr', text })
   })
   const eventParser = createRunnerEventParser({
-    onEvent: (event) => eventSink({ type: 'runner_event', event }),
+    onEvent: (event) => {
+      if (event?.type === 'workflow_awaiting_review') runnerTerminalStatus = 'awaiting_review'
+      eventSink({ type: 'runner_event', event })
+    },
     onError: (error) => eventSink({
       type: 'runner_event_error',
       message: error.message,
@@ -627,7 +639,7 @@ function runWorkflowChild({ flowId, projectRoot, options = {}, eventSink = () =>
       if (settled) return
       settled = true
       if (forceKillTimer) clearTimeout(forceKillTimer)
-      const status = code === 0 ? 'completed' : cancelRequested ? 'cancelled' : 'failed'
+      const status = code === 0 ? runnerTerminalStatus || 'completed' : cancelRequested ? 'cancelled' : 'failed'
       const result = {
         status,
         command,
@@ -758,6 +770,9 @@ function inferRunStateStatus(runState = {}) {
   if (statuses.some((status) => ['failed', 'timeout', 'cancelled', 'canceled'].includes(status))) {
     return 'failed'
   }
+  if (runState?.status === 'awaiting_review' || statuses.some((status) => status === 'awaiting_review')) {
+    return 'awaiting_review'
+  }
   if (statuses.length === steps.length && statuses.every((status) => ['complete', 'completed', 'dry-run'].includes(status))) {
     return 'completed'
   }
@@ -791,6 +806,193 @@ function stepStatusSnapshot(runState = {}) {
       runCount: Array.isArray(step.runs) ? step.runs.length : 0,
     }))
     .filter((step) => step.stepId)
+}
+
+function workflowAgentEventSnapshots(runState = {}) {
+  if (!runState?.dir) return []
+  let replay
+  try {
+    replay = readEventLog(eventLogPathForRunState(runState))
+  } catch {
+    return []
+  }
+
+  const snapshots = new Map()
+  for (const event of Array.isArray(replay.events) ? replay.events : []) {
+    if (event?.type !== 'agent_status') continue
+    const stepId = String(event.stepId || '').trim()
+    const agent = String(event.agent || '').trim()
+    const runnerId = String(event.runnerId || '').trim()
+    if (!stepId || !agent || !runnerId || event.existingRunnerId) continue
+    snapshots.set(`${stepId}\0${agent}`, {
+      stepId,
+      agent,
+      runnerId,
+      sessionId: String(event.sessionId || ''),
+      links: event.links && typeof event.links === 'object' && !Array.isArray(event.links) ? event.links : {},
+      status: String(event.status || ''),
+      submittedAfterSeconds: typeof event.submittedAfterSeconds === 'number' ? event.submittedAfterSeconds : null,
+    })
+  }
+  return [...snapshots.values()]
+}
+
+function hydrateWorkflowRunsFromEvents(runState = {}) {
+  const snapshots = workflowAgentEventSnapshots(runState)
+  if (snapshots.length === 0) return runState
+
+  const byStepAgent = new Map(snapshots.map((snapshot) => [`${snapshot.stepId}\0${snapshot.agent}`, snapshot]))
+  for (const step of Array.isArray(runState.steps) ? runState.steps : []) {
+    const stepId = String(step?.id || '').trim()
+    if (!stepId) continue
+    for (const run of Array.isArray(step.runs) ? step.runs : []) {
+      const agent = String(run?.agent || '').trim()
+      const snapshot = byStepAgent.get(`${stepId}\0${agent}`)
+      if (!snapshot) continue
+      if (!String(run.runnerId || '').trim()) run.runnerId = snapshot.runnerId
+      if (!String(run.sessionId || '').trim() && snapshot.sessionId) run.sessionId = snapshot.sessionId
+      if ((!run.links || Object.keys(run.links).length === 0) && Object.keys(snapshot.links).length > 0) {
+        run.links = snapshot.links
+      }
+      if (run.submittedAfterSeconds == null && snapshot.submittedAfterSeconds != null) {
+        run.submittedAfterSeconds = snapshot.submittedAfterSeconds
+      }
+    }
+  }
+  return runState
+}
+
+function cancellableWorkflowRunnerIds(runState = {}) {
+  hydrateWorkflowRunsFromEvents(runState)
+  const runnerIds = []
+  const terminal = new Set(['completed', 'failed', 'timeout', 'cancelled', 'canceled', 'dry-run'])
+  const terminalStepAgents = new Set()
+  const add = (runnerId) => {
+    const normalized = String(runnerId || '').trim()
+    if (normalized) runnerIds.push(normalized)
+  }
+  for (const step of Array.isArray(runState.steps) ? runState.steps : []) {
+    const stepId = String(step?.id || '').trim()
+    for (const run of Array.isArray(step.runs) ? step.runs : []) {
+      const status = String(run.status || '').toLowerCase()
+      if (stepId && run.agent && terminal.has(status)) terminalStepAgents.add(`${stepId}\0${run.agent}`)
+      const runnerId = String(run.runnerId || '').trim()
+      if (!runnerId || run.existingRunnerId) continue
+      if (terminal.has(status)) continue
+      add(runnerId)
+    }
+  }
+
+  for (const snapshot of workflowAgentEventSnapshots(runState)) {
+    const status = String(snapshot.status || '').toLowerCase()
+    if (terminal.has(status)) continue
+    if (terminalStepAgents.has(`${snapshot.stepId}\0${snapshot.agent}`)) continue
+    add(snapshot.runnerId)
+  }
+  return [...new Set(runnerIds)]
+}
+
+async function stopWorkflowRunners({ runState, projectRoot, env, stopRun = stopAgentRun } = {}) {
+  const runnerIds = cancellableWorkflowRunnerIds(runState)
+  const stopped = []
+  const warnings = []
+  for (const runnerId of runnerIds) {
+    try {
+      const result = await stopRun({ projectRoot, runnerId, env })
+      if (result?.stopped === true) {
+        stopped.push(runnerId)
+      } else if (result?.error) {
+        warnings.push(`${runnerId}: ${result.error}`)
+      } else {
+        warnings.push(`${runnerId}: stop request did not report success`)
+      }
+    } catch (error) {
+      warnings.push(`${runnerId}: ${error?.message || String(error)}`)
+    }
+  }
+  return { runnerIds, stopped, warnings }
+}
+
+function appendDurableWorkflowEvent(runState = {}, type, data = {}) {
+  if (!runState?.dir) return null
+  const filePath = eventLogPathForRunState(runState)
+  const replay = readEventLog(filePath)
+  const seq = replay.events.reduce((max, event) => Math.max(max, Number(event.seq || 0)), 0) + 1
+  const event = {
+    schemaVersion: 1,
+    seq,
+    eventId: `${runState.runId || 'workflow'}:${seq}`,
+    type,
+    at: new Date().toISOString(),
+    runId: runState.runId || '',
+    flowId: runState.flowId || '',
+    flowTitle: runState.flowTitle || '',
+    projectRoot: runState.projectRoot || '',
+    transport: runState.transport || '',
+    branch: runState.branch || runState.options?.branch || '',
+    target: runState.target || runState.options?.target || null,
+    ...data,
+  }
+  appendEventLog(filePath, event)
+  return event
+}
+
+function applyRemoteCancelToWorkflow(runState = {}, remoteCancel = {}, { reason = 'cancelled from visualizer' } = {}) {
+  hydrateWorkflowRunsFromEvents(runState)
+  const stopped = new Set(Array.isArray(remoteCancel.stopped) ? remoteCancel.stopped : Array.isArray(remoteCancel.archived) ? remoteCancel.archived : [])
+  const runnerIds = Array.isArray(remoteCancel.runnerIds) ? remoteCancel.runnerIds : []
+  const attempted = new Set(runnerIds)
+  const terminal = new Set(['completed', 'failed', 'timeout', 'cancelled', 'canceled', 'dry-run'])
+  const cancelledAt = new Date().toISOString()
+  let changed = false
+  for (const step of Array.isArray(runState.steps) ? runState.steps : []) {
+    let stepChanged = false
+    for (const run of Array.isArray(step.runs) ? step.runs : []) {
+      const runnerId = String(run.runnerId || '').trim()
+      const status = String(run.status || '').toLowerCase()
+      if (terminal.has(status)) continue
+      if (runnerId && attempted.has(runnerId) && !stopped.has(runnerId)) continue
+      run.status = 'cancelled'
+      run.cancelledAt = cancelledAt
+      run.cancelReason = reason
+      changed = true
+      stepChanged = true
+    }
+    const runs = Array.isArray(step.runs) ? step.runs : []
+    const hasActiveRun = runs.some((run) => !terminal.has(String(run.status || '').toLowerCase()))
+    if (stepChanged && !hasActiveRun) {
+      step.status = 'cancelled'
+    }
+  }
+  if (!changed && runnerIds.length === 0) return runState
+  if (changed) {
+    runState.status = 'cancelled'
+    runState.cancelledAt = cancelledAt
+    runState.cancelReason = reason
+  }
+  runState.remoteCancel = {
+    reason,
+    requestedAt: cancelledAt,
+    runnerIds,
+    stopped: [...stopped],
+    warnings: Array.isArray(remoteCancel.warnings) ? remoteCancel.warnings : [],
+  }
+  if (runState.remoteCancel.warnings.length > 0) {
+    runState.remoteCancelWarning = `${runState.remoteCancel.warnings.length} remote ${runState.remoteCancel.warnings.length === 1 ? 'runner' : 'runners'} could not be stopped.`
+  }
+  saveRunState(runState)
+  appendDurableWorkflowEvent(runState, 'remote_cancel_requested', {
+    runnerIds,
+    stoppedRunnerIds: [...stopped],
+    warnings: runState.remoteCancel.warnings,
+  })
+  if (changed || stopped.size > 0) {
+    appendDurableWorkflowEvent(runState, 'workflow_cancelled', {
+      status: 'cancelled',
+      reason,
+    })
+  }
+  return runState
 }
 
 function eventText(event) {
@@ -854,7 +1056,8 @@ function createRequestHandler(options = {}) {
   const followupSubmitRun = options.followupSubmitRun
   const followupWriteBlob = options.followupWriteBlob
   const followupSetBlob = options.followupSetBlob || setBlob
-  const followupArchiveRun = options.followupArchiveRun || archiveAgentRun
+  const followupStopRun = options.followupStopRun || stopAgentRun
+  const cancelStopRun = options.cancelStopRun || stopAgentRun
   const followupSyncRunCommand = options.followupSyncRunCommand
   const runs = new Map()
   const activeByWorkflow = new Map()
@@ -1037,6 +1240,106 @@ function createRequestHandler(options = {}) {
       run.runId = run.runId || extractDurableRunId(`${run.stdout || ''}\n${run.stderr || ''}`)
       run.cancellable = false
       run.cancel = null
+      if (run.stepStatusTimer) clearInterval(run.stepStatusTimer)
+      run.stepStatusTimer = null
+      activeByWorkflow.delete(flowId)
+      recordStepStatusEvents(run)
+      recordEvent(run, 'error', { message })
+      recordEvent(run, 'exited', { status: run.status, exitCode: run.exitCode, signal: run.signal })
+      endClients(run.clients)
+      evictFinishedRuns(runs)
+    })
+    return run
+  }
+
+  function startResumeRun({ durable, stepId = '' }) {
+    const flowId = durable.flowId || ''
+    const existingRunId = activeByWorkflow.get(flowId)
+    if (existingRunId) {
+      const existing = runs.get(existingRunId)
+      if (existing && existing.status === 'running') {
+        throw requestError(409, 'duplicate_run', `Workflow "${flowId}" already has an active visualize run.`)
+      }
+      activeByWorkflow.delete(flowId)
+    }
+    const id = `${new Date().toISOString().replace(/[:.]/g, '-')}-${durable.runId}-resume`
+    const run = {
+      id,
+      runId: durable.runId || '',
+      flowId,
+      status: 'running',
+      command: ['nax', 'resume', durable.runId || '', '--project-root', projectRoot],
+      startedAt: new Date().toISOString(),
+      exitedAt: '',
+      durationMs: 0,
+      exitCode: null,
+      signal: null,
+      stdout: '',
+      stderr: '',
+      stdoutDropped: 0,
+      stderrDropped: 0,
+      events: [],
+      eventSeq: 0,
+      clients: new Set(),
+      cancellable: false,
+      cancelRequested: false,
+      cancel: null,
+      stepStatuses: {},
+      stepStatusTimer: null,
+    }
+    runs.set(id, run)
+    activeByWorkflow.set(flowId, id)
+    run.stepStatusTimer = setInterval(() => {
+      if (run.status === 'running') recordStepStatusEvents(run)
+    }, 1000)
+    run.stepStatusTimer.unref?.()
+    const promise = resumeWorkflow({
+      runId: durable.runId,
+      projectRoot,
+      options: { projectRoot, stepId, reviewer: 'visualizer', yes: true, force: true },
+      passthrough: tailOutput,
+      eventSink: (event) => {
+        if (event.type === 'stdout') {
+          const bounded = appendBounded(run.stdout, event.text || '')
+          run.stdout = bounded.text
+          run.stdoutDropped += bounded.dropped
+          recordStepStatusEvents(run)
+        }
+        if (event.type === 'stderr') {
+          const bounded = appendBounded(run.stderr, event.text || '')
+          run.stderr = bounded.text
+          run.stderrDropped += bounded.dropped
+        }
+        if (event.type === 'started') recordEvent(run, 'started', { command: event.command || run.command, flowId })
+        else if (event.type === 'stdout') recordEvent(run, 'stdout', { text: event.text || '' })
+        else if (event.type === 'stderr') recordEvent(run, 'stderr', { text: event.text || '' })
+        else if (event.type === 'error') recordEvent(run, 'error', { message: event.message || '' })
+      },
+    })
+    promise.then((result) => {
+      run.exitCode = result.exitCode
+      run.signal = result.signal
+      run.status = result.status
+      run.exitedAt = result.exitedAt
+      run.durationMs = result.durationMs
+      run.stdout = result.stdout
+      run.stderr = result.stderr
+      run.cancellable = false
+      if (run.stepStatusTimer) clearInterval(run.stepStatusTimer)
+      run.stepStatusTimer = null
+      activeByWorkflow.delete(flowId)
+      recordStepStatusEvents(run)
+      recordEvent(run, 'exited', { status: run.status, exitCode: run.exitCode, signal: run.signal, durationMs: run.durationMs })
+      endClients(run.clients)
+      evictFinishedRuns(runs)
+    }).catch((error) => {
+      const message = error?.message || String(error)
+      run.status = 'failed'
+      run.exitedAt = new Date().toISOString()
+      run.exitCode = 1
+      const bounded = appendBounded(run.stderr, `${message}\n`)
+      run.stderr = bounded.text
+      run.stderrDropped += bounded.dropped
       if (run.stepStatusTimer) clearInterval(run.stepStatusTimer)
       run.stepStatusTimer = null
       activeByWorkflow.delete(flowId)
@@ -1300,6 +1603,56 @@ function createRequestHandler(options = {}) {
           return
         }
 
+        const reviewApproveMatch = pathname.match(/^\/api\/runs\/([^/]+)\/review\/approve$/)
+        if (reviewApproveMatch) {
+          if (req.method !== 'POST') {
+            methodNotAllowed(res, req.method || 'UNKNOWN')
+            return
+          }
+          assertToken(req, requestUrl, token)
+          const durable = durableRunStateForId(reviewApproveMatch[1])
+          if (!durable) {
+            notFound(res, 'Unknown visualize run.')
+            return
+          }
+          const body = await readJsonBody(req)
+          const gate = findReviewStep(durable, body.stepId || '')
+          if (!gate) throw requestError(409, 'no_review_gate', 'No human review gate is awaiting approval for this workflow.')
+          const run = startResumeRun({ durable, stepId: gate.id || '' })
+          jsonResponse(res, 202, {
+            run: publicRun(run),
+            approved: true,
+            stepId: gate.id || '',
+          })
+          return
+        }
+
+        const reviewCancelMatch = pathname.match(/^\/api\/runs\/([^/]+)\/review\/cancel$/)
+        if (reviewCancelMatch) {
+          if (req.method !== 'POST') {
+            methodNotAllowed(res, req.method || 'UNKNOWN')
+            return
+          }
+          assertToken(req, requestUrl, token)
+          const durable = durableRunStateForId(reviewCancelMatch[1])
+          if (!durable) {
+            notFound(res, 'Unknown visualize run.')
+            return
+          }
+          const body = await readJsonBody(req)
+          const next = cancelHumanReviewGate({
+            runState: durable,
+            stepId: body.stepId || '',
+            reviewer: 'visualizer',
+            reason: body.reason || 'cancelled by reviewer',
+          })
+          jsonResponse(res, 200, {
+            run: publicRunState(next),
+            cancelled: true,
+          })
+          return
+        }
+
         const runFollowupsMatch = pathname.match(/^\/api\/runs\/([^/]+)\/followups$/)
         if (runFollowupsMatch) {
           if (req.method !== 'POST') {
@@ -1476,20 +1829,20 @@ function createRequestHandler(options = {}) {
             sessionId,
             agent: String(body.agent || '').trim(),
           })
-          let remoteArchived = false
+          let remoteStopped = false
           if (result.changed && runnerId && !result.run?.existingRunnerId) {
-            const archive = await followupArchiveRun({
+            const stopped = await followupStopRun({
               projectRoot,
               runnerId,
               env,
             })
-            remoteArchived = archive.archived === true
-            if (!remoteArchived && archive.error) warnings.push(archive.error)
+            remoteStopped = stopped.stopped === true
+            if (!remoteStopped && stopped.error) warnings.push(stopped.error)
           }
           jsonResponse(res, 200, {
             run: publicRunState(result.runState),
             cancelled: result.changed,
-            remoteArchived,
+            remoteStopped,
             warnings,
           })
           return
@@ -1502,21 +1855,57 @@ function createRequestHandler(options = {}) {
             return
           }
           assertToken(req, requestUrl, token)
-          const run = runs.get(safeDecode(runCancelMatch[1]))
-          if (!run) {
+          const requestedRunId = safeDecode(runCancelMatch[1])
+          const run = runs.get(requestedRunId)
+          const durable = durableRunStateForId(run?.runId || run?.id || requestedRunId)
+          if (!run && !durable) {
             notFound(res, 'Unknown visualize run.')
             return
           }
-          if (run.status !== 'running' || !run.cancellable) {
-            jsonResponse(res, 200, { run: publicRun(run), cancelled: false })
+          const remoteCancel = durable
+            ? await stopWorkflowRunners({
+                runState: durable,
+                projectRoot,
+                env,
+                stopRun: cancelStopRun,
+              })
+            : { runnerIds: [], stopped: [], warnings: [] }
+          if (durable) {
+            applyRemoteCancelToWorkflow(durable, remoteCancel, { reason: 'cancelled from visualizer' })
+          }
+          if (!run) {
+            jsonResponse(res, 200, {
+              run: publicRunState(durable),
+              cancelled: Boolean(durable?.status === 'cancelled' || remoteCancel.stopped.length > 0),
+              remoteStopped: remoteCancel.stopped.length,
+              remoteStopAttempted: remoteCancel.runnerIds.length,
+              warnings: remoteCancel.warnings,
+            })
             return
           }
-          const cancelled = typeof run.cancel === 'function' ? run.cancel() : false
-          run.cancelRequested = cancelled
-          run.cancellable = !cancelled
-          recordEvent(run, 'cancel_requested')
-          if (cancelled) recordCancelSemantics(run)
-          jsonResponse(res, 200, { run: publicRun(run), cancelled })
+          if (remoteCancel.runnerIds.length > 0) {
+            recordEvent(run, 'remote_cancel_requested', {
+              runnerIds: remoteCancel.runnerIds,
+              stoppedRunnerIds: remoteCancel.stopped,
+              warnings: remoteCancel.warnings,
+            })
+          }
+          const canCancelLive = run.status === 'running' && run.cancellable
+          const localCancelled = canCancelLive && typeof run.cancel === 'function' ? run.cancel() : false
+          run.cancelRequested = localCancelled || remoteCancel.stopped.length > 0
+          run.cancellable = canCancelLive ? !localCancelled : false
+          recordEvent(run, 'cancel_requested', {
+            remoteStopped: remoteCancel.stopped.length,
+            remoteStopAttempted: remoteCancel.runnerIds.length,
+          })
+          if (localCancelled) recordCancelSemantics(run)
+          jsonResponse(res, 200, {
+            run: publicRun(run),
+            cancelled: localCancelled || Boolean(durable?.status === 'cancelled') || remoteCancel.stopped.length > 0,
+            remoteStopped: remoteCancel.stopped.length,
+            remoteStopAttempted: remoteCancel.runnerIds.length,
+            warnings: remoteCancel.warnings,
+          })
           return
         }
 
@@ -1688,7 +2077,11 @@ function startVisualizeServer(options = {}) {
 module.exports = {
   _private: {
     appendBounded,
+    appendDurableWorkflowEvent,
+    applyRemoteCancelToWorkflow,
     broadcastEvent,
+    cancellableWorkflowRunnerIds,
+    stopWorkflowRunners,
     createRunnerEventParser,
     defaultIndexHtml,
     endClients,

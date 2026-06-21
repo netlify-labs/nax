@@ -13,6 +13,7 @@ const {
   createAgentRunAsync,
   createAgentSession,
   createAgentSessionAsync,
+  stopAgentRun,
   detectJavascriptWorkspace,
   findNetlifyConfigPaths,
   formatCommandForError,
@@ -24,6 +25,7 @@ const {
   readNetlifyState,
   readRootNetlifyBuildCommand,
   resolveNetlifyFilter,
+  resolveNetlifyProjectTarget,
   waitForLocalAgentRuns,
   showAgentRun,
   submitLocalAgentRun,
@@ -58,6 +60,45 @@ test('compactPromptForArgumentLimitRetry preserves blob prompt wrappers', () => 
   assert.equal(compactPromptForArgumentLimitRetry(run), 'short blob wrapper')
 })
 
+test('stopAgentRun cancels active runner through Netlify API stop operation', () => {
+  const calls = []
+  const result = stopAgentRun({
+    projectRoot: '/tmp/project',
+    runnerId: 'runner-1',
+    env: { NETLIFY_AUTH_TOKEN: 'token' },
+    runCommand(command, args, options) {
+      calls.push({ command, args, options })
+      return { status: 0, stdout: '', stderr: '' }
+    },
+  })
+
+  assert.equal(result.stopped, true)
+  assert.equal(calls[0].command, 'netlify')
+  assert.deepEqual(calls[0].args, [
+    'api',
+    'deleteAgentRunner',
+    '--data',
+    '{"agent_runner_id":"runner-1"}',
+  ])
+  assert.equal(calls[0].options.cwd, '/tmp/project')
+  assert.equal(calls[0].options.allowFailure, true)
+})
+
+test('stopAgentRun treats Netlify CLI Accepted response as stopped', () => {
+  const result = stopAgentRun({
+    projectRoot: '/tmp/project',
+    runnerId: 'runner-1',
+    env: { NETLIFY_AUTH_TOKEN: 'token' },
+    runCommand() {
+      return { status: 1, stdout: '', stderr: '\u001b[31mTextHTTPError:\u001b[39m Accepted' }
+    },
+  })
+
+  assert.equal(result.stopped, true)
+  assert.equal(result.accepted, true)
+  assert.equal(result.commandError, false)
+})
+
 test('archiveAgentRun invokes Netlify API archive operation', () => {
   const calls = []
   const result = archiveAgentRun({
@@ -79,6 +120,21 @@ test('archiveAgentRun invokes Netlify API archive operation', () => {
   ])
   assert.equal(calls[0].options.cwd, '/tmp/project')
   assert.equal(calls[0].options.allowFailure, true)
+})
+
+test('archiveAgentRun treats Netlify CLI Accepted response as archived', () => {
+  const result = archiveAgentRun({
+    projectRoot: '/tmp/project',
+    runnerId: 'runner-1',
+    env: { NETLIFY_AUTH_TOKEN: 'token' },
+    runCommand() {
+      return { status: 1, stdout: '', stderr: '\u001b[31mTextHTTPError:\u001b[39m Accepted' }
+    },
+  })
+
+  assert.equal(result.archived, true)
+  assert.equal(result.accepted, true)
+  assert.equal(result.commandError, false)
 })
 
 test('detectJavascriptWorkspace reports build-info workspace state', async () => {
@@ -225,6 +281,63 @@ test('listNetlifyFilterCandidates includes exact local Netlify site state for co
     siteId: 'site-from-app',
     stateSource: path.join('projects', 'data', 'snowflake_dbt', '.netlify', 'state.json'),
   }])
+})
+
+test('resolveNetlifyProjectTarget uses nested config site state with inferred filter', () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'nax-local-target-nested-'))
+  const appDir = path.join(tmp, 'clients', 'frontend')
+  fs.mkdirSync(path.join(tmp, '.netlify'), { recursive: true })
+  fs.writeFileSync(path.join(tmp, '.netlify', 'state.json'), JSON.stringify({ siteId: 'root-site' }))
+  fs.mkdirSync(path.join(appDir, '.netlify'), { recursive: true })
+  fs.writeFileSync(path.join(appDir, 'netlify.toml'), [
+    '[build]',
+    '  command = "pnpm --filter revenue-engine-frontend build:netlify"',
+    '',
+  ].join('\n'))
+  fs.writeFileSync(path.join(appDir, '.netlify', 'state.json'), JSON.stringify({ siteId: 'frontend-site' }))
+
+  const target = resolveNetlifyProjectTarget({ projectRoot: tmp, env: {} })
+
+  assert.equal(target.siteId, 'frontend-site')
+  assert.equal(target.env.NETLIFY_SITE_ID, 'frontend-site')
+  assert.equal(target.filter, 'revenue-engine-frontend')
+  assert.equal(target.filterSource, path.join('clients', 'frontend', 'netlify.toml'))
+  assert.equal(target.siteSource, path.join('clients', 'frontend', '.netlify', 'state.json'))
+})
+
+test('resolveNetlifyProjectTarget refuses root site fallback for unlinked nested config', () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'nax-local-target-refuse-root-'))
+  const appDir = path.join(tmp, 'clients', 'frontend')
+  fs.mkdirSync(path.join(tmp, '.netlify'), { recursive: true })
+  fs.mkdirSync(appDir, { recursive: true })
+  fs.writeFileSync(path.join(tmp, '.netlify', 'state.json'), JSON.stringify({ siteId: 'root-site' }))
+  fs.writeFileSync(path.join(appDir, 'netlify.toml'), [
+    '[build]',
+    '  command = "pnpm --filter revenue-engine-frontend build:netlify"',
+    '',
+  ].join('\n'))
+
+  assert.throws(
+    () => resolveNetlifyProjectTarget({ projectRoot: tmp, env: {} }),
+    /Refusing to use root \.netlify\/state\.json/,
+  )
+})
+
+test('resolveNetlifyProjectTarget accepts explicit site id for unlinked nested config', () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'nax-local-target-explicit-'))
+  const appDir = path.join(tmp, 'clients', 'frontend')
+  fs.mkdirSync(appDir, { recursive: true })
+  fs.writeFileSync(path.join(appDir, 'netlify.toml'), [
+    '[build]',
+    '  command = "pnpm --filter revenue-engine-frontend build:netlify"',
+    '',
+  ].join('\n'))
+
+  const target = resolveNetlifyProjectTarget({ projectRoot: tmp, siteId: 'explicit-site', env: {} })
+
+  assert.equal(target.siteId, 'explicit-site')
+  assert.equal(target.filter, 'revenue-engine-frontend')
+  assert.equal(target.siteSource, 'option')
 })
 
 test('findNetlifyConfigPaths skips netlify.toml inside gitignored directories', () => {

@@ -2,6 +2,7 @@ const fs = require('fs')
 const path = require('path')
 const configorama = require('configorama')
 const { loadPromptFile } = require('./prompts')
+const { HUMAN_REVIEW_ACTION, HUMAN_REVIEW_SUBMIT, HUMAN_REVIEW_WAIT_FOR, isHumanReviewStep } = require('./human-review')
 
 const FLOWS_DIR = path.join(__dirname, 'flows')
 const DEFAULT_PROJECT_FLOWS_DIRS = ['.github/nax-flows']
@@ -10,14 +11,15 @@ const FLOW_FILE_EXTENSIONS = ['yml', 'yaml', 'json', 'toml', 'js', 'cjs', 'mjs',
 const NAX_CONFIG_FILE_NAMES = CONFIG_FILE_EXTENSIONS.map((extension) => `nax.config.${extension}`)
 const FLOW_FILE_NAMES = FLOW_FILE_EXTENSIONS.map((extension) => `flow.${extension}`)
 const WAIT_FOR_AGENT_RESULTS = 'agent-results'
-const ALLOWED_STEP_ACTIONS = ['issue', 'comment']
-const ALLOWED_STEP_SUBMITS = ['new-run', 'follow-up']
+const ALLOWED_STEP_ACTIONS = ['issue', 'comment', HUMAN_REVIEW_ACTION]
+const ALLOWED_STEP_SUBMITS = ['new-run', 'follow-up', HUMAN_REVIEW_SUBMIT]
 /**
  * @typedef {{ stepId: string, code: string, message: string, hint: string }} FlowDiagnostic
  * @typedef {{ errors: FlowDiagnostic[], warnings: FlowDiagnostic[] }} FlowValidation
  */
 const FLOW_PICKER_ORDER = [
   'review',
+  'human-review-example',
   'ideas',
   'do-next',
   'security-audit',
@@ -205,14 +207,15 @@ function validateFlowStructure(flow, { existsSync = fs.existsSync } = {}) {
   for (let index = 0; index < steps.length; index += 1) {
     const step = steps[index]
     const stepId = String(step.id || `step-${index + 1}`)
-    if (!step.prompt) {
+    const humanReview = isHumanReviewStep(step)
+    if (!humanReview && !step.prompt) {
       errors.push(flowDiagnostic({
         stepId,
         code: 'missing_prompt',
         message: `Step "${stepId}" is missing a prompt path.`,
         hint: 'Set step.prompt to a prompt file relative to the flow directory.',
       }))
-    } else {
+    } else if (!humanReview) {
       const resolvedPrompt = promptPathForStep(flow, step)
       if (!existsSync(resolvedPrompt)) {
         errors.push(flowDiagnostic({
@@ -242,12 +245,13 @@ function validateFlowStructure(flow, { existsSync = fs.existsSync } = {}) {
       }))
     }
 
-    if (step.waitFor !== WAIT_FOR_AGENT_RESULTS) {
+    const allowedWaitFor = humanReview ? HUMAN_REVIEW_WAIT_FOR : WAIT_FOR_AGENT_RESULTS
+    if (step.waitFor !== allowedWaitFor) {
       errors.push(flowDiagnostic({
         stepId,
         code: 'invalid_wait_for',
         message: `Step "${stepId}" has unsupported waitFor "${step.waitFor}".`,
-        hint: 'Only "agent-results" is supported.',
+        hint: humanReview ? 'Human review steps use waitFor "human-review".' : 'Only "agent-results" is supported.',
       }))
     }
 
@@ -365,17 +369,21 @@ function normalizeFlow(raw, { id, dir, file, source = {} }) {
     options: raw.options && typeof raw.options === 'object' ? raw.options : {},
     steps: steps.map((step, index) => {
       const stepId = String(step.id || `step-${index + 1}`)
-      const waitFor = String(step.waitFor || WAIT_FOR_AGENT_RESULTS)
+      const action = String(step.action || step.type || 'issue')
+      const humanReview = action === HUMAN_REVIEW_ACTION
+      const waitFor = String(step.waitFor || (humanReview ? HUMAN_REVIEW_WAIT_FOR : WAIT_FOR_AGENT_RESULTS))
       return {
         id: stepId,
         title: step.title || stepId,
         description: step.description || '',
         prompt: step.prompt,
-        action: step.action || 'issue',
-        submit: step.submit || 'new-run',
-        agents: normalizeList(step.agents).length > 0 ? normalizeList(step.agents) : normalizeList(defaults.agents),
+        type: step.type || (humanReview ? HUMAN_REVIEW_ACTION : ''),
+        action,
+        submit: step.submit || (humanReview ? HUMAN_REVIEW_SUBMIT : 'new-run'),
+        agents: humanReview ? [] : normalizeList(step.agents).length > 0 ? normalizeList(step.agents) : normalizeList(defaults.agents),
         input: step.input === undefined ? [] : step.input,
         waitFor,
+        review: step.review && typeof step.review === 'object' ? step.review : null,
         autoArchive: normalizeBoolean(step.autoArchive, null),
         isArchivable: normalizeBoolean(step.isArchivable, true),
       }
@@ -442,12 +450,14 @@ module.exports = {
   FLOWS_DIR,
   FLOW_FILE_NAMES,
   FLOW_PICKER_ORDER,
+  HUMAN_REVIEW_WAIT_FOR,
   NAX_CONFIG_FILE_NAMES,
   WAIT_FOR_AGENT_RESULTS,
   assertValidFlowStructure,
   findFlowFile,
   flowSources,
   formatFlowValidation,
+  isHumanReviewStep,
   listFlows,
   loadFlow,
   loadStepPrompt,

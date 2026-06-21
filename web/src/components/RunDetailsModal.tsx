@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type RefObject } from 'react'
 import { ActionIcon, Alert, Anchor, Badge, Box, Button, Code, Group, Menu, Modal, Paper, ScrollArea, Stack, Text, Timeline, Title, Tooltip, UnstyledButton } from '@mantine/core'
 import { Ban, Check, ChevronsDownUp, ChevronsUpDown, ChevronDown, ChevronRight, ExternalLink, FileText, Files, Play } from 'lucide-react'
-import { cancelFollowupRun, getRunDetails, openLocalFile } from '../api'
+import { approveHumanReviewGate, cancelFollowupRun, cancelHumanReviewGate, cancelWorkflowRun, getRunDetails, openLocalFile } from '../api'
 import { agentLabel, isDoneStatus, recordList, recordValue, runId, statusBadgeStyle, statusColor, statusLabel, workflowName } from '../run-format'
 import { extractMarkdownToc } from '../run-details-toc'
 import { selectRunDetailsSection, selectorKey, type RunDetailsSelector } from '../run-details-selection'
@@ -257,12 +257,15 @@ function buildTimelineEntries(
     agents.forEach((agent) => {
       const section = sessionByAgent.get(agent)
       if (section) {
+        const runInfo = step.agentRuns[agent]
+        const status = runInfo?.status || section.status
         entries.push({
           id: `session:${section.id}`,
           kind: 'session',
           title: `${agentLabel(section.agent)} · ${section.stepTitle || step.title}`,
-          subtitle: section.status || section.runnerId || section.sessionId,
-          status: section.status,
+          subtitle: status || section.runnerId || section.sessionId,
+          status,
+          sourceType: step.sourceType,
           path: section.path,
           absolutePath: section.absolutePath,
           markdown: section.markdown,
@@ -284,6 +287,7 @@ function buildTimelineEntries(
         title: `${agentLabel(agent)} · ${context.stepTitle || step.title}`,
         subtitle: context.status || 'pending',
         status: context.status || 'pending',
+        sourceType: step.sourceType,
         path: '',
         absolutePath: '',
         markdown: '',
@@ -438,11 +442,30 @@ export function RunDetailsModal({
   const cancelFollowupEntry = async (entry: TimelineEntry) => {
     const target = cancelTargetForEntry(entry)
     if (!detailsRunId || !target) throw new Error('This entry is no longer cancellable.')
-    const response = await cancelFollowupRun(detailsRunId, target)
+    const response = entry.sourceType === 'visualizer-followup'
+      ? await cancelFollowupRun(detailsRunId, target)
+      : await cancelWorkflowRun(detailsRunId)
     await refreshDetails()
     await onRunUpdated?.(response.run)
-    if (!response.cancelled) throw new Error('This follow-up is no longer active.')
+    if (!response.cancelled) throw new Error('This run is no longer active.')
     if (response.warnings?.length) throw new Error(`Cancelled locally. ${response.warnings[0]}`)
+  }
+
+  const approveReviewEntry = async (entry: TimelineEntry) => {
+    if (!detailsRunId || !entry.stepNumber) throw new Error('This review gate is no longer active.')
+    const response = await approveHumanReviewGate(detailsRunId, { stepId: entry.id.replace(/^step:/, '') })
+    await refreshDetails()
+    await onRunUpdated?.(response.run)
+  }
+
+  const cancelReviewEntry = async (entry: TimelineEntry) => {
+    if (!detailsRunId || !entry.stepNumber) throw new Error('This review gate is no longer active.')
+    const response = await cancelHumanReviewGate(detailsRunId, {
+      stepId: entry.id.replace(/^step:/, ''),
+      reason: 'cancelled from visualizer',
+    })
+    await refreshDetails()
+    await onRunUpdated?.(response.run)
   }
 
   useEffect(() => {
@@ -593,7 +616,9 @@ export function RunDetailsModal({
                   contentView={contentView}
                   detailsRunId={detailsRunId}
                   entry={activeEntry}
+                  onApproveReview={approveReviewEntry}
                   onCancelFollowup={cancelFollowupEntry}
+                  onCancelReview={cancelReviewEntry}
                   onContentViewChange={setContentView}
                   workflowName={detailWorkflowName}
                   scrollRootRef={markdownScrollRef}
@@ -761,7 +786,9 @@ function RunDetailsContent({
   contentView,
   detailsRunId,
   entry,
+  onApproveReview,
   onCancelFollowup,
+  onCancelReview,
   onContentViewChange,
   workflowName: name,
   scrollRootRef,
@@ -769,11 +796,14 @@ function RunDetailsContent({
   contentView: 'results' | 'prompt'
   detailsRunId: string
   entry: TimelineEntry
+  onApproveReview: (entry: TimelineEntry) => Promise<void>
   onCancelFollowup: (entry: TimelineEntry) => Promise<void>
+  onCancelReview: (entry: TimelineEntry) => Promise<void>
   onContentViewChange: (view: 'results' | 'prompt') => void
   workflowName: string
   scrollRootRef?: RefObject<HTMLDivElement | null>
 }) {
+  const [reviewAction, setReviewAction] = useState<'approve' | 'cancel' | ''>('')
   const hasPrompt = Boolean(entry.promptMarkdown)
   const showingPrompt = contentView === 'prompt' && hasPrompt
   const markdown = showingPrompt ? entry.promptMarkdown || '' : entry.markdown
@@ -781,6 +811,16 @@ function RunDetailsContent({
   const actionFilePath = showingPrompt ? entry.promptPath || '' : entry.absolutePath
   const actionSessionUrl = showingPrompt ? '' : entry.section?.links.sessionUrl || entry.section?.links.agentRunUrl
   const canCancel = !showingPrompt && Boolean(detailsRunId && cancelTargetForEntry(entry))
+  const canReview = !showingPrompt && entry.kind === 'step' && entry.status === 'awaiting_review'
+  const runReviewAction = async (action: 'approve' | 'cancel') => {
+    setReviewAction(action)
+    try {
+      if (action === 'approve') await onApproveReview(entry)
+      else await onCancelReview(entry)
+    } finally {
+      setReviewAction('')
+    }
+  }
   return (
     <Stack gap="sm" style={{ marginTop: -4 }}>
       <Group gap="xs" wrap="wrap">
@@ -802,6 +842,29 @@ function RunDetailsContent({
             sessionUrl={actionSessionUrl}
             onCancel={canCancel ? () => onCancelFollowup(entry) : undefined}
           />
+        ) : null}
+        {canReview ? (
+          <Group gap={6} wrap="nowrap">
+            <Button
+              leftSection={<Check size={14} />}
+              loading={reviewAction === 'approve'}
+              onClick={() => runReviewAction('approve')}
+              size="compact-xs"
+              variant="filled"
+            >
+              Continue
+            </Button>
+            <Button
+              color="red"
+              leftSection={<Ban size={14} />}
+              loading={reviewAction === 'cancel'}
+              onClick={() => runReviewAction('cancel')}
+              size="compact-xs"
+              variant="light"
+            >
+              Cancel flow
+            </Button>
+          </Group>
         ) : null}
       </Group>
       <Box className="run-details-markdown-shell">
@@ -1166,10 +1229,12 @@ function ArtifactActions({
   filePath = '',
   sessionUrl,
   onCancel,
+  cancelLabel = 'Cancel run',
 }: {
   filePath?: string
   sessionUrl?: string
   onCancel?: () => Promise<void>
+  cancelLabel?: string
 }) {
   const [error, setError] = useState('')
   const [opening, setOpening] = useState(false)
@@ -1230,8 +1295,8 @@ function ArtifactActions({
       ) : null}
       {sessionUrl ? <Anchor href={sessionUrl} target="_blank" rel="noreferrer" size="xs">Open in Netlify</Anchor> : null}
       {onCancel ? (
-        <Tooltip label="Cancel follow-up">
-          <ActionIcon aria-label="Cancel follow-up" variant="subtle" color="red" size="sm" loading={cancelling} onClick={cancelRun}>
+        <Tooltip label={cancelLabel}>
+          <ActionIcon aria-label={cancelLabel} variant="subtle" color="red" size="sm" loading={cancelling} onClick={cancelRun}>
             <Ban size={14} />
           </ActionIcon>
         </Tooltip>

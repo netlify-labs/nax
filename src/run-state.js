@@ -1,6 +1,17 @@
 const fs = require('fs')
 const path = require('path')
 
+const DEFAULT_STATE_LOCK_TIMEOUT_MS = 30000
+const DEFAULT_STATE_LOCK_STALE_MS = 10 * 60 * 1000
+const STATE_WRITE_DURABLE_FIELDS = [
+  'runnerId',
+  'sessionId',
+  'issueNumber',
+  'issueUrl',
+  'submittedAfterSeconds',
+  'existingRunnerId',
+]
+
 function slugify(value) {
   return String(value)
     .trim()
@@ -89,6 +100,177 @@ function readRunState(filePath) {
   return JSON.parse(fs.readFileSync(filePath, 'utf8'))
 }
 
+function sleepSync(ms) {
+  const buffer = new SharedArrayBuffer(4)
+  const view = new Int32Array(buffer)
+  Atomics.wait(view, 0, 0, ms)
+}
+
+function parsePositiveInt(value, fallback) {
+  const parsed = Number.parseInt(String(value || ''), 10)
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback
+}
+
+function removeStaleLock(lockDir, staleMs) {
+  let stats
+  try {
+    stats = fs.statSync(lockDir)
+  } catch {
+    return false
+  }
+  if (Date.now() - stats.mtimeMs < staleMs) return false
+  try {
+    fs.rmSync(lockDir, { recursive: true, force: true })
+    return true
+  } catch {
+    return false
+  }
+}
+
+function acquireStateFileLock(filePath, {
+  timeoutMs = parsePositiveInt(process.env.NAX_STATE_LOCK_TIMEOUT_MS, DEFAULT_STATE_LOCK_TIMEOUT_MS),
+  staleMs = parsePositiveInt(process.env.NAX_STATE_LOCK_STALE_MS, DEFAULT_STATE_LOCK_STALE_MS),
+} = {}) {
+  const lockDir = `${filePath}.lock`
+  const startedAt = Date.now()
+  let delayMs = 5
+
+  while (true) {
+    try {
+      fs.mkdirSync(lockDir)
+      try {
+        fs.writeFileSync(path.join(lockDir, 'owner.json'), JSON.stringify({
+          pid: process.pid,
+          createdAt: new Date().toISOString(),
+        }, null, 2) + '\n')
+      } catch {
+        // The directory itself is the lock; owner metadata is only diagnostic.
+      }
+      let released = false
+      return () => {
+        if (released) return
+        released = true
+        fs.rmSync(lockDir, { recursive: true, force: true })
+      }
+    } catch (error) {
+      if (error?.code !== 'EEXIST') throw error
+      if (removeStaleLock(lockDir, staleMs)) continue
+      if (Date.now() - startedAt > timeoutMs) {
+        throw new Error(`Timed out waiting for workflow state lock: ${lockDir}`)
+      }
+      sleepSync(delayMs)
+      delayMs = Math.min(delayMs * 2, 100)
+    }
+  }
+}
+
+function fsyncPath(filePath) {
+  let fd
+  try {
+    fd = fs.openSync(filePath, 'r')
+    fs.fsyncSync(fd)
+  } catch {
+    // Some filesystems do not support fsync on directories; the rename is still atomic.
+  } finally {
+    if (fd !== undefined) {
+      try {
+        fs.closeSync(fd)
+      } catch {
+        // Best effort durability flush.
+      }
+    }
+  }
+}
+
+function atomicWriteJsonFile(filePath, data) {
+  const dir = path.dirname(filePath)
+  const tmpPath = path.join(dir, `.${path.basename(filePath)}.${process.pid}.${Date.now()}.${Math.random().toString(16).slice(2)}.tmp`)
+  let fd
+  try {
+    fd = fs.openSync(tmpPath, 'w', 0o600)
+    fs.writeFileSync(fd, data)
+    fs.fsyncSync(fd)
+    fs.closeSync(fd)
+    fd = undefined
+    fs.renameSync(tmpPath, filePath)
+    fsyncPath(dir)
+  } catch (error) {
+    if (fd !== undefined) {
+      try {
+        fs.closeSync(fd)
+      } catch {
+        // Best effort cleanup before removing the temp file.
+      }
+    }
+    try {
+      fs.rmSync(tmpPath, { force: true })
+    } catch {
+      // Best effort cleanup.
+    }
+    throw error
+  }
+}
+
+function hasValue(value) {
+  if (value === undefined || value === null) return false
+  if (typeof value === 'string') return value.trim() !== ''
+  return true
+}
+
+function matchingExistingRun(existingRuns, incomingRun, index) {
+  if (!Array.isArray(existingRuns)) return null
+  const incomingRunnerId = String(incomingRun?.runnerId || '').trim()
+  if (incomingRunnerId) {
+    const byRunnerId = existingRuns.find((run) => String(run?.runnerId || '').trim() === incomingRunnerId)
+    if (byRunnerId) return byRunnerId
+  }
+  const sameIndex = existingRuns[index]
+  if (sameIndex && sameIndex.agent === incomingRun?.agent) return sameIndex
+  const sameAgent = existingRuns.filter((run) => run?.agent === incomingRun?.agent)
+  return sameAgent.length === 1 ? sameAgent[0] : null
+}
+
+function mergeRunDurableFields(existingRun = {}, incomingRun = {}) {
+  if (!existingRun || !incomingRun) return incomingRun
+  for (const field of STATE_WRITE_DURABLE_FIELDS) {
+    if (!hasValue(incomingRun[field]) && hasValue(existingRun[field])) {
+      incomingRun[field] = existingRun[field]
+    }
+  }
+  if ((!incomingRun.links || Object.keys(incomingRun.links).length === 0) && existingRun.links && Object.keys(existingRun.links).length > 0) {
+    incomingRun.links = existingRun.links
+  } else if (incomingRun.links && existingRun.links) {
+    incomingRun.links = { ...existingRun.links, ...incomingRun.links }
+  }
+  if (existingRun.raw && typeof existingRun.raw === 'object') {
+    incomingRun.raw = incomingRun.raw && typeof incomingRun.raw === 'object' ? incomingRun.raw : {}
+    for (const field of ['create', 'session']) {
+      if (!incomingRun.raw[field] && existingRun.raw[field]) {
+        incomingRun.raw[field] = existingRun.raw[field]
+      }
+    }
+  }
+  return incomingRun
+}
+
+function mergeExistingStateForWrite(existingState, incomingState) {
+  if (!existingState || existingState.runId !== incomingState?.runId) return incomingState
+  const existingSteps = Array.isArray(existingState.steps) ? existingState.steps : []
+  const incomingSteps = Array.isArray(incomingState.steps) ? incomingState.steps : []
+  const existingByStepId = new Map(existingSteps.filter((step) => step?.id).map((step) => [step.id, step]))
+
+  for (const [stepIndex, incomingStep] of incomingSteps.entries()) {
+    const existingStep = existingByStepId.get(incomingStep?.id) || existingSteps[stepIndex]
+    if (!existingStep || !Array.isArray(incomingStep?.runs)) continue
+    const existingRuns = Array.isArray(existingStep.runs) ? existingStep.runs : []
+    for (const [runIndex, incomingRun] of incomingStep.runs.entries()) {
+      const existingRun = matchingExistingRun(existingRuns, incomingRun, runIndex)
+      if (existingRun) mergeRunDurableFields(existingRun, incomingRun)
+    }
+  }
+  return incomingState
+}
+
 function listRunStates(projectRoot) {
   return listWorkflowStates(projectRoot)
 }
@@ -164,10 +346,12 @@ function transportMatches(candidate, requested) {
 function isUnfinishedRun(state) {
   if (state?.status === 'dismissed' || state?.dismissedAt) return false
   if (!Array.isArray(state.steps) || state.steps.length === 0) return false
+  if (state?.status === 'awaiting_review') return true
   if (hasRemainingInterruptedSteps(state)) return true
   return state.steps.some((step) => {
     return step.status === 'running' ||
       step.status === 'submitted' ||
+      step.status === 'awaiting_review' ||
       hasInFlightRuns(step) ||
       hasRepairableRuns(step)
   })
@@ -223,8 +407,22 @@ function createRunState({ projectRoot, flow, transport, options = {}, target = n
 
 function saveRunState(state) {
   fs.mkdirSync(state.dir, { recursive: true })
-  const next = { ...state, updatedAt: new Date().toISOString() }
-  fs.writeFileSync(workflowStatePath(state.dir), JSON.stringify(next, null, 2) + '\n')
+  const filePath = workflowStatePath(state.dir)
+  const release = acquireStateFileLock(filePath)
+  let next
+  try {
+    next = { ...state, updatedAt: new Date().toISOString() }
+    if (fs.existsSync(filePath)) {
+      try {
+        next = mergeExistingStateForWrite(readRunState(filePath), next)
+      } catch {
+        // If the existing state is corrupt, the new complete state replaces it.
+      }
+    }
+    atomicWriteJsonFile(filePath, JSON.stringify(next, null, 2) + '\n')
+  } finally {
+    release()
+  }
   try {
     require('./workflow-artifacts').persistWorkflowArtifacts(next, { summaryOnly: true })
   } catch (error) {

@@ -282,6 +282,7 @@ nax list
 | Flow | Use it for |
 |---|---|
 | `review` | Broad multi-agent code review with cross-review and consensus synthesis. |
+| `human-review-example` | Example flow that pauses for human approval before continuing. |
 | `ideas` | Multi-agent idea generation, adversarial scoring, reactions, and ranked synthesis. |
 | `do-next` | Choosing the single most logical next development task. |
 | `security-audit` | Auth, billing, webhook, tenant isolation, secrets, and attack-surface audits. |

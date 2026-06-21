@@ -59,11 +59,13 @@ function publicFlow(flow = {}) {
         title: step.title || '',
         description: step.description || '',
         prompt: step.prompt || '',
+        type: step.type || '',
         action: step.action || '',
         submit: step.submit || '',
         agents: Array.isArray(step.agents) ? step.agents : [],
         input: Array.isArray(step.input) ? step.input : [],
         waitFor: step.waitFor || '',
+        review: step.review || null,
         autoArchive: step.autoArchive,
         isArchivable: step.isArchivable,
       }))

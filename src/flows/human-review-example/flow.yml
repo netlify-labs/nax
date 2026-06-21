@@ -1,0 +1,43 @@
+id: human-review-example
+title: Human Review Example
+description: Demonstrate a workflow that pauses for a human approval before continuing.
+
+defaults:
+  transport: auto
+  notify: false
+  agents:
+    - codex
+
+steps:
+  - id: audit
+    title: Audit Change Candidates
+    description: Identify safe, high-value changes and call out anything risky.
+    prompt: prompts/1_audit-change-candidates.md
+    action: issue
+    submit: new-run
+    agents:
+      - codex
+    waitFor: agent-results
+
+  - id: human-review
+    title: Human Review
+    description: Pause for a person to review the audit and either continue or cancel the flow.
+    action: human-review
+    input:
+      - step: audit
+        results: all
+
+  - id: implement
+    title: Implement Approved Changes
+    description: Implement only the changes approved at the human review gate.
+    prompt: prompts/2_implement-approved-changes.md
+    action: comment
+    submit: follow-up
+    agents:
+      - codex
+    input:
+      - step: audit
+        results: all
+      - step: human-review
+        results: all
+    waitFor: agent-results

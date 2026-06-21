@@ -1326,6 +1326,86 @@ test('submitted local run boxes keep non-TTY run links on one line', () => {
   }
 })
 
+test('localAgentRunUrl uses nested Netlify config directory and rejects root site mismatch', () => {
+  const projectRoot = tmpRoot()
+  const appDir = path.join(projectRoot, 'clients', 'frontend')
+  const binDir = path.join(projectRoot, 'bin')
+  fs.mkdirSync(appDir, { recursive: true })
+  fs.mkdirSync(binDir, { recursive: true })
+  fs.writeFileSync(path.join(appDir, 'netlify.toml'), '[build]\n')
+  const fakeNetlify = path.join(binDir, 'netlify')
+  fs.writeFileSync(fakeNetlify, [
+    '#!/usr/bin/env node',
+    'const path = require("path")',
+    'const cwd = process.cwd()',
+    'const isFrontend = cwd.endsWith(path.join("clients", "frontend"))',
+    'const siteName = isFrontend ? "revenue-engine-frontend" : "deprecated-gmail-emailer"',
+    'const siteId = isFrontend ? "frontend-site" : "root-site"',
+    'console.log(JSON.stringify({ siteData: { "site-id": siteId, "site-name": siteName, "admin-url": `https://app.netlify.com/projects/${siteName}` } }))',
+    '',
+  ].join('\n'))
+  fs.chmodSync(fakeNetlify, 0o755)
+  const originalPath = process.env.PATH
+  process.env.PATH = `${binDir}${path.delimiter}${originalPath || ''}`
+  try {
+    const nestedUrl = _private.localAgentRunUrl({
+      projectRoot,
+      runnerId: 'runner-1',
+      options: {
+        netlifyConfig: 'clients/frontend/netlify.toml',
+        netlifySiteId: 'frontend-site',
+      },
+    })
+    assert.equal(nestedUrl, 'https://app.netlify.com/projects/revenue-engine-frontend/agent-runs/runner-1')
+
+    const mismatchedRootUrl = _private.localAgentRunUrl({
+      projectRoot,
+      runnerId: 'runner-1',
+      options: { netlifySiteId: 'frontend-site' },
+    })
+    assert.equal(mismatchedRootUrl, '')
+  } finally {
+    process.env.PATH = originalPath
+  }
+})
+
+test('cancelLocalWorkflowRunnersForInterrupt stops active fresh Netlify runners and records state', () => {
+  const projectRoot = tmpRoot()
+  const calls = []
+  const runState = {
+    transport: 'netlify-api',
+    options: { netlifySiteId: 'site-123' },
+    steps: [{
+      id: 'review',
+      status: 'running',
+      runs: [
+        { runnerId: 'runner-1', status: 'submitted' },
+        { runnerId: 'runner-2', status: 'completed' },
+        { runnerId: 'runner-3', status: 'running', existingRunnerId: 'source-runner' },
+      ],
+    }],
+  }
+
+  const result = _private.cancelLocalWorkflowRunnersForInterrupt({
+    runState,
+    projectRoot,
+    options: { netlifySiteId: 'site-123' },
+    reason: 'test interrupt',
+    stopRun({ runnerId }) {
+      calls.push(runnerId)
+      return { stopped: true, error: '' }
+    },
+  })
+
+  assert.deepEqual(calls, ['runner-1'])
+  assert.deepEqual(result.stopped, ['runner-1'])
+  assert.equal(runState.steps[0].runs[0].status, 'cancelled')
+  assert.equal(runState.steps[0].runs[1].status, 'completed')
+  assert.equal(runState.steps[0].runs[2].status, 'running')
+  assert.deepEqual(runState.remoteCancel.runnerIds, ['runner-1'])
+  assert.deepEqual(runState.remoteCancel.stopped, ['runner-1'])
+})
+
 test('non-TTY progress reporter aligns agent and state columns', () => {
   const originalLog = console.log
   const originalIsTTY = Object.getOwnPropertyDescriptor(process.stdout, 'isTTY')

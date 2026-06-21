@@ -5,6 +5,7 @@ import { approveHumanReviewGate, cancelFollowupRun, cancelHumanReviewGate, cance
 import { agentLabel, isDoneStatus, recordList, recordValue, runId, statusBadgeStyle, statusColor, statusLabel, workflowName } from '../run-format'
 import { extractMarkdownToc } from '../run-details-toc'
 import { selectRunDetailsSection, selectorKey, type RunDetailsSelector } from '../run-details-selection'
+import { displayAgentStatuses, displayStepStatus, selectedAgentsForStep } from '../run-projection'
 import type { RunDetailsResponse, RunDetailsSection, RunFollowupResponse, Target, VisualizeRun } from '../types'
 import { AgentIcon } from './AgentIcon'
 import { MarkdownRenderer } from './MarkdownRenderer'
@@ -27,6 +28,7 @@ type RunDetailsModalProps = {
   runId?: string
   initialSelector?: RunDetailsSelector
   liveContext?: RunDetailsLiveContext | null
+  liveRevision?: string
   missingRunMessage?: string
   onFollowupSubmitted?: (response: RunFollowupResponse) => void | Promise<void>
   onRunUpdated?: (run: VisualizeRun) => void | Promise<void>
@@ -104,7 +106,11 @@ function timelineBullet(entry: TimelineEntry) {
   return undefined
 }
 
-function buildStepItems(details: RunDetailsResponse['details'] | undefined, run: VisualizeRun | undefined): StepItem[] {
+function buildStepItems(
+  details: RunDetailsResponse['details'] | undefined,
+  run: VisualizeRun | undefined,
+  liveContext?: RunDetailsLiveContext | null,
+): StepItem[] {
   const stepSections = details?.sections.filter((section) => section.kind === 'step') || []
   const sectionByStepId = new Map(stepSections.map((section) => [section.stepId || section.id, section]))
   const items: StepItem[] = []
@@ -144,10 +150,38 @@ function buildStepItems(details: RunDetailsResponse['details'] | undefined, run:
       const agent = recordValue(runRecord as Record<string, unknown>, 'agent')
       if (agent && !agents.includes(agent)) agents.push(agent)
     })
+    if (liveContext?.selector.stepId === id && liveContext.selector.agent && !agents.includes(liveContext.selector.agent)) {
+      agents.push(liveContext.selector.agent)
+    }
+    const statusInput = {
+      status: recordValue(step, 'status') || section?.status || 'unknown',
+      agents,
+      selectedAgents: agents,
+      runs: runs.filter((runRecord): runRecord is Record<string, unknown> => (
+        Boolean(runRecord) && typeof runRecord === 'object' && !Array.isArray(runRecord)
+      )),
+    }
+    const liveAgentStatuses = liveContext?.selector.stepId === id && liveContext.selector.agent
+      ? { [liveContext.selector.agent]: liveContext.status }
+      : {}
+    const selectedAgents = selectedAgentsForStep(statusInput)
+    const projectedAgentStatuses = displayAgentStatuses(statusInput, liveAgentStatuses, selectedAgents)
+    Object.entries(projectedAgentStatuses).forEach(([agent, status]) => {
+      if (!agents.includes(agent)) agents.push(agent)
+      const existing = agentRuns[agent]
+      agentRuns[agent] = {
+        status,
+        runnerId: existing?.runnerId || '',
+        sessionId: existing?.sessionId || '',
+        url: existing?.url || '',
+        submittedAfterSeconds: existing?.submittedAfterSeconds ?? null,
+        lastEventAt: existing?.lastEventAt || '',
+      }
+    })
     items.push({
       id,
       title: recordValue(step, 'title') || section?.stepTitle || section?.title || id || `Step ${index + 1}`,
-      status: recordValue(step, 'status') || section?.status || 'unknown',
+      status: displayStepStatus(statusInput, projectedAgentStatuses, selectedAgents),
       sourceType: step.source && typeof step.source === 'object' && !Array.isArray(step.source)
         ? recordValue(step.source as Record<string, unknown>, 'type')
         : '',
@@ -389,6 +423,7 @@ export function RunDetailsModal({
   runId: detailsRunId = '',
   initialSelector,
   liveContext,
+  liveRevision = '',
   missingRunMessage = 'Load a saved workflow run before opening agent results.',
   onFollowupSubmitted,
   onRunUpdated,
@@ -406,7 +441,8 @@ export function RunDetailsModal({
   const followupTargets = details?.followupTargets || []
   const markdownScrollRef = useRef<HTMLDivElement>(null)
   const resolvedSelectionKeyRef = useRef('')
-  const stepItems = useMemo(() => buildStepItems(details, detailRun), [details, detailRun])
+  const appliedLiveRevisionRef = useRef('')
+  const stepItems = useMemo(() => buildStepItems(details, detailRun, liveContext), [details, detailRun, liveContext])
   const timelineEntries = useMemo(
     () => buildTimelineEntries(details, detailRun, stepItems, liveContext),
     [details, detailRun, liveContext, stepItems],
@@ -527,6 +563,28 @@ export function RunDetailsModal({
       window.clearInterval(timer)
     }
   }, [detailsRunId, detailsView, onRunUpdated, opened, refreshDetails, timelineEntries])
+
+  useEffect(() => {
+    if (!opened || !detailsRunId || !liveRevision || detailsView !== 'results') return undefined
+    if (!detailsResponse && detailsLoading) return undefined
+    const revisionKey = `${detailsRunId}|${liveRevision}`
+    if (appliedLiveRevisionRef.current === revisionKey) return undefined
+    let stopped = false
+    const timer = window.setTimeout(() => {
+      appliedLiveRevisionRef.current = revisionKey
+      refreshDetails()
+        .then(async (response) => {
+          if (!stopped && response?.run) await onRunUpdated?.(response.run)
+        })
+        .catch(() => {
+          // Live detail refresh is opportunistic; the modal keeps the last usable payload.
+        })
+    }, 350)
+    return () => {
+      stopped = true
+      window.clearTimeout(timer)
+    }
+  }, [detailsLoading, detailsResponse, detailsRunId, detailsView, liveRevision, onRunUpdated, opened, refreshDetails])
 
   useEffect(() => {
     setDetailsView('results')

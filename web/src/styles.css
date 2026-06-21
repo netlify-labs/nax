@@ -1342,6 +1342,14 @@ body {
   opacity: 0;
 }
 
+.workflow-target-handle {
+  top: -18px;
+}
+
+.workflow-source-handle {
+  bottom: -18px;
+}
+
 .react-flow__edge-path {
   stroke: var(--workflow-edge-color);
   stroke-width: 2;

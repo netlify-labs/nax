@@ -31,7 +31,7 @@ export const WorkflowNode = memo(function WorkflowNode({ data, selected }: NodeP
   const humanReview = node.action === 'human-review' || node.submit === 'human-review'
   return (
     <div className={`workflow-node${statusClass}${selected ? ' selected' : ''}`}>
-      <Handle className="hidden-handle" type="target" position={Position.Top} />
+      <Handle className="hidden-handle workflow-target-handle" type="target" position={Position.Top} />
       <div className="node-header">
         <div className="node-header-top">
           <div className="node-kicker-row">
@@ -91,7 +91,7 @@ export const WorkflowNode = memo(function WorkflowNode({ data, selected }: NodeP
           )
         })}
       </div>
-      <Handle className="hidden-handle" type="source" position={Position.Bottom} />
+      <Handle className="hidden-handle workflow-source-handle" type="source" position={Position.Bottom} />
     </div>
   )
 })

@@ -34,6 +34,7 @@ import { WorkflowCanvas } from './components/WorkflowCanvas'
 import { WorkflowControls } from './components/WorkflowControls'
 import { WorkflowList } from './components/WorkflowList'
 import { initialLiveRunState, liveRunReducer, visualStatus } from './liveRunReducer'
+import { projectWorkflowGraph, workflowGraphNodeByStepId } from './run-projection'
 import { recordValue, runId } from './run-format'
 import type { RunDetailsSelector } from './run-details-selection'
 import type { DryRunOptions, DryRunResult, RunFollowupResponse, RunnerEvent, VisualizeRun, Workflow, WorkflowGraph, WorkflowGraphNodeData } from './types'
@@ -142,6 +143,29 @@ function liveAgentUrl(event: RunnerEvent | null): string {
   if (!event) return ''
   const links = event.links || {}
   return links.sessionUrl || links.agentRunUrl || links.issueUrl || event.issueUrl || ''
+}
+
+function eventRevisionPart(event: RunnerEvent): string {
+  const type = String(event.type || '')
+  if (![
+    'agent_status',
+    'artifact_written',
+    'step_status',
+    'workflow_awaiting_review',
+    'workflow_cancelled',
+    'workflow_completed',
+    'workflow_failed',
+    'exited',
+  ].includes(type)) return ''
+  return [
+    type,
+    event.seq ?? event.id ?? '',
+    event.stepId || '',
+    event.agent || '',
+    event.status || '',
+    event.runnerId || '',
+    event.sessionId || '',
+  ].join(':')
 }
 
 function savedRunUrl(run: Record<string, unknown> | undefined): string {
@@ -825,6 +849,38 @@ export default function App() {
         ? `${selectedWorkflow.title} · ${selectedWorkflow.steps.length} steps`
         : 'No workflow selected'
   const repoName = repoNameFromPath(projectRoot)
+  const projectedGraph = useMemo(() => projectWorkflowGraph({
+    graph,
+    stepModels: dryRunOptions.stepModels,
+    stepStatuses: liveStepStatuses,
+    stepAgentStatuses: liveAgentStatuses,
+  }), [dryRunOptions.stepModels, graph, liveAgentStatuses, liveStepStatuses])
+  const selectedRunSnapshot = useMemo(() => {
+    if (!selectedRunId) return null
+    return runs.find((run) => run.runId === selectedRunId || run.id === selectedRunId) || activeRun
+  }, [activeRun, runs, selectedRunId])
+  const detailsLiveRevision = useMemo(() => {
+    const eventKey = liveRunState.rawEvents
+      .map(eventRevisionPart)
+      .filter(Boolean)
+      .slice(-24)
+      .join('|')
+    return [
+      selectedRunId,
+      selectedRunSnapshot?.status || '',
+      selectedRunSnapshot?.updatedAt || '',
+      selectedRunSnapshot?.eventCount || '',
+      liveRunState.run?.status || '',
+      eventKey,
+    ].join('::')
+  }, [
+    liveRunState.rawEvents,
+    liveRunState.run?.status,
+    selectedRunId,
+    selectedRunSnapshot?.eventCount,
+    selectedRunSnapshot?.status,
+    selectedRunSnapshot?.updatedAt,
+  ])
 
   const activeRunResult = activeRun ? {
     status: liveRunState.run?.status || activeRun.status,
@@ -839,10 +895,11 @@ export default function App() {
   } : null
   const detailsModalLiveContext = useMemo<RunDetailsLiveContext | null>(() => {
     if (!detailsModalContext) return null
-    const event = latestAgentEvent(liveRunState.rawEvents, detailsModalContext.node, detailsModalContext.agent)
-    const savedRun = runForAgent(detailsModalContext.node, detailsModalContext.agent)
+    const latestNode = workflowGraphNodeByStepId(projectedGraph, detailsModalContext.node.stepId) || detailsModalContext.node
+    const event = latestAgentEvent(liveRunState.rawEvents, latestNode, detailsModalContext.agent)
+    const savedRun = runForAgent(latestNode, detailsModalContext.agent)
     const savedStatus = runValue(savedRun, 'status')
-    const status = detailsModalContext.node.agentStatuses?.[detailsModalContext.agent] ||
+    const status = latestNode.agentStatuses?.[detailsModalContext.agent] ||
       event?.status ||
       (savedStatus ? visualStatus(savedStatus) : '')
     return {
@@ -851,7 +908,7 @@ export default function App() {
         runnerId: detailsModalContext.selector.runnerId || runValue(savedRun, 'runnerId') || event?.runnerId || '',
         sessionId: detailsModalContext.selector.sessionId || runValue(savedRun, 'sessionId') || event?.sessionId || '',
       },
-      stepTitle: detailsModalContext.node.title,
+      stepTitle: latestNode.title,
       status,
       runnerId: event?.runnerId || runValue(savedRun, 'runnerId'),
       sessionId: event?.sessionId || runValue(savedRun, 'sessionId'),
@@ -859,7 +916,7 @@ export default function App() {
       lastEventAt: event?.at || '',
       url: liveAgentUrl(event) || savedRunUrl(savedRun),
     }
-  }, [detailsModalContext, liveRunState.rawEvents])
+  }, [detailsModalContext, liveRunState.rawEvents, projectedGraph])
 
   return (
     <ReactFlowProvider>
@@ -948,11 +1005,8 @@ export default function App() {
                   <Splitter orientation="vertical" className="workflow-splitter" lineSize={1} handleColor="blue">
                     <Splitter.Pane defaultSize={72} min={35}>
                       <WorkflowCanvas
-                        graph={graph}
+                        graph={projectedGraph}
                         loading={loadingGraph}
-                        stepModels={dryRunOptions.stepModels}
-                        stepStatuses={liveStepStatuses}
-                        stepAgentStatuses={liveAgentStatuses}
                         onToggleStepAgent={toggleStepAgent}
                         onSelectNode={setSelectedNode}
                         onViewPrompt={setPromptNode}
@@ -1110,6 +1164,7 @@ export default function App() {
         runId={detailsModalContext?.runId || ''}
         initialSelector={detailsModalLiveContext?.selector || detailsModalContext?.selector}
         liveContext={detailsModalLiveContext}
+        liveRevision={detailsLiveRevision}
         missingRunMessage="Load a saved workflow run before opening agent results."
         onFollowupSubmitted={handleFollowupSubmitted}
         onRunUpdated={handleRunUpdated}

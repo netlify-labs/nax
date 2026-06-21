@@ -72,6 +72,22 @@ function normalizeFollowupRun({ run = {}, promptText = '', source = {}, timestam
 }
 
 /**
+ * @param {{
+ *   runState?: Record<string, any>,
+ *   target?: Record<string, any> | null,
+ *   source?: Record<string, any>,
+ * }} input
+ */
+function followupSource({ runState = {}, target = null, source = {} } = {}) {
+  return {
+    type: 'visualizer-followup',
+    sourceWorkflowRunId: runState.runId || '',
+    sourceTargetId: target?.id || '',
+    ...(source || {}),
+  }
+}
+
+/**
  * Append submitted visualizer follow-ups to the source workflow so the graph and
  * run-details modal retain the accepted runner/session links after the modal closes.
  *
@@ -100,18 +116,15 @@ function appendFollowupRunsToWorkflow({
   const sourceId = safeStepId(source.id || `followup-${timestamp}`, 'visualizer-followup')
   const stepId = `visualizer-${sourceId}`
   const agents = uniqueAgents(submittedRuns)
+  const stepSource = followupSource({ runState, target, source })
   const normalizedRuns = submittedRuns.map((run) => normalizeFollowupRun({
     run,
     promptText,
-    source: {
-      type: 'visualizer-followup',
-      sourceWorkflowRunId: runState.runId || '',
-      sourceTargetId: target?.id || '',
-      ...(source || {}),
-    },
+    source: stepSource,
     timestamp,
   }))
   const sourceStepId = target?.stepId || ''
+  const status = submittedStepStatus(normalizedRuns)
   const step = {
     id: stepId,
     title: followupStepTitle(target || {}, submittedRuns),
@@ -122,13 +135,8 @@ function appendFollowupRunsToWorkflow({
     agents,
     input: sourceStepId ? [{ step: sourceStepId, results: 'selected' }] : [],
     promptText,
-    status: submittedStepStatus(normalizedRuns),
-    source: {
-      type: 'visualizer-followup',
-      sourceWorkflowRunId: runState.runId || '',
-      sourceTargetId: target?.id || '',
-      ...(source || {}),
-    },
+    status,
+    source: stepSource,
     runs: normalizedRuns,
   }
 
@@ -153,7 +161,7 @@ function appendFollowupRunsToWorkflow({
 
   return saveRunState({
     ...runState,
-    status: submittedStepStatus(normalizedRuns),
+    status,
     flow: nextFlow,
     steps: [...(Array.isArray(runState.steps) ? runState.steps : []), step],
   })
@@ -203,6 +211,7 @@ function persistFreshPseudoWorkflow({
   stepTitle = 'Fresh Agent Runner',
 }) {
   const agents = uniqueAgents(runs)
+  const status = submittedStepStatus(runs)
   const flow = freshAgentFlow({ title, stepTitle })
   flow.steps[0].agents = agents
   /** @type {any} */
@@ -219,7 +228,7 @@ function persistFreshPseudoWorkflow({
     now,
   })
   const timestamp = now.toISOString()
-  state.status = submittedStepStatus(runs)
+  state.status = status
   state.source = {
     type: 'visualizer-followup',
     mode: 'fresh-runner',
@@ -228,7 +237,7 @@ function persistFreshPseudoWorkflow({
   state.steps = [{
     id: 'fresh-agent-runner',
     title: stepTitle,
-    status: submittedStepStatus(runs),
+    status,
     agents,
     promptText,
     runs: runs.map((run) => ({

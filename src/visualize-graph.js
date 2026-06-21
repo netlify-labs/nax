@@ -24,20 +24,25 @@ function stepRuns(step = {}, runState = null) {
   return Array.isArray(saved?.runs) ? saved.runs : []
 }
 
+function uniqueRunAgents(runs = []) {
+  const seen = new Set()
+  const agents = []
+  for (const run of Array.isArray(runs) ? runs : []) {
+    const agent = String(run?.agent || '').trim()
+    if (!agent || seen.has(agent)) continue
+    seen.add(agent)
+    agents.push(agent)
+  }
+  return agents
+}
+
 function stepSelectedAgents(step = {}, runState = null) {
   if (!runState) return null
   const savedSteps = Array.isArray(runState?.steps) ? runState.steps : []
   const saved = savedSteps.find((candidate) => candidate.id === step.id)
   if (!saved) return null
 
-  const seen = new Set()
-  const selected = []
-  for (const run of Array.isArray(saved.runs) ? saved.runs : []) {
-    const agent = String(run?.agent || '').trim()
-    if (!agent || seen.has(agent)) continue
-    seen.add(agent)
-    selected.push(agent)
-  }
+  const selected = uniqueRunAgents(saved.runs)
   if (selected.length > 0) return selected
 
   const savedAgents = filteredAgents(saved.agents)
@@ -120,15 +125,7 @@ function flowAgents(steps = []) {
 function agentsForSavedStep(step = {}) {
   const declared = filteredAgents(step.agents)
   if (declared.length > 0) return declared
-  const seen = new Set()
-  const agents = []
-  for (const run of Array.isArray(step.runs) ? step.runs : []) {
-    const agent = String(run?.agent || '').trim()
-    if (!agent || seen.has(agent)) continue
-    seen.add(agent)
-    agents.push(agent)
-  }
-  return agents
+  return uniqueRunAgents(step.runs)
 }
 
 function hasPath(edges, source, target, ignoredEdgeId, visited = new Set()) {

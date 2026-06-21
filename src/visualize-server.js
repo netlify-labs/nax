@@ -19,6 +19,7 @@ const { buildFollowupSubmissionPlan } = require('./followup-plan')
 const { buildFollowupPrompt, submitFollowupPlan } = require('./handoff-runner')
 const { persistFreshPseudoWorkflow } = require('./followup-persistence')
 const { setBlob } = require('./netlify-blobs')
+const { readLinkedSiteId } = require('./init')
 
 const SESSION_COOKIE_NAME = 'nax_visualize_token'
 
@@ -321,11 +322,11 @@ function followupId(sourceRunId = '') {
   return `followup-${String(sourceRunId || 'run')}-${Date.now().toString(36)}`
 }
 
-/** @param {{ projectRoot?: string, siteId?: string, env?: NodeJS.ProcessEnv, writeBlob?: ((input: { ref: Record<string, any>, payload: string }) => any) | null }} [input] */
-function makeFollowupBlobWriter({ projectRoot, siteId, env = process.env, writeBlob } = {}) {
+/** @param {{ projectRoot?: string, siteId?: string, env?: NodeJS.ProcessEnv, writeBlob?: ((input: { ref: Record<string, any>, payload: string }) => any) | null, setBlobCommand?: typeof setBlob }} [input] */
+function makeFollowupBlobWriter({ projectRoot, siteId, env = process.env, writeBlob, setBlobCommand = setBlob } = {}) {
   if (typeof writeBlob === 'function') return writeBlob
   if (!siteId) return null
-  return async ({ ref, payload }) => setBlob({
+  return async ({ ref, payload }) => setBlobCommand({
     store: ref.store,
     key: ref.key,
     value: payload,
@@ -334,6 +335,11 @@ function makeFollowupBlobWriter({ projectRoot, siteId, env = process.env, writeB
     cwd: projectRoot,
     env,
   })
+}
+
+/** @param {{ projectRoot?: string, siteId?: string, env?: NodeJS.ProcessEnv }} [input] */
+function resolveFollowupSiteId({ projectRoot, siteId = '', env = process.env } = {}) {
+  return siteId || env.NETLIFY_SITE_ID || readLinkedSiteId(projectRoot, env) || ''
 }
 
 function linkSubmittedRunFactory({ siteName = '' } = {}) {
@@ -841,11 +847,12 @@ function createRequestHandler(options = {}) {
   const token = options.token || crypto.randomBytes(24).toString('hex')
   const initialWorkflow = options.initialWorkflow || ''
   const env = options.env || process.env
-  const followupSiteId = options.siteId || env.NETLIFY_SITE_ID || ''
+  const followupSiteId = resolveFollowupSiteId({ projectRoot, siteId: options.siteId, env })
   const followupSiteName = options.siteName || env.NETLIFY_SITE_NAME || ''
   const followupNetlifyFilter = options.netlifyFilter || ''
   const followupSubmitRun = options.followupSubmitRun
   const followupWriteBlob = options.followupWriteBlob
+  const followupSetBlob = options.followupSetBlob || setBlob
   const runs = new Map()
   const activeByWorkflow = new Map()
 
@@ -1100,7 +1107,7 @@ function createRequestHandler(options = {}) {
             projectRoot,
             tokenRequiredForMutations: true,
             tokenRequiredForSensitiveReads: true,
-          })
+          }, sessionBootstrapHeaders(token))
           return
         }
 
@@ -1310,6 +1317,7 @@ function createRequestHandler(options = {}) {
               siteId: followupSiteId,
               env,
               writeBlob: followupWriteBlob,
+              setBlobCommand: followupSetBlob,
             }),
           })
           const sourceArtifactIds = contextPackage.artifacts.map((artifact) => artifact.id)
@@ -1552,7 +1560,8 @@ function createRequestHandler(options = {}) {
       } catch (error) {
         const message = error?.message || String(error)
         if (error?.statusCode) {
-          jsonResponse(res, error.statusCode, errorPayload(error.statusCode, error.code || 'request_error', message))
+          const headers = error.statusCode === 401 ? sessionBootstrapHeaders(token) : {}
+          jsonResponse(res, error.statusCode, errorPayload(error.statusCode, error.code || 'request_error', message), headers)
           return
         }
         if (/^Unknown flow /.test(message)) {

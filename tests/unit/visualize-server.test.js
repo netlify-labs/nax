@@ -768,6 +768,58 @@ test('visualize follow-up endpoint submits matching runner and fresh additional 
   }
 })
 
+test('visualize follow-up endpoint offloads oversized context using linked site state', async () => {
+  const projectRoot = tmpRoot()
+  fs.mkdirSync(path.join(projectRoot, '.netlify'), { recursive: true })
+  fs.writeFileSync(path.join(projectRoot, '.netlify', 'state.json'), JSON.stringify({ siteId: 'linked-site-id' }))
+  const { runId, dir } = writeFollowupRunFixture(projectRoot)
+  fs.writeFileSync(path.join(dir, 'artifacts', 'summary.md'), `# Huge summary\n\n${'prior result detail '.repeat(5000)}\n`)
+  const submissions = []
+  const blobWrites = []
+  const server = await startVisualizeServer({
+    projectRoot,
+    siteName: 'netlify-agent-executor',
+    env: {
+      ...process.env,
+      NETLIFY_SITE_ID: '',
+      NAX_SAFE_PROMPT_BYTES: '1024',
+    },
+    followupSetBlob: async (input) => {
+      blobWrites.push({ ...input })
+      return { status: 'ok' }
+    },
+    followupSubmitRun: async ({ run }) => {
+      submissions.push({ ...run })
+      return {
+        ...run,
+        status: 'submitted',
+        runnerId: run.existingRunnerId || `runner-${run.agent}`,
+        sessionId: run.existingRunnerId ? `session-${run.agent}-followup` : `session-${run.agent}`,
+      }
+    },
+  })
+  try {
+    const base = `http://127.0.0.1:${server.port}`
+    const response = await postJson(`${base}/api/runs/${runId}/followups`, server.token, {
+      prompt: 'Fix the confirmed security issues.',
+      mode: 'follow-up-thread',
+      targetId: 'agent-result:review:runner-1:session-1:codex',
+      models: ['codex'],
+    })
+
+    assert.equal(response.statusCode, 202, response.payload?.error?.message)
+    assert.equal(response.payload.followup.context.delivery, 'blob')
+    assert.equal(blobWrites.length, 1)
+    assert.equal(blobWrites[0].siteId, 'linked-site-id')
+    assert.match(blobWrites[0].value, /prior result detail/)
+    assert.equal(submissions.length, 1)
+    assert.match(submissions[0].promptText, /blobs:get/)
+    assert.doesNotMatch(submissions[0].promptText, /prior result detail/)
+  } finally {
+    await server.close()
+  }
+})
+
 test('visualize events API replays durable event log with since filter', async () => {
   const projectRoot = tmpRoot()
   const runId = 'fixture-events-run'

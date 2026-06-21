@@ -36,6 +36,14 @@ type StepItem = {
   title: string
   status: string
   agents: string[]
+  agentRuns: Record<string, {
+    status: string
+    runnerId: string
+    sessionId: string
+    url: string
+    submittedAfterSeconds: number | null
+    lastEventAt: string
+  }>
   section?: RunDetailsSection
 }
 
@@ -95,22 +103,69 @@ function timelineBullet(entry: TimelineEntry) {
 
 function buildStepItems(details: RunDetailsResponse['details'] | undefined, run: VisualizeRun | undefined): StepItem[] {
   const stepSections = details?.sections.filter((section) => section.kind === 'step') || []
-  if (stepSections.length > 0) {
-    return stepSections.map((section) => ({
-      id: section.stepId || section.id,
+  const sectionByStepId = new Map(stepSections.map((section) => [section.stepId || section.id, section]))
+  const items: StepItem[] = []
+  const seen = new Set<string>()
+
+  ;(run?.steps || []).forEach((step, index) => {
+    const id = recordValue(step, 'id') || `step-${index + 1}`
+    const section = sectionByStepId.get(id)
+    const agentRuns: StepItem['agentRuns'] = {}
+    const runs = Array.isArray(step.runs) ? step.runs : []
+    runs.forEach((runRecord) => {
+      if (!runRecord || typeof runRecord !== 'object') return
+      const record = runRecord as Record<string, unknown>
+      const agent = recordValue(record, 'agent')
+      if (!agent) return
+      const links = record.links && typeof record.links === 'object'
+        ? record.links as Record<string, unknown>
+        : {}
+      const url = recordValue(record, 'url') ||
+        recordValue(record, 'sessionUrl') ||
+        recordValue(record, 'agentRunUrl') ||
+        (typeof links.sessionUrl === 'string' ? links.sessionUrl : '') ||
+        (typeof links.agentRunUrl === 'string' ? links.agentRunUrl : '')
+      agentRuns[agent] = {
+        status: recordValue(record, 'status') ||
+          (recordValue(record, 'runnerId') || recordValue(record, 'sessionId') ? 'submitted' : ''),
+        runnerId: recordValue(record, 'runnerId'),
+        sessionId: recordValue(record, 'sessionId'),
+        url,
+        submittedAfterSeconds: typeof record.submittedAfterSeconds === 'number' ? record.submittedAfterSeconds : null,
+        lastEventAt: recordValue(record, 'lastEventAt') || recordValue(record, 'updatedAt') || recordValue(record, 'createdAt'),
+      }
+    })
+    const agents = recordList(step, 'agents')
+    runs.forEach((runRecord) => {
+      if (!runRecord || typeof runRecord !== 'object') return
+      const agent = recordValue(runRecord as Record<string, unknown>, 'agent')
+      if (agent && !agents.includes(agent)) agents.push(agent)
+    })
+    items.push({
+      id,
+      title: recordValue(step, 'title') || section?.stepTitle || section?.title || id || `Step ${index + 1}`,
+      status: recordValue(step, 'status') || section?.status || 'unknown',
+      agents,
+      agentRuns,
+      section,
+    })
+    seen.add(id)
+  })
+
+  stepSections.forEach((section) => {
+    const id = section.stepId || section.id
+    if (seen.has(id)) return
+    items.push({
+      id,
       title: section.stepTitle || section.title,
       status: section.status || 'unknown',
       agents: [],
+      agentRuns: {},
       section,
-    }))
-  }
+    })
+  })
 
-  return (run?.steps || []).map((step, index) => ({
-    id: recordValue(step, 'id') || `step-${index + 1}`,
-    title: recordValue(step, 'title') || recordValue(step, 'id') || `Step ${index + 1}`,
-    status: recordValue(step, 'status') || 'unknown',
-    agents: recordList(step, 'agents'),
-  }))
+  return items
 }
 
 function stepDescription(step: StepItem, sessions: RunDetailsSection[]): string {
@@ -122,6 +177,29 @@ function stepDescription(step: StepItem, sessions: RunDetailsSection[]): string 
 
 function liveEntryId(context: RunDetailsLiveContext): string {
   return `live:${context.selector.stepId}:${context.selector.agent}`
+}
+
+function agentEntryId(stepId: string, agent: string): string {
+  return `agent:${stepId}:${agent}`
+}
+
+function runInfoLiveContext(step: StepItem, agent: string): RunDetailsLiveContext {
+  const runInfo = step.agentRuns[agent]
+  return {
+    selector: {
+      stepId: step.id,
+      agent,
+      runnerId: runInfo?.runnerId || '',
+      sessionId: runInfo?.sessionId || '',
+    },
+    stepTitle: step.title,
+    status: runInfo?.status || 'pending',
+    runnerId: runInfo?.runnerId || '',
+    sessionId: runInfo?.sessionId || '',
+    submittedAfterSeconds: runInfo?.submittedAfterSeconds ?? null,
+    lastEventAt: runInfo?.lastEventAt || '',
+    url: runInfo?.url || '',
+  }
 }
 
 function buildTimelineEntries(
@@ -136,7 +214,7 @@ function buildTimelineEntries(
     id: 'summary',
     kind: 'summary',
     title: run ? `"${workflowName(run)}" Workflow ${statusLabel(run.status || '')}` : 'Workflow results',
-    subtitle: 'click to view results',
+    subtitle: isSuccessfulWorkflowStatus(run?.status || '') ? 'click to view results' : statusLabel(run?.status || ''),
     status: run?.status || '',
     path: details.summaryPath || run?.summaryPath || runId(run || {}),
     absolutePath: details.summaryAbsolutePath || '',
@@ -145,6 +223,7 @@ function buildTimelineEntries(
 
   steps.forEach((step, index) => {
     const sessions = sessionSections.filter((section) => section.stepId === step.id)
+    const sessionByAgent = new Map(sessions.map((section) => [section.agent, section]))
     entries.push({
       id: `step:${step.id}`,
       kind: 'step',
@@ -160,39 +239,52 @@ function buildTimelineEntries(
       stepNumber: index + 1,
       section: step.section,
     })
+    const agents = [...step.agents]
     sessions.forEach((section) => {
-      entries.push({
-        id: `session:${section.id}`,
-        kind: 'session',
-        title: `${agentLabel(section.agent)} · ${section.stepTitle || step.title}`,
-        subtitle: section.status || section.runnerId || section.sessionId,
-        status: section.status,
-        path: section.path,
-        absolutePath: section.absolutePath,
-        markdown: section.markdown,
-        promptMarkdown: section.promptMarkdown || '',
-        promptPath: section.promptPath || '',
-        promptTitle: section.promptTitle || section.stepTitle || step.title,
-        section,
-      })
+      if (section.agent && !agents.includes(section.agent)) agents.push(section.agent)
     })
-    if (
-      liveContext &&
-      liveContext.selector.stepId === step.id &&
-      !sessions.some((section) => section.agent === liveContext.selector.agent)
-    ) {
+    if (liveContext?.selector.stepId === step.id && liveContext.selector.agent && !agents.includes(liveContext.selector.agent)) {
+      agents.push(liveContext.selector.agent)
+    }
+    agents.forEach((agent) => {
+      const section = sessionByAgent.get(agent)
+      if (section) {
+        entries.push({
+          id: `session:${section.id}`,
+          kind: 'session',
+          title: `${agentLabel(section.agent)} · ${section.stepTitle || step.title}`,
+          subtitle: section.status || section.runnerId || section.sessionId,
+          status: section.status,
+          path: section.path,
+          absolutePath: section.absolutePath,
+          markdown: section.markdown,
+          promptMarkdown: section.promptMarkdown || '',
+          promptPath: section.promptPath || '',
+          promptTitle: section.promptTitle || section.stepTitle || step.title,
+          section,
+        })
+        return
+      }
+      const context = liveContext?.selector.stepId === step.id && liveContext.selector.agent === agent
+        ? liveContext
+        : runInfoLiveContext(step, agent)
       entries.push({
-        id: liveEntryId(liveContext),
+        id: liveContext?.selector.stepId === step.id && liveContext.selector.agent === agent
+          ? liveEntryId(liveContext)
+          : agentEntryId(step.id, agent),
         kind: 'session',
-        title: `${agentLabel(liveContext.selector.agent)} · ${liveContext.stepTitle || step.title}`,
-        subtitle: liveContext.status,
-        status: liveContext.status,
+        title: `${agentLabel(agent)} · ${context.stepTitle || step.title}`,
+        subtitle: context.status || 'pending',
+        status: context.status || 'pending',
         path: '',
         absolutePath: '',
         markdown: '',
-        liveContext,
+        promptMarkdown: step.section?.promptMarkdown || '',
+        promptPath: step.section?.promptPath || '',
+        promptTitle: step.section?.promptTitle || step.title,
+        liveContext: context,
       })
-    }
+    })
   })
 
   entries.push({
@@ -237,7 +329,7 @@ function resolveInitialTimelineId(
 }
 
 function isActiveLiveStatus(status: string): boolean {
-  return ['running', 'submitted', 'waiting', 'retrying', 'queued'].includes(status.toLowerCase())
+  return ['pending', 'running', 'submitted', 'submitting', 'waiting', 'retrying', 'queued'].includes(status.toLowerCase())
 }
 
 function isSuccessfulWorkflowStatus(status: string): boolean {
@@ -291,6 +383,7 @@ export function RunDetailsModal({
   const detailRun = detailsResponse?.run
   const followupTargets = details?.followupTargets || []
   const markdownScrollRef = useRef<HTMLDivElement>(null)
+  const resolvedSelectionKeyRef = useRef('')
   const stepItems = useMemo(() => buildStepItems(details, detailRun), [details, detailRun])
   const timelineEntries = useMemo(
     () => buildTimelineEntries(details, detailRun, stepItems, liveContext),
@@ -312,17 +405,6 @@ export function RunDetailsModal({
     : null
   const detailWorkflowName = workflowName(detailRun)
   const selectorIdentity = selectorKey(initialSelector)
-  const liveIdentity = liveContext
-    ? [
-      selectorKey(liveContext.selector),
-      liveContext.status,
-      liveContext.runnerId || '',
-      liveContext.sessionId || '',
-      liveContext.submittedAfterSeconds ?? '',
-      liveContext.lastEventAt || '',
-      liveContext.url || '',
-    ].join('|')
-    : ''
 
   const refreshDetails = async () => {
     if (!detailsRunId) return
@@ -381,11 +463,18 @@ export function RunDetailsModal({
   }, [activeEntry?.promptMarkdown, contentView])
 
   useEffect(() => {
-    if (!opened) return
+    if (!opened) {
+      resolvedSelectionKeyRef.current = ''
+      return
+    }
+    const resolutionKey = `${detailsRunId}|${selectorIdentity}`
+    const activeExists = timelineEntries.some((entry) => entry.id === activeTimelineId)
+    if (resolvedSelectionKeyRef.current === resolutionKey && activeExists) return
     const resolved = resolveInitialTimelineId(details, timelineEntries, initialSelector, liveContext)
+    resolvedSelectionKeyRef.current = resolutionKey
     setActiveTimelineId(resolved.id)
     setSelectionWarning(resolved.warning)
-  }, [details, initialSelector, liveContext, liveIdentity, opened, selectorIdentity, timelineEntries])
+  }, [activeTimelineId, details, detailsRunId, initialSelector, liveContext, opened, selectorIdentity, timelineEntries])
 
   const title = detailWorkflowName
     ? `Workflow results for "${detailWorkflowName}"`

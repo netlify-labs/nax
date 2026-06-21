@@ -33,7 +33,7 @@ export function statusLabel(status: string): string {
 export function statusBadgeTone(status: string): 'green' | 'yellow' | 'red' | undefined {
   const normalized = status.toLowerCase()
   if (isDoneStatus(normalized)) return 'green'
-  if (['running', 'submitted', 'waiting', 'retrying', 'queued', 'interrupted'].includes(normalized)) return 'yellow'
+  if (['pending', 'running', 'submitted', 'submitting', 'waiting', 'retrying', 'queued', 'interrupted'].includes(normalized)) return 'yellow'
   return ['failed', 'timeout', 'cancelled', 'canceled', 'dismissed', 'error', 'abandoned'].includes(normalized)
     ? 'red'
     : undefined

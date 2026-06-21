@@ -10,19 +10,39 @@ function authHeaders(): Record<string, string> {
   return token ? { 'x-nax-token': token } : {}
 }
 
-async function requestJson<T>(path: string): Promise<T> {
-  const response = await fetch(path, {
+async function bootstrapSession(): Promise<void> {
+  await fetch('/api/health', {
     headers: {
       accept: 'application/json',
       ...authHeaders(),
     },
+  }).catch(() => null)
+}
+
+async function fetchJson<T>(path: string, init: RequestInit = {}, retryOnUnauthorized = true): Promise<T> {
+  const headers = new Headers(init.headers)
+  if (!headers.has('accept')) headers.set('accept', 'application/json')
+  for (const [key, value] of Object.entries(authHeaders())) {
+    if (!headers.has(key)) headers.set(key, value)
+  }
+  const response = await fetch(path, {
+    ...init,
+    headers,
   })
   const payload = await response.json().catch(() => null)
+  if (response.status === 401 && retryOnUnauthorized && !sessionToken()) {
+    await bootstrapSession()
+    return fetchJson<T>(path, init, false)
+  }
   if (!response.ok) {
     const message = payload?.error?.message || `Request failed with ${response.status}`
     throw new Error(message)
   }
   return payload as T
+}
+
+async function requestJson<T>(path: string): Promise<T> {
+  return fetchJson<T>(path)
 }
 
 export function listWorkflows(): Promise<WorkflowListResponse> {
@@ -38,55 +58,31 @@ export function getWorkflowGraph(id: string): Promise<WorkflowGraphResponse> {
 }
 
 export async function runWorkflowDryRun(id: string, options: DryRunOptions): Promise<DryRunResponse> {
-  const response = await fetch(`/api/workflows/${encodeURIComponent(id)}/dry-run`, {
+  return fetchJson<DryRunResponse>(`/api/workflows/${encodeURIComponent(id)}/dry-run`, {
     method: 'POST',
     headers: {
-      accept: 'application/json',
       'content-type': 'application/json',
-      ...authHeaders(),
     },
     body: JSON.stringify(options),
   })
-  const payload = await response.json().catch(() => null)
-  if (!response.ok) {
-    const message = payload?.error?.message || payload?.dryRun?.stderr || `Dry-run failed with ${response.status}`
-    throw new Error(message)
-  }
-  return payload as DryRunResponse
 }
 
 export async function startWorkflowRun(id: string, options: DryRunOptions): Promise<StartRunResponse> {
-  const response = await fetch(`/api/workflows/${encodeURIComponent(id)}/runs`, {
+  return fetchJson<StartRunResponse>(`/api/workflows/${encodeURIComponent(id)}/runs`, {
     method: 'POST',
     headers: {
-      accept: 'application/json',
       'content-type': 'application/json',
-      ...authHeaders(),
     },
     body: JSON.stringify(options),
   })
-  const payload = await response.json().catch(() => null)
-  if (!response.ok) {
-    const message = payload?.error?.message || `Run failed with ${response.status}`
-    throw new Error(message)
-  }
-  return payload as StartRunResponse
 }
 
 export async function cancelWorkflowRun(id: string): Promise<{ run: VisualizeRun; cancelled: boolean }> {
-  const response = await fetch(`/api/runs/${encodeURIComponent(id)}/cancel`, {
+  return fetchJson<{ run: VisualizeRun; cancelled: boolean }>(`/api/runs/${encodeURIComponent(id)}/cancel`, {
     method: 'POST',
     headers: {
-      accept: 'application/json',
-      ...authHeaders(),
     },
   })
-  const payload = await response.json().catch(() => null)
-  if (!response.ok) {
-    const message = payload?.error?.message || `Cancel failed with ${response.status}`
-    throw new Error(message)
-  }
-  return payload as { run: VisualizeRun; cancelled: boolean }
 }
 
 export type RunEventStream = { close: () => void }
@@ -162,21 +158,13 @@ export function getRunDetails(id: string): Promise<RunDetailsResponse> {
 }
 
 export async function startRunFollowup(id: string, options: RunFollowupRequest): Promise<RunFollowupResponse> {
-  const response = await fetch(`/api/runs/${encodeURIComponent(id)}/followups`, {
+  return fetchJson<RunFollowupResponse>(`/api/runs/${encodeURIComponent(id)}/followups`, {
     method: 'POST',
     headers: {
-      accept: 'application/json',
       'content-type': 'application/json',
-      ...authHeaders(),
     },
     body: JSON.stringify(options),
   })
-  const payload = await response.json().catch(() => null)
-  if (!response.ok) {
-    const message = payload?.error?.message || `Follow-up failed with ${response.status}`
-    throw new Error(message)
-  }
-  return payload as RunFollowupResponse
 }
 
 export async function openLocalFile(path: string): Promise<{ opened: boolean; path: string }> {

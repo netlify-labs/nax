@@ -266,22 +266,78 @@ body {
   margin-inline: auto;
 }
 
-.prompt-markdown :where(h1, h2, h3, h4) {
-  margin: 1.15em 0 0.45em;
+.prompt-markdown :where(h1, h2, h3, h4, h5, h6) {
+  margin: 1.35em 0 0.55em;
   color: var(--mantine-color-text);
+  font-weight: 750;
+  letter-spacing: 0;
   line-height: 1.2;
 }
 
-.prompt-markdown :where(h1, h2, h3, h4):first-child {
+.prompt-markdown :where(h1, h2, h3, h4, h5, h6):first-child {
   margin-top: 0;
 }
 
-.prompt-markdown :where(p, ul, ol, pre, blockquote, table) {
-  margin: 0 0 0.9em;
+.prompt-markdown :where(h1),
+.prompt-markdown [data-streamdown='heading-1'] {
+  font-size: 2rem;
+}
+
+.prompt-markdown :where(h2),
+.prompt-markdown [data-streamdown='heading-2'] {
+  font-size: 1.5rem;
+}
+
+.prompt-markdown :where(h3),
+.prompt-markdown [data-streamdown='heading-3'] {
+  font-size: 1.15rem;
+}
+
+.prompt-markdown :where(h4),
+.prompt-markdown [data-streamdown='heading-4'] {
+  font-size: 1rem;
+}
+
+.prompt-markdown :where(p, ul, ol, pre, blockquote, table, details, [data-streamdown='table-wrapper']) {
+  margin: 0 0 0.95em;
+}
+
+.prompt-markdown :where(ul, ol) {
+  padding-left: 1.35rem;
+}
+
+.prompt-markdown :where(ul) {
+  list-style: disc;
+}
+
+.prompt-markdown :where(ol) {
+  list-style: decimal;
+}
+
+.prompt-markdown :where(li) {
+  padding: 0.1rem 0;
+}
+
+.prompt-markdown :where(li > p) {
+  margin: 0;
+  display: inline;
+}
+
+.prompt-markdown :where(hr),
+.prompt-markdown [data-streamdown='horizontal-rule'] {
+  margin: 1.35rem 0;
+  border: 0;
+  border-top: 1px solid var(--mantine-color-default-border);
 }
 
 .prompt-markdown details {
   margin-top: 20px;
+  border-radius: var(--mantine-radius-sm);
+}
+
+.prompt-markdown summary {
+  cursor: pointer;
+  font-weight: 600;
 }
 
 .prompt-markdown :where(code, pre) {
@@ -302,19 +358,91 @@ body {
   border-radius: var(--mantine-radius-xs);
   padding: 1px 4px;
   background: light-dark(var(--mantine-color-gray-1), var(--mantine-color-dark-6));
+  color: light-dark(var(--mantine-color-dark-7), var(--mantine-color-gray-1));
 }
 
-.prompt-markdown a[data-streamdown='link'] {
+.prompt-markdown :where(a, button[data-streamdown='link']),
+.prompt-markdown :where(a, button)[data-streamdown='link'],
+.run-details-markdown :where(a, button[data-streamdown='link']),
+.run-details-markdown :where(a, button)[data-streamdown='link'] {
+  appearance: none;
+  display: inline;
+  width: auto;
+  border-radius: 0;
+  border: 0;
+  padding: 0;
+  background: transparent;
   color: var(--mantine-primary-color-4);
+  cursor: pointer;
+  font: inherit;
   font-weight: 500;
   overflow-wrap: anywhere;
+  text-align: inherit;
   text-decoration: underline;
   text-decoration-thickness: 1px;
   text-underline-offset: 2px;
 }
 
-.prompt-markdown a[data-streamdown='link']:hover {
+.prompt-markdown :where(a, button[data-streamdown='link']):hover,
+.prompt-markdown :where(a, button)[data-streamdown='link']:hover,
+.run-details-markdown :where(a, button[data-streamdown='link']):hover,
+.run-details-markdown :where(a, button)[data-streamdown='link']:hover {
+  background: transparent;
   color: var(--mantine-primary-color-3);
+}
+
+.prompt-markdown :where(blockquote),
+.prompt-markdown [data-streamdown='blockquote'] {
+  border-left: 3px solid var(--mantine-primary-color-5);
+  margin: 1rem 0;
+  padding: 0.25rem 0 0.25rem 1rem;
+  color: var(--mantine-color-dimmed);
+  font-style: italic;
+}
+
+.prompt-markdown [data-streamdown='table-wrapper'] {
+  overflow: hidden;
+  border: 1px solid var(--mantine-color-default-border);
+  border-radius: var(--mantine-radius-sm);
+  background: light-dark(var(--mantine-color-white), var(--mantine-color-dark-8));
+}
+
+.prompt-markdown [data-streamdown='table-wrapper'] > div {
+  overflow-x: auto;
+}
+
+.prompt-markdown :where(table),
+.run-details-markdown :where(table) {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 0;
+}
+
+.prompt-markdown :where(th),
+.run-details-markdown :where(th) {
+  background: light-dark(var(--mantine-color-gray-1), var(--mantine-color-dark-6));
+  color: var(--mantine-color-text);
+  font-weight: 700;
+  text-align: left;
+  vertical-align: top;
+}
+
+.prompt-markdown :where(th, td),
+.run-details-markdown :where(th, td) {
+  border-bottom: 1px solid var(--mantine-color-default-border);
+  padding: 8px 12px;
+  text-align: left;
+  vertical-align: top;
+}
+
+.prompt-markdown :where(tbody tr:nth-child(even)),
+.run-details-markdown :where(tbody tr:nth-child(even)) {
+  background: light-dark(var(--mantine-color-gray-0), color-mix(in srgb, var(--mantine-color-dark-5), transparent 56%));
+}
+
+.prompt-markdown :where(tbody tr:hover),
+.run-details-markdown :where(tbody tr:hover) {
+  background: light-dark(color-mix(in srgb, var(--mantine-color-teal-0), transparent 30%), color-mix(in srgb, var(--mantine-color-teal-9), transparent 82%));
 }
 
 .prompt-markdown [data-streamdown='code-block'] {
@@ -385,8 +513,16 @@ body {
   height: calc(90vh - 110px);
   max-height: none;
   overflow: auto;
-  padding-bottom: 540px;
   scroll-padding-bottom: 540px;
+  overscroll-behavior: contain;
+}
+
+.run-details-markdown::after {
+  content: '';
+  display: block;
+  height: 540px;
+  user-select: none;
+  pointer-events: none;
 }
 
 .run-details-markdown-shell {
@@ -1269,6 +1405,10 @@ body {
     height: auto;
     max-height: none;
     overflow: visible;
+  }
+
+  .run-details-markdown::after {
+    display: none;
   }
 
   .run-details-timeline {

@@ -73,7 +73,33 @@ function loadCliResumeRunner() {
   return resumeRun
 }
 
-/** @param {{ onStdout?: (text: string) => void, onStderr?: (text: string) => void, passthrough?: boolean }} param0 */
+/**
+ * @callback WorkflowEventSink
+ * @param {import('./types').JsonMap} event
+ * @returns {void}
+ */
+
+/**
+ * @typedef {{
+ *   onStdout?: (text: string) => void,
+ *   onStderr?: (text: string) => void,
+ *   passthrough?: boolean,
+ * }} WorkflowConsolePatchOptions
+ *
+ * @typedef {{
+ *   status: string,
+ *   command: string[],
+ *   startedAt: string,
+ *   exitedAt: string,
+ *   durationMs: number,
+ *   exitCode: number,
+ *   signal: null,
+ *   stdout: string,
+ *   stderr: string,
+ * }} WorkflowExecutionResult
+ */
+
+/** @param {WorkflowConsolePatchOptions} options @returns {() => void} */
 function patchConsole({ onStdout = noop, onStderr = noop, passthrough = false }) {
   const original = {
     log: console.log,
@@ -110,6 +136,107 @@ function patchConsole({ onStdout = noop, onStderr = noop, passthrough = false })
 }
 
 /**
+ * @typedef {{
+ *   command: string[],
+ *   startEvent: import('./types').JsonMap,
+ *   projectRoot?: string,
+ *   passthrough?: boolean,
+ *   eventSink?: WorkflowEventSink,
+ *   run: () => Promise<unknown>,
+ *   successStatus?: (status: unknown) => string,
+ * }} InProcessWorkflowOptions
+ */
+
+/**
+ * @param {string[]} command
+ * @param {string} startedAt
+ * @param {number} started
+ * @param {string} status
+ * @param {number} exitCode
+ * @param {string} stdout
+ * @param {string} stderr
+ * @returns {WorkflowExecutionResult}
+ */
+function workflowResult(command, startedAt, started, status, exitCode, stdout, stderr) {
+  return {
+    status,
+    command,
+    startedAt,
+    exitedAt: new Date().toISOString(),
+    durationMs: Date.now() - started,
+    exitCode,
+    signal: null,
+    stdout,
+    stderr,
+  }
+}
+
+/** @param {InProcessWorkflowOptions} options @returns {Promise<WorkflowExecutionResult>} */
+async function runInProcessWorkflow({
+  command,
+  startEvent,
+  projectRoot,
+  passthrough = false,
+  eventSink = noop,
+  run,
+  successStatus = () => 'completed',
+}) {
+  const startedAt = new Date().toISOString()
+  const started = Date.now()
+  let stdout = ''
+  let stderr = ''
+  eventSink({ type: 'started', command, ...startEvent })
+
+  const restoreConsole = patchConsole({
+    onStdout: (text) => {
+      stdout += text
+      eventSink({ type: 'stdout', text })
+    },
+    onStderr: (text) => {
+      stderr += text
+      eventSink({ type: 'stderr', text })
+    },
+    passthrough,
+  })
+  const cwd = process.cwd()
+  /** @param {WorkflowExecutionResult} result */
+  const emitExited = (result) => eventSink({
+    type: 'exited',
+    status: result.status,
+    exitCode: result.exitCode,
+    signal: null,
+    durationMs: result.durationMs,
+  })
+  try {
+    if (projectRoot) process.chdir(projectRoot)
+    const status = await run()
+    const result = workflowResult(command, startedAt, started, successStatus(status), 0, stdout, stderr)
+    emitExited(result)
+    return result
+  } catch (error) {
+    /** @type {{ code?: string, message?: string }} */
+    const codedError = error && typeof error === 'object' ? error : {}
+    if (codedError.code === 'awaiting_review') {
+      const result = workflowResult(command, startedAt, started, 'awaiting_review', 0, stdout, stderr)
+      emitExited(result)
+      return result
+    }
+    const message = codedError.message || String(error)
+    if (!stderr.includes(message)) {
+      stderr += `${message}\n`
+      eventSink({ type: 'stderr', text: `${message}\n` })
+    }
+    const result = workflowResult(command, startedAt, started, 'failed', 1, stdout, stderr)
+    eventSink({ type: 'error', message })
+    emitExited(result)
+    return result
+  } finally {
+    if (process.cwd() !== cwd) process.chdir(cwd)
+    restoreConsole()
+  }
+}
+
+/**
  * Run a Nax workflow inside the current Node process.
  *
  * @param {{
@@ -125,12 +252,7 @@ function patchConsole({ onStdout = noop, onStderr = noop, passthrough = false })
  * }} input
  */
 async function runWorkflow(input) {
-  const {
-    flowId,
-    projectRoot,
-    dryRun = false,
-    eventSink = noop,
-  } = input
+  const { flowId, projectRoot, dryRun = false, eventSink = noop } = input
   const runProjectRoot = projectRoot || input.options?.projectRoot || process.cwd()
   const forceNonInteractive = input.forceNonInteractive !== false
   const resolvedDryRun = dryRun || input.options?.dryRun === true
@@ -144,164 +266,35 @@ async function runWorkflow(input) {
     ...(input.runnerEventSink ? { runnerEventSink: input.runnerEventSink } : {}),
   }
   const command = workflowCommand({ flowId, projectRoot: runProjectRoot, options, dryRun: resolvedDryRun })
-  const startedAt = new Date().toISOString()
-  const started = Date.now()
-  let stdout = ''
-  let stderr = ''
-  eventSink({ type: 'started', command, flowId })
-
-  const restoreConsole = patchConsole({
-    onStdout: (text) => {
-      stdout += text
-      eventSink({ type: 'stdout', text })
-    },
-    onStderr: (text) => {
-      stderr += text
-      eventSink({ type: 'stderr', text })
-    },
+  return runInProcessWorkflow({
+    command,
+    startEvent: { flowId },
+    projectRoot,
+    eventSink,
     passthrough: input.passthrough === true,
+    successStatus: (status) => status === 'awaiting_review' ? 'awaiting_review' : 'completed',
+    run: async () => {
+      const handleRun = input.engine || loadCliRunner()
+      return handleRun(flowId, options)
+    },
   })
-  const cwd = process.cwd()
-  try {
-    if (projectRoot) process.chdir(projectRoot)
-    const handleRun = input.engine || loadCliRunner()
-    const status = await handleRun(flowId, options)
-    const resultStatus = status === 'awaiting_review' ? 'awaiting_review' : 'completed'
-    const result = {
-      status: resultStatus,
-      command,
-      startedAt,
-      exitedAt: new Date().toISOString(),
-      durationMs: Date.now() - started,
-      exitCode: 0,
-      signal: null,
-      stdout,
-      stderr,
-    }
-    eventSink({ type: 'exited', status: result.status, exitCode: result.exitCode, signal: null, durationMs: result.durationMs })
-    return result
-  } catch (error) {
-    if (error?.code === 'awaiting_review') {
-      const result = {
-        status: 'awaiting_review',
-        command,
-        startedAt,
-        exitedAt: new Date().toISOString(),
-        durationMs: Date.now() - started,
-        exitCode: 0,
-        signal: null,
-        stdout,
-        stderr,
-      }
-      eventSink({ type: 'exited', status: result.status, exitCode: result.exitCode, signal: null, durationMs: result.durationMs })
-      return result
-    }
-    const message = error?.message || String(error)
-    if (!stderr.includes(message)) {
-      stderr += `${message}\n`
-      eventSink({ type: 'stderr', text: `${message}\n` })
-    }
-    const result = {
-      status: 'failed',
-      command,
-      startedAt,
-      exitedAt: new Date().toISOString(),
-      durationMs: Date.now() - started,
-      exitCode: 1,
-      signal: null,
-      stdout,
-      stderr,
-    }
-    eventSink({ type: 'error', message })
-    eventSink({ type: 'exited', status: result.status, exitCode: result.exitCode, signal: null, durationMs: result.durationMs })
-    return result
-  } finally {
-    if (process.cwd() !== cwd) process.chdir(cwd)
-    restoreConsole()
-  }
 }
 
 async function resumeWorkflow(input) {
-  const {
-    runId,
-    projectRoot,
-    eventSink = noop,
-  } = input
+  const { runId, projectRoot, eventSink = noop } = input
   const command = ['nax', 'resume', runId, '--project-root', projectRoot || process.cwd()]
-  const startedAt = new Date().toISOString()
-  const started = Date.now()
-  let stdout = ''
-  let stderr = ''
-  eventSink({ type: 'started', command, runId })
-
-  const restoreConsole = patchConsole({
-    onStdout: (text) => {
-      stdout += text
-      eventSink({ type: 'stdout', text })
-    },
-    onStderr: (text) => {
-      stderr += text
-      eventSink({ type: 'stderr', text })
-    },
+  return runInProcessWorkflow({
+    command,
+    startEvent: { runId },
+    projectRoot,
+    eventSink,
     passthrough: input.passthrough === true,
+    run: async () => {
+      const resumeRun = input.engine || loadCliResumeRunner()
+      await resumeRun(runId, input.options || {})
+      return null
+    },
   })
-  const cwd = process.cwd()
-  try {
-    if (projectRoot) process.chdir(projectRoot)
-    const resumeRun = input.engine || loadCliResumeRunner()
-    await resumeRun(runId, input.options || {})
-    const result = {
-      status: 'completed',
-      command,
-      startedAt,
-      exitedAt: new Date().toISOString(),
-      durationMs: Date.now() - started,
-      exitCode: 0,
-      signal: null,
-      stdout,
-      stderr,
-    }
-    eventSink({ type: 'exited', status: result.status, exitCode: result.exitCode, signal: null, durationMs: result.durationMs })
-    return result
-  } catch (error) {
-    if (error?.code === 'awaiting_review') {
-      const result = {
-        status: 'awaiting_review',
-        command,
-        startedAt,
-        exitedAt: new Date().toISOString(),
-        durationMs: Date.now() - started,
-        exitCode: 0,
-        signal: null,
-        stdout,
-        stderr,
-      }
-      eventSink({ type: 'exited', status: result.status, exitCode: result.exitCode, signal: null, durationMs: result.durationMs })
-      return result
-    }
-    const message = error?.message || String(error)
-    if (!stderr.includes(message)) {
-      stderr += `${message}\n`
-      eventSink({ type: 'stderr', text: `${message}\n` })
-    }
-    const result = {
-      status: 'failed',
-      command,
-      startedAt,
-      exitedAt: new Date().toISOString(),
-      durationMs: Date.now() - started,
-      exitCode: 1,
-      signal: null,
-      stdout,
-      stderr,
-    }
-    eventSink({ type: 'error', message })
-    eventSink({ type: 'exited', status: result.status, exitCode: result.exitCode, signal: null, durationMs: result.durationMs })
-    return result
-  } finally {
-    if (process.cwd() !== cwd) process.chdir(cwd)
-    restoreConsole()
-  }
 }
 
 module.exports = {

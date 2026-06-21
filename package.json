@@ -19,6 +19,9 @@
   "scripts": {
     "start": "node bin/nax.js",
     "check": "node --check bin/nax.js && for f in src/*.js; do node --check \"$f\"; done && npm run typecheck",
+    "check:cli-help": "node scripts/check-cli-help.js",
+    "check:import-direction": "node scripts/check-import-direction.js",
+    "check:jsdoc-types": "node scripts/check-jsdoc-types.js",
     "typecheck": "tsc -p tsconfig.json",
     "dry-run": "node bin/nax.js issue review --dry --force",
     "try:multiline": "node scripts/try-multiline.js",

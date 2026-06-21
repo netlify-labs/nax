@@ -5,7 +5,51 @@ const os = require('os')
 const path = require('path')
 const { spawnSync } = require('child_process')
 
-const { buildPlan, _private } = require('../../bin/nax')
+const { _private } = require('../../bin/nax')
+const {
+  AD_HOC_RUN_CHOICE,
+  formatFlowList,
+  formatFlowListJson,
+  workflowPickerHint,
+  workflowPickerLabel,
+} = require('../../src/cli/flow-list')
+const {
+  chooseNetlifyFilterOption,
+  netlifyConfigChoiceHint,
+  netlifyProjectChoiceLabel,
+  resolveProjectRoot,
+  sortNetlifyConfigChoices,
+} = require('../../src/netlify/project-selection')
+const {
+  enforceGithubActionPromptBudget,
+  githubActionTriggerTextMetrics,
+} = require('../../src/github/prompt-budget')
+const { buildPlan } = require('../../src/github/issue-plan')
+const {
+  AGENT_RUNNER_USE_CASES,
+  agentStepCompletionSummary,
+  clearRenderedProgressFrame,
+  formatDidYouKnowLines,
+  formatTtyProgressRow,
+  localRetryCandidates,
+  makeStepProgressReporter,
+  nextLocalStepMessage,
+  physicalRowCount,
+  pickFlavor,
+  shouldPollGithubRun,
+} = require('../../src/workflow/progress')
+const {
+  findLatestResumableRun,
+  formatDetailedRelativeTime,
+  formatResumeRunDetails,
+  isAutomaticResumeCandidate,
+  resumeLastStepTitle,
+  resumeRunDetailsTitle,
+  resumeStatusColor,
+  resumeStepDecorations,
+  savedAgentStatus,
+  stepResultsSummaryPath,
+} = require('../../src/workflow/resume')
 
 function tmpRoot() {
   return fs.mkdtempSync(path.join(os.tmpdir(), 'nax-flow-execution-'))
@@ -473,7 +517,7 @@ test('chooseNetlifyFilterOption does not require filters for non-workspace multi
   fs.writeFileSync(path.join(projectRoot, 'sanity', 'netlify.toml'), '[build]\n  command = "npm run build"\n')
 
   const options = { yes: true }
-  const resolved = await _private.chooseNetlifyFilterOption({
+  const resolved = await chooseNetlifyFilterOption({
     projectRoot,
     options,
     detectWorkspace: async () => ({ isWorkspace: false, workspace: null, packageManager: null, error: '' }),
@@ -490,7 +534,7 @@ test('chooseNetlifyFilterOption still requires filters for JavaScript workspaces
   fs.writeFileSync(path.join(projectRoot, 'docs', 'netlify.toml'), '[build]\n  command = "npm run build"\n')
 
   await assert.rejects(
-    _private.chooseNetlifyFilterOption({
+    chooseNetlifyFilterOption({
       projectRoot,
       options: { yes: true },
       detectWorkspace: async () => ({ isWorkspace: true, workspace: { packages: [] }, packageManager: { name: 'pnpm' }, error: '' }),
@@ -747,7 +791,7 @@ test('usageSummariesForRunState aggregates usage by step and total', () => {
 })
 
 test('TTY progress rows show a green complete status', () => {
-  const line = _private.formatTtyProgressRow({
+  const line = formatTtyProgressRow({
     agent: 'codex',
     status: 'completed',
     url: 'https://app.netlify.com/projects/netlify-agent-executor/agent-runs/runner-1?session=session-1',
@@ -760,7 +804,7 @@ test('TTY progress rows show a green complete status', () => {
 })
 
 test('TTY progress rows show compact current task details while running', () => {
-  const line = _private.formatTtyProgressRow({
+  const line = formatTtyProgressRow({
     agent: 'gemini',
     status: 'running',
     emoji: '🎨',
@@ -778,7 +822,7 @@ test('TTY progress rows show compact current task details while running', () => 
 })
 
 test('TTY progress rows show discovered Netlify run URLs while running', () => {
-  const line = _private.formatTtyProgressRow({
+  const line = formatTtyProgressRow({
     agent: 'claude',
     status: 'running',
     emoji: '🌀',
@@ -859,14 +903,14 @@ test('GitHub completed status comments mark progress rows complete', () => {
 })
 
 test('pickFlavor avoids active phrases already in use', () => {
-  const first = _private.pickFlavor({ random: () => 0 })
-  const second = _private.pickFlavor({ used: new Set([first[0]]), random: () => 0 })
+  const first = pickFlavor({ random: () => 0 })
+  const second = pickFlavor({ used: new Set([first[0]]), random: () => 0 })
 
   assert.notEqual(second[0], first[0])
 })
 
 test('Did you know progress tip formats a rotating Agent Runner use case', () => {
-  const lines = _private.formatDidYouKnowLines([
+  const lines = formatDidYouKnowLines([
     '👀 Code reviews',
     'Bring in a fresh reviewer that can inspect architecture, tests, and edge cases.',
     'Audit the code with fresh eyes and identify areas for improvement.',
@@ -888,7 +932,7 @@ test('Did you know progress tip formats a rotating Agent Runner use case', () =>
 })
 
 test('Did you know progress tip reserves terminal edge space', () => {
-  const lines = _private.formatDidYouKnowLines([
+  const lines = formatDidYouKnowLines([
     '🚦 Error handling',
     'Improve user-facing failures, logging, empty states, and recovery paths.',
     'Add proper error boundaries, logging, and user-friendly error states throughout the app.',
@@ -901,27 +945,38 @@ test('Did you know progress tip reserves terminal edge space', () => {
 
 test('physicalRowCount counts wrapped rows for lines wider than the terminal', () => {
   // 200-char line in an 80-col terminal wraps to ceil(200/80) = 3 rows.
-  assert.equal(_private.physicalRowCount(['x'.repeat(200)], 80), 3)
+  assert.equal(physicalRowCount(['x'.repeat(200)], 80), 3)
   // Empty line still occupies 1 row.
-  assert.equal(_private.physicalRowCount(['short', '', 'short'], 80), 3)
+  assert.equal(physicalRowCount(['short', '', 'short'], 80), 3)
   // Falls back to logical count when columns is unknown.
-  assert.equal(_private.physicalRowCount(['x'.repeat(200)], 0), 1)
+  assert.equal(physicalRowCount(['x'.repeat(200)], 0), 1)
   // ANSI escapes don't count toward visible width.
   const ansi = `\x1b[31m${'x'.repeat(80)}\x1b[0m`
-  assert.equal(_private.physicalRowCount([ansi], 80), 1)
+  assert.equal(physicalRowCount([ansi], 80), 1)
 })
 
 test('progress frame clearing accounts for terminal width changes', () => {
+  /** @type {Array<[string, ...number[]]>} */
   const calls = []
-  const output = { columns: 60 }
+  const output = /** @type {NodeJS.WriteStream} */ (/** @type {unknown} */ ({ columns: 60 }))
   const lines = ['x'.repeat(119), 'short']
+  /** @type {Pick<typeof import('readline'), 'moveCursor' | 'cursorTo' | 'clearScreenDown'>} */
   const controls = {
-    moveCursor: (_output, dx, dy) => calls.push(['moveCursor', dx, dy]),
-    cursorTo: (_output, x) => calls.push(['cursorTo', x]),
-    clearScreenDown: () => calls.push(['clearScreenDown']),
+    moveCursor: (_output, dx, dy) => {
+      calls.push(['moveCursor', dx, dy])
+      return true
+    },
+    cursorTo: (_output, x) => {
+      calls.push(['cursorTo', x])
+      return true
+    },
+    clearScreenDown: () => {
+      calls.push(['clearScreenDown'])
+      return true
+    },
   }
 
-  const cleared = _private.clearRenderedProgressFrame({
+  const cleared = clearRenderedProgressFrame({
     rows: 2,
     lines,
     columns: 120,
@@ -938,7 +993,7 @@ test('progress frame clearing accounts for terminal width changes', () => {
 })
 
 test('Did you know progress tip wraps its header instead of overflowing one logical line', () => {
-  const lines = _private.formatDidYouKnowLines([
+  const lines = formatDidYouKnowLines([
     '♿ Accessibility',
     'Review keyboard flows, labels, contrast, landmarks, and WCAG gaps.',
     'Run an accessibility audit and fix all WCAG 2.1 AA violations.',
@@ -960,7 +1015,7 @@ test('Did you know progress tip does not force full terminal width by default', 
   const originalColumns = Object.getOwnPropertyDescriptor(process.stdout, 'columns')
   Object.defineProperty(process.stdout, 'columns', { configurable: true, value: 200 })
   try {
-    const lines = _private.formatDidYouKnowLines([
+    const lines = formatDidYouKnowLines([
       '👀 Code reviews',
       'Bring in a fresh reviewer that can inspect architecture, tests, and edge cases.',
       'Audit the code with fresh eyes and identify areas for improvement.',
@@ -988,7 +1043,7 @@ test('TTY progress reporter clears the Agent Runner use case tip after all runs 
   }
   Object.defineProperty(process.stdout, 'isTTY', { configurable: true, value: true })
   try {
-    const reporter = _private.makeStepProgressReporter({
+    const reporter = makeStepProgressReporter({
       stepTitle: 'Cross Review',
       total: 2,
       agents: ['claude', 'gemini'],
@@ -1039,8 +1094,8 @@ test('nextLocalStepMessage describes the immediate transition after a local step
     { title: 'Synthesize Next Task' },
   ]
 
-  assert.equal(_private.nextLocalStepMessage(steps, 0), 'Preparing next step: Synthesize Next Task...')
-  assert.equal(_private.nextLocalStepMessage(steps, 1), 'Finalizing workflow outputs...')
+  assert.equal(nextLocalStepMessage(steps, 0), 'Preparing next step: Synthesize Next Task...')
+  assert.equal(nextLocalStepMessage(steps, 1), 'Finalizing workflow outputs...')
 })
 
 test('handoff helpers default to the latest run summary', () => {
@@ -1237,7 +1292,7 @@ test('non-TTY progress reporter repeats unchanged run status after heartbeat int
   Date.now = () => now
   Object.defineProperty(process.stdout, 'isTTY', { configurable: true, value: false })
   try {
-    const reporter = _private.makeStepProgressReporter({
+    const reporter = makeStepProgressReporter({
       stepTitle: 'Review',
       total: 1,
       agents: ['codex'],
@@ -1413,7 +1468,7 @@ test('non-TTY progress reporter aligns agent and state columns', () => {
   console.log = (line) => lines.push(line)
   Object.defineProperty(process.stdout, 'isTTY', { configurable: true, value: false })
   try {
-    const reporter = _private.makeStepProgressReporter({
+    const reporter = makeStepProgressReporter({
       stepTitle: 'Review',
       total: 3,
       agents: ['claude', 'gemini', 'codex'],
@@ -1462,7 +1517,7 @@ test('non-TTY progress reporter prints usage when a local run completes', () => 
   console.log = (line) => lines.push(line)
   Object.defineProperty(process.stdout, 'isTTY', { configurable: true, value: false })
   try {
-    const reporter = _private.makeStepProgressReporter({
+    const reporter = makeStepProgressReporter({
       stepTitle: 'Review',
       total: 1,
       agents: ['codex'],
@@ -1497,7 +1552,7 @@ test('non-TTY progress reporter prints usage when a local run completes', () => 
 })
 
 test('agentStepCompletionSummary formats aligned duration and usage rows', () => {
-  const summary = _private.agentStepCompletionSummary({
+  const summary = agentStepCompletionSummary({
     stepTitle: 'Review',
     runs: [
       {
@@ -1549,7 +1604,7 @@ test('agentStepCompletionSummary includes USD cost when requested', () => {
   const original = process.env.NAX_INCLUDE_COST
   process.env.NAX_INCLUDE_COST = '1'
   try {
-    const summary = _private.agentStepCompletionSummary({
+    const summary = agentStepCompletionSummary({
       stepTitle: 'Review',
       runs: [
         {
@@ -1604,7 +1659,7 @@ test('chooseNetlifyFilterOption auto-selects a single nested filter in non-TTY m
   const originalIsTTY = Object.getOwnPropertyDescriptor(process.stdin, 'isTTY')
   Object.defineProperty(process.stdin, 'isTTY', { configurable: true, value: false })
   try {
-    assert.deepEqual(await _private.chooseNetlifyFilterOption({ projectRoot, options: {} }), {
+    assert.deepEqual(await chooseNetlifyFilterOption({ projectRoot, options: {} }), {
       filter: 'revenue-engine-frontend',
       netlifyConfig: path.join('clients', 'frontend', 'netlify.toml'),
     })
@@ -1632,7 +1687,7 @@ test('chooseNetlifyFilterOption rejects ambiguous configs in non-TTY mode', asyn
   Object.defineProperty(process.stdin, 'isTTY', { configurable: true, value: false })
   try {
     await assert.rejects(
-      _private.chooseNetlifyFilterOption({
+      chooseNetlifyFilterOption({
         projectRoot,
         options: {},
         detectWorkspace: async () => ({ isWorkspace: true, workspace: { packages: [] }, packageManager: { name: 'pnpm' }, error: '' }),
@@ -1649,7 +1704,7 @@ test('chooseNetlifyFilterOption rejects ambiguous configs in non-TTY mode', asyn
 })
 
 test('sortNetlifyConfigChoices puts configs with inferred filters first', () => {
-  assert.deepEqual(_private.sortNetlifyConfigChoices([
+  assert.deepEqual(sortNetlifyConfigChoices([
     { source: '_misc/netlify.toml', filter: '' },
     { source: 'clients/frontend/netlify.toml', filter: 'revenue-engine-frontend' },
   ]), [
@@ -1663,7 +1718,7 @@ test('sortNetlifyConfigChoices prefers the config closest to the invocation dire
   const frontendDir = path.join(projectRoot, 'frontend')
   const sanityDir = path.join(projectRoot, 'sanity')
   const legacyDir = path.join(projectRoot, 'sanity-legacy')
-  assert.deepEqual(_private.sortNetlifyConfigChoices([
+  assert.deepEqual(sortNetlifyConfigChoices([
     { source: 'sanity/netlify.toml', configDir: sanityDir, filter: '' },
     { source: 'frontend/netlify.toml', configDir: frontendDir, filter: '' },
     { source: 'sanity-legacy/netlify.toml', configDir: legacyDir, filter: '' },
@@ -1683,23 +1738,23 @@ test('resolveProjectRoot finds the git root when invoked from a subdirectory', (
   fs.mkdirSync(childDir, { recursive: true })
   spawnSync('git', ['init', '-q'], { cwd: projectRoot })
 
-  assert.equal(_private.resolveProjectRoot('', { cwd: childDir }), fs.realpathSync(projectRoot))
-  assert.equal(_private.resolveProjectRoot(childDir, { cwd: projectRoot }), childDir)
+  assert.equal(resolveProjectRoot('', { cwd: childDir }), fs.realpathSync(projectRoot))
+  assert.equal(resolveProjectRoot(childDir, { cwd: projectRoot }), childDir)
 })
 
 test('netlifyConfigChoiceHint explains non-workspace configs without asking for filters', () => {
   assert.equal(
-    _private.netlifyConfigChoiceHint({ source: 'frontend/netlify.toml', filter: '', siteId: '', stateSource: '' }, { isWorkspace: false }),
+    netlifyConfigChoiceHint({ source: 'frontend/netlify.toml', filter: '', siteId: '', stateSource: '' }, { isWorkspace: false }),
     'config frontend/netlify.toml',
   )
 })
 
 test('netlifyProjectChoiceLabel prefers linked site ids and otherwise shows directory', () => {
   assert.equal(
-    _private.netlifyProjectChoiceLabel({ dir: 'frontend', siteId: '1963fff0-bb0c-4f91-8601-f7acd91cd76e' }),
+    netlifyProjectChoiceLabel({ dir: 'frontend', siteId: '1963fff0-bb0c-4f91-8601-f7acd91cd76e' }),
     'frontend (1963fff0-bb0c-4f91-8601-f7acd91cd76e)',
   )
-  assert.equal(_private.netlifyProjectChoiceLabel({ dir: 'sanity', siteId: '' }), 'sanity')
+  assert.equal(netlifyProjectChoiceLabel({ dir: 'sanity', siteId: '' }), 'sanity')
 })
 
 test('success box keeps non-TTY links on one line', () => {
@@ -1771,7 +1826,7 @@ test('localRetryCandidates finds failed local runs by step and agent', () => {
     ],
   }
 
-  const candidates = _private.localRetryCandidates(runState, { stepId: 'react', agent: 'claude' })
+  const candidates = localRetryCandidates(runState, { stepId: 'react', agent: 'claude' })
 
   assert.equal(candidates.length, 1)
   assert.equal(candidates[0].step.id, 'react')
@@ -1926,7 +1981,7 @@ test('findGithubRunnerFailures ignores old failures before the submitted prompt 
 })
 
 test('githubActionTriggerTextMetrics measures the environment string that GitHub Actions must launch', () => {
-  const metrics = _private.githubActionTriggerTextMetrics('x'.repeat(134626))
+  const metrics = githubActionTriggerTextMetrics('x'.repeat(134626))
   assert.equal(metrics.bodyChars, 134626)
   assert.equal(metrics.bodyBytes, 134626)
   assert.equal(metrics.envBytes, 134639)
@@ -1943,16 +1998,16 @@ test('enforceGithubActionPromptBudget rejects prompts that would exceed the GitH
   }
 
   assert.throws(
-    () => _private.enforceGithubActionPromptBudget(plan),
+    () => enforceGithubActionPromptBudget(plan),
     /Prompt too large for GitHub Actions Agent Runner[\s\S]*Estimated TRIGGER_TEXT= env string: 134,639 bytes[\s\S]*Argument list too long/,
   )
 })
 
 test('shouldPollGithubRun repairs timed out GitHub runs without saved result text', () => {
-  assert.equal(_private.shouldPollGithubRun({ issueNumber: 97, status: 'timeout', resultText: '' }), true)
-  assert.equal(_private.shouldPollGithubRun({ issueNumber: 97, status: 'timeout', resultText: 'saved result' }), false)
-  assert.equal(_private.shouldPollGithubRun({ issueNumber: 97, status: 'completed', resultText: 'saved result' }), false)
-  assert.equal(_private.shouldPollGithubRun({ issueNumber: 97, status: 'failed', resultText: '' }), false)
+  assert.equal(shouldPollGithubRun({ issueNumber: 97, status: 'timeout', resultText: '' }), true)
+  assert.equal(shouldPollGithubRun({ issueNumber: 97, status: 'timeout', resultText: 'saved result' }), false)
+  assert.equal(shouldPollGithubRun({ issueNumber: 97, status: 'completed', resultText: 'saved result' }), false)
+  assert.equal(shouldPollGithubRun({ issueNumber: 97, status: 'failed', resultText: '' }), false)
 })
 
 test('githubStepStatus derives completion from completed runs even when saved step status is stale', () => {
@@ -1967,7 +2022,7 @@ test('githubStepStatus derives completion from completed runs even when saved st
 })
 
 test('resumeStepDecorations marks completed, resume, and pending steps for resume previews', () => {
-  const decorations = _private.resumeStepDecorations({
+  const decorations = resumeStepDecorations({
     steps: [
       { id: 'ideate' },
       { id: 'cross-score' },
@@ -2009,11 +2064,11 @@ test('savedAgentStatus drives resume model chip success and error colors', () =>
     ],
   }
 
-  assert.equal(_private.resumeStatusColor(_private.savedAgentStatus(savedStep, 'claude')), '#22c55e')
-  assert.equal(_private.resumeStatusColor(_private.savedAgentStatus(savedStep, 'gemini')), '#ef4444')
-  assert.equal(_private.resumeStatusColor(_private.savedAgentStatus(savedStep, 'codex')), '#ef4444')
-  assert.equal(_private.resumeStatusColor(_private.savedAgentStatus(savedStep, 'unknown')), '')
-  assert.equal(_private.resumeStatusColor(_private.savedAgentStatus({ status: 'completed', runs: [] }, 'claude')), '#22c55e')
+  assert.equal(resumeStatusColor(savedAgentStatus(savedStep, 'claude')), '#22c55e')
+  assert.equal(resumeStatusColor(savedAgentStatus(savedStep, 'gemini')), '#ef4444')
+  assert.equal(resumeStatusColor(savedAgentStatus(savedStep, 'codex')), '#ef4444')
+  assert.equal(resumeStatusColor(savedAgentStatus(savedStep, 'unknown')), '')
+  assert.equal(resumeStatusColor(savedAgentStatus({ status: 'completed', runs: [] }, 'claude')), '#22c55e')
 })
 
 test('stepResultsSummaryPath returns existing finished step summary path for resume previews', () => {
@@ -2032,11 +2087,11 @@ test('stepResultsSummaryPath returns existing finished step summary path for res
   fs.writeFileSync(summaryPath, '# Cross Score Ideas\n')
 
   assert.equal(
-    _private.stepResultsSummaryPath({ runState, savedStep, projectRoot }),
+    stepResultsSummaryPath({ runState, savedStep, projectRoot }),
     './.nax/workflows/2026-06-04T01-03-58-737Z-ideas/artifacts/steps/02-cross-score/summary.md',
   )
   assert.equal(
-    _private.stepResultsSummaryPath({
+    stepResultsSummaryPath({
       runState,
       savedStep: { id: 'react', title: 'React To Scores', status: 'running', runs: [] },
       projectRoot,
@@ -2048,11 +2103,11 @@ test('stepResultsSummaryPath returns existing finished step summary path for res
 test('formatDetailedRelativeTime includes two useful time units', () => {
   const now = new Date('2026-06-04T12:00:00').getTime()
   assert.equal(
-    _private.formatDetailedRelativeTime('2026-06-02T06:30:00', now),
+    formatDetailedRelativeTime('2026-06-02T06:30:00', now),
     '2 days and 5 hours ago',
   )
   assert.equal(
-    _private.formatDetailedRelativeTime('2026-06-04T12:00:30', now),
+    formatDetailedRelativeTime('2026-06-04T12:00:30', now),
     'in 30 seconds',
   )
 })
@@ -2077,13 +2132,13 @@ test('formatResumeRunDetails shows timestamps and artifact summary path', () => 
   fs.mkdirSync(path.dirname(summaryPath), { recursive: true })
   fs.writeFileSync(summaryPath, '# Ideas\n')
 
-  const lines = _private.formatResumeRunDetails(runState, {
+  const lines = formatResumeRunDetails(runState, {
     projectRoot,
     now: new Date('2026-06-04T12:00:00').getTime(),
   })
 
-  assert.equal(_private.resumeRunDetailsTitle(runState), 'Unfinished "Ideas" workflow run found')
-  assert.equal(_private.resumeLastStepTitle(runState), 'Cross Score Ideas')
+  assert.equal(resumeRunDetailsTitle(runState), 'Unfinished "Ideas" workflow run found')
+  assert.equal(resumeLastStepTitle(runState), 'Cross Score Ideas')
   assert.equal(lines[0], 'Last Step: Cross Score Ideas')
   assert.equal(lines[1], 'Run ID: 2026-06-04T01-03-58-737Z-ideas')
   assert.equal(lines[2], 'Transport: github')
@@ -2124,7 +2179,7 @@ test('findLatestResumableRun skips stale unfinished runs with unavailable flows'
   const originalWarn = console.warn
   console.warn = (message) => warnings.push(message)
   try {
-    const resumable = await _private.findLatestResumableRun({
+    const resumable = await findLatestResumableRun({
       projectRoot,
       now: new Date('2026-06-04T12:30:00').getTime(),
     })
@@ -2165,7 +2220,7 @@ test('findLatestResumableRun ignores old unfinished runs that are not the latest
     steps: [{ id: 'ideate', title: 'Generate Ideas', status: 'running', runs: [] }],
   })
 
-  const resumable = await _private.findLatestResumableRun({
+  const resumable = await findLatestResumableRun({
     projectRoot,
     now: new Date('2026-06-04T12:00:00').getTime(),
   })
@@ -2181,7 +2236,7 @@ test('isAutomaticResumeCandidate accepts the latest workflow even when older tha
     updatedAt: '2026-06-01T12:00:00',
     steps: [{ id: 'ideate', status: 'running', runs: [] }],
   }
-  assert.equal(_private.isAutomaticResumeCandidate(runState, {
+  assert.equal(isAutomaticResumeCandidate(runState, {
     allStates: [runState],
     now: new Date('2026-06-04T12:00:00').getTime(),
   }), true)
@@ -2520,7 +2575,7 @@ test('withSelectedStepModels applies step-specific agent overrides', () => {
 })
 
 test('workflowPickerHint uses compact bundled flow descriptions without source labels', () => {
-  assert.equal(_private.workflowPickerHint({
+  assert.equal(workflowPickerHint({
     id: 'performance-audit',
     source: 'bundled',
     sourceLabel: 'bundled',
@@ -2529,7 +2584,7 @@ test('workflowPickerHint uses compact bundled flow descriptions without source l
 })
 
 test('formatFlowList renders workflows as stacked boxes', () => {
-  const output = stripAnsi(_private.formatFlowList([
+  const output = stripAnsi(formatFlowList([
     {
       id: 'local-smoke-test',
       title: 'Local Smoke Test',
@@ -2569,7 +2624,7 @@ test('formatFlowList renders workflows as stacked boxes', () => {
 })
 
 test('formatFlowList verbose output includes workflow metadata', () => {
-  const output = stripAnsi(_private.formatFlowList([
+  const output = stripAnsi(formatFlowList([
     {
       id: 'review',
       title: 'Review',
@@ -2592,7 +2647,7 @@ test('formatFlowList verbose output includes workflow metadata', () => {
 })
 
 test('formatFlowList verbose output keeps external workflow directories absolute', () => {
-  const output = stripAnsi(_private.formatFlowList([
+  const output = stripAnsi(formatFlowList([
     {
       id: 'review',
       title: 'Review',
@@ -2609,7 +2664,7 @@ test('formatFlowList verbose output keeps external workflow directories absolute
 
 test('formatFlowListJson returns workflow items and metadata', () => {
   const flowDir = path.join('/repo', 'flows', 'review')
-  const output = _private.formatFlowListJson([
+  const output = formatFlowListJson([
     {
       id: 'review',
       title: 'Review',
@@ -2652,26 +2707,26 @@ test('formatFlowListJson returns workflow items and metadata', () => {
 })
 
 test('workflowPickerLabel names project workflows in the main run menu', () => {
-  assert.equal(_private.workflowPickerLabel({
+  assert.equal(workflowPickerLabel({
     source: 'project',
     title: 'Local Smoke Test',
   }, { includeAdHoc: true }), 'Workflow - Local Smoke Test')
 })
 
 test('workflowPickerLabel keeps bundled workflows generic in the main run menu', () => {
-  assert.equal(_private.workflowPickerLabel({
+  assert.equal(workflowPickerLabel({
     source: 'bundled',
     title: 'Performance Audit',
   }, { includeAdHoc: true }), 'NAX Workflow - Performance Audit')
 })
 
 test('ad hoc run picker choice uses one-line no-hint wording', () => {
-  assert.equal(_private.AD_HOC_RUN_CHOICE.label, 'Start a single Netlify agent with a custom prompt')
-  assert.equal(Object.hasOwn(_private.AD_HOC_RUN_CHOICE, 'hint'), false)
+  assert.equal(AD_HOC_RUN_CHOICE.label, 'Start a single Netlify agent with a custom prompt')
+  assert.equal(Object.hasOwn(AD_HOC_RUN_CHOICE, 'hint'), false)
 })
 
 test('workflowPickerHint compacts project flow descriptions without source prefixes', () => {
-  const hint = _private.workflowPickerHint({
+  const hint = workflowPickerHint({
     id: 'custom-audit',
     source: 'project',
     sourceLabel: 'project .github/nax-flows',

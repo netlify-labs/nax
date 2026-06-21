@@ -2,7 +2,7 @@ const test = require('node:test')
 const assert = require('node:assert/strict')
 
 const { classifyNetlifyRuntime, isNetlifyAgentRunner, isTruthy } = require('../../src/netlify-runtime')
-const { _private } = require('../../bin/nax')
+const { handleCi } = require('../../src/cli/ci')
 
 test('classifyNetlifyRuntime detects local environments', () => {
   assert.deepEqual(classifyNetlifyRuntime({}), {
@@ -63,7 +63,7 @@ test('isTruthy accepts Netlify-style truthy values only', () => {
 test('handleCi skips command outside Netlify agent runners', () => {
   const calls = []
   const logs = []
-  const result = _private.handleCi(['npm test'], {}, {
+  const result = handleCi(['npm test'], {}, {
     env: {},
     runCommand(command, args, options) {
       calls.push({ command, args, options })
@@ -82,7 +82,7 @@ test('handleCi skips command outside Netlify agent runners', () => {
 
 test('handleCi runs shell command inside Netlify agent runners', () => {
   const calls = []
-  const result = _private.handleCi(['npm test && npm run build'], {}, {
+  const result = handleCi(['npm test && npm run build'], {}, {
     cwd: '/tmp/project',
     env: { NETLIFY: 'true', CONTEXT: 'dev-server' },
     runCommand(command, args, options) {

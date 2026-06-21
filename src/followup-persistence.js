@@ -31,12 +31,29 @@ function safeStepId(value, fallback = 'visualizer-followup') {
   return slug || fallback
 }
 
-function followupStepTitle(target = {}, runs = []) {
-  const base = target.stepTitle || target.label || 'Follow-up'
+function cleanFollowupBaseTitle(value = '') {
+  let title = String(value || '').trim() || 'Follow-up'
+  title = title.replace(/^Step\s+\d+:\s*/i, '').trim()
+  title = title.replace(/^Follow[- ]up(?:\s+\d+)?:\s*/i, '').trim()
+  title = title.replace(/\s+follow[- ]up(?:\s+\([^)]*\))?$/i, '').trim()
+  return title || 'Follow-up'
+}
+
+function followupOrdinal(runState = {}) {
+  const steps = Array.isArray(runState.steps) ? runState.steps : []
+  return steps.filter((step) => step?.source?.type === 'visualizer-followup').length + 1
+}
+
+function followupStepTitle(target = {}, runs = [], ordinal = 1) {
+  const base = cleanFollowupBaseTitle(target.stepTitle || target.label || 'Follow-up')
   const agents = uniqueAgents(runs)
-  if (agents.length === 1) return `Follow up: ${base} (${agents[0]})`
-  if (agents.length > 1) return `Follow up: ${base} (${agents.length} agents)`
-  return `Follow up: ${base}`
+  const agentSuffix = agents.length === 1
+    ? ` (${agents[0]})`
+    : agents.length > 1
+      ? ` (${agents.length} agents)`
+      : ''
+  const suffix = agentSuffix && base.endsWith(agentSuffix) ? '' : agentSuffix
+  return `Follow-up ${Math.max(1, Number(ordinal) || 1)}: ${base}${suffix}`
 }
 
 function isActiveFollowupStatus(status = '') {
@@ -132,7 +149,7 @@ function appendFollowupRunsToWorkflow({
   const status = submittedStepStatus(normalizedRuns)
   const step = {
     id: stepId,
-    title: followupStepTitle(target || {}, submittedRuns),
+    title: followupStepTitle(target || {}, submittedRuns, followupOrdinal(runState)),
     description: 'Follow-up submitted from the visualizer.',
     action: 'agent-run',
     submit: submittedRuns.some((run) => run.existingRunnerId) ? 'follow-up' : 'new-run',

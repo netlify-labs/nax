@@ -8,6 +8,7 @@ const { buildRunDetails } = require('../../src/visualize-run-details')
 const { flowToGraph } = require('../../src/visualize-graph')
 const { listRunStates, workflowStatePath } = require('../../src/run-state')
 const {
+  appendFollowupRunsToWorkflow,
   cancelFollowupRunInWorkflow,
   followupStepTitle,
   freshAgentFlow,
@@ -41,11 +42,15 @@ test('submittedStepStatus summarizes submitted run statuses', () => {
 test('followupStepTitle prefixes visualizer follow-up steps', () => {
   assert.equal(
     followupStepTitle({ stepTitle: 'Synthesize Security Findings' }, [{ agent: 'codex' }]),
-    'Follow up: Synthesize Security Findings (codex)',
+    'Follow-up 1: Synthesize Security Findings (codex)',
   )
   assert.equal(
-    followupStepTitle({ stepTitle: 'Audit Security' }, [{ agent: 'codex' }, { agent: 'gemini' }]),
-    'Follow up: Audit Security (2 agents)',
+    followupStepTitle({ stepTitle: 'Audit Security' }, [{ agent: 'codex' }, { agent: 'gemini' }], 2),
+    'Follow-up 2: Audit Security (2 agents)',
+  )
+  assert.equal(
+    followupStepTitle({ stepTitle: 'Step 4: Follow up: Synthesize Security Findings (codex) follow-up (codex)' }, [{ agent: 'codex' }], 3),
+    'Follow-up 3: Synthesize Security Findings (codex)',
   )
 })
 
@@ -105,6 +110,53 @@ test('persistFreshPseudoWorkflow writes a renderable one-step workflow state', (
   const details = buildRunDetails(state)
   assert.match(details.summaryMarkdown, /Follow-up Agent Run|Agent Run/)
   assert.ok(details.followupTargets.some((target) => target.kind === 'workflow-summary'))
+})
+
+test('appendFollowupRunsToWorkflow numbers repeated follow-ups without duplicating title text', () => {
+  const projectRoot = tmpRoot()
+  const runDir = path.join(projectRoot, '.nax', 'workflows', 'source-run')
+  fs.mkdirSync(runDir, { recursive: true })
+  const runState = {
+    runId: 'source-run',
+    flowId: 'security-audit',
+    flowTitle: 'Security Audit',
+    status: 'completed',
+    dir: runDir,
+    flow: {
+      id: 'security-audit',
+      title: 'Security Audit',
+      steps: [
+        { id: 'synthesize', title: 'Synthesize Security Findings', agents: ['codex'], submit: 'new-run' },
+      ],
+    },
+    steps: [{
+      id: 'synthesize',
+      title: 'Synthesize Security Findings',
+      status: 'completed',
+      agents: ['codex'],
+      runs: [{ agent: 'codex', status: 'completed', runnerId: 'runner-1', sessionId: 'session-1' }],
+    }],
+  }
+
+  const first = appendFollowupRunsToWorkflow({
+    runState,
+    now: new Date('2026-06-20T20:00:00.000Z'),
+    target: { id: 'agent-result:synthesize:codex', stepId: 'synthesize', stepTitle: 'Synthesize Security Findings' },
+    source: { id: 'followup-1' },
+    runs: [{ agent: 'codex', status: 'completed', runnerId: 'runner-1', sessionId: 'session-2' }],
+  })
+  const second = appendFollowupRunsToWorkflow({
+    runState: first,
+    now: new Date('2026-06-20T20:01:00.000Z'),
+    target: { id: 'agent-result:visualizer-followup-1:codex', stepId: 'visualizer-followup-1', stepTitle: first.steps[1].title },
+    source: { id: 'followup-2' },
+    runs: [{ agent: 'codex', status: 'submitted', runnerId: 'runner-1', sessionId: 'session-3' }],
+  })
+
+  assert.deepEqual(second.steps.slice(1).map((step) => step.title), [
+    'Follow-up 1: Synthesize Security Findings (codex)',
+    'Follow-up 2: Synthesize Security Findings (codex)',
+  ])
 })
 
 test('cancelFollowupRunInWorkflow marks a submitted follow-up run cancelled', () => {

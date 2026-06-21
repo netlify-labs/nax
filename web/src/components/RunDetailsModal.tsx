@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type RefObject } from 'react'
 import { ActionIcon, Alert, Anchor, Badge, Box, Button, Code, Group, Menu, Modal, Paper, ScrollArea, Stack, Text, Timeline, Title, Tooltip, UnstyledButton } from '@mantine/core'
-import { Check, ChevronsDownUp, ChevronsUpDown, ChevronDown, ChevronRight, ExternalLink, FileText, Files, Play } from 'lucide-react'
-import { getRunDetails, openLocalFile } from '../api'
+import { Ban, Check, ChevronsDownUp, ChevronsUpDown, ChevronDown, ChevronRight, ExternalLink, FileText, Files, Play } from 'lucide-react'
+import { cancelFollowupRun, getRunDetails, openLocalFile } from '../api'
 import { agentLabel, isDoneStatus, recordList, recordValue, runId, statusBadgeStyle, statusColor, statusLabel, workflowName } from '../run-format'
 import { extractMarkdownToc } from '../run-details-toc'
 import { selectRunDetailsSection, selectorKey, type RunDetailsSelector } from '../run-details-selection'
@@ -29,6 +29,7 @@ type RunDetailsModalProps = {
   liveContext?: RunDetailsLiveContext | null
   missingRunMessage?: string
   onFollowupSubmitted?: (response: RunFollowupResponse) => void | Promise<void>
+  onRunUpdated?: (run: VisualizeRun) => void | Promise<void>
 }
 
 type StepItem = {
@@ -339,6 +340,15 @@ function isActiveLiveStatus(status: string): boolean {
   return ['pending', 'running', 'submitted', 'submitting', 'waiting', 'retrying', 'queued'].includes(status.toLowerCase())
 }
 
+function cancelTargetForEntry(entry: TimelineEntry): { stepId?: string; agent?: string; runnerId?: string; sessionId?: string } | null {
+  const stepId = entry.section?.stepId || entry.liveContext?.selector.stepId || ''
+  const agent = entry.section?.agent || entry.liveContext?.selector.agent || ''
+  const runnerId = entry.section?.runnerId || entry.liveContext?.runnerId || entry.liveContext?.selector.runnerId || ''
+  const sessionId = entry.section?.sessionId || entry.liveContext?.sessionId || entry.liveContext?.selector.sessionId || ''
+  if (!isActiveLiveStatus(entry.status || '') || (!runnerId && !sessionId)) return null
+  return { stepId, agent, runnerId, sessionId }
+}
+
 function isSuccessfulWorkflowStatus(status: string): boolean {
   return ['complete', 'completed'].includes(status.toLowerCase())
 }
@@ -377,6 +387,7 @@ export function RunDetailsModal({
   liveContext,
   missingRunMessage = 'Load a saved workflow run before opening agent results.',
   onFollowupSubmitted,
+  onRunUpdated,
 }: RunDetailsModalProps) {
   const [detailsLoading, setDetailsLoading] = useState(false)
   const [detailsError, setDetailsError] = useState('')
@@ -403,7 +414,7 @@ export function RunDetailsModal({
     const followupSteps = stepEntries.filter((entry) => entry.sourceType === 'visualizer-followup')
     if (followupSteps.length === 0) return [...stepEntries, summaryEntry]
     const regularSteps = stepEntries.filter((entry) => entry.sourceType !== 'visualizer-followup')
-    return [...regularSteps, summaryEntry, ...followupSteps]
+    return [...regularSteps, ...followupSteps, summaryEntry]
   }, [timelineEntries])
   const activeTimelineIndex = Math.max(0, timelineEntries.findIndex((entry) => entry.id === activeTimelineId))
   const timelineProgressIndex = Math.max(0, parentTimelineEntries.length - 1)
@@ -421,6 +432,16 @@ export function RunDetailsModal({
     if (!detailsRunId) return
     const response = await getRunDetails(detailsRunId)
     setDetailsResponse(response)
+  }
+
+  const cancelFollowupEntry = async (entry: TimelineEntry) => {
+    const target = cancelTargetForEntry(entry)
+    if (!detailsRunId || !target) throw new Error('This entry is no longer cancellable.')
+    const response = await cancelFollowupRun(detailsRunId, target)
+    await refreshDetails()
+    await onRunUpdated?.(response.run)
+    if (!response.cancelled) throw new Error('This follow-up is no longer active.')
+    if (response.warnings?.length) throw new Error(`Cancelled locally. ${response.warnings[0]}`)
   }
 
   useEffect(() => {
@@ -543,7 +564,9 @@ export function RunDetailsModal({
               {activeEntry ? (
                 <RunDetailsContent
                   contentView={contentView}
+                  detailsRunId={detailsRunId}
                   entry={activeEntry}
+                  onCancelFollowup={cancelFollowupEntry}
                   onContentViewChange={setContentView}
                   workflowName={detailWorkflowName}
                   scrollRootRef={markdownScrollRef}
@@ -709,13 +732,17 @@ function RunDetailsTimeline({
 
 function RunDetailsContent({
   contentView,
+  detailsRunId,
   entry,
+  onCancelFollowup,
   onContentViewChange,
   workflowName: name,
   scrollRootRef,
 }: {
   contentView: 'results' | 'prompt'
+  detailsRunId: string
   entry: TimelineEntry
+  onCancelFollowup: (entry: TimelineEntry) => Promise<void>
   onContentViewChange: (view: 'results' | 'prompt') => void
   workflowName: string
   scrollRootRef?: RefObject<HTMLDivElement | null>
@@ -726,6 +753,7 @@ function RunDetailsContent({
   const promptTitle = entry.promptTitle || entry.section?.stepTitle || entry.title
   const actionFilePath = showingPrompt ? entry.promptPath || '' : entry.absolutePath
   const actionSessionUrl = showingPrompt ? '' : entry.section?.links.sessionUrl || entry.section?.links.agentRunUrl
+  const canCancel = !showingPrompt && Boolean(detailsRunId && cancelTargetForEntry(entry))
   return (
     <Stack gap="sm" style={{ marginTop: -4 }}>
       <Group gap="xs" wrap="wrap">
@@ -741,10 +769,11 @@ function RunDetailsContent({
             {entry.status}
           </Badge>
         ) : null}
-        {actionFilePath ? (
+        {actionFilePath || canCancel ? (
           <ArtifactActions
             filePath={actionFilePath}
             sessionUrl={actionSessionUrl}
+            onCancel={canCancel ? () => onCancelFollowup(entry) : undefined}
           />
         ) : null}
       </Group>
@@ -1106,9 +1135,18 @@ function MetadataRow({
   )
 }
 
-function ArtifactActions({ filePath, sessionUrl }: { filePath: string; sessionUrl?: string }) {
+function ArtifactActions({
+  filePath = '',
+  sessionUrl,
+  onCancel,
+}: {
+  filePath?: string
+  sessionUrl?: string
+  onCancel?: () => Promise<void>
+}) {
   const [error, setError] = useState('')
   const [opening, setOpening] = useState(false)
+  const [cancelling, setCancelling] = useState(false)
   const [copied, setCopied] = useState(false)
 
   const openPath = async () => {
@@ -1134,19 +1172,43 @@ function ArtifactActions({ filePath, sessionUrl }: { filePath: string; sessionUr
     }
   }
 
+  const cancelRun = async () => {
+    if (!onCancel) return
+    setCancelling(true)
+    setError('')
+    try {
+      await onCancel()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err))
+    } finally {
+      setCancelling(false)
+    }
+  }
+
   return (
     <Group gap={4} wrap="nowrap" className="artifact-actions">
-      <Tooltip label={copied ? 'Copied' : 'Copy file path'}>
-        <ActionIcon aria-label="Copy file path" variant="subtle" color="gray" size="sm" onClick={copyPath}>
-          <Files size={14} />
-        </ActionIcon>
-      </Tooltip>
-      <Tooltip label="Open file">
-        <ActionIcon aria-label="Open file" variant="subtle" color="gray" size="sm" loading={opening} onClick={openPath}>
-          <ExternalLink size={14} />
-        </ActionIcon>
-      </Tooltip>
+      {filePath ? (
+        <>
+          <Tooltip label={copied ? 'Copied' : 'Copy file path'}>
+            <ActionIcon aria-label="Copy file path" variant="subtle" color="gray" size="sm" onClick={copyPath}>
+              <Files size={14} />
+            </ActionIcon>
+          </Tooltip>
+          <Tooltip label="Open file">
+            <ActionIcon aria-label="Open file" variant="subtle" color="gray" size="sm" loading={opening} onClick={openPath}>
+              <ExternalLink size={14} />
+            </ActionIcon>
+          </Tooltip>
+        </>
+      ) : null}
       {sessionUrl ? <Anchor href={sessionUrl} target="_blank" rel="noreferrer" size="xs">Open in Netlify</Anchor> : null}
+      {onCancel ? (
+        <Tooltip label="Cancel follow-up">
+          <ActionIcon aria-label="Cancel follow-up" variant="subtle" color="red" size="sm" loading={cancelling} onClick={cancelRun}>
+            <Ban size={14} />
+          </ActionIcon>
+        </Tooltip>
+      ) : null}
       {error ? <Text size="xs" c="red" mt={4}>{error}</Text> : null}
     </Group>
   )

@@ -683,12 +683,18 @@ export default function App() {
     }
   }
 
-  const handleFollowupSubmitted = async (response: RunFollowupResponse) => {
+  const handleRunUpdated = async (updated: VisualizeRun) => {
     const latestRuns = await refreshRuns()
+    const updatedRunId = updated.runId || updated.id
+    if (!updatedRunId) return
+    const nextRun = latestRuns.find((candidate) => candidate.runId === updatedRunId || candidate.id === updatedRunId) || updated
+    await selectRun(nextRun)
+  }
+
+  const handleFollowupSubmitted = async (response: RunFollowupResponse) => {
     const persisted = response.followup.sourceWorkflow || response.followup.persistedWorkflow
     if (!persisted?.runId) return
-    const nextRun = latestRuns.find((candidate) => candidate.runId === persisted.runId || candidate.id === persisted.runId) || persisted
-    await selectRun(nextRun)
+    await handleRunUpdated(persisted)
   }
 
   const resumeRun = async (run: VisualizeRun) => {
@@ -1017,6 +1023,7 @@ export default function App() {
         liveContext={detailsModalLiveContext}
         missingRunMessage="Load a saved workflow run before opening agent results."
         onFollowupSubmitted={handleFollowupSubmitted}
+        onRunUpdated={handleRunUpdated}
       />
     </ReactFlowProvider>
   )

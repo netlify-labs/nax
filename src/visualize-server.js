@@ -17,7 +17,8 @@ const { buildFollowupContextPackage } = require('./followup-context')
 const { prepareFollowupContextDelivery } = require('./followup-delivery')
 const { buildFollowupSubmissionPlan } = require('./followup-plan')
 const { buildFollowupPrompt, submitFollowupPlan } = require('./handoff-runner')
-const { appendFollowupRunsToWorkflow, persistFreshPseudoWorkflow } = require('./followup-persistence')
+const { appendFollowupRunsToWorkflow, cancelFollowupRunInWorkflow, persistFreshPseudoWorkflow } = require('./followup-persistence')
+const { archiveAgentRun } = require('./local-runner')
 const { setBlob } = require('./netlify-blobs')
 const { readLinkedSiteId } = require('./init')
 
@@ -853,6 +854,7 @@ function createRequestHandler(options = {}) {
   const followupSubmitRun = options.followupSubmitRun
   const followupWriteBlob = options.followupWriteBlob
   const followupSetBlob = options.followupSetBlob || setBlob
+  const followupArchiveRun = options.followupArchiveRun || archiveAgentRun
   const runs = new Map()
   const activeByWorkflow = new Map()
 
@@ -1431,6 +1433,52 @@ function createRequestHandler(options = {}) {
               persistedWorkflow: persistedWorkflow ? publicRunState(persistedWorkflow) : null,
               warnings,
             },
+          })
+          return
+        }
+
+        const runFollowupCancelMatch = pathname.match(/^\/api\/runs\/([^/]+)\/followups\/cancel$/)
+        if (runFollowupCancelMatch) {
+          if (req.method !== 'POST') {
+            methodNotAllowed(res, req.method || 'UNKNOWN')
+            return
+          }
+          assertToken(req, requestUrl, token)
+          const sourceRunId = safeDecode(runFollowupCancelMatch[1])
+          const durable = durableRunStateForId(sourceRunId)
+          if (!durable) {
+            notFound(res, 'Unknown visualize run.')
+            return
+          }
+          const body = await readJsonBody(req)
+          const runnerId = String(body.runnerId || '').trim()
+          const sessionId = String(body.sessionId || '').trim()
+          if (!runnerId && !sessionId) {
+            throw requestError(400, 'missing_followup_run', 'Select a follow-up runner or session to cancel.')
+          }
+          const warnings = []
+          const result = cancelFollowupRunInWorkflow({
+            runState: durable,
+            stepId: String(body.stepId || '').trim(),
+            runnerId,
+            sessionId,
+            agent: String(body.agent || '').trim(),
+          })
+          let remoteArchived = false
+          if (result.changed && runnerId && !result.run?.existingRunnerId) {
+            const archive = await followupArchiveRun({
+              projectRoot,
+              runnerId,
+              env,
+            })
+            remoteArchived = archive.archived === true
+            if (!remoteArchived && archive.error) warnings.push(archive.error)
+          }
+          jsonResponse(res, 200, {
+            run: publicRunState(result.runState),
+            cancelled: result.changed,
+            remoteArchived,
+            warnings,
           })
           return
         }

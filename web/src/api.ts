@@ -85,6 +85,22 @@ export async function cancelWorkflowRun(id: string): Promise<{ run: VisualizeRun
   })
 }
 
+export async function cancelFollowupRun(
+  id: string,
+  target: { stepId?: string; agent?: string; runnerId?: string; sessionId?: string },
+): Promise<{ run: VisualizeRun; cancelled: boolean; remoteArchived: boolean; warnings: string[] }> {
+  return fetchJson<{ run: VisualizeRun; cancelled: boolean; remoteArchived: boolean; warnings: string[] }>(
+    `/api/runs/${encodeURIComponent(id)}/followups/cancel`,
+    {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify(target),
+    },
+  )
+}
+
 export type RunEventStream = { close: () => void }
 
 export function runEventsStream(

@@ -13,7 +13,8 @@ function uniqueAgents(runs = []) {
 }
 
 function submittedStepStatus(runs = []) {
-  if (runs.some((run) => ['failed', 'timeout', 'cancelled', 'canceled'].includes(String(run?.status || '').toLowerCase()))) {
+  if (runs.length > 0 && runs.every((run) => ['cancelled', 'canceled'].includes(String(run?.status || '').toLowerCase()))) return 'cancelled'
+  if (runs.some((run) => ['failed', 'timeout'].includes(String(run?.status || '').toLowerCase()))) {
     return 'failed'
   }
   if (runs.length > 0 && runs.every((run) => String(run?.status || '').toLowerCase() === 'completed')) return 'completed'
@@ -36,6 +37,10 @@ function followupStepTitle(target = {}, runs = []) {
   if (agents.length === 1) return `Follow up: ${base} (${agents[0]})`
   if (agents.length > 1) return `Follow up: ${base} (${agents.length} agents)`
   return `Follow up: ${base}`
+}
+
+function isActiveFollowupStatus(status = '') {
+  return ['pending', 'queued', 'running', 'submitted', 'submitting', 'waiting', 'retrying'].includes(String(status || '').toLowerCase())
 }
 
 /**
@@ -265,10 +270,97 @@ function persistFreshPseudoWorkflow({
   return saveRunState(state)
 }
 
+/**
+ * @param {{
+ *   runState: Record<string, any>,
+ *   stepId?: string,
+ *   runnerId?: string,
+ *   sessionId?: string,
+ *   agent?: string,
+ *   now?: Date,
+ * }} input
+ */
+function cancelFollowupRunInWorkflow({
+  runState,
+  stepId = '',
+  runnerId = '',
+  sessionId = '',
+  agent = '',
+  now = new Date(),
+}) {
+  if (!runState?.dir) throw new Error('Cannot cancel a follow-up run without a workflow state directory.')
+  const steps = Array.isArray(runState.steps) ? runState.steps : []
+  let matched = false
+  let changed = false
+  let selectedRun = null
+  const updatedAt = now.toISOString()
+  const nextSteps = steps.map((step) => {
+    const runs = Array.isArray(step.runs) ? step.runs : []
+    if (stepId && step.id !== stepId) return step
+    let stepChanged = false
+    const nextRuns = runs.map((run) => {
+      const candidateRunner = String(run?.runnerId || run?.existingRunnerId || '')
+      const candidateSession = String(run?.sessionId || '')
+      const candidateAgent = String(run?.agent || '')
+      const idMatches = (runnerId && candidateRunner === runnerId) || (sessionId && candidateSession === sessionId)
+      const agentMatches = !agent || candidateAgent === agent
+      if (!idMatches || !agentMatches) return run
+      matched = true
+      selectedRun = run
+      if (!isActiveFollowupStatus(run.status)) return run
+      changed = true
+      stepChanged = true
+      selectedRun = {
+        ...run,
+        status: 'cancelled',
+        updatedAt,
+        raw: {
+          ...(run.raw || {}),
+          cancelledAt: updatedAt,
+          cancelSource: 'visualizer',
+        },
+      }
+      return selectedRun
+    })
+    if (!stepChanged) return step
+    return {
+      ...step,
+      status: submittedStepStatus(nextRuns),
+      runs: nextRuns,
+    }
+  })
+
+  if (!matched) {
+    const target = [runnerId ? `runner ${runnerId}` : '', sessionId ? `session ${sessionId}` : ''].filter(Boolean).join(' / ')
+    throw new Error(`No matching follow-up run was found for ${target || 'the selected target'}.`)
+  }
+  if (!changed) {
+    return {
+      runState,
+      changed: false,
+      run: selectedRun,
+    }
+  }
+
+  const nextStatus = submittedStepStatus(nextSteps.flatMap((step) => Array.isArray(step.runs) ? step.runs : []))
+  return {
+    runState: saveRunState({
+      ...runState,
+      status: nextStatus,
+      updatedAt,
+      steps: nextSteps,
+    }),
+    changed: true,
+    run: selectedRun,
+  }
+}
+
 module.exports = {
   appendFollowupRunsToWorkflow,
+  cancelFollowupRunInWorkflow,
   followupStepTitle,
   freshAgentFlow,
+  isActiveFollowupStatus,
   persistFreshPseudoWorkflow,
   safeStepId,
   submittedStepStatus,

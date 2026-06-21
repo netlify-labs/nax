@@ -8,6 +8,7 @@ const { buildRunDetails } = require('../../src/visualize-run-details')
 const { flowToGraph } = require('../../src/visualize-graph')
 const { listRunStates, workflowStatePath } = require('../../src/run-state')
 const {
+  cancelFollowupRunInWorkflow,
   followupStepTitle,
   freshAgentFlow,
   persistFreshPseudoWorkflow,
@@ -32,6 +33,8 @@ test('submittedStepStatus summarizes submitted run statuses', () => {
   assert.equal(submittedStepStatus([]), 'submitted')
   assert.equal(submittedStepStatus([{ status: 'submitted' }, { status: 'running' }]), 'submitted')
   assert.equal(submittedStepStatus([{ status: 'completed' }]), 'completed')
+  assert.equal(submittedStepStatus([{ status: 'cancelled' }]), 'cancelled')
+  assert.equal(submittedStepStatus([{ status: 'submitted' }, { status: 'cancelled' }]), 'submitted')
   assert.equal(submittedStepStatus([{ status: 'completed' }, { status: 'failed' }]), 'failed')
 })
 
@@ -102,4 +105,40 @@ test('persistFreshPseudoWorkflow writes a renderable one-step workflow state', (
   const details = buildRunDetails(state)
   assert.match(details.summaryMarkdown, /Follow-up Agent Run|Agent Run/)
   assert.ok(details.followupTargets.some((target) => target.kind === 'workflow-summary'))
+})
+
+test('cancelFollowupRunInWorkflow marks a submitted follow-up run cancelled', () => {
+  const projectRoot = tmpRoot()
+  const state = persistFreshPseudoWorkflow({
+    projectRoot,
+    now: new Date('2026-06-20T20:00:00.000Z'),
+    title: 'Follow-up Agent Run',
+    stepTitle: 'Review follow-up',
+    promptText: 'Check the fix.',
+    runs: [{
+      transport: 'netlify-api',
+      agent: 'codex',
+      status: 'submitted',
+      runnerId: 'runner-1',
+      sessionId: 'session-1',
+    }],
+  })
+
+  const result = cancelFollowupRunInWorkflow({
+    runState: state,
+    stepId: 'fresh-agent-runner',
+    runnerId: 'runner-1',
+    sessionId: 'session-1',
+    agent: 'codex',
+    now: new Date('2026-06-20T20:01:00.000Z'),
+  })
+
+  assert.equal(result.changed, true)
+  assert.equal(result.run.status, 'cancelled')
+  assert.equal(result.runState.status, 'cancelled')
+  assert.equal(result.runState.steps[0].status, 'cancelled')
+  assert.equal(result.runState.steps[0].runs[0].raw.cancelSource, 'visualizer')
+
+  const listed = listRunStates(projectRoot)
+  assert.equal(listed[0].steps[0].runs[0].status, 'cancelled')
 })

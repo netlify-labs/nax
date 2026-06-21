@@ -713,6 +713,7 @@ test('visualize follow-up endpoint submits matching runner and fresh additional 
   const projectRoot = tmpRoot()
   const { runId } = writeFollowupRunFixture(projectRoot)
   const submissions = []
+  const archived = []
   const server = await startVisualizeServer({
     projectRoot,
     siteName: 'netlify-agent-executor',
@@ -724,6 +725,10 @@ test('visualize follow-up endpoint submits matching runner and fresh additional 
         runnerId: run.existingRunnerId || `runner-${run.agent}`,
         sessionId: run.existingRunnerId ? `session-${run.agent}-followup` : `session-${run.agent}`,
       }
+    },
+    followupArchiveRun: async ({ runnerId }) => {
+      archived.push(runnerId)
+      return { archived: true, error: '', commandError: false }
     },
   })
   try {
@@ -771,6 +776,22 @@ test('visualize follow-up endpoint submits matching runner and fresh additional 
     assert.equal(followupNode.data.status, 'submitted')
     assert.deepEqual(followupNode.data.runs.map((run) => run.sessionId), ['session-codex-followup', 'session-gemini'])
     assert.ok(graph.payload.graph.edges.some((edge) => edge.source === 'review' && edge.target === followupNode.id))
+
+    const cancel = await postJson(`${base}/api/runs/${runId}/followups/cancel`, server.token, {
+      stepId: followupNode.id,
+      agent: 'gemini',
+      runnerId: 'runner-gemini',
+      sessionId: 'session-gemini',
+    })
+    assert.equal(cancel.statusCode, 200, cancel.payload?.error?.message)
+    assert.equal(cancel.payload.cancelled, true)
+    assert.equal(cancel.payload.remoteArchived, true)
+    assert.deepEqual(archived, ['runner-gemini'])
+
+    const cancelledGraph = await requestJson(`${base}/api/runs/${runId}/graph`, { token: server.token })
+    const cancelledNode = cancelledGraph.payload.graph.nodes.find((node) => node.id === followupNode.id)
+    assert.equal(cancelledNode.data.status, 'submitted')
+    assert.deepEqual(cancelledNode.data.runs.map((run) => run.status), ['submitted', 'cancelled'])
   } finally {
     await server.close()
   }

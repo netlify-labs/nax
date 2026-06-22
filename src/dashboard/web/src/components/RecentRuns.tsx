@@ -1,30 +1,20 @@
-import { useState } from 'react'
 import { ActionIcon, Badge, Box, Group, Paper, ScrollArea, Stack, Text, Title, Tooltip, UnstyledButton } from '@mantine/core'
 import { GitBranch, History, RotateCcw } from 'lucide-react'
 import { runId, statusBadgeStyle, statusColor, statusLabel } from '../run-format'
 import { statusKey } from '../status-model'
-import type { RunFollowupResponse, DashboardRun } from '../types'
-import { RunDetailsModal } from './RunDetailsModal'
+import type { DashboardRun } from '../types'
 
 type Props = {
   runs: DashboardRun[]
   selectedRunId: string
   onSelect: (run: DashboardRun) => void
+  onOpenDetails: (run: DashboardRun) => void
   onResume: (run: DashboardRun) => void
-  onFollowupSubmitted?: (response: RunFollowupResponse) => void | Promise<void>
 }
 
-export function RecentRuns({ runs, selectedRunId, onSelect, onResume, onFollowupSubmitted }: Props) {
-  const [detailsRunId, setDetailsRunId] = useState('')
-
-  const openRunDetails = (run: DashboardRun) => {
-    const id = runId(run)
-    if (id) setDetailsRunId(id)
-  }
-
+export function RecentRuns({ runs, selectedRunId, onSelect, onOpenDetails, onResume }: Props) {
   return (
-    <>
-      <Box className="recent-runs" component="section" aria-label="Recent runs">
+    <Box className="recent-runs" component="section" aria-label="Recent runs">
         <Group className="panel-header" justify="space-between" wrap="nowrap">
           <Title order={2} size="sm">Runs</Title>
           <Badge variant="light" color="gray">{runs.length}</Badge>
@@ -44,7 +34,7 @@ export function RecentRuns({ runs, selectedRunId, onSelect, onResume, onFollowup
                   <Group className="run-item-title-row" gap={6} justify="space-between" wrap="nowrap">
                     <UnstyledButton
                       className="run-item-details-button"
-                      onClick={() => openRunDetails(run)}
+                      onClick={() => onOpenDetails(run)}
                     >
                       <Group gap={6} wrap="nowrap">
                         <History size={14} />
@@ -88,7 +78,7 @@ export function RecentRuns({ runs, selectedRunId, onSelect, onResume, onFollowup
                   </Group>
                   <UnstyledButton
                     className="run-item-details-button"
-                    onClick={() => openRunDetails(run)}
+                    onClick={() => onOpenDetails(run)}
                   >
                     <Badge
                       className={`run-status ${statusKey(run.status || '')}`}
@@ -106,14 +96,6 @@ export function RecentRuns({ runs, selectedRunId, onSelect, onResume, onFollowup
             ))}
           </Stack>
         </ScrollArea>
-      </Box>
-
-      <RunDetailsModal
-        opened={Boolean(detailsRunId)}
-        onClose={() => setDetailsRunId('')}
-        runId={detailsRunId}
-        onFollowupSubmitted={onFollowupSubmitted}
-      />
-    </>
+    </Box>
   )
 }

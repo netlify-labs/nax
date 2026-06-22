@@ -259,6 +259,14 @@ test('dashboard server exposes health, workflow list, and graph routes', async (
     assert.equal(health.payload.ok, true)
     assert.equal(Object.hasOwn(health.payload, 'projectRoot'), false)
     assert.equal(health.payload.tokenRequiredForSensitiveReads, true)
+    assert.deepEqual(health.payload.capabilities, {
+      deploymentMode: 'local',
+      canStartRuns: true,
+      canDryRun: true,
+      canOpenLocalFiles: true,
+      canStreamRunEvents: true,
+      requiresAuth: true,
+    })
 
     const workflows = await requestJson(`${base}/api/workflows`)
     assert.equal(workflows.statusCode, 401)
@@ -283,6 +291,26 @@ test('dashboard server exposes health, workflow list, and graph routes', async (
     assert.equal(graph.payload.workflow.id, 'review')
     assert.equal(graph.payload.graph.nodes.length, 3)
     assert.equal(graph.payload.graph.edges.length, 2)
+  } finally {
+    await server.close()
+  }
+})
+
+test('dashboard health reports hosted web capability limits', async () => {
+  const server = await startDashboardServer({
+    projectRoot: process.cwd(),
+    env: {
+      ...process.env,
+      NAX_DASHBOARD_DEPLOYMENT_MODE: 'web',
+    },
+  })
+  try {
+    const health = await requestJson(`http://127.0.0.1:${server.port}/api/health?token=${server.token}`)
+    assert.equal(health.statusCode, 200)
+    assert.equal(health.payload.capabilities.deploymentMode, 'web')
+    assert.equal(health.payload.capabilities.canOpenLocalFiles, false)
+    assert.equal(health.payload.capabilities.canStartRuns, false)
+    assert.equal(health.payload.capabilities.canDryRun, false)
   } finally {
     await server.close()
   }

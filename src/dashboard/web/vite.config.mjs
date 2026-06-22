@@ -120,6 +120,14 @@ function devApiPlugin() {
               viteDevApi: true,
               tokenRequiredForMutations: false,
               tokenRequiredForSensitiveReads: false,
+              capabilities: {
+                deploymentMode: 'local',
+                canStartRuns: false,
+                canDryRun: false,
+                canOpenLocalFiles: true,
+                canStreamRunEvents: false,
+                requiresAuth: false,
+              },
             })
             return
           }

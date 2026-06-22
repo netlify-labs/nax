@@ -11,6 +11,8 @@ type Props = {
   graph: WorkflowGraph | null
   initialStepId?: string
   projectRoot?: string
+  canOpenLocalFiles?: boolean
+  onStepSelect?: (stepId: string) => void
 }
 
 type PromptStepMetadata = {
@@ -176,7 +178,7 @@ function MetadataField({
   )
 }
 
-function PromptStepMetadataPanel({ entry }: { entry: PromptTimelineEntry | null }) {
+function PromptStepMetadataPanel({ canOpenLocalFiles = true, entry }: { canOpenLocalFiles?: boolean; entry: PromptTimelineEntry | null }) {
   if (!entry) return null
   return (
     <Paper className="run-details-meta" withBorder>
@@ -189,7 +191,7 @@ function PromptStepMetadataPanel({ entry }: { entry: PromptTimelineEntry | null 
         <MetadataField label="Agents" value={entry.metadata.agents} />
         <MetadataField label="Prompt title" value={entry.metadata.promptTitle} />
         <MetadataField
-          actions={<ArtifactActions filePath={entry.metadata.promptFilePath} />}
+          actions={<ArtifactActions canOpenLocalFiles={canOpenLocalFiles} filePath={entry.metadata.promptFilePath} />}
           label="Prompt file"
           truncate
           value={entry.metadata.promptFile}
@@ -199,7 +201,7 @@ function PromptStepMetadataPanel({ entry }: { entry: PromptTimelineEntry | null 
   )
 }
 
-export function WorkflowPromptModal({ opened, onClose, workflow, graph, initialStepId = '', projectRoot = '' }: Props) {
+export function WorkflowPromptModal({ opened, onClose, workflow, graph, initialStepId = '', projectRoot = '', canOpenLocalFiles = true, onStepSelect }: Props) {
   const [activeTimelineId, setActiveTimelineId] = useState('')
   const markdownScrollRef = useRef<HTMLDivElement>(null)
   const entries = useMemo(
@@ -215,6 +217,12 @@ export function WorkflowPromptModal({ opened, onClose, workflow, graph, initialS
     if (!opened) return
     setActiveTimelineId(entries.some((entry) => entry.id === preferredTimelineId) ? preferredTimelineId : entries[0]?.id || '')
   }, [entries, opened, preferredTimelineId])
+
+  const selectTimelineEntry = (entryId: string) => {
+    setActiveTimelineId(entryId)
+    const stepId = entryId.replace(/^prompt-step:/, '')
+    if (stepId && stepId !== activeEntry?.metadata.stepId) onStepSelect?.(stepId)
+  }
 
   return (
     <Modal
@@ -238,7 +246,7 @@ export function WorkflowPromptModal({ opened, onClose, workflow, graph, initialS
             timelineEntries={entries}
             timelineProgressIndex={Math.max(activeIndex, entries.length - 1)}
             timelineColor="gray"
-            onSelect={setActiveTimelineId}
+            onSelect={selectTimelineEntry}
             canRunFollowup={false}
             onRunFollowup={() => undefined}
           />
@@ -247,7 +255,7 @@ export function WorkflowPromptModal({ opened, onClose, workflow, graph, initialS
               <Stack gap="sm" style={{ marginTop: -4 }}>
                 <Group gap="xs" wrap="wrap">
                   <Title order={2} size="h4">Step {activeEntry.stepNumber}: {activeEntry.title}</Title>
-                  <ArtifactActions filePath={activeEntry.absolutePath} />
+                  <ArtifactActions canOpenLocalFiles={canOpenLocalFiles} filePath={activeEntry.absolutePath} />
                 </Group>
                 <Box className="run-details-markdown-shell">
                   <Box className="prompt-markdown run-details-markdown workflow-prompt-markdown" ref={markdownScrollRef}>
@@ -261,7 +269,7 @@ export function WorkflowPromptModal({ opened, onClose, workflow, graph, initialS
           </Box>
           <Stack className="run-details-side" gap="md">
             <MarkdownTableOfContents entry={tocEntry} scrollRootRef={markdownScrollRef} />
-            <PromptStepMetadataPanel entry={activeEntry} />
+            <PromptStepMetadataPanel canOpenLocalFiles={canOpenLocalFiles} entry={activeEntry} />
           </Stack>
         </Box>
       )}

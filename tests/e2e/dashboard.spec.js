@@ -352,8 +352,14 @@ test('dashboard opens shared run details modal from runs and graph agent results
 
     await expect(page.getByRole('dialog', { name: /Workflow results for "Review"/ })).toBeVisible()
     await expect(page.getByRole('heading', { name: 'Codex result' })).toBeVisible()
+    await expect(page).toHaveURL(new RegExp(`/runs/${runId}/steps/review/agents/codex$`))
     await expect(page.getByText('Final result text.')).toBeVisible()
-    await expect(page.locator('.run-details-timeline-child-button').filter({ hasText: 'Codex - completed' })).toBeVisible()
+    const codexTimelineButton = page.locator('.run-details-timeline-child-button').filter({ hasText: 'Codex - completed' })
+    await expect(codexTimelineButton).toBeVisible()
+    await page.locator('.run-details-timeline-button').filter({ hasText: '"Review" Workflow Completed' }).click()
+    await expect(page).toHaveURL(new RegExp(`/runs/${runId}/details$`))
+    await codexTimelineButton.click()
+    await expect(page).toHaveURL(new RegExp(`/runs/${runId}/steps/review/agents/codex$`))
     const activeResultsButton = page.locator('.run-details-content-switch-button[data-active="true"]').filter({ hasText: 'Results' })
     await expect(activeResultsButton).toBeVisible()
     expectVisibleTeal(await computedTextColor(activeResultsButton))
@@ -376,6 +382,7 @@ test('dashboard opens shared run details modal from runs and graph agent results
 })
 
 test('dashboard submits a follow-up from run details composer', async ({ page }) => {
+  test.setTimeout(45_000)
   const projectRoot = tmpRoot()
   const runId = writeCompletedRunFixture(projectRoot)
   const followupRequests = []

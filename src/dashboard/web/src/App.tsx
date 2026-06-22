@@ -1,5 +1,6 @@
 import { type CSSProperties, useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
+import { useNavigate, useRouterState } from '@tanstack/react-router'
 import {
   ActionIcon,
   Alert,
@@ -28,11 +29,20 @@ import { runEventsStream, type RunEventStream } from './api'
 import { WorkflowOutputTabs } from './components/DryRunPanel'
 import { Inspector } from './components/Inspector'
 import { RecentRuns } from './components/RecentRuns'
-import { RunDetailsModal, type RunDetailsLiveContext } from './components/RunDetailsModal'
+import { RunDetailsModal, type RunDetailsLiveContext, type TimelineEntry } from './components/RunDetailsModal'
 import { WorkflowCanvas } from './components/WorkflowCanvas'
 import { WorkflowControls } from './components/WorkflowControls'
 import { WorkflowList } from './components/WorkflowList'
 import { WorkflowPromptModal } from './components/WorkflowPromptModal'
+import {
+  defaultDashboardCapabilities,
+  parseDashboardPath,
+  routePromptStepId,
+  routeRunId,
+  routeRunStepId,
+  routeWorkflowId,
+  routeWorkflowStepId,
+} from './dashboard-routes'
 import { initialLiveRunState, liveRunReducer, visualStatus } from './liveRunReducer'
 import { dashboardQueryKeys } from './query-keys'
 import { invalidateDashboardLists, invalidateRunViews, sameRun, upsertRunInDashboardCache } from './queries/dashboard-cache'
@@ -72,16 +82,9 @@ function stepModelsFromRunGraph(graph: WorkflowGraph): Record<string, string[]> 
   return out
 }
 
-function initialWorkflowFromUrl(): string {
+function legacyWorkflowFromUrl(): string {
   const params = new URLSearchParams(window.location.search)
   return params.get('workflow') || ''
-}
-
-function setWorkflowUrl(id: string) {
-  const url = new URL(window.location.href)
-  if (id) url.searchParams.set('workflow', id)
-  else url.searchParams.delete('workflow')
-  window.history.replaceState(null, '', url)
 }
 
 function repoNameFromPath(projectRoot: string): string {
@@ -206,12 +209,15 @@ function NetlifyLogo() {
 
 export default function App() {
   const queryClient = useQueryClient()
+  const navigate = useNavigate()
+  const pathname = useRouterState({ select: (state) => state.location.pathname })
+  const routeState = useMemo(() => parseDashboardPath(pathname), [pathname])
+  const routedWorkflowId = routeWorkflowId(routeState)
+  const selectedRunId = routeRunId(routeState)
+  const legacyWorkflowId = useMemo(() => legacyWorkflowFromUrl(), [])
   const [navbarOpened, { toggle: toggleNavbar }] = useDisclosure(false)
   const [eventDiagnosticsOpened, { open: openEventDiagnostics, close: closeEventDiagnostics }] = useDisclosure(false)
   const { colorScheme, toggleColorScheme } = useMantineColorScheme()
-  const [selectedWorkflowId, setSelectedWorkflowId] = useState(initialWorkflowFromUrl)
-  const [selectedNode, setSelectedNode] = useState<WorkflowGraphNodeData | null>(null)
-  const [graph, setGraph] = useState<WorkflowGraph | null>(null)
   const [dryRunOptions, setDryRunOptions] = useState<DryRunOptions>({
     branch: 'master',
     transport: 'netlify-api',
@@ -225,7 +231,6 @@ export default function App() {
   const [dryRunRunning, setDryRunRunning] = useState(false)
   const [dryRunError, setDryRunError] = useState('')
   const [activeRun, setActiveRun] = useState<DashboardRun | null>(null)
-  const [selectedRunId, setSelectedRunId] = useState('')
   const [runOutput, setRunOutput] = useState('')
   const [runRunning, setRunRunning] = useState(false)
   const [cancelRunning, setCancelRunning] = useState(false)
@@ -242,8 +247,6 @@ export default function App() {
   const [error, setError] = useState('')
   const [contextModalAction, setContextModalAction] = useState<ContextModalAction>('')
   const [contextDraft, setContextDraft] = useState('')
-  const [promptModalStepId, setPromptModalStepId] = useState<string | null>(null)
-  const [detailsModalContext, setDetailsModalContext] = useState<DetailsModalContext | null>(null)
   const dryRunSimulationTimers = useRef<number[]>([])
   const runEventsRef = useRef<RunEventStream | null>(null)
   const runReconnectTimerRef = useRef<number | null>(null)
@@ -253,8 +256,8 @@ export default function App() {
   const runsQuery = useRunsQuery({
     refetchInterval: runRunning && activeRun ? 2500 : false,
   })
-  const workflowGraphQuery = useWorkflowGraphQuery(selectedWorkflowId, {
-    enabled: Boolean(selectedWorkflowId && !selectedRunId),
+  const workflowGraphQuery = useWorkflowGraphQuery(routedWorkflowId, {
+    enabled: Boolean(routedWorkflowId && !selectedRunId),
   })
   const runGraphQuery = useRunGraphQuery(selectedRunId, {
     enabled: Boolean(selectedRunId),
@@ -265,15 +268,20 @@ export default function App() {
   const cancelWorkflowRunMutation = useCancelWorkflowRunMutation()
   const workflows = workflowsQuery.data?.items || []
   const projectRoot = healthQuery.data?.projectRoot || ''
+  const capabilities = healthQuery.data?.capabilities || defaultDashboardCapabilities
   const runs = runsQuery.data || []
   const loadingWorkflows = workflowsQuery.isPending
   const loadingGraph = selectedRunId
     ? runGraphQuery.isFetching && !runGraphQuery.data
     : workflowGraphQuery.isFetching && !workflowGraphQuery.data
+  const selectedWorkflowId = routedWorkflowId || runGraphQuery.data?.workflow.id || ''
   const selectedWorkflow = useMemo(
-    () => workflows.find((workflow) => workflow.id === selectedWorkflowId) || null,
-    [workflows, selectedWorkflowId],
+    () => runGraphQuery.data?.workflow || workflows.find((workflow) => workflow.id === selectedWorkflowId) || null,
+    [runGraphQuery.data?.workflow, workflows, selectedWorkflowId],
   )
+  const graph = selectedRunId
+    ? runGraphQuery.data?.graph || null
+    : workflowGraphQuery.data?.graph || null
 
   // Toggle the output pane between minimized and ~35% expanded
   const toggleOutputPane = useCallback(() => {
@@ -297,17 +305,55 @@ export default function App() {
     runEventsRef.current = null
   }, [])
 
+  const navigateWorkflow = useCallback((workflowId: string, replace = false) => {
+    if (!workflowId) return
+    void navigate({ to: '/workflows/$workflowId', params: { workflowId }, replace })
+  }, [navigate])
+
+  const navigateWorkflowStep = useCallback((workflowId: string, stepId: string, replace = false) => {
+    if (!workflowId || !stepId) return
+    void navigate({ to: '/workflows/$workflowId/steps/$stepId', params: { workflowId, stepId }, replace })
+  }, [navigate])
+
+  const navigateWorkflowPrompts = useCallback((workflowId: string, replace = false) => {
+    if (!workflowId) return
+    void navigate({ to: '/workflows/$workflowId/prompts', params: { workflowId }, replace })
+  }, [navigate])
+
+  const navigateWorkflowPromptStep = useCallback((workflowId: string, stepId: string, replace = false) => {
+    if (!workflowId || !stepId) return
+    void navigate({ to: '/workflows/$workflowId/prompts/$stepId', params: { workflowId, stepId }, replace })
+  }, [navigate])
+
+  const navigateRun = useCallback((runId: string, replace = false) => {
+    if (!runId) return
+    void navigate({ to: '/runs/$runId', params: { runId }, replace })
+  }, [navigate])
+
+  const navigateRunDetails = useCallback((runId: string, replace = false) => {
+    if (!runId) return
+    void navigate({ to: '/runs/$runId/details', params: { runId }, replace })
+  }, [navigate])
+
+  const navigateRunStep = useCallback((runId: string, stepId: string, replace = false) => {
+    if (!runId || !stepId) return
+    void navigate({ to: '/runs/$runId/steps/$stepId', params: { runId, stepId }, replace })
+  }, [navigate])
+
+  const navigateRunAgent = useCallback((runId: string, stepId: string, agent: string, replace = false) => {
+    if (!runId || !stepId || !agent) return
+    void navigate({ to: '/runs/$runId/steps/$stepId/agents/$agent', params: { runId, stepId, agent }, replace })
+  }, [navigate])
+
   const selectWorkflowDefinition = useCallback((id: string) => {
-    setSelectedRunId('')
     setActiveRun(null)
     setRunOutput('')
     setRunError('')
     setRunRunning(false)
-    setGraph(null)
     closeRunEvents()
     dispatchLiveRun({ type: 'reset' })
-    setSelectedWorkflowId(id)
-  }, [closeRunEvents])
+    navigateWorkflow(id)
+  }, [closeRunEvents, navigateWorkflow])
 
   const simulateDryRunStepStatuses = useCallback((options: DryRunOptions) => {
     clearDryRunSimulation()
@@ -400,13 +446,15 @@ export default function App() {
   useEffect(() => {
     if (!workflowsQuery.data) return
     setError('')
-    const requested = selectedWorkflowId
+    if (selectedRunId) return
+    const shouldPickWorkflow = routeState.kind === 'home' || routeState.kind === 'workflows' || (routedWorkflowId && !workflowsQuery.data.items.some((workflow) => workflow.id === routedWorkflowId))
+    if (!shouldPickWorkflow) return
+    const requested = routedWorkflowId || legacyWorkflowId
     const next = workflowsQuery.data.items.some((workflow) => workflow.id === requested)
       ? requested
       : workflowsQuery.data.items[0]?.id || ''
-    if (next !== selectedWorkflowId) setSelectedWorkflowId(next)
-    if (next) setWorkflowUrl(next)
-  }, [selectedWorkflowId, workflowsQuery.data])
+    if (next) navigateWorkflow(next, true)
+  }, [legacyWorkflowId, navigateWorkflow, routeState.kind, routedWorkflowId, selectedRunId, workflowsQuery.data])
 
   useEffect(() => {
     if (!workflowsQuery.error) return
@@ -415,12 +463,25 @@ export default function App() {
 
   useEffect(() => {
     if (!healthQuery.error) return
-    queryClient.setQueryData(dashboardQueryKeys.health(), { ok: false, projectRoot: '', tokenRequiredForMutations: false, tokenRequiredForSensitiveReads: false })
+    queryClient.setQueryData(dashboardQueryKeys.health(), {
+      ok: false,
+      projectRoot: '',
+      tokenRequiredForMutations: false,
+      tokenRequiredForSensitiveReads: false,
+      capabilities: defaultDashboardCapabilities,
+    })
   }, [healthQuery.error, queryClient])
 
   useEffect(() => {
     if (!selectedWorkflowId || selectedRunId) return
     clearDryRunSimulation()
+    if (activeRun) {
+      setActiveRun(null)
+      setRunOutput('')
+      setRunError('')
+      setRunRunning(false)
+      closeRunEvents()
+    }
     dispatchLiveRun({ type: 'reset' })
     setDryRunOptions((options) => ({
       ...options,
@@ -430,15 +491,12 @@ export default function App() {
       step: '',
       fromStep: '',
     }))
-  }, [clearDryRunSimulation, selectedRunId, selectedWorkflowId])
+  }, [activeRun, clearDryRunSimulation, closeRunEvents, selectedRunId, selectedWorkflowId])
 
   useEffect(() => {
     if (!workflowGraphQuery.data || selectedRunId) return
-    setGraph(workflowGraphQuery.data.graph)
-    setSelectedNode(null)
     setError('')
-    setWorkflowUrl(selectedWorkflowId)
-  }, [selectedRunId, selectedWorkflowId, workflowGraphQuery.data])
+  }, [selectedRunId, workflowGraphQuery.data])
 
   useEffect(() => {
     if (!workflowGraphQuery.error || selectedRunId) return
@@ -449,8 +507,6 @@ export default function App() {
     if (!runGraphQuery.data || !selectedRunId) return
     const response = runGraphQuery.data
     const runOptions = response.run.options || {}
-    if (response.workflow.id !== selectedWorkflowId) setSelectedWorkflowId(response.workflow.id)
-    setGraph(response.graph)
     setDryRunOptions((options) => ({
       ...options,
       branch: typeof runOptions.branch === 'string' ? runOptions.branch : response.run.branch || options.branch,
@@ -461,10 +517,8 @@ export default function App() {
       models: [],
       stepModels: stepModelsFromRunGraph(response.graph),
     }))
-    setSelectedNode(null)
     setError('')
-    setWorkflowUrl(response.workflow.id)
-  }, [runGraphQuery.data, selectedRunId, selectedWorkflowId])
+  }, [runGraphQuery.data, selectedRunId])
 
   useEffect(() => {
     if (!runGraphQuery.error || !selectedRunId) return
@@ -510,6 +564,10 @@ export default function App() {
 
   const runDryRun = async (optionsOverride: DryRunOptions = dryRunOptions) => {
     if (!selectedWorkflow) return
+    if (!capabilities.canDryRun) {
+      setDryRunError('Dry run is not available in this dashboard deployment.')
+      return
+    }
     setDryRunRunning(true)
     setDryRunError('')
     setDryRunResult(null)
@@ -527,35 +585,24 @@ export default function App() {
   }
 
   const openAgentResult = useCallback((node: WorkflowGraphNodeData, agent: string) => {
-    const savedRun = runForAgent(node, agent)
-    const runnerId = runValue(savedRun, 'runnerId')
-    const sessionId = runValue(savedRun, 'sessionId')
-    setDetailsModalContext({
-      node,
-      agent,
-      runId: selectedRunId || activeRun?.runId || '',
-      selector: {
-        stepId: node.stepId,
-        agent,
-        runnerId,
-        sessionId,
-      },
-    })
-  }, [activeRun?.runId, selectedRunId])
+    const runId = selectedRunId || activeRun?.runId || activeRun?.id || ''
+    if (!runId) return
+    navigateRunAgent(runId, node.stepId, agent)
+  }, [activeRun?.id, activeRun?.runId, navigateRunAgent, selectedRunId])
 
   const openNodeDetails = useCallback((node: WorkflowGraphNodeData) => {
-    setDetailsModalContext({
-      node,
-      runId: selectedRunId || activeRun?.runId || '',
-      selector: {
-        stepId: node.stepId,
-      },
-    })
-  }, [activeRun?.runId, selectedRunId])
+    const runId = selectedRunId || activeRun?.runId || activeRun?.id || ''
+    if (!runId) return
+    navigateRunStep(runId, node.stepId)
+  }, [activeRun?.id, activeRun?.runId, navigateRunStep, selectedRunId])
 
   const runWorkflow = async (workflowOverride?: Workflow, optionsOverride: DryRunOptions = dryRunOptions, confirmed = false) => {
     const workflow = workflowOverride || selectedWorkflow
     if (!workflow) return
+    if (!capabilities.canStartRuns) {
+      setRunError('Run actions are not available in this dashboard deployment.')
+      return
+    }
     const stepOverrideCount = Object.keys(optionsOverride.stepModels).length
     const models = stepOverrideCount > 0 ? `${stepOverrideCount} step override${stepOverrideCount === 1 ? '' : 's'}` : 'all configured agents'
     const allowed = confirmed || window.confirm([
@@ -579,7 +626,7 @@ export default function App() {
       setActiveRun(response.run)
       upsertRunInDashboardCache(queryClient, response.run)
       dispatchLiveRun({ type: 'reset', run: response.run })
-      setSelectedRunId(response.run.runId || response.run.id)
+      navigateRun(response.run.runId || response.run.id)
       let eventCursor = 0
       let terminal = false
       const dispatchEvent = (event: Event) => {
@@ -592,7 +639,7 @@ export default function App() {
           setRunOutput((value) => `${value}${data.text}`)
         }
         if (data.type === 'workflow_started' && data.runId) {
-          setSelectedRunId(data.runId)
+          navigateRun(data.runId, true)
           setActiveRun((value) => value ? {
             ...value,
             runId: data.runId,
@@ -646,7 +693,7 @@ export default function App() {
         })
         runEventsRef.current = events
       }
-      connectEvents()
+      if (capabilities.canStreamRunEvents) connectEvents()
     } catch (err) {
       setRunError(err instanceof Error ? err.message : String(err))
       setRunRunning(false)
@@ -687,10 +734,17 @@ export default function App() {
     const id = run.runId || run.id
     if (!id) return
     upsertRunInDashboardCache(queryClient, run)
-    setSelectedRunId(id)
+    navigateRun(id)
     dispatchLiveRun({ type: 'reset' })
     setError('')
     await queryClient.invalidateQueries({ queryKey: dashboardQueryKeys.runGraph(id) })
+  }
+
+  const openRunDetails = (run: DashboardRun) => {
+    const id = run.runId || run.id
+    if (!id) return
+    upsertRunInDashboardCache(queryClient, run)
+    navigateRunDetails(id)
   }
 
   const handleRunUpdated = async (updated: DashboardRun) => {
@@ -698,13 +752,16 @@ export default function App() {
     const updatedRunId = updated.runId || updated.id
     if (!updatedRunId) return
     await invalidateRunViews(queryClient, updatedRunId)
-    setSelectedRunId(updatedRunId)
   }
 
-  const handleFollowupSubmitted = async (response: RunFollowupResponse) => {
-    const persisted = response.followup.sourceWorkflow || response.followup.persistedWorkflow
-    if (!persisted?.runId) return
-    await handleRunUpdated(persisted)
+  const handleFollowupSubmitted = (response: RunFollowupResponse) => {
+    if (response.followup.sourceWorkflow) {
+      upsertRunInDashboardCache(queryClient, response.followup.sourceWorkflow)
+    }
+    if (response.followup.persistedWorkflow) {
+      upsertRunInDashboardCache(queryClient, response.followup.persistedWorkflow)
+    }
+    void queryClient.invalidateQueries({ queryKey: dashboardQueryKeys.runs() })
   }
 
   const resumeRun = async (run: DashboardRun) => {
@@ -714,7 +771,7 @@ export default function App() {
     if (!confirmed) return
     const workflow = workflows.find((candidate) => candidate.id === flowId)
     if (!workflow) return
-    setSelectedWorkflowId(flowId)
+    navigateWorkflow(flowId)
     await runWorkflow(workflow, dryRunOptions, true)
   }
 
@@ -759,13 +816,31 @@ export default function App() {
     stepStatuses: liveStepStatuses,
     stepAgentStatuses: liveAgentStatuses,
   }), [dryRunOptions.stepModels, graph, liveAgentStatuses, liveStepStatuses])
-  useEffect(() => {
-    if (!projectedGraph || projectedGraph.nodes.length === 0) return
-    setSelectedNode((current) => {
-      if (current && projectedGraph.nodes.some((node) => node.data.stepId === current.stepId)) return current
-      return projectedGraph.nodes[0].data
-    })
-  }, [projectedGraph])
+  const selectedWorkflowStepId = routeWorkflowStepId(routeState)
+  const selectedNode = useMemo(
+    () => workflowGraphNodeByStepId(projectedGraph, selectedWorkflowStepId),
+    [projectedGraph, selectedWorkflowStepId],
+  )
+  const routeDetailsStepId = routeRunStepId(routeState)
+  const routeDetailsAgent = routeState.kind === 'run-agent' ? routeState.agent : ''
+  const detailsModalContext = useMemo<DetailsModalContext | null>(() => {
+    const detailsRunId = selectedRunId || activeRun?.runId || activeRun?.id || ''
+    if (!detailsRunId || !routeDetailsStepId) return null
+    const node = workflowGraphNodeByStepId(projectedGraph, routeDetailsStepId)
+    if (!node) return null
+    const savedRun = routeDetailsAgent ? runForAgent(node, routeDetailsAgent) : undefined
+    return {
+      node,
+      agent: routeDetailsAgent || undefined,
+      runId: detailsRunId,
+      selector: {
+        stepId: node.stepId,
+        agent: routeDetailsAgent || undefined,
+        runnerId: routeDetailsAgent ? runValue(savedRun, 'runnerId') : undefined,
+        sessionId: routeDetailsAgent ? runValue(savedRun, 'sessionId') : undefined,
+      },
+    }
+  }, [activeRun?.id, activeRun?.runId, projectedGraph, routeDetailsAgent, routeDetailsStepId, selectedRunId])
   const selectedRunSnapshot = useMemo(() => {
     if (!selectedRunId) return null
     return runs.find((run) => run.runId === selectedRunId || run.id === selectedRunId) || activeRun
@@ -829,6 +904,59 @@ export default function App() {
       url: liveAgentUrl(event) || savedRunUrl(savedRun),
     }
   }, [detailsModalContext, liveRunState.rawEvents, projectedGraph])
+  const selectCanvasNode = useCallback((node: WorkflowGraphNodeData | null) => {
+    if (workflowCanvasMode !== 'configure') return
+    if (!selectedWorkflowId) return
+    if (!node) {
+      navigateWorkflow(selectedWorkflowId)
+      return
+    }
+    navigateWorkflowStep(selectedWorkflowId, node.stepId)
+  }, [navigateWorkflow, navigateWorkflowStep, selectedWorkflowId, workflowCanvasMode])
+  const promptModalOpened = routeState.kind === 'workflow-prompts'
+  const promptModalStepId = routePromptStepId(routeState)
+  const openWorkflowPrompts = useCallback(() => {
+    if (!selectedWorkflowId) return
+    if (selectedNode?.stepId) navigateWorkflowPromptStep(selectedWorkflowId, selectedNode.stepId)
+    else navigateWorkflowPrompts(selectedWorkflowId)
+  }, [navigateWorkflowPrompts, navigateWorkflowPromptStep, selectedNode?.stepId, selectedWorkflowId])
+  const closeWorkflowPrompts = useCallback(() => {
+    if (routeState.kind !== 'workflow-prompts') return
+    if (routeState.stepId) navigateWorkflowStep(routeState.workflowId, routeState.stepId)
+    else navigateWorkflow(routeState.workflowId)
+  }, [navigateWorkflow, navigateWorkflowStep, routeState])
+  const selectPromptStep = useCallback((stepId: string) => {
+    if (!selectedWorkflowId || !stepId) return
+    navigateWorkflowPromptStep(selectedWorkflowId, stepId, true)
+  }, [navigateWorkflowPromptStep, selectedWorkflowId])
+  const closeRunDetails = useCallback(() => {
+    if (selectedRunId) navigateRun(selectedRunId)
+  }, [navigateRun, selectedRunId])
+  const runDetailsModalOpened = routeState.kind === 'run-details' || Boolean(detailsModalContext)
+  const runDetailsModalRunId = detailsModalContext?.runId || (routeState.kind === 'run-details' ? selectedRunId : '')
+  const selectRunDetailsTimelineEntry = useCallback((entry: TimelineEntry) => {
+    if (!runDetailsModalRunId) return
+    if (entry.kind === 'session') {
+      const stepId = entry.section?.stepId || entry.liveContext?.selector.stepId || ''
+      const agent = entry.section?.agent || entry.liveContext?.selector.agent || ''
+      if (stepId && agent) {
+        navigateRunAgent(runDetailsModalRunId, stepId, agent)
+        return
+      }
+      if (stepId) {
+        navigateRunStep(runDetailsModalRunId, stepId)
+        return
+      }
+    }
+    if (entry.kind === 'step') {
+      const stepId = entry.section?.stepId || entry.id.replace(/^step:/, '')
+      if (stepId) {
+        navigateRunStep(runDetailsModalRunId, stepId)
+        return
+      }
+    }
+    navigateRunDetails(runDetailsModalRunId)
+  }, [navigateRunAgent, navigateRunDetails, navigateRunStep, runDetailsModalRunId])
 
   return (
     <ReactFlowProvider>
@@ -907,13 +1035,15 @@ export default function App() {
                   running={dryRunRunning}
                   realRunning={runRunning}
                   cancelling={cancelRunning}
+                  canDryRun={capabilities.canDryRun}
+                  canRun={capabilities.canStartRuns}
                   onChange={setDryRunOptions}
                   onDryRun={() => {
                     void runDryRun()
                   }}
                   onRun={() => openContextModal('run')}
                   onCancelRun={cancelActiveRun}
-                  onViewPrompts={() => setPromptModalStepId(selectedNode?.stepId || '')}
+                  onViewPrompts={openWorkflowPrompts}
                 />
                 <Box className="workflow-splitter-shell">
                   <Badge className="workflow-status-badge" variant="light" color={error ? 'red' : 'blue'}>
@@ -927,7 +1057,7 @@ export default function App() {
                         mode={workflowCanvasMode}
                         selectedNode={selectedNode}
                         onToggleStepAgent={toggleStepAgent}
-                        onSelectNode={setSelectedNode}
+                        onSelectNode={selectCanvasNode}
                         onViewNodeDetails={openNodeDetails}
                         onViewAgentResult={openAgentResult}
                       />
@@ -951,14 +1081,14 @@ export default function App() {
                 <Inspector
                   workflow={selectedWorkflow}
                   selectedNode={selectedNode}
-                  graph={graph}
+                  graph={projectedGraph}
                 />
                 <RecentRuns
                   runs={runs}
                   selectedRunId={selectedRunId}
                   onSelect={selectRun}
+                  onOpenDetails={openRunDetails}
                   onResume={resumeRun}
-                  onFollowupSubmitted={handleFollowupSubmitted}
                 />
               </Box>
             </Splitter.Pane>
@@ -1059,23 +1189,27 @@ export default function App() {
         </Stack>
       </Modal>
       <WorkflowPromptModal
-        opened={promptModalStepId !== null}
-        onClose={() => setPromptModalStepId(null)}
+        opened={promptModalOpened}
+        onClose={closeWorkflowPrompts}
         workflow={selectedWorkflow}
-        graph={graph}
+        graph={projectedGraph}
         initialStepId={promptModalStepId || ''}
         projectRoot={projectRoot}
+        canOpenLocalFiles={capabilities.canOpenLocalFiles}
+        onStepSelect={selectPromptStep}
       />
       <RunDetailsModal
-        opened={Boolean(detailsModalContext)}
-        onClose={() => setDetailsModalContext(null)}
-        runId={detailsModalContext?.runId || ''}
+        opened={runDetailsModalOpened}
+        onClose={closeRunDetails}
+        canOpenLocalFiles={capabilities.canOpenLocalFiles}
+        runId={runDetailsModalRunId}
         initialSelector={detailsModalLiveContext?.selector || detailsModalContext?.selector}
         liveContext={detailsModalLiveContext}
         liveRevision={detailsLiveRevision}
         missingRunMessage="Load a saved workflow run before opening agent results."
         onFollowupSubmitted={handleFollowupSubmitted}
         onRunUpdated={handleRunUpdated}
+        onTimelineEntrySelect={selectRunDetailsTimelineEntry}
       />
     </ReactFlowProvider>
   )

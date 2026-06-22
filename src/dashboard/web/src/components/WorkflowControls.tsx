@@ -8,6 +8,8 @@ type Props = {
   running: boolean
   realRunning: boolean
   cancelling: boolean
+  canDryRun?: boolean
+  canRun?: boolean
   onChange: (options: DryRunOptions) => void
   onDryRun: () => void
   onRun: () => void
@@ -18,7 +20,7 @@ type Props = {
 const SHOW_START_CONTROLS = false
 const SHOW_TRANSPORT_SELECT = false
 
-export function WorkflowControls({ workflow, options, running, realRunning, cancelling, onChange, onDryRun, onRun, onCancelRun, onViewPrompts }: Props) {
+export function WorkflowControls({ workflow, options, running, realRunning, cancelling, canDryRun = true, canRun = true, onChange, onDryRun, onRun, onCancelRun, onViewPrompts }: Props) {
   const steps = (workflow?.steps || []).map((step) => ({ value: step.id, label: step.title }))
   const startMode = options.fromStep ? 'resume' : 'beginning'
   const selectedStep = options.fromStep || null
@@ -112,7 +114,7 @@ export function WorkflowControls({ workflow, options, running, realRunning, canc
           type="button"
           leftSection={<Play size={14} />}
           onClick={onDryRun}
-          disabled={!workflow || running || realRunning}
+          disabled={!workflow || !canDryRun || running || realRunning}
           loading={running}
           size="xs"
           variant="light"
@@ -123,7 +125,7 @@ export function WorkflowControls({ workflow, options, running, realRunning, canc
           type="button"
           leftSection={(running || realRunning) ? <RotateCcw size={16} /> : <Rocket size={16} />}
           onClick={onRun}
-          disabled={!workflow || running}
+          disabled={!workflow || !canRun || running}
           loading={realRunning}
           size="xs"
           color="violet"

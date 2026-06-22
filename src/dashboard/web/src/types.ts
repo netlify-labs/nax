@@ -92,11 +92,23 @@ export type WorkflowListResponse = {
   items: Workflow[]
 }
 
+export type DashboardDeploymentMode = 'local' | 'desktop' | 'web'
+
+export type DashboardCapabilities = {
+  deploymentMode: DashboardDeploymentMode
+  canStartRuns: boolean
+  canDryRun: boolean
+  canOpenLocalFiles: boolean
+  canStreamRunEvents: boolean
+  requiresAuth: boolean
+}
+
 export type HealthResponse = {
   ok: boolean
   projectRoot?: string
   tokenRequiredForMutations: boolean
   tokenRequiredForSensitiveReads: boolean
+  capabilities?: DashboardCapabilities
 }
 
 export type WorkflowGraphResponse = {

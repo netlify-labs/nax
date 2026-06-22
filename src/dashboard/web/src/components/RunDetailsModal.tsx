@@ -28,6 +28,7 @@ export type RunDetailsLiveContext = {
 type RunDetailsModalProps = {
   opened: boolean
   onClose: () => void
+  canOpenLocalFiles?: boolean
   runId?: string
   initialSelector?: RunDetailsSelector
   liveContext?: RunDetailsLiveContext | null
@@ -35,6 +36,7 @@ type RunDetailsModalProps = {
   missingRunMessage?: string
   onFollowupSubmitted?: (response: RunFollowupResponse) => void | Promise<void>
   onRunUpdated?: (run: DashboardRun) => void | Promise<void>
+  onTimelineEntrySelect?: (entry: TimelineEntry) => void
 }
 
 type StepItem = {
@@ -504,6 +506,7 @@ async function copyTextToClipboard(text: string) {
 export function RunDetailsModal({
   opened,
   onClose,
+  canOpenLocalFiles = true,
   runId: detailsRunId = '',
   initialSelector,
   liveContext,
@@ -511,12 +514,14 @@ export function RunDetailsModal({
   missingRunMessage = 'Load a saved workflow run before opening agent results.',
   onFollowupSubmitted,
   onRunUpdated,
+  onTimelineEntrySelect,
 }: RunDetailsModalProps) {
   const [activeTimelineId, setActiveTimelineId] = useState('summary')
   const [selectionWarning, setSelectionWarning] = useState('')
   const [detailsView, setDetailsView] = useState<'results' | 'followup'>('results')
   const [contentView, setContentView] = useState<'results' | 'prompt'>('results')
   const [followupSubmitting, setFollowupSubmitting] = useState(false)
+  const [followupSuccess, setFollowupSuccess] = useState<RunFollowupResponse | null>(null)
   const cancelWorkflowRunMutation = useCancelWorkflowRunMutation()
   const cancelFollowupRunMutation = useCancelFollowupRunMutation()
   const approveHumanReviewGateMutation = useApproveHumanReviewGateMutation()
@@ -539,7 +544,7 @@ export function RunDetailsModal({
   const detailRun = detailsResponse?.run
   const followupTargets = details?.followupTargets || []
   const markdownScrollRef = useRef<HTMLDivElement>(null)
-  const resolvedSelectionKeyRef = useRef('')
+  const appliedSelectorKeyRef = useRef('')
   const appliedLiveRevisionRef = useRef('')
   const stepItems = useMemo(() => buildStepItems(details, detailRun, liveContext), [details, detailRun, liveContext])
   const detailWorkflowStatus = useMemo(() => effectiveWorkflowStatus(detailRun, stepItems), [detailRun, stepItems])
@@ -567,6 +572,13 @@ export function RunDetailsModal({
     : null
   const detailWorkflowName = workflowName(detailRun)
   const selectorIdentity = selectorKey(initialSelector)
+  const followupRun = useMemo<DashboardRun | undefined>(() => {
+    if (!detailRun) return undefined
+    return {
+      ...detailRun,
+      runId: detailRun.runId || detailsRunId,
+    }
+  }, [detailRun, detailsRunId])
 
   const refreshDetails = useCallback(async () => {
     if (!detailsRunId) return
@@ -605,6 +617,11 @@ export function RunDetailsModal({
     await onRunUpdated?.(response.run)
   }
 
+  const selectTimelineEntry = useCallback((entry: TimelineEntry) => {
+    setActiveTimelineId(entry.id)
+    onTimelineEntrySelect?.(entry)
+  }, [onTimelineEntrySelect])
+
   useEffect(() => {
     setSelectionWarning('')
   }, [detailsRunId, opened, selectorIdentity])
@@ -637,6 +654,7 @@ export function RunDetailsModal({
 
   useEffect(() => {
     setDetailsView('results')
+    setFollowupSuccess(null)
   }, [detailsRunId, selectorIdentity])
 
   useEffect(() => {
@@ -653,17 +671,16 @@ export function RunDetailsModal({
 
   useEffect(() => {
     if (!opened) {
-      resolvedSelectionKeyRef.current = ''
+      appliedSelectorKeyRef.current = ''
       return
     }
-    const timelineEntryKey = timelineEntries.map((entry) => entry.id).join('|')
-    const resolutionKey = `${detailsRunId}|${selectorIdentity}|${timelineEntryKey}`
     const activeExists = timelineEntries.some((entry) => entry.id === activeTimelineId)
-    if (resolvedSelectionKeyRef.current === resolutionKey && activeExists) return
+    const selectorKeyForRun = `${detailsRunId}|${selectorIdentity}`
+    if (appliedSelectorKeyRef.current === selectorKeyForRun && activeExists) return
     const resolved = resolveInitialTimelineId(details, timelineEntries, initialSelector, liveContext)
-    resolvedSelectionKeyRef.current = resolutionKey
-    setActiveTimelineId(resolved.id)
-    setSelectionWarning(resolved.warning)
+    appliedSelectorKeyRef.current = selectorKeyForRun
+    setActiveTimelineId((current) => current === resolved.id ? current : resolved.id)
+    setSelectionWarning((current) => current === resolved.warning ? current : resolved.warning)
   }, [activeTimelineId, details, detailsRunId, initialSelector, liveContext, opened, selectorIdentity, timelineEntries])
 
   const title = detailWorkflowName
@@ -692,15 +709,25 @@ export function RunDetailsModal({
       ) : detailsError ? (
         <Alert color="red" variant="light">{detailsError}</Alert>
       ) : details ? (
-        detailsView === 'followup' && detailRun && detailRun.runId && followupTargets.length > 0 ? (
+        detailsView === 'followup' && followupRun?.runId ? (
           <RunFollowupContent
-            onClose={() => setDetailsView('results')}
-            run={detailRun}
+            canOpenLocalFiles={canOpenLocalFiles}
+            onClose={() => {
+              setDetailsView('results')
+              setFollowupSuccess(null)
+              void refreshDetails().catch(() => {
+                // The results view will keep the last usable details if refresh fails.
+              })
+            }}
+            run={followupRun}
             details={details}
             onSubmittingChange={setFollowupSubmitting}
-            onSubmitted={async (_response: RunFollowupResponse) => {
-              await refreshDetails()
-              await onFollowupSubmitted?.(_response)
+            submittedResponse={followupSuccess}
+            onSubmitted={(_response: RunFollowupResponse) => {
+              setFollowupSuccess(_response)
+              void Promise.resolve(onFollowupSubmitted?.(_response)).catch(() => {
+                // The composer success state should stay visible even if list refresh fails.
+              })
             }}
           />
         ) : (
@@ -713,9 +740,12 @@ export function RunDetailsModal({
                 parentTimelineEntries={parentTimelineEntries}
                 timelineEntries={timelineEntries}
                 timelineProgressIndex={timelineProgressIndex}
-                onSelect={setActiveTimelineId}
+                onSelect={selectTimelineEntry}
                 canRunFollowup={Boolean(detailRun?.runId && followupTargets.length > 0)}
-                onRunFollowup={() => setDetailsView('followup')}
+                onRunFollowup={() => {
+                  setFollowupSuccess(null)
+                  setDetailsView('followup')
+                }}
               />
             ) : null}
             <Box className="run-details-content">
@@ -728,6 +758,7 @@ export function RunDetailsModal({
                   onCancelFollowup={cancelFollowupEntry}
                   onCancelReview={cancelReviewEntry}
                   onContentViewChange={setContentView}
+                  canOpenLocalFiles={canOpenLocalFiles}
                   workflowName={detailWorkflowName}
                   scrollRootRef={markdownScrollRef}
                 />
@@ -742,6 +773,7 @@ export function RunDetailsModal({
                 workflowName={detailWorkflowName}
                 workflowStatus={detailWorkflowStatus}
                 section={activeEntry?.section}
+                canOpenLocalFiles={canOpenLocalFiles}
                 liveContext={activeEntry?.liveContext}
               />
             </Stack>
@@ -772,7 +804,7 @@ export function RunDetailsTimeline({
   timelineEntries: TimelineEntry[]
   timelineProgressIndex: number
   timelineColor?: string
-  onSelect: (id: string) => void
+  onSelect: (entry: TimelineEntry) => void
   canRunFollowup: boolean
   onRunFollowup: () => void
 }) {
@@ -811,7 +843,7 @@ export function RunDetailsTimeline({
                 <Paper className="run-details-timeline-card" withBorder>
                   <UnstyledButton
                     className={`run-details-timeline-button${entry.id === activeTimelineId ? ' active' : ''}`}
-                    onClick={() => onSelect(entry.id)}
+                    onClick={() => onSelect(entry)}
                   >
                     <Group gap={6} wrap="nowrap" className="run-details-timeline-title">
                       <Text size="sm" fw={700} truncate>{entry.title}</Text>
@@ -826,7 +858,7 @@ export function RunDetailsTimeline({
                           <UnstyledButton
                             key={child.id}
                             className={`run-details-timeline-child-button${child.id === activeTimelineId ? ' active' : ''}`}
-                            onClick={() => onSelect(child.id)}
+                            onClick={() => onSelect(child)}
                           >
                             <Group gap={6} wrap="nowrap" className="run-details-timeline-title session">
                               {agent ? <AgentIcon agent={agent} /> : null}
@@ -899,6 +931,7 @@ export function RunDetailsTimeline({
 }
 
 function RunDetailsContent({
+  canOpenLocalFiles = true,
   contentView,
   detailsRunId,
   entry,
@@ -909,6 +942,7 @@ function RunDetailsContent({
   workflowName: name,
   scrollRootRef,
 }: {
+  canOpenLocalFiles?: boolean
   contentView: 'results' | 'prompt'
   detailsRunId: string
   entry: TimelineEntry
@@ -954,6 +988,7 @@ function RunDetailsContent({
         ) : null}
         {actionFilePath || canCancel ? (
           <ArtifactActions
+            canOpenLocalFiles={canOpenLocalFiles}
             filePath={actionFilePath}
             sessionUrl={actionSessionUrl}
             onCancel={canCancel ? () => onCancelFollowup(entry) : undefined}
@@ -1262,12 +1297,14 @@ function LivePanel({ context }: { context: RunDetailsLiveContext }) {
 }
 
 function RunDetailsMetadata({
+  canOpenLocalFiles = true,
   run,
   workflowName: name,
   section,
   liveContext,
   workflowStatus,
 }: {
+  canOpenLocalFiles?: boolean
   run: DashboardRun | undefined
   workflowName: string
   section?: RunDetailsSection
@@ -1306,7 +1343,7 @@ function RunDetailsMetadata({
         <MetadataRow
           label="Run ID"
           value={runId(run || {})}
-          onClick={runDir ? openRunDir : undefined}
+          onClick={runDir && canOpenLocalFiles ? openRunDir : undefined}
           loading={openingRunDir}
           copyValue={runDir}
           copyLabel="Copy folder path"
@@ -1385,11 +1422,13 @@ function MetadataRow({
 }
 
 export function ArtifactActions({
+  canOpenLocalFiles = true,
   filePath = '',
   sessionUrl,
   onCancel,
   cancelLabel = 'Cancel run',
 }: {
+  canOpenLocalFiles?: boolean
   filePath?: string
   sessionUrl?: string
   onCancel?: () => Promise<void>
@@ -1445,11 +1484,13 @@ export function ArtifactActions({
               <Files size={14} />
             </ActionIcon>
           </Tooltip>
-          <Tooltip label="Open file">
-            <ActionIcon aria-label="Open file" variant="subtle" color="gray" size="sm" loading={opening} onClick={openPath}>
-              <ExternalLink size={14} />
-            </ActionIcon>
-          </Tooltip>
+          {canOpenLocalFiles ? (
+            <Tooltip label="Open file">
+              <ActionIcon aria-label="Open file" variant="subtle" color="gray" size="sm" loading={opening} onClick={openPath}>
+                <ExternalLink size={14} />
+              </ActionIcon>
+            </Tooltip>
+          ) : null}
         </>
       ) : null}
       {sessionUrl ? <Anchor href={sessionUrl} target="_blank" rel="noreferrer" size="xs">Open in Netlify</Anchor> : null}

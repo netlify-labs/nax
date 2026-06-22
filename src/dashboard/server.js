@@ -1493,11 +1493,25 @@ function createRequestHandler(options = {}) {
             methodNotAllowed(res, req.method || 'UNKNOWN')
             return
           }
-          /** @type {{ ok: boolean, tokenRequiredForMutations: boolean, tokenRequiredForSensitiveReads: boolean, projectRoot?: string }} */
+          /** @type {'local' | 'desktop' | 'web'} */
+          const deploymentMode = ['local', 'desktop', 'web'].includes(String(env.NAX_DASHBOARD_DEPLOYMENT_MODE || ''))
+            ? /** @type {'local' | 'desktop' | 'web'} */ (String(env.NAX_DASHBOARD_DEPLOYMENT_MODE))
+            : 'local'
+          /** @type {{ deploymentMode: 'local' | 'desktop' | 'web', canStartRuns: boolean, canDryRun: boolean, canOpenLocalFiles: boolean, canStreamRunEvents: boolean, requiresAuth: boolean }} */
+          const capabilities = {
+            deploymentMode,
+            canStartRuns: deploymentMode !== 'web' || String(env.NAX_DASHBOARD_WEB_CAN_START_RUNS || '') === '1',
+            canDryRun: deploymentMode !== 'web' || String(env.NAX_DASHBOARD_WEB_CAN_DRY_RUN || '') === '1',
+            canOpenLocalFiles: deploymentMode !== 'web',
+            canStreamRunEvents: true,
+            requiresAuth: true,
+          }
+          /** @type {{ ok: boolean, tokenRequiredForMutations: boolean, tokenRequiredForSensitiveReads: boolean, capabilities: typeof capabilities, projectRoot?: string }} */
           const health = {
             ok: true,
             tokenRequiredForMutations: true,
             tokenRequiredForSensitiveReads: true,
+            capabilities,
           }
           if (timingSafeTokenEqual(tokenFromRequest(req, requestUrl), token)) health.projectRoot = projectRoot
           jsonResponse(res, 200, health, sessionBootstrapHeadersForRequest(req, requestUrl, token))

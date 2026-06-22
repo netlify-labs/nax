@@ -1,10 +1,11 @@
 import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 import { QueryClientProvider } from '@tanstack/react-query'
+import { RouterProvider } from '@tanstack/react-router'
 import { MantineProvider } from '@mantine/core'
 import { Notifications } from '@mantine/notifications'
-import App from './App'
 import { dashboardQueryClient } from './query-client'
+import { router } from './router'
 import { theme } from './theme'
 import '@mantine/core/styles.css'
 import '@mantine/notifications/styles.css'
@@ -16,7 +17,7 @@ createRoot(document.getElementById('root') as HTMLElement).render(
     <QueryClientProvider client={dashboardQueryClient}>
       <MantineProvider theme={theme} defaultColorScheme="dark">
         <Notifications position="top-right" />
-        <App />
+        <RouterProvider router={router} />
       </MantineProvider>
     </QueryClientProvider>
   </StrictMode>,

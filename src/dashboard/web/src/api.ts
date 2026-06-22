@@ -1,5 +1,26 @@
 import type { DryRunOptions, DryRunResponse, HealthResponse, RunDetailsResponse, RunFollowupRequest, RunFollowupResponse, RunGraphResponse, RunsResponse, StartRunResponse, WorkflowGraphResponse, WorkflowListResponse, DashboardRun } from './types'
 
+type DashboardWindow = Window & {
+  NAX_DASHBOARD_API_BASE?: string
+}
+
+function trimTrailingSlash(value: string): string {
+  return value.replace(/\/+$/, '')
+}
+
+export function dashboardApiBaseUrl(): string {
+  const globalBase = (window as DashboardWindow).NAX_DASHBOARD_API_BASE || ''
+  const metaBase = document.querySelector<HTMLMetaElement>('meta[name="nax-dashboard-api-base"]')?.content || ''
+  return trimTrailingSlash(globalBase.trim() || metaBase.trim())
+}
+
+function apiUrl(path: string): string {
+  if (/^https?:\/\//i.test(path)) return path
+  const base = dashboardApiBaseUrl()
+  if (!base) return path
+  return `${base}${path.startsWith('/') ? path : `/${path}`}`
+}
+
 function sessionToken(): string {
   const params = new URLSearchParams(window.location.search)
   return params.get('token') || ''
@@ -19,7 +40,7 @@ function authHeaders(): Record<string, string> {
 }
 
 async function bootstrapSession(): Promise<void> {
-  await fetch('/api/health', {
+  await fetch(apiUrl('/api/health'), {
     headers: {
       accept: 'application/json',
       ...authHeaders(),
@@ -33,7 +54,7 @@ async function fetchJson<T>(path: string, init: RequestInit = {}, retryOnUnautho
   for (const [key, value] of Object.entries(authHeaders())) {
     if (!headers.has(key)) headers.set(key, value)
   }
-  const response = await fetch(path, {
+  const response = await fetch(apiUrl(path), {
     ...init,
     headers,
   })
@@ -169,7 +190,7 @@ export function runEventsStream(
     handlers.onEvent(event)
   }
 
-  void fetch(path, {
+  void fetch(apiUrl(path), {
     headers: {
       accept: 'text/event-stream',
       ...authHeaders(),
@@ -225,7 +246,7 @@ export async function startRunFollowup(id: string, options: RunFollowupRequest):
 }
 
 export async function openLocalFile(path: string): Promise<{ opened: boolean; path: string }> {
-  const response = await fetch('/api/files/open', {
+  const response = await fetch(apiUrl('/api/files/open'), {
     method: 'POST',
     headers: {
       accept: 'application/json',

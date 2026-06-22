@@ -12,6 +12,7 @@ import { AgentIcon } from './AgentIcon'
 type RunFollowupModalProps = {
   opened: boolean
   onClose: () => void
+  canOpenLocalFiles?: boolean
   run: DashboardRun
   details: RunDetails
   onSubmitted: (response: RunFollowupResponse) => void | Promise<void>
@@ -20,6 +21,7 @@ type RunFollowupModalProps = {
 type RunFollowupContentProps = Omit<RunFollowupModalProps, 'opened'> & {
   closeLabel?: string
   onSubmittingChange?: (submitting: boolean) => void
+  submittedResponse?: RunFollowupResponse | null
 }
 
 type FollowupArtifact = RunDetails['followupArtifacts'][number]
@@ -49,7 +51,7 @@ function targetSelectLabel(target: RunDetails['followupTargets'][number]): strin
   return target.label
 }
 
-function ArtifactRow({ artifact, advanced = false }: { artifact: FollowupArtifact; advanced?: boolean }) {
+function ArtifactRow({ artifact, advanced = false, canOpenLocalFiles = true }: { artifact: FollowupArtifact; advanced?: boolean; canOpenLocalFiles?: boolean }) {
   return (
     <Group className="run-followup-artifact-row" gap="xs" wrap="nowrap">
       <Checkbox
@@ -63,27 +65,29 @@ function ArtifactRow({ artifact, advanced = false }: { artifact: FollowupArtifac
           </Group>
         )}
       />
-      <Tooltip label="Open artifact in editor" withArrow>
-        <ActionIcon
-          type="button"
-          size="sm"
-          variant="subtle"
-          color="gray"
-          aria-label={`Open ${artifact.label}`}
-          onClick={(event) => {
-            event.preventDefault()
-            event.stopPropagation()
-            openArtifactPath(artifact.absolutePath)
-          }}
-        >
-          <FileSearch size={15} />
-        </ActionIcon>
-      </Tooltip>
+      {canOpenLocalFiles ? (
+        <Tooltip label="Open artifact in editor" withArrow>
+          <ActionIcon
+            type="button"
+            size="sm"
+            variant="subtle"
+            color="gray"
+            aria-label={`Open ${artifact.label}`}
+            onClick={(event) => {
+              event.preventDefault()
+              event.stopPropagation()
+              openArtifactPath(artifact.absolutePath)
+            }}
+          >
+            <FileSearch size={15} />
+          </ActionIcon>
+        </Tooltip>
+      ) : null}
     </Group>
   )
 }
 
-function notifyFollowupSubmitted(response: RunFollowupResponse) {
+function notifyFollowupSubmitted(response: RunFollowupResponse, canOpenLocalFiles: boolean) {
   const warnings = response.followup.warnings || []
   const firstLink = response.followup.submissions.find((submission) => submission.links.agentRunUrl)?.links.agentRunUrl || ''
   const firstLocalArtifact = response.followup.submissions.find((submission) => submission.sessionArtifactPath || submission.runnerArtifactPath)
@@ -104,7 +108,7 @@ function notifyFollowupSubmitted(response: RunFollowupResponse) {
               Open Netlify run
             </Button>
           ) : null}
-          {localPath ? (
+          {localPath && canOpenLocalFiles ? (
             <Button size="compact-xs" variant="light" onClick={() => void openLocalFile(localPath)}>
               Open local artifact
             </Button>
@@ -116,7 +120,7 @@ function notifyFollowupSubmitted(response: RunFollowupResponse) {
   })
 }
 
-export function RunFollowupContent({ onClose, run, details, onSubmitted, closeLabel = 'Back to results', onSubmittingChange }: RunFollowupContentProps) {
+export function RunFollowupContent({ canOpenLocalFiles = true, onClose, run, details, onSubmitted, closeLabel = 'Back to results', onSubmittingChange, submittedResponse = null }: RunFollowupContentProps) {
   const initialThreadTarget = useMemo(() => defaultFollowupThreadTarget(details), [details])
   const initialTarget = useMemo(() => initialThreadTarget || defaultFollowupTarget(details), [details, initialThreadTarget])
   const threadTargets = useMemo(() => followupThreadTargets(details), [details])
@@ -128,7 +132,7 @@ export function RunFollowupContent({ onClose, run, details, onSubmitted, closeLa
   const [prompt, setPrompt] = useState('')
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState('')
-  const [success, setSuccess] = useState<RunFollowupResponse | null>(null)
+  const [success, setSuccess] = useState<RunFollowupResponse | null>(submittedResponse)
   const startRunFollowupMutation = useStartRunFollowupMutation()
 
   useEffect(() => {
@@ -144,6 +148,10 @@ export function RunFollowupContent({ onClose, run, details, onSubmitted, closeLa
     setError('')
     setSuccess(null)
   }, [details, submitting, success])
+
+  useEffect(() => {
+    if (submittedResponse) setSuccess(submittedResponse)
+  }, [submittedResponse])
 
   useEffect(() => {
     onSubmittingChange?.(submitting)
@@ -196,8 +204,15 @@ export function RunFollowupContent({ onClose, run, details, onSubmitted, closeLa
         artifacts: selectedArtifacts,
       }) })
       setSuccess(response)
-      notifyFollowupSubmitted(response)
-      await onSubmitted(response)
+      setPrompt('')
+      notifyFollowupSubmitted(response, canOpenLocalFiles)
+      void Promise.resolve(onSubmitted(response)).catch((submitError: unknown) => {
+        notifications.show({
+          color: 'yellow',
+          title: 'Follow-up started, but results refresh failed',
+          message: submitError instanceof Error ? submitError.message : String(submitError),
+        })
+      })
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err))
     } finally {
@@ -390,7 +405,9 @@ export function RunFollowupContent({ onClose, run, details, onSubmitted, closeLa
               </Group>
               <Checkbox.Group value={artifactIds} onChange={setArtifactIds}>
                 <Stack gap={4}>
-                  {visibleArtifacts.map((artifact) => <ArtifactRow key={artifact.id} artifact={artifact} advanced={artifact.advanced} />)}
+                  {visibleArtifacts.map((artifact) => (
+                    <ArtifactRow key={artifact.id} artifact={artifact} advanced={artifact.advanced} canOpenLocalFiles={canOpenLocalFiles} />
+                  ))}
                   {extraArtifacts.length > 0 ? (
                     <Spoiler
                       maxHeight={0}
@@ -398,7 +415,9 @@ export function RunFollowupContent({ onClose, run, details, onSubmitted, closeLa
                       hideLabel="Hide extra artifacts"
                     >
                       <Stack gap={4} mt={4}>
-                        {extraArtifacts.map((artifact) => <ArtifactRow key={artifact.id} artifact={artifact} advanced={artifact.advanced} />)}
+                        {extraArtifacts.map((artifact) => (
+                          <ArtifactRow key={artifact.id} artifact={artifact} advanced={artifact.advanced} canOpenLocalFiles={canOpenLocalFiles} />
+                        ))}
                       </Stack>
                     </Spoiler>
                   ) : null}
@@ -450,7 +469,7 @@ export function RunFollowupContent({ onClose, run, details, onSubmitted, closeLa
   )
 }
 
-export function RunFollowupModal({ opened, onClose, run, details, onSubmitted }: RunFollowupModalProps) {
+export function RunFollowupModal({ opened, onClose, canOpenLocalFiles = true, run, details, onSubmitted }: RunFollowupModalProps) {
   const [submitting, setSubmitting] = useState(false)
 
   return (
@@ -464,6 +483,7 @@ export function RunFollowupModal({ opened, onClose, run, details, onSubmitted }:
       scrollAreaComponent={ScrollArea.Autosize}
     >
       <RunFollowupContent
+        canOpenLocalFiles={canOpenLocalFiles}
         onClose={onClose}
         run={run}
         details={details}

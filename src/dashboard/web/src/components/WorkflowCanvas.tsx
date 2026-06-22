@@ -5,11 +5,12 @@ import {
   Controls,
   MarkerType,
   ReactFlow,
-  useNodesInitialized,
   useReactFlow,
+  useStore,
   type Edge,
   type Node,
   type NodeMouseHandler,
+  type ReactFlowState,
 } from '@xyflow/react'
 import '@xyflow/react/dist/style.css'
 import { activeOrCompletedStatuses, completedStatuses } from '../run-projection'
@@ -37,24 +38,47 @@ type FlowBodyProps = Props & {
   fitViewKey: string
 }
 
+type MeasuredNodeLayout = {
+  heightsById: ReadonlyMap<string, number>
+  initialized: boolean
+  signature: string
+}
+
 function graphIndexForNode(node: Node): number {
   const workflowNode = node.data as WorkflowGraphNodeData
   return Number.isFinite(workflowNode.graphIndex) ? workflowNode.graphIndex : 0
 }
 
-function measuredHeightForNode(node: Node): number {
-  return node.measured?.height || node.height || 0
+function measuredNodeLayoutSelector(state: ReactFlowState): MeasuredNodeLayout {
+  const measuredEntries = Array.from(state.nodeLookup, ([id, node]) => {
+    const height = node.measured?.height ||
+      node.height ||
+      node.internals.userNode.measured?.height ||
+      node.internals.userNode.height ||
+      0
+    return [id, height] as const
+  }).sort(([leftId], [rightId]) => leftId.localeCompare(rightId))
+
+  return {
+    heightsById: new Map(measuredEntries),
+    initialized: measuredEntries.length > 0 && measuredEntries.every(([, height]) => height > 0),
+    signature: measuredEntries.map(([id, height]) => `${id}:${height}`).join('|'),
+  }
 }
 
-function layoutMeasuredNodes(nodes: Node[], measuredNodesById: Map<string, Node>): Node[] {
+function measuredNodeLayoutEqual(left: MeasuredNodeLayout, right: MeasuredNodeLayout): boolean {
+  return left.initialized === right.initialized && left.signature === right.signature
+}
+
+function layoutMeasuredNodes(nodes: Node[], measuredHeightsById: ReadonlyMap<string, number>): Node[] {
   const orderedNodes = [...nodes].sort((a, b) => graphIndexForNode(a) - graphIndexForNode(b))
   const yByNodeId = new Map<string, number>()
   let nextY = 0
 
   for (const node of orderedNodes) {
-    const measuredNode = measuredNodesById.get(node.id) || node
+    const measuredNodeHeight = measuredHeightsById.get(node.id) || node.measured?.height || node.height || 0
     yByNodeId.set(node.id, nextY)
-    nextY += measuredHeightForNode(measuredNode) + WORKFLOW_NODE_MIN_GAP
+    nextY += measuredNodeHeight + WORKFLOW_NODE_MIN_GAP
   }
 
   let changed = false
@@ -75,8 +99,8 @@ function layoutMeasuredNodes(nodes: Node[], measuredNodesById: Map<string, Node>
 }
 
 function FlowBody({ graph, loading, mode, onSelectNode, onViewNodeDetails, fitViewKey }: FlowBodyProps) {
-  const { fitView, getNodes } = useReactFlow()
-  const nodesInitialized = useNodesInitialized()
+  const { fitView } = useReactFlow()
+  const measuredNodeLayout = useStore(measuredNodeLayoutSelector, measuredNodeLayoutEqual)
   const lastFitViewKey = useRef('')
   const graphNodes = useMemo(() => (graph?.nodes || []) as Node[], [graph])
   const [nodes, setNodes] = useState<Node[]>(graphNodes)
@@ -125,12 +149,11 @@ function FlowBody({ graph, loading, mode, onSelectNode, onViewNodeDetails, fitVi
   }, [graphNodes])
 
   useEffect(() => {
-    if (!nodesInitialized || nodes.length === 0) return
-    const measuredNodesById = new Map(getNodes().map((node) => [node.id, node]))
+    if (!measuredNodeLayout.initialized || nodes.length === 0) return
     setNodes((currentNodes) => {
-      return layoutMeasuredNodes(currentNodes, measuredNodesById)
+      return layoutMeasuredNodes(currentNodes, measuredNodeLayout.heightsById)
     })
-  }, [getNodes, nodes, nodesInitialized])
+  }, [measuredNodeLayout, nodes.length])
 
   useEffect(() => {
     if (!graph) return

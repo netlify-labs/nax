@@ -14,7 +14,7 @@ const StreamdownMarkdown = lazy(async () => {
       return (
         <Streamdown
           mode="static"
-          controls={{ code: false, table: false, mermaid: false }}
+          controls={{ code: { copy: true, download: false }, table: false, mermaid: false }}
           linkSafety={{ enabled: true }}
           lineNumbers={false}
           plugins={{ code: codePlugin }}

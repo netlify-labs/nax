@@ -254,7 +254,7 @@ The dashboard now has a route spine while keeping TanStack Query as the server-s
 - `@tanstack/react-router` is installed.
 - `src/dashboard/web/src/router.tsx` defines route shells for workflow, prompt, run, step-detail, and agent-detail destinations.
 - `src/dashboard/web/src/main.tsx` renders `RouterProvider` inside the existing `QueryClientProvider`.
-- `src/dashboard/web/src/dashboard-routes.ts` owns route parsing helpers and default deployment capabilities.
+- `src/dashboard/web/src/dashboard-routes.ts` owns match-based route-state helpers and default deployment capabilities.
 - `App.tsx` derives selected workflow id, selected run id, selected workflow step, prompt modal state, run details modal state, and graph data from route params plus Query results.
 - `App.tsx` no longer mirrors `selectedWorkflowId`, `selectedRunId`, `selectedNode`, `promptModalStepId`, `detailsModalContext`, or `graph` in local state.
 - Existing `?workflow=<id>` startup URLs are still accepted and replaced with `/workflows/$workflowId`.

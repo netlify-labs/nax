@@ -1,26 +1,26 @@
 # NAX Dashboard Route Consolidation Plan
 
-> Status: Draft implementation plan.
+> Status: Implemented on 2026-06-22.
 > Scope: dashboard client routing architecture.
 > Primary goal: make TanStack Router the single source of truth for dashboard view state, route params, modal destinations, and navigation helpers.
 
 ## Summary
 
-The dashboard now has useful URL-addressable routes, but route ownership is split:
+The dashboard previously had useful URL-addressable routes, but route ownership was split:
 
-- `src/dashboard/web/src/router.tsx` declares the TanStack Router tree.
-- `src/dashboard/web/src/dashboard-routes.ts` manually parses `location.pathname`.
-- `src/dashboard/web/src/App.tsx` reads `useRouterState`, calls `parseDashboardPath`, then derives selected workflow/run/step/modal state from that manual parser.
-- Navigation helpers manually build route strings.
+- `src/dashboard/web/src/router.tsx` declared the TanStack Router tree.
+- `src/dashboard/web/src/dashboard-routes.ts` manually parsed `location.pathname`.
+- `src/dashboard/web/src/App.tsx` read `useRouterState`, called `parseDashboardPath`, then derived selected workflow/run/step/modal state from that manual parser.
+- Navigation helpers manually carried route strings.
 
-This works, but every route has to stay synchronized across at least two systems. The next routing pass should remove that duplication so adding or changing a route happens in one route table.
+That duplication has been removed. The current rule is: add or change dashboard URL shapes in `src/dashboard/web/src/route-spec.ts`, then consume those templates from the router, navigation callbacks, and tests.
 
-The right end state is not "delete TanStack Router" or "delete all helper functions". The right end state is:
+The implemented end state is not "delete TanStack Router" or "delete all helper functions". The current shape is:
 
 - TanStack Router owns route matching and params.
-- Route declarations contain the path structure and route ids.
-- App rendering consumes typed route matches/params, not a second pathname parser.
-- Navigation helpers are generated from or colocated with the route table.
+- `route-spec.ts` contains the route path structure and path builders.
+- App rendering consumes router matches/params through `dashboardRouteStateFromMatches`, not a second pathname parser.
+- Navigation callbacks use route templates from the same route spec.
 - Tests assert route matching and navigation helpers against the same route definitions.
 
 ## Why This Matters
@@ -42,7 +42,7 @@ The current split was acceptable for the initial router migration because it lim
 
 ### Route Declaration
 
-`src/dashboard/web/src/router.tsx` declares routes such as:
+`src/dashboard/web/src/route-spec.ts` defines the route templates, and `src/dashboard/web/src/router-factory.ts` creates TanStack routes from that spec:
 
 ```txt
 /
@@ -64,18 +64,17 @@ The route leaves currently render a null component. They exist so the router can
 `src/dashboard/web/src/dashboard-routes.ts` owns:
 
 - route state union types
-- `parseDashboardPath(pathname)`
+- `dashboardRouteStateFromMatches(matches)`
 - helper selectors like `routeWorkflowId`, `routeRunId`, and `routeRunStepId`
-- path builder helpers such as `workflowPath`, `runPath`, and details routes
+- default dashboard capabilities
 
 `App.tsx` does this:
 
 ```ts
-const pathname = useRouterState({ select: (state) => state.location.pathname })
-const routeState = useMemo(() => parseDashboardPath(pathname), [pathname])
+const routeState = useRouterState({ select: (state) => dashboardRouteStateFromMatches(state.matches) })
 ```
 
-That means the TanStack route tree and `parseDashboardPath` must agree forever, but nothing mechanically enforces that.
+Route path builders live in `route-spec.ts`, alongside the route templates that `router-factory.ts` consumes.
 
 ## Goals
 
@@ -97,11 +96,11 @@ That means the TanStack route tree and `parseDashboardPath` must agree forever, 
 - Do not replace TanStack Query server-state hooks.
 - Do not solve hosted auth or API base URL concerns in this plan.
 
-## Proposed Architecture
+## Current Architecture
 
 ### 1. Route Table As Source Of Truth
 
-Create a route specification module, likely `src/dashboard/web/src/route-spec.ts`, that contains the route ids, path segments, and path builders.
+`src/dashboard/web/src/route-spec.ts` contains path templates and path builders.
 
 Example shape:
 
@@ -127,23 +126,22 @@ export const dashboardRoutes = {
 }
 ```
 
-The exact implementation can be more compact, but the important rule is that route declarations and path builders import from the same source.
+The implementation is more compact than this sketch, but the important rule is that route declarations and path builders import from the same source.
 
 ### 2. TanStack Router Owns Matching
 
-Update `router.tsx` so every route is created from the route spec. Routes may still render a shell-level null component if `App.tsx` remains the root renderer, but the route ids and params should be accessible from the router match state.
+`router-factory.ts` creates every route from the route spec. Routes still render a shell-level null component because `App.tsx` remains the root renderer, but params are consumed from router match state.
 
-Use TanStack Router match APIs in `App.tsx`:
+`App.tsx` uses TanStack Router match state through `useRouterState`:
 
-- `useMatches`
-- `useMatchRoute`
-- `getRouteApi` for individual routes where useful
+- `dashboardRouteStateFromMatches(state.matches)` derives the dashboard route union.
+- Route templates from `dashboardRouteSpec` are used for navigation callbacks.
 
 The app should derive route state from matched route ids and params, not from `pathname`.
 
-### 3. Replace `DashboardRouteState` With Matched State
+### 3. Derive `DashboardRouteState` From Matched State
 
-Keep a small route-state adapter during migration:
+The small route-state adapter keeps the existing downstream route union stable:
 
 ```ts
 type DashboardRouteState =
@@ -158,17 +156,15 @@ But build it from TanStack matches:
 function routeStateFromMatches(matches: RouterMatch[]): DashboardRouteState
 ```
 
-After `App.tsx` fully consumes route APIs directly, this adapter can shrink or disappear.
+If `App.tsx` later moves to route-specific component boundaries, this adapter can shrink or disappear.
 
 ### 4. Keep Navigation Helpers, But Stop Duplicating Parse Logic
 
-Helpers such as `workflowPath`, `workflowStepPath`, `runPath`, and `runAgentPath` are valuable because they centralize URL encoding.
-
-Keep them, but move them into the same source as route specs. Delete manual regex/pathname parsing once the router adapter has replaced it.
+Helpers such as `workflowPath`, `workflowStepPath`, `runPath`, and `runAgentPath` are valuable because they centralize URL encoding. They live in `route-spec.ts` with the route templates. Manual regex/pathname parsing has been removed.
 
 ### 5. Route Tests
 
-Add tests that assert:
+Tests assert:
 
 - every path builder produces a URL matched by the router
 - route params round-trip for ids containing spaces, slashes encoded as `%2F`, and model names with punctuation
@@ -177,33 +173,31 @@ Add tests that assert:
 
 The test should not reimplement parsing. It should instantiate the router or call the route-state adapter with real matches.
 
-## Implementation Phases
+## Completed Migration Steps
 
-### Phase 1: Introduce Route Spec
+### Step 1: Introduce Route Spec
 
-Tasks:
+Completed:
 
-- Add `route-spec.ts`.
-- Move existing path builder helpers into it or make `dashboard-routes.ts` re-export from it temporarily.
-- Update `router.tsx` to import paths from the spec.
-- Keep `parseDashboardPath` unchanged for now.
+- Added `route-spec.ts`.
+- Moved path builder helpers into it.
+- Updated router creation to import paths from the spec.
 
 Validation:
 
-- Existing route parser tests still pass.
-- New route spec tests prove path builders match declared route patterns.
+- Route spec tests prove path builders match declared route patterns.
 
 Rationale:
 
 This creates the shared source without changing app behavior.
 
-### Phase 2: Add Match-Based Route Adapter
+### Step 2: Add Match-Based Route Adapter
 
-Tasks:
+Completed:
 
-- Add `routeStateFromRouterState` or `routeStateFromMatches`.
-- Use TanStack Router match data to produce the same `DashboardRouteState` union currently produced by `parseDashboardPath`.
-- Add tests comparing current parser output to match-based output for the known route matrix.
+- Added `dashboardRouteStateFromMatches`.
+- Used TanStack Router match data to produce the `DashboardRouteState` union.
+- Added tests comparing match-based output to the known route matrix.
 
 Validation:
 
@@ -215,13 +209,13 @@ Rationale:
 
 This gives a safe equivalence bridge before removing the old parser.
 
-### Phase 3: Switch `App.tsx` To Match-Based Route State
+### Step 3: Switch `App.tsx` To Match-Based Route State
 
-Tasks:
+Completed:
 
-- Replace `useRouterState(...pathname)` plus `parseDashboardPath(pathname)` with match-based route state.
-- Keep downstream selectors like `routeWorkflowId` if they still simplify `App.tsx`.
-- Verify workflow configure routes, run inspect routes, prompt modal routes, and details modal routes.
+- Replaced `useRouterState(...pathname)` plus manual parsing with match-based route state.
+- Kept downstream selectors like `routeWorkflowId` where they still simplify `App.tsx`.
+- Verified workflow configure routes, run inspect routes, prompt modal routes, and details modal routes.
 
 Validation:
 
@@ -233,14 +227,14 @@ Rationale:
 
 This removes the actual production duplication while minimizing rendering changes.
 
-### Phase 4: Delete Manual Parser
+### Step 4: Delete Manual Parser
 
-Tasks:
+Completed:
 
-- Delete `parseDashboardPath` or keep it only as a test helper if absolutely needed.
-- Remove tests that assert manual pathname parsing.
-- Replace them with route spec/router match tests.
-- Update imports.
+- Deleted `parseDashboardPath`.
+- Removed tests that asserted manual pathname parsing.
+- Replaced them with route spec/router match tests.
+- Updated imports.
 
 Validation:
 
@@ -340,8 +334,8 @@ Add or update tests for:
 
 Mitigations:
 
-- Keep Phase 1 and Phase 2 behavior-preserving.
-- Use adapter tests before switching `App.tsx`.
+- Keep route-spec and adapter changes behavior-preserving.
+- Use adapter tests before changing route consumers.
 - Keep URL shapes unchanged.
 - Prefer one route surface at a time if the implementation gets large.
 
@@ -353,3 +347,15 @@ Mitigations:
 - Prompt and run details modal routes still deep-link.
 - Typecheck, tests, and dashboard build pass.
 
+## Implementation Notes
+
+Implemented files:
+
+- `src/dashboard/web/src/route-spec.ts` is the route source of truth for path templates and encoded path builders.
+- `src/dashboard/web/src/router-factory.ts` creates the TanStack route tree from `route-spec.ts` without importing `App.tsx`, so unit tests can instantiate the router without loading CSS-bearing UI components.
+- `src/dashboard/web/src/router.tsx` now only binds `App` to the shared router factory.
+- `src/dashboard/web/src/dashboard-routes.ts` keeps the route-state union and selector helpers, but derives route state from router matches via `dashboardRouteStateFromMatches`.
+- `tests/unit/dashboard-routes.test.ts` verifies route declarations, builders, router matches, encoded params, prompt routes, run details routes, and legacy `?workflow=` behavior.
+- `tests/e2e/dashboard.spec.js` covers workflow deep-links, prompt modal deep-links with back/forward, and run details/step/agent deep-links.
+
+Optional route-aware `App.tsx` component extraction was not done in this pass. After replacing the parser, the route-facing code remained localized enough that extracting `WorkflowRouteView`, `RunRouteView`, or modal bridge components would be cleanup rather than required migration work.

@@ -1,4 +1,5 @@
 import type { DashboardCapabilities } from './types'
+import { dashboardRouteSpec } from './route-spec'
 
 export type DashboardRouteState =
   | { kind: 'home' }
@@ -21,44 +22,59 @@ export const defaultDashboardCapabilities: DashboardCapabilities = {
   requiresAuth: true,
 }
 
-function decodeSegment(value: string | undefined): string {
-  if (!value) return ''
-  try {
-    return decodeURIComponent(value)
-  } catch {
-    return value
-  }
+export type DashboardRouteMatch = {
+  fullPath?: string
+  params?: Record<string, unknown>
 }
 
-export function parseDashboardPath(pathname: string): DashboardRouteState {
-  const segments = pathname.split('/').filter(Boolean)
-  if (segments.length === 0) return { kind: 'home' }
-  if (segments[0] === 'workflows') {
-    if (segments.length === 1) return { kind: 'workflows' }
-    const workflowId = decodeSegment(segments[1])
-    if (segments[2] === 'steps' && segments[3]) {
-      return { kind: 'workflow-step', workflowId, stepId: decodeSegment(segments[3]) }
-    }
-    if (segments[2] === 'prompts') {
-      const stepId = decodeSegment(segments[3])
-      return stepId
-        ? { kind: 'workflow-prompts', workflowId, stepId }
-        : { kind: 'workflow-prompts', workflowId }
-    }
-    return { kind: 'workflow', workflowId }
-  }
-  if (segments[0] === 'runs') {
-    if (segments.length === 1) return { kind: 'runs' }
-    const runId = decodeSegment(segments[1])
-    if (segments[2] === 'details') return { kind: 'run-details', runId }
-    if (segments[2] === 'steps' && segments[3]) {
-      const stepId = decodeSegment(segments[3])
-      if (segments[4] === 'agents' && segments[5]) {
-        return { kind: 'run-agent', runId, stepId, agent: decodeSegment(segments[5]) }
+function routeParam(match: DashboardRouteMatch, key: string): string {
+  const value = match.params?.[key]
+  return typeof value === 'string' ? value : ''
+}
+
+export function dashboardRouteStateFromMatches(matches: readonly DashboardRouteMatch[]): DashboardRouteState {
+  const match = [...matches].reverse().find((candidate) => typeof candidate.fullPath === 'string') || null
+  if (!match) return { kind: 'home' }
+  switch (match.fullPath) {
+    case dashboardRouteSpec.home.fullPath:
+      return { kind: 'home' }
+    case dashboardRouteSpec.workflows.fullPath:
+      return { kind: 'workflows' }
+    case dashboardRouteSpec.workflow.fullPath:
+      return { kind: 'workflow', workflowId: routeParam(match, 'workflowId') }
+    case dashboardRouteSpec.workflowStep.fullPath:
+      return {
+        kind: 'workflow-step',
+        workflowId: routeParam(match, 'workflowId'),
+        stepId: routeParam(match, 'stepId'),
       }
-      return { kind: 'run-step', runId, stepId }
-    }
-    return { kind: 'run', runId }
+    case dashboardRouteSpec.workflowPrompts.fullPath:
+      return { kind: 'workflow-prompts', workflowId: routeParam(match, 'workflowId') }
+    case dashboardRouteSpec.workflowPromptStep.fullPath:
+      return {
+        kind: 'workflow-prompts',
+        workflowId: routeParam(match, 'workflowId'),
+        stepId: routeParam(match, 'stepId'),
+      }
+    case dashboardRouteSpec.runs.fullPath:
+      return { kind: 'runs' }
+    case dashboardRouteSpec.run.fullPath:
+      return { kind: 'run', runId: routeParam(match, 'runId') }
+    case dashboardRouteSpec.runDetails.fullPath:
+      return { kind: 'run-details', runId: routeParam(match, 'runId') }
+    case dashboardRouteSpec.runStep.fullPath:
+      return {
+        kind: 'run-step',
+        runId: routeParam(match, 'runId'),
+        stepId: routeParam(match, 'stepId'),
+      }
+    case dashboardRouteSpec.runAgent.fullPath:
+      return {
+        kind: 'run-agent',
+        runId: routeParam(match, 'runId'),
+        stepId: routeParam(match, 'stepId'),
+        agent: routeParam(match, 'agent'),
+      }
   }
   return { kind: 'home' }
 }

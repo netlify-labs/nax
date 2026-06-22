@@ -35,8 +35,8 @@ import { WorkflowControls } from './components/WorkflowControls'
 import { WorkflowList } from './components/WorkflowList'
 import { WorkflowPromptModal } from './components/WorkflowPromptModal'
 import {
+  dashboardRouteStateFromMatches,
   defaultDashboardCapabilities,
-  parseDashboardPath,
   routePromptStepId,
   routeRunId,
   routeRunStepId,
@@ -49,6 +49,7 @@ import { invalidateDashboardLists, invalidateRunViews, sameRun, upsertRunInDashb
 import { useCancelWorkflowRunMutation, useDryRunWorkflowMutation, useStartWorkflowRunMutation } from './queries/dashboard-mutations'
 import { useDashboardHealthQuery, useRunGraphQuery, useRunsQuery, useWorkflowGraphQuery, useWorkflowsQuery } from './queries/dashboard-queries'
 import { applyRunnerEventToDashboardCache } from './queries/query-event-bridge'
+import { dashboardRouteSpec } from './route-spec'
 import { projectWorkflowGraph, workflowGraphNodeByStepId } from './run-projection'
 import { recordValue } from './run-format'
 import type { RunDetailsSelector } from './run-details-selection'
@@ -210,8 +211,7 @@ function NetlifyLogo() {
 export default function App() {
   const queryClient = useQueryClient()
   const navigate = useNavigate()
-  const pathname = useRouterState({ select: (state) => state.location.pathname })
-  const routeState = useMemo(() => parseDashboardPath(pathname), [pathname])
+  const routeState = useRouterState({ select: (state) => dashboardRouteStateFromMatches(state.matches) })
   const routedWorkflowId = routeWorkflowId(routeState)
   const selectedRunId = routeRunId(routeState)
   const legacyWorkflowId = useMemo(() => legacyWorkflowFromUrl(), [])
@@ -307,42 +307,42 @@ export default function App() {
 
   const navigateWorkflow = useCallback((workflowId: string, replace = false) => {
     if (!workflowId) return
-    void navigate({ to: '/workflows/$workflowId', params: { workflowId }, replace })
+    void navigate({ to: dashboardRouteSpec.workflow.fullPath, params: { workflowId }, replace })
   }, [navigate])
 
   const navigateWorkflowStep = useCallback((workflowId: string, stepId: string, replace = false) => {
     if (!workflowId || !stepId) return
-    void navigate({ to: '/workflows/$workflowId/steps/$stepId', params: { workflowId, stepId }, replace })
+    void navigate({ to: dashboardRouteSpec.workflowStep.fullPath, params: { workflowId, stepId }, replace })
   }, [navigate])
 
   const navigateWorkflowPrompts = useCallback((workflowId: string, replace = false) => {
     if (!workflowId) return
-    void navigate({ to: '/workflows/$workflowId/prompts', params: { workflowId }, replace })
+    void navigate({ to: dashboardRouteSpec.workflowPrompts.fullPath, params: { workflowId }, replace })
   }, [navigate])
 
   const navigateWorkflowPromptStep = useCallback((workflowId: string, stepId: string, replace = false) => {
     if (!workflowId || !stepId) return
-    void navigate({ to: '/workflows/$workflowId/prompts/$stepId', params: { workflowId, stepId }, replace })
+    void navigate({ to: dashboardRouteSpec.workflowPromptStep.fullPath, params: { workflowId, stepId }, replace })
   }, [navigate])
 
   const navigateRun = useCallback((runId: string, replace = false) => {
     if (!runId) return
-    void navigate({ to: '/runs/$runId', params: { runId }, replace })
+    void navigate({ to: dashboardRouteSpec.run.fullPath, params: { runId }, replace })
   }, [navigate])
 
   const navigateRunDetails = useCallback((runId: string, replace = false) => {
     if (!runId) return
-    void navigate({ to: '/runs/$runId/details', params: { runId }, replace })
+    void navigate({ to: dashboardRouteSpec.runDetails.fullPath, params: { runId }, replace })
   }, [navigate])
 
   const navigateRunStep = useCallback((runId: string, stepId: string, replace = false) => {
     if (!runId || !stepId) return
-    void navigate({ to: '/runs/$runId/steps/$stepId', params: { runId, stepId }, replace })
+    void navigate({ to: dashboardRouteSpec.runStep.fullPath, params: { runId, stepId }, replace })
   }, [navigate])
 
   const navigateRunAgent = useCallback((runId: string, stepId: string, agent: string, replace = false) => {
     if (!runId || !stepId || !agent) return
-    void navigate({ to: '/runs/$runId/steps/$stepId/agents/$agent', params: { runId, stepId, agent }, replace })
+    void navigate({ to: dashboardRouteSpec.runAgent.fullPath, params: { runId, stepId, agent }, replace })
   }, [navigate])
 
   const selectWorkflowDefinition = useCallback((id: string) => {

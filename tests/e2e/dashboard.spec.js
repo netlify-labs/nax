@@ -35,6 +35,15 @@ function tmpRoot() {
 }
 
 /**
+ * @param {string} baseUrl
+ * @param {string} routePath
+ * @returns {string}
+ */
+function dashboardRouteUrl(baseUrl, routePath) {
+  return new URL(routePath, `${baseUrl}/`).toString()
+}
+
+/**
  * @param {string} color
  * @returns {{ red: number, green: number, blue: number, alpha: number }}
  */
@@ -290,6 +299,44 @@ test('dashboard dry-run simulation updates step, model pill, and output without 
   })
 })
 
+test('dashboard deep-links workflow routes and prompt modal routes', async ({ page }) => {
+  await page.setViewportSize({ width: 1360, height: 860 })
+  await page.goto(instance.url, { waitUntil: 'networkidle' })
+  await expect(page.getByRole('heading', { name: 'Netlify Agent Executor' })).toBeVisible()
+
+  await page.goto(dashboardRouteUrl(instance.url, '/workflows/review'), { waitUntil: 'networkidle' })
+
+  await expect(page).toHaveURL(/\/workflows\/review$/)
+  await expect(page.locator('.workflow-node')).toHaveCount(3)
+  await expect(page.locator('.inspector').getByRole('heading', { name: 'Review' })).toBeVisible()
+
+  await page.goto(dashboardRouteUrl(instance.url, '/workflows/review/steps/cross-review'), { waitUntil: 'networkidle' })
+  await expect(page).toHaveURL(/\/workflows\/review\/steps\/cross-review$/)
+  await expect(page.locator('.workflow-node.selected').getByRole('heading', { name: 'Cross Review' })).toBeVisible()
+  await expect(page.locator('.inspector').getByRole('heading', { name: 'Cross Review' })).toBeVisible()
+
+  await page.goto(dashboardRouteUrl(instance.url, '/workflows/review/prompts/cross-review'), { waitUntil: 'networkidle' })
+  const promptDialog = page.getByRole('dialog', { name: /"Review" prompt sequence/ })
+  await expect(promptDialog).toBeVisible()
+  await expect(promptDialog.getByRole('heading', { name: 'Step 2: Cross Review' })).toBeVisible()
+
+  await page.goto(dashboardRouteUrl(instance.url, '/workflows/review/prompts/synthesize'), { waitUntil: 'networkidle' })
+  await expect(page).toHaveURL(/\/workflows\/review\/prompts\/synthesize$/)
+  await expect(promptDialog.getByRole('heading', { name: 'Step 3: Summarize Consensus' })).toBeVisible()
+
+  await page.goBack()
+  await expect(page).toHaveURL(/\/workflows\/review\/prompts\/cross-review$/)
+  await expect(promptDialog.getByRole('heading', { name: 'Step 2: Cross Review' })).toBeVisible()
+
+  await page.goForward()
+  await expect(page).toHaveURL(/\/workflows\/review\/prompts\/synthesize$/)
+  await expect(promptDialog.getByRole('heading', { name: 'Step 3: Summarize Consensus' })).toBeVisible()
+
+  await page.keyboard.press('Escape')
+  await expect(promptDialog).toBeHidden()
+  await expect(page).toHaveURL(/\/workflows\/review\/steps\/synthesize$/)
+})
+
 test('run details timeline shows all configured agents for running steps', async ({ page }) => {
   const projectRoot = tmpRoot()
   const runId = writeRunningRunFixture(projectRoot)
@@ -317,6 +364,45 @@ test('run details timeline shows all configured agents for running steps', async
     await expect(timeline.locator('.run-details-timeline-child-button').filter({ hasText: 'Codex - Queued' })).toBeVisible()
     await expect(timeline.locator('.run-details-timeline-card').filter({ hasText: '"Security Audit" Workflow Queued' })).toContainText('Queued')
     await expect(timeline.locator('.run-details-timeline-card').filter({ hasText: '"Security Audit" Workflow Queued' })).not.toContainText('click to view results')
+  } finally {
+    await server.close()
+  }
+})
+
+test('dashboard deep-links run details modal routes', async ({ page }) => {
+  const projectRoot = tmpRoot()
+  const runId = writeCompletedRunFixture(projectRoot)
+  const server = await startDashboardServer({
+    projectRoot,
+    initialWorkflow: 'review',
+  })
+
+  try {
+    await page.setViewportSize({ width: 1360, height: 860 })
+    await page.goto(server.url, { waitUntil: 'networkidle' })
+    await expect(page.getByRole('heading', { name: 'Netlify Agent Executor' })).toBeVisible()
+
+    await page.goto(dashboardRouteUrl(server.url, `/runs/${runId}/details`), { waitUntil: 'networkidle' })
+
+    const detailsDialog = page.getByRole('dialog', { name: /Workflow results for "Review"/ })
+    await expect(detailsDialog).toBeVisible()
+    await expect(detailsDialog.getByRole('heading', { name: 'Review summary' })).toBeVisible()
+    await expect(page).toHaveURL(new RegExp(`/runs/${runId}/details$`))
+
+    await page.goto(dashboardRouteUrl(server.url, `/runs/${runId}/steps/review`), { waitUntil: 'networkidle' })
+    await expect(detailsDialog).toBeVisible()
+    await expect(detailsDialog.getByText('No saved step details were found for this workflow step.')).toBeVisible()
+    await expect(page).toHaveURL(new RegExp(`/runs/${runId}/steps/review$`))
+
+    await page.goto(dashboardRouteUrl(server.url, `/runs/${runId}/steps/review/agents/codex`), { waitUntil: 'networkidle' })
+    await expect(detailsDialog).toBeVisible()
+    await expect(detailsDialog.getByRole('heading', { name: 'Codex result' })).toBeVisible()
+    await expect(detailsDialog.getByText('Final result text.')).toBeVisible()
+    await expect(page).toHaveURL(new RegExp(`/runs/${runId}/steps/review/agents/codex$`))
+
+    await page.goBack()
+    await expect(page).toHaveURL(new RegExp(`/runs/${runId}/steps/review$`))
+    await expect(detailsDialog.getByText('No saved step details were found for this workflow step.')).toBeVisible()
   } finally {
     await server.close()
   }

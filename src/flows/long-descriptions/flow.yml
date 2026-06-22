@@ -1,0 +1,54 @@
+id: long-descriptions
+title: Long Descriptions
+description: Dashboard layout stress flow with deliberately long step descriptions.
+
+defaults:
+  transport: auto
+  notify: false
+  agents:
+    - claude
+    - gemini
+    - codex
+
+steps:
+  - id: collect-context
+    title: Collect Context With A Description That Wraps
+    description: Collect enough project context to make the workflow node grow taller than the normal compact card. This intentionally verbose copy should wrap across several lines in the dashboard, leaving enough vertical breathing room before the next React Flow node starts.
+    prompt: prompts/1_collect-context.md
+    action: issue
+    submit: new-run
+    agents:
+      - claude
+      - gemini
+      - codex
+    waitFor: agent-results
+
+  - id: compare-findings
+    title: Compare Findings
+    description: Compare the first pass from every agent, call out disagreements, preserve useful nuance, and keep enough descriptive text here to stress the layout again. The next card should sit below this one with a clear minimum gap even when the description wraps into a dense paragraph.
+    prompt: prompts/2_compare-findings.md
+    action: comment
+    submit: follow-up
+    agents:
+      - claude
+      - gemini
+      - codex
+    input:
+      - step: collect-context
+        results: all
+    waitFor: agent-results
+
+  - id: summarize-layout-check
+    title: Summarize Layout Check
+    description: Synthesize the layout stress results into a compact note, while still using a deliberately long description so this final node confirms that generated graph positions continue accumulating height instead of returning to a fixed step interval.
+    prompt: prompts/3_summarize-layout-check.md
+    action: issue
+    submit: new-run
+    agents:
+      - codex
+    input:
+      - step: collect-context
+        results: all
+      - step: compare-findings
+        results: all
+    waitFor: agent-results

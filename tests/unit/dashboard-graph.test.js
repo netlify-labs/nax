@@ -42,6 +42,28 @@ test('flowToGraph adds sequential fallback edges for steps without explicit inpu
   assert.equal(graph.edges[0].data.implicit, true)
 })
 
+test('flowToGraph spaces the next node after long descriptions', () => {
+  const flow = {
+    id: 'long-description',
+    title: 'Long Description',
+    steps: [
+      {
+        id: 'one',
+        title: 'One',
+        description: 'React to adversarial scores, concede valid criticism, defend strong ideas, and identify blind spots. '.repeat(8),
+        agents: ['claude', 'gemini', 'codex'],
+        submit: 'follow-up',
+      },
+      { id: 'two', title: 'Two', agents: ['codex'], submit: 'new-run' },
+    ],
+  }
+
+  const graph = flowToGraph({ flow })
+
+  assert.equal(graph.nodes[0].position.y, 0)
+  assert.ok(graph.nodes[1].position.y > 220)
+})
+
 test('flowToGraph filters agents without mutating original flow', async () => {
   const flow = await loadFlow('review')
   const originalAgents = flow.steps[0].agents.slice()

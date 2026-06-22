@@ -1,5 +1,21 @@
 const { isHumanReviewStep, loadStepPrompt } = require('../../flows')
 
+const WORKFLOW_NODE_LAYOUT = {
+  width: 300,
+  verticalGap: 36,
+  headerHeight: 74,
+  titleLineHeight: 20,
+  descriptionCharsPerLine: 38,
+  descriptionLineHeight: 19,
+  descriptionPaddingTop: 12,
+  agentRowPadding: 24,
+  agentRowGap: 8,
+  agentChipHeight: 28,
+  agentChipGap: 8,
+  agentChipBaseWidth: 40,
+  agentChipCharacterWidth: 7,
+}
+
 function normalizeSelectedAgents(selectedAgents) {
   if (!Array.isArray(selectedAgents)) return null
   const normalized = selectedAgents.map((agent) => String(agent || '').trim()).filter(Boolean)
@@ -145,6 +161,82 @@ function reduceTransitiveEdges(edges = []) {
   return edges.filter((edge) => !hasPath(edges, edge.source, edge.target, edge.id))
 }
 
+/** @param {string} value */
+function titleCase(value) {
+  return value.replace(/(^|-)([a-z])/g, (_match, prefix, char) => `${prefix}${char.toUpperCase()}`)
+}
+
+/**
+ * @param {string} text
+ * @param {number} charsPerLine
+ * @returns {number}
+ */
+function estimatedLineCount(text, charsPerLine) {
+  const normalized = String(text || '').replace(/\s+/g, ' ').trim()
+  if (!normalized) return 0
+  return Math.max(1, Math.ceil(normalized.length / charsPerLine))
+}
+
+/**
+ * @param {string} agent
+ * @returns {number}
+ */
+function estimatedAgentChipWidth(agent) {
+  return WORKFLOW_NODE_LAYOUT.agentChipBaseWidth + titleCase(String(agent || '')).length * WORKFLOW_NODE_LAYOUT.agentChipCharacterWidth
+}
+
+/**
+ * @param {string[]} agents
+ * @returns {number}
+ */
+function estimatedAgentRowCount(agents = []) {
+  const availableWidth = WORKFLOW_NODE_LAYOUT.width - WORKFLOW_NODE_LAYOUT.agentRowPadding
+  const chipWidths = agents.length > 0 ? agents.map(estimatedAgentChipWidth) : [118]
+  let rows = 1
+  let rowWidth = 0
+
+  for (const chipWidth of chipWidths) {
+    const nextWidth = rowWidth > 0
+      ? rowWidth + WORKFLOW_NODE_LAYOUT.agentChipGap + chipWidth
+      : chipWidth
+    if (rowWidth > 0 && nextWidth > availableWidth) {
+      rows += 1
+      rowWidth = chipWidth
+    } else {
+      rowWidth = nextWidth
+    }
+  }
+
+  return rows
+}
+
+/**
+ * Estimate the custom React Flow node height before the browser measures it.
+ * React Flow positions nodes from the supplied coordinates; it does not reserve
+ * spacing for taller custom-node content by itself.
+ *
+ * @param {import('../../types').WorkflowStep | Record<string, unknown>} step
+ * @param {string[]} agents
+ * @returns {number}
+ */
+function estimatedWorkflowNodeHeight(step = {}, agents = []) {
+  const title = String(step.title || step.id || '')
+  const description = String(step.description || '')
+  const titleLines = estimatedLineCount(title, 30) || 1
+  const descriptionLines = estimatedLineCount(description, WORKFLOW_NODE_LAYOUT.descriptionCharsPerLine)
+  const agentRows = estimatedAgentRowCount(agents)
+
+  const titleOverflowHeight = Math.max(0, titleLines - 1) * WORKFLOW_NODE_LAYOUT.titleLineHeight
+  const descriptionHeight = descriptionLines > 0
+    ? WORKFLOW_NODE_LAYOUT.descriptionPaddingTop + descriptionLines * WORKFLOW_NODE_LAYOUT.descriptionLineHeight
+    : 0
+  const agentRowsHeight = WORKFLOW_NODE_LAYOUT.agentRowPadding +
+    agentRows * WORKFLOW_NODE_LAYOUT.agentChipHeight +
+    Math.max(0, agentRows - 1) * WORKFLOW_NODE_LAYOUT.agentRowGap
+
+  return Math.ceil(WORKFLOW_NODE_LAYOUT.headerHeight + titleOverflowHeight + descriptionHeight + agentRowsHeight)
+}
+
 /**
  * Convert a Nax workflow definition into React Flow nodes and edges.
  *
@@ -190,14 +282,17 @@ function flowToGraph(options = {}) {
     .filter((item) => isHumanReviewStep(item.step) || item.agents.length > 0)
   const runnableIds = new Set(runnableSteps.map((item) => item.step.id))
 
+  let nextNodeY = 0
   const nodes = runnableSteps.map(({ step, index, agents }, graphIndex) => {
     const prompt = stepPrompt(step, flow)
+    const y = nextNodeY
+    nextNodeY += estimatedWorkflowNodeHeight(step, agents) + WORKFLOW_NODE_LAYOUT.verticalGap
     return {
       id: step.id,
       type: 'workflowStep',
       position: {
         x: 0,
-        y: graphIndex * 220,
+        y,
       },
       data: {
         kind: 'workflow-step',

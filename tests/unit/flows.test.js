@@ -55,6 +55,7 @@ test('listFlows discovers flow directories', async () => {
   const ids = flows.map((flow) => flow.id)
   for (const id of [
     'review',
+    'long-descriptions',
     'ideas',
     'do-next',
     'security-audit',

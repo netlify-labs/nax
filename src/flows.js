@@ -26,6 +26,7 @@ const ALLOWED_STEP_SUBMITS = ['new-run', 'follow-up', HUMAN_REVIEW_SUBMIT]
 const FLOW_PICKER_ORDER = [
   'review',
   'human-review-example',
+  'long-descriptions',
   'ideas',
   'do-next',
   'security-audit',

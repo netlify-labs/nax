@@ -5,6 +5,14 @@ function sessionToken(): string {
   return params.get('token') || ''
 }
 
+function stripSessionTokenFromUrl(): void {
+  if (!sessionToken()) return
+  const url = new URL(window.location.href)
+  url.searchParams.delete('token')
+  const nextUrl = `${url.pathname}${url.search}${url.hash}`
+  window.history.replaceState(window.history.state, '', nextUrl)
+}
+
 function authHeaders(): Record<string, string> {
   const token = sessionToken()
   return token ? { 'x-nax-token': token } : {}
@@ -38,6 +46,7 @@ async function fetchJson<T>(path: string, init: RequestInit = {}, retryOnUnautho
     const message = payload?.error?.message || `Request failed with ${response.status}`
     throw new Error(message)
   }
+  stripSessionTokenFromUrl()
   return payload as T
 }
 

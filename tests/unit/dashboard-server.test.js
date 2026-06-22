@@ -378,6 +378,18 @@ test('dashboard server serves built static assets when dist exists', async () =>
     assert.equal(script.statusCode, 200)
     assert.match(String(script.headers['content-type']), /text\/javascript/)
     assert.equal(script.body, 'console.log("ok")\n')
+
+    const spaRoute = await requestText(`${base}/runs/example`)
+    assert.equal(spaRoute.statusCode, 200)
+    assert.match(spaRoute.body, /assets\/app\.js/)
+
+    const missingAsset = await requestJson(`${base}/assets/missing.js`)
+    assert.equal(missingAsset.statusCode, 404)
+    assert.equal(missingAsset.payload.error.code, 'not_found')
+
+    const missingFile = await requestJson(`${base}/favicon.ico`)
+    assert.equal(missingFile.statusCode, 404)
+    assert.equal(missingFile.payload.error.code, 'not_found')
   } finally {
     await server.close()
   }

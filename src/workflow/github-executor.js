@@ -331,7 +331,6 @@ async function executeGithubFlow({ flow, steps, options, runState, completedStep
     runState.steps.push(stepState)
     saveRunState(runState)
     runtimeEvents?.stepStatus('running', stepState, step)
-    runtimeEvents?.stepStatus('running', stepState, step)
 
     const sourceIssues = sourceIssueNumbersForStep(step, completedStepStates).join(',')
     const recoveryIssues = step.action === 'comment' ? (options.fromIssues || options.fromIssue || options.issues || options.issue || '') : ''

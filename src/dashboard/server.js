@@ -1093,6 +1093,8 @@ function staticFileForPath(distDir, pathname) {
     return ''
   }
   if (fs.existsSync(resolved) && fs.statSync(resolved).isFile()) return resolved
+  const assetLikePath = pathname === '/assets' || pathname.startsWith('/assets/') || path.extname(pathname) !== ''
+  if (assetLikePath) return ''
   const indexPath = path.join(distDir, 'index.html')
   if (fs.existsSync(indexPath)) return indexPath
   return ''

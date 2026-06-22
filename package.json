@@ -30,6 +30,7 @@
     "dashboard:build": "vite build --config src/dashboard/web/vite.config.mjs",
     "dashboard:preview": "vite preview --config src/dashboard/web/vite.config.mjs",
     "dashboard:smoke": "playwright test tests/e2e/dashboard.spec.js",
+    "prepare": "npm run dashboard:build",
     "prepack": "npm run dashboard:build",
     "test": "node --import tsx --test tests/unit/*.test.js tests/unit/*.test.ts tests/integration/*.test.js",
     "publish": "git push origin && git push origin --tags",

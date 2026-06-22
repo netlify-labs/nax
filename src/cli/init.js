@@ -64,12 +64,8 @@ function printInitResult(result, { dryRun = false } = {}) {
   const prefix = dryRun ? 'Would initialize' : 'Initialized'
   console.log(`${prefix}: ${result.projectRoot}`)
   if (result.repo) console.log(`GitHub repo: ${result.repo}`)
-  if (result.netlify.siteId) {
-    console.log(`Netlify site ID: ${result.netlify.siteId}`)
-  } else if (result.netlify.siteName) {
-    console.log(`Netlify project: ${result.netlify.siteName}`)
-  }
-  if (result.netlify.siteName && result.netlify.siteId) console.log(`Netlify project: ${result.netlify.siteName}`)
+  if (result.netlify.siteId) console.log(`Netlify site ID: ${result.netlify.siteId}`)
+  if (result.netlify.siteName) console.log(`Netlify project: ${result.netlify.siteName}`)
   if (result.netlify.siteUrl) console.log(`Netlify URL: ${result.netlify.siteUrl}`)
   if (result.netlify.adminUrl) console.log(`Netlify admin: ${result.netlify.adminUrl}`)
   if (result.netlify.accountName || result.netlify.accountEmail) {

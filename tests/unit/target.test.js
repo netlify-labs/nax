@@ -24,9 +24,7 @@ function makeRepo() {
   git(tmp, ['init', '-b', 'main'])
   git(tmp, ['config', 'user.email', 'test@example.com'])
   git(tmp, ['config', 'user.name', 'Test User'])
-  fs.writeFileSync(path.join(tmp, 'README.md'), 'one\n')
-  git(tmp, ['add', 'README.md'])
-  git(tmp, ['commit', '-m', 'initial'])
+  git(tmp, ['commit', '--allow-empty', '-m', 'initial'])
   return tmp
 }
 

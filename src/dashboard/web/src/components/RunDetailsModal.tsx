@@ -1292,7 +1292,14 @@ function RunDetailsMetadata({
         <MetadataRow label="Target" value={targetLabel(run?.target)} />
         <MetadataRow label="Target SHA" value={run?.target?.sha || ''} />
         <MetadataRow label="Target Caveats" value={targetCaveats(run?.target)} />
-        <MetadataRow label="Run ID" value={runId(run || {})} onClick={runDir ? openRunDir : undefined} loading={openingRunDir} />
+        <MetadataRow
+          label="Run ID"
+          value={runId(run || {})}
+          onClick={runDir ? openRunDir : undefined}
+          loading={openingRunDir}
+          copyValue={runDir}
+          copyLabel="Copy folder path"
+        />
         {runDirError ? <Text size="xs" c="red">{runDirError}</Text> : null}
         <MetadataRow label="Runner ID" value={section?.runnerId || liveContext?.runnerId || ''} />
         <MetadataRow label="Session ID" value={section?.sessionId || liveContext?.sessionId || ''} href={sessionLink} />
@@ -1307,28 +1314,61 @@ function MetadataRow({
   href,
   onClick,
   loading,
+  copyValue,
+  copyLabel = 'Copy value',
 }: {
   label: string
   value: string
   href?: string
   onClick?: () => void
   loading?: boolean
+  copyValue?: string
+  copyLabel?: string
 }) {
+  const [copied, setCopied] = useState(false)
+  const [copyError, setCopyError] = useState('')
+
+  const copyValueToClipboard = async () => {
+    if (!copyValue) return
+    setCopyError('')
+    try {
+      await copyTextToClipboard(copyValue)
+      setCopied(true)
+      window.setTimeout(() => setCopied(false), 1200)
+    } catch (err) {
+      setCopyError(err instanceof Error ? err.message : String(err))
+    }
+  }
+
   if (!value) return null
+  const content = href ? (
+    <Anchor href={href} target="_blank" rel="noreferrer" size="xs" className="field-value">
+      {value}
+    </Anchor>
+  ) : onClick ? (
+    <Anchor component="button" type="button" onClick={onClick} size="xs" className="field-value">
+      {loading ? 'Opening...' : value}
+    </Anchor>
+  ) : (
+    <Text size="xs" className="field-value">{value}</Text>
+  )
+
   return (
     <Box>
       <Text size="10px" c="dimmed" fw={800} tt="uppercase">{label}</Text>
-      {href ? (
-        <Anchor href={href} target="_blank" rel="noreferrer" size="xs" className="field-value">
-          {value}
-        </Anchor>
-      ) : onClick ? (
-        <Anchor component="button" type="button" onClick={onClick} size="xs" className="field-value">
-          {loading ? 'Opening...' : value}
-        </Anchor>
+      {copyValue ? (
+        <Group gap={4} wrap="nowrap" align="center">
+          {content}
+          <Tooltip label={copied ? 'Copied' : copyLabel}>
+            <ActionIcon aria-label={copyLabel} variant="subtle" color="gray" size="sm" onClick={copyValueToClipboard}>
+              <Files size={14} />
+            </ActionIcon>
+          </Tooltip>
+        </Group>
       ) : (
-        <Text size="xs" className="field-value">{value}</Text>
+        content
       )}
+      {copyError ? <Text size="xs" c="red" mt={4}>{copyError}</Text> : null}
     </Box>
   )
 }

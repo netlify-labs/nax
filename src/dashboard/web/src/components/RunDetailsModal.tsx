@@ -40,6 +40,9 @@ type StepItem = {
   status: string
   sourceType: string
   agents: string[]
+  promptMarkdown: string
+  promptPath: string
+  promptTitle: string
   agentRuns: Record<string, {
     status: string
     runnerId: string
@@ -113,14 +116,25 @@ function buildStepItems(
 ): StepItem[] {
   const stepSections = details?.sections.filter((section) => section.kind === 'step') || []
   const sectionByStepId = new Map(stepSections.map((section) => [section.stepId || section.id, section]))
+  const savedSteps = Array.isArray(run?.steps) ? run.steps : []
+  const savedStepById = new Map<string, Record<string, unknown>>()
+  savedSteps.forEach((step, index) => {
+    const id = recordValue(step, 'id') || `step-${index + 1}`
+    savedStepById.set(id, step)
+  })
   const items: StepItem[] = []
   const seen = new Set<string>()
 
-  ;(run?.steps || []).forEach((step, index) => {
-    const id = recordValue(step, 'id') || `step-${index + 1}`
+  const appendStep = (
+    step: Record<string, unknown>,
+    index: number,
+    definition: RunDetailsResponse['details']['workflowSteps'][number] | null = null,
+  ) => {
+    const id = recordValue(step, 'id') || definition?.id || `step-${index + 1}`
+    const savedStep = savedStepById.get(id) || step
     const section = sectionByStepId.get(id)
     const agentRuns: StepItem['agentRuns'] = {}
-    const runs = Array.isArray(step.runs) ? step.runs : []
+    const runs = Array.isArray(savedStep.runs) ? savedStep.runs : []
     runs.forEach((runRecord) => {
       if (!runRecord || typeof runRecord !== 'object') return
       const record = runRecord as Record<string, unknown>
@@ -144,7 +158,10 @@ function buildStepItems(
         lastEventAt: recordValue(record, 'lastEventAt') || recordValue(record, 'updatedAt') || recordValue(record, 'createdAt'),
       }
     })
-    const agents = recordList(step, 'agents')
+    const agents = recordList(savedStep, 'agents')
+    for (const agent of definition?.agents || []) {
+      if (!agents.includes(agent)) agents.push(agent)
+    }
     runs.forEach((runRecord) => {
       if (!runRecord || typeof runRecord !== 'object') return
       const agent = recordValue(runRecord as Record<string, unknown>, 'agent')
@@ -154,7 +171,7 @@ function buildStepItems(
       agents.push(liveContext.selector.agent)
     }
     const statusInput = {
-      status: recordValue(step, 'status') || section?.status || 'unknown',
+      status: recordValue(savedStep, 'status') || section?.status || definition?.status || 'pending',
       agents,
       selectedAgents: agents,
       runs: runs.filter((runRecord): runRecord is Record<string, unknown> => (
@@ -178,18 +195,32 @@ function buildStepItems(
         lastEventAt: existing?.lastEventAt || '',
       }
     })
+    const source = savedStep.source && typeof savedStep.source === 'object' && !Array.isArray(savedStep.source)
+      ? savedStep.source as Record<string, unknown>
+      : {}
     items.push({
       id,
-      title: recordValue(step, 'title') || section?.stepTitle || section?.title || id || `Step ${index + 1}`,
+      title: recordValue(savedStep, 'title') || definition?.title || section?.stepTitle || section?.title || id || `Step ${index + 1}`,
       status: displayStepStatus(statusInput, projectedAgentStatuses, selectedAgents),
-      sourceType: step.source && typeof step.source === 'object' && !Array.isArray(step.source)
-        ? recordValue(step.source as Record<string, unknown>, 'type')
-        : '',
+      sourceType: recordValue(source, 'type') || definition?.sourceType || '',
       agents,
+      promptMarkdown: section?.promptMarkdown || definition?.promptMarkdown || '',
+      promptPath: section?.promptPath || definition?.promptPath || '',
+      promptTitle: section?.promptTitle || definition?.promptTitle || '',
       agentRuns,
       section,
     })
     seen.add(id)
+  }
+
+  ;(details?.workflowSteps || []).forEach((definition, index) => {
+    appendStep(savedStepById.get(definition.id) || { id: definition.id }, index, definition)
+  })
+
+  savedSteps.forEach((step, index) => {
+    const id = recordValue(step, 'id') || `step-${index + 1}`
+    if (seen.has(id)) return
+    appendStep(step, items.length)
   })
 
   stepSections.forEach((section) => {
@@ -201,6 +232,9 @@ function buildStepItems(
       status: section.status || 'unknown',
       sourceType: '',
       agents: [],
+      promptMarkdown: section.promptMarkdown || '',
+      promptPath: section.promptPath || '',
+      promptTitle: section.promptTitle || '',
       agentRuns: {},
       section,
     })
@@ -243,6 +277,12 @@ function runInfoLiveContext(step: StepItem, agent: string): RunDetailsLiveContex
   }
 }
 
+function effectiveWorkflowStatus(run: DashboardRun | undefined, steps: StepItem[]): string {
+  const status = run?.status || ''
+  if (!isActiveLiveStatus(status) || steps.length === 0) return status
+  return steps.every((step) => isDoneStatus(step.status)) ? 'completed' : status
+}
+
 function buildTimelineEntries(
   details: RunDetailsResponse['details'] | undefined,
   run: DashboardRun | undefined,
@@ -250,13 +290,14 @@ function buildTimelineEntries(
   liveContext?: RunDetailsLiveContext | null,
 ): TimelineEntry[] {
   if (!details) return []
+  const workflowStatus = effectiveWorkflowStatus(run, steps)
   const sessionSections = details.sections.filter((section) => section.kind === 'session')
   const entries: TimelineEntry[] = [{
     id: 'summary',
     kind: 'summary',
-    title: run ? `"${workflowName(run)}" Workflow ${statusLabel(run.status || '')}` : 'Workflow results',
-    subtitle: isSuccessfulWorkflowStatus(run?.status || '') ? 'click to view results' : statusLabel(run?.status || ''),
-    status: run?.status || '',
+    title: run ? `"${workflowName(run)}" Workflow ${statusLabel(workflowStatus)}` : 'Workflow results',
+    subtitle: isSuccessfulWorkflowStatus(workflowStatus) ? 'click to view results' : statusLabel(workflowStatus),
+    status: workflowStatus,
     path: details.summaryPath || run?.summaryPath || runId(run || {}),
     absolutePath: details.summaryAbsolutePath || '',
     markdown: details.summaryMarkdown,
@@ -275,9 +316,9 @@ function buildTimelineEntries(
       path: step.section?.path || '',
       absolutePath: step.section?.absolutePath || '',
       markdown: step.section?.markdown || '',
-      promptMarkdown: step.section?.promptMarkdown || '',
-      promptPath: step.section?.promptPath || '',
-      promptTitle: step.section?.promptTitle || step.title,
+      promptMarkdown: step.section?.promptMarkdown || step.promptMarkdown,
+      promptPath: step.section?.promptPath || step.promptPath,
+      promptTitle: step.section?.promptTitle || step.promptTitle || step.title,
       stepNumber: index + 1,
       section: step.section,
     })
@@ -292,7 +333,7 @@ function buildTimelineEntries(
       const section = sessionByAgent.get(agent)
       if (section) {
         const runInfo = step.agentRuns[agent]
-        const status = runInfo?.status || section.status
+        const status = isDoneStatus(section.status) ? section.status : runInfo?.status || section.status
         entries.push({
           id: `session:${section.id}`,
           kind: 'session',
@@ -325,9 +366,9 @@ function buildTimelineEntries(
         path: '',
         absolutePath: '',
         markdown: '',
-        promptMarkdown: step.section?.promptMarkdown || '',
-        promptPath: step.section?.promptPath || '',
-        promptTitle: step.section?.promptTitle || step.title,
+        promptMarkdown: step.section?.promptMarkdown || step.promptMarkdown,
+        promptPath: step.section?.promptPath || step.promptPath,
+        promptTitle: step.section?.promptTitle || step.promptTitle || step.title,
         liveContext: context,
       })
     })
@@ -337,8 +378,8 @@ function buildTimelineEntries(
     id: 'final',
     kind: 'final',
     title: details.finalTitle || 'Final result',
-    subtitle: run?.status || 'final',
-    status: run?.status || 'completed',
+    subtitle: workflowStatus || 'final',
+    status: workflowStatus || 'completed',
     path: '',
     absolutePath: '',
     markdown: details.finalMarkdown,
@@ -443,6 +484,7 @@ export function RunDetailsModal({
   const resolvedSelectionKeyRef = useRef('')
   const appliedLiveRevisionRef = useRef('')
   const stepItems = useMemo(() => buildStepItems(details, detailRun, liveContext), [details, detailRun, liveContext])
+  const detailWorkflowStatus = useMemo(() => effectiveWorkflowStatus(detailRun, stepItems), [detailRun, stepItems])
   const timelineEntries = useMemo(
     () => buildTimelineEntries(details, detailRun, stepItems, liveContext),
     [details, detailRun, liveContext, stepItems],
@@ -687,7 +729,13 @@ export function RunDetailsModal({
             </Box>
             <Stack className="run-details-side" gap="md">
               <MarkdownTableOfContents entry={tocEntry} scrollRootRef={markdownScrollRef} />
-              <RunDetailsMetadata run={detailRun} workflowName={detailWorkflowName} section={activeEntry?.section} liveContext={activeEntry?.liveContext} />
+              <RunDetailsMetadata
+                run={detailRun}
+                workflowName={detailWorkflowName}
+                workflowStatus={detailWorkflowStatus}
+                section={activeEntry?.section}
+                liveContext={activeEntry?.liveContext}
+              />
             </Stack>
           </Box>
         </Stack>
@@ -1207,11 +1255,13 @@ function RunDetailsMetadata({
   workflowName: name,
   section,
   liveContext,
+  workflowStatus,
 }: {
   run: DashboardRun | undefined
   workflowName: string
   section?: RunDetailsSection
   liveContext?: RunDetailsLiveContext
+  workflowStatus?: string
 }) {
   const sessionLink = sessionHref(section, liveContext)
   const [openingRunDir, setOpeningRunDir] = useState(false)
@@ -1236,7 +1286,7 @@ function RunDetailsMetadata({
       <Text size="xs" fw={800} c="dimmed" className="run-details-meta-heading">Metadata</Text>
       <Stack gap={10}>
         <MetadataRow label="Workflow" value={name} />
-        <MetadataRow label="Status" value={run?.status || liveContext?.status || 'unknown'} />
+        <MetadataRow label="Status" value={workflowStatus || run?.status || liveContext?.status || 'unknown'} />
         <MetadataRow label="Transport" value={run?.transport || ''} />
         <MetadataRow label="Branch" value={run?.branch || ''} />
         <MetadataRow label="Target" value={targetLabel(run?.target)} />

@@ -262,12 +262,24 @@ export type RunFollowupArtifact = {
   }
 }
 
+export type RunDetailsWorkflowStep = {
+  id: string
+  title: string
+  status: string
+  sourceType: string
+  agents: string[]
+  promptMarkdown: string
+  promptPath: string
+  promptTitle: string
+}
+
 export type RunDetails = {
   summaryPath: string
   summaryAbsolutePath: string
   summaryMarkdown: string
   finalMarkdown: string
   finalTitle: string
+  workflowSteps: RunDetailsWorkflowStep[]
   sections: RunDetailsSection[]
   followupTargets: RunFollowupTarget[]
   followupArtifacts: RunFollowupArtifact[]

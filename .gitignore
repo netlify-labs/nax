@@ -2,7 +2,7 @@ node_modules/
 .nax/
 web/dist/
 .DS_Store
-
+src/dashboard/web/dist/
 # Local Netlify folder
 .netlify
 

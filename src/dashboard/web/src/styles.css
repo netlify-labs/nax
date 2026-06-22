@@ -2,6 +2,19 @@
   box-sizing: border-box;
 }
 
+:root,
+[data-mantine-color-scheme='light'] {
+  /* Lightning CSS rewrites light-dark() in production to these inherited toggles. */
+  --lightningcss-light: initial;
+  --lightningcss-dark: ;
+}
+
+:root[data-mantine-color-scheme='dark'],
+[data-mantine-color-scheme='dark'] {
+  --lightningcss-light: ;
+  --lightningcss-dark: initial;
+}
+
 html,
 body,
 #root {
@@ -1343,11 +1356,11 @@ body {
 }
 
 .workflow-target-handle {
-  top: -18px;
+  top: 0;
 }
 
 .workflow-source-handle {
-  bottom: -18px;
+  bottom: 0;
 }
 
 .react-flow__edge-path {

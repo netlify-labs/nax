@@ -4,6 +4,8 @@ const os = require('os')
 const path = require('path')
 const { startDashboardServer } = require('../../src/dashboard/server')
 
+/** @typedef {import('@playwright/test').Locator} Locator */
+
 let instance
 
 test.beforeAll(async () => {
@@ -32,7 +34,59 @@ function tmpRoot() {
   return fs.mkdtempSync(path.join(os.tmpdir(), 'nax-dashboard-e2e-'))
 }
 
-function writeCompletedRunFixture(projectRoot) {
+/**
+ * @param {string} color
+ * @returns {{ red: number, green: number, blue: number, alpha: number }}
+ */
+function parseCssColor(color) {
+  const values = color.match(/-?\d*\.?\d+/g)?.map(Number) || []
+  return {
+    red: values[0] || 0,
+    green: values[1] || 0,
+    blue: values[2] || 0,
+    alpha: values.length > 3 ? values[3] : 1,
+  }
+}
+
+/**
+ * @param {Locator} locator
+ * @returns {Promise<{ red: number, green: number, blue: number, alpha: number }>}
+ */
+async function computedBackground(locator) {
+  const color = await locator.evaluate((element) => {
+    const view = element.ownerDocument.defaultView
+    return view ? view.getComputedStyle(element).backgroundColor : ''
+  })
+  return parseCssColor(String(color))
+}
+
+/**
+ * @param {{ red: number, green: number, blue: number, alpha: number }} color
+ */
+function expectVisibleTeal(color) {
+  expect(color.alpha).toBeGreaterThan(0.1)
+  expect(color.green).toBeGreaterThan(color.red)
+  expect(color.green).toBeGreaterThan(color.blue)
+}
+
+/**
+ * @param {Locator} locator
+ * @returns {Promise<{ red: number, green: number, blue: number, alpha: number }>}
+ */
+async function computedTextColor(locator) {
+  const color = await locator.evaluate((element) => {
+    const view = element.ownerDocument.defaultView
+    return view ? view.getComputedStyle(element).color : ''
+  })
+  return parseCssColor(String(color))
+}
+
+/**
+ * @param {string} projectRoot
+ * @param {{ staleRunStatus?: string, staleWorkflowStatus?: string }} [options]
+ * @returns {string}
+ */
+function writeCompletedRunFixture(projectRoot, options = {}) {
   const runId = 'fixture-run-details'
   const flowDir = path.join(projectRoot, '.github', 'nax-flows', 'review')
   const dir = path.join(projectRoot, '.nax', 'workflows', runId)
@@ -61,7 +115,7 @@ function writeCompletedRunFixture(projectRoot) {
     runId,
     flowId: 'review',
     flowTitle: 'Review',
-    status: 'completed',
+    status: options.staleWorkflowStatus || 'completed',
     transport: 'netlify-api',
     branch: 'main',
     target: {
@@ -95,7 +149,7 @@ function writeCompletedRunFixture(projectRoot) {
       title: 'Review',
       status: 'completed',
       agents: ['codex'],
-      runs: [{ agent: 'codex', status: 'completed', runnerId: 'runner-1', sessionId: 'session-1' }],
+      runs: [{ agent: 'codex', status: options.staleRunStatus || 'completed', runnerId: 'runner-1', sessionId: 'session-1' }],
     }],
   }, null, 2))
 
@@ -116,7 +170,7 @@ function writeCompletedRunFixture(projectRoot) {
       sessionUrl: 'https://example.test/session-1',
     },
   }, null, 2))
-  fs.writeFileSync(path.join(runnerDir, 'codex.md'), '# Codex result\n\nFinal result text.\n')
+  fs.writeFileSync(path.join(runnerDir, 'codex.md'), '# Codex result\n\n## Findings\n\nFinal result text.\n')
 
   return runId
 }
@@ -192,13 +246,6 @@ function writeRunningRunFixture(projectRoot) {
           },
         }],
       },
-      {
-        id: 'synthesize-security-findings',
-        title: 'Synthesize Security Findings',
-        status: 'pending',
-        agents: ['codex'],
-        runs: [],
-      },
     ],
   }, null, 2))
 
@@ -267,6 +314,7 @@ test('run details timeline shows all configured agents for running steps', async
     await expect(timeline.locator('.run-details-timeline-child-button').filter({ hasText: 'Claude - submitted' })).toBeVisible()
     await expect(timeline.locator('.run-details-timeline-child-button').filter({ hasText: 'Gemini - running' })).toBeVisible()
     await expect(timeline.locator('.run-details-timeline-child-button').filter({ hasText: 'Codex - running' })).toBeVisible()
+    await expect(timeline.locator('.run-details-timeline-card').filter({ hasText: 'Synthesize Security Findings' })).toContainText('queued')
     await expect(timeline.locator('.run-details-timeline-child-button').filter({ hasText: 'Codex - queued' })).toBeVisible()
     await expect(timeline.locator('.run-details-timeline-card').filter({ hasText: '"Security Audit" Workflow Running' })).toContainText('Running')
     await expect(timeline.locator('.run-details-timeline-card').filter({ hasText: '"Security Audit" Workflow Running' })).not.toContainText('click to view results')
@@ -277,7 +325,7 @@ test('run details timeline shows all configured agents for running steps', async
 
 test('dashboard opens shared run details modal from runs and graph agent results', async ({ page }) => {
   const projectRoot = tmpRoot()
-  const runId = writeCompletedRunFixture(projectRoot)
+  const runId = writeCompletedRunFixture(projectRoot, { staleRunStatus: 'submitted', staleWorkflowStatus: 'running' })
   const server = await startDashboardServer({
     projectRoot,
     initialWorkflow: 'review',
@@ -294,6 +342,8 @@ test('dashboard opens shared run details modal from runs and graph agent results
     await expect(page.getByRole('dialog', { name: /Workflow results for "Review"/ })).toBeVisible()
     await expect(page.getByRole('heading', { name: 'Review summary' })).toBeVisible()
     await expect(page.getByText('Final workflow summary.')).toBeVisible()
+    await expect(page.locator('.run-details-timeline-card').filter({ hasText: '"Review" Workflow Completed' })).toBeVisible()
+    await expect(page.locator('.run-details-timeline-card').filter({ hasText: '"Review" Workflow Running' })).toHaveCount(0)
     await page.keyboard.press('Escape')
     await expect(page.getByRole('dialog', { name: /Workflow results for "Review"/ })).toBeHidden()
 
@@ -306,6 +356,18 @@ test('dashboard opens shared run details modal from runs and graph agent results
     await expect(page.getByRole('dialog', { name: /Workflow results for "Review"/ })).toBeVisible()
     await expect(page.getByRole('heading', { name: 'Codex result' })).toBeVisible()
     await expect(page.getByText('Final result text.')).toBeVisible()
+    await expect(page.locator('.run-details-timeline-child-button').filter({ hasText: 'Codex - completed' })).toBeVisible()
+    const activeResultsButton = page.locator('.run-details-content-switch-button[data-active="true"]').filter({ hasText: 'Results' })
+    await expect(activeResultsButton).toBeVisible()
+    expectVisibleTeal(await computedTextColor(activeResultsButton))
+    const tocLink = page.locator('.run-details-toc-link').filter({ hasText: 'Findings' })
+    await expect(tocLink).toBeVisible()
+    await tocLink.click()
+    await expect(tocLink).toHaveAttribute('data-active', 'true')
+    expectVisibleTeal(await computedTextColor(tocLink))
+    const activeTocRow = page.locator('.run-details-toc-row[data-active="true"]').filter({ hasText: 'Findings' })
+    await expect(activeTocRow).toBeVisible()
+    expectVisibleTeal(await computedBackground(activeTocRow))
     await page.locator('.run-details-content-switch').getByRole('button', { name: 'Prompt' }).click()
     await expect(page.getByRole('heading', { name: 'Review prompt' })).toBeVisible()
     await expect(page.getByText('Review this fixture prompt.')).toBeVisible()

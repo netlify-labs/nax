@@ -133,6 +133,19 @@ const { loadStepPrompt } = require('../../flows')
  *   promptTitle?: string,
  * }} RunDetailSection
  *
+ * Workflow definition step displayed in dashboard run details before runtime
+ * state or artifacts exist for that step.
+ * @typedef {{
+ *   id: string,
+ *   title: string,
+ *   status: string,
+ *   sourceType: string,
+ *   agents: string[],
+ *   promptMarkdown: string,
+ *   promptPath: string,
+ *   promptTitle: string,
+ * }} RunDetailWorkflowStep
+ *
  * Options for building dashboard run details.
  * @typedef {{
  *   flow?: import('../../types').WorkflowFlow | null,
@@ -145,6 +158,7 @@ const { loadStepPrompt } = require('../../flows')
  *   summaryMarkdown: string,
  *   finalMarkdown: string,
  *   finalTitle: string,
+ *   workflowSteps: RunDetailWorkflowStep[],
  *   sections: RunDetailSection[],
  *   followupTargets: RunDetailFollowupTarget[],
  *   followupArtifacts: RunDetailFollowupArtifact[],
@@ -415,6 +429,30 @@ function promptDetailsForStep(flow, stepMeta = {}) {
   }
 }
 
+/**
+ * @param {import('../../types').WorkflowFlow | null} flow
+ * @returns {RunDetailWorkflowStep[]}
+ */
+function workflowStepsForDetails(flow) {
+  if (!flow || !Array.isArray(flow.steps)) return []
+  return flow.steps.map((step, index) => {
+    const promptDetails = promptDetailsForStep(flow, step)
+    const source = step?.source && typeof step.source === 'object' && !Array.isArray(step.source)
+      ? step.source
+      : {}
+    return {
+      id: String(step?.id || `step-${index + 1}`),
+      title: String(step?.title || step?.id || `Step ${index + 1}`),
+      status: String(step?.status || 'pending'),
+      sourceType: String(source.type || ''),
+      agents: Array.isArray(step?.agents) ? step.agents.map(String).filter(Boolean) : [],
+      promptMarkdown: promptDetails?.promptMarkdown || '',
+      promptPath: promptDetails?.promptPath || '',
+      promptTitle: promptDetails?.promptTitle || String(step?.title || step?.id || `Step ${index + 1}`),
+    }
+  })
+}
+
 /** @param {{ stepNumber?: number }} [target] @returns {number} */
 function targetSortRank(target = {}) {
   return target.stepNumber || 0
@@ -504,6 +542,7 @@ function buildRunDetails(runState = {}, options = {}) {
   const followupArtifacts = []
   const stepNumbers = stepNumberLookup(runState)
   const flow = options.flow || runState.flow || null
+  const workflowSteps = workflowStepsForDetails(flow)
 
   if (summaryMarkdown) {
     addUnique(followupArtifacts, followupArtifact({
@@ -752,6 +791,7 @@ function buildRunDetails(runState = {}, options = {}) {
     summaryMarkdown,
     finalMarkdown: finalSection?.markdown || summaryMarkdown,
     finalTitle: finalSection?.title || 'Final result',
+    workflowSteps,
     sections,
     followupTargets,
     followupArtifacts: finalArtifacts,

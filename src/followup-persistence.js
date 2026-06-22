@@ -5,14 +5,14 @@ const { createRunState, saveRunState } = require('./run-state')
 const { isCancelledRunStatus, isFailedRunStatus, isTerminalRunStatus } = require('./status')
 
 /**
- * Source metadata attached to visualizer follow-up runs.
+ * Source metadata attached to dashboard follow-up runs.
  * @typedef {Record<string, unknown> & {
  *   id?: string,
  *   type?: string,
  *   mode?: string,
  * }} FollowupSource
  *
- * Visualizer target fields used while naming and linking follow-up steps.
+ * Dashboard target fields used while naming and linking follow-up steps.
  * @typedef {import('./types').TargetLike & {
  *   stepId?: string,
  *   stepTitle?: string,
@@ -40,7 +40,7 @@ function submittedStepStatus(runs = []) {
   return 'submitted'
 }
 
-function safeStepId(value, fallback = 'visualizer-followup') {
+function safeStepId(value, fallback = 'dashboard-followup') {
   const slug = String(value || '')
     .trim()
     .toLowerCase()
@@ -60,7 +60,7 @@ function cleanFollowupBaseTitle(value = '') {
 
 function followupOrdinal(runState = {}) {
   const steps = Array.isArray(runState.steps) ? runState.steps : []
-  return steps.filter((step) => step?.source?.type === 'visualizer-followup').length + 1
+  return steps.filter((step) => step?.source?.type === 'dashboard-followup').length + 1
 }
 
 function followupStepTitle(target = {}, runs = [], ordinal = 1) {
@@ -80,7 +80,7 @@ function normalizeFollowupStepTitles(steps = []) {
   let changed = false
   const titles = new Map()
   const nextSteps = steps.map((step) => {
-    if (step?.source?.type !== 'visualizer-followup') return step
+    if (step?.source?.type !== 'dashboard-followup') return step
     ordinal += 1
     const title = followupStepTitle({ stepTitle: step.title || step.id || 'Follow-up' }, step.runs || [], ordinal)
     if (title === step.title) return step
@@ -192,7 +192,7 @@ function normalizeFollowupRun({ run = {}, promptText = '', source = {}, timestam
  */
 function followupSource({ runState = {}, target = null, source = {} } = {}) {
   return {
-    type: 'visualizer-followup',
+    type: 'dashboard-followup',
     sourceWorkflowRunId: runState.runId || '',
     sourceTargetId: target?.id || '',
     ...(source || {}),
@@ -200,7 +200,7 @@ function followupSource({ runState = {}, target = null, source = {} } = {}) {
 }
 
 /**
- * Append submitted visualizer follow-ups to the source workflow so the graph and
+ * Append submitted dashboard follow-ups to the source workflow so the graph and
  * run-details modal retain the accepted runner/session links after the modal closes.
  *
  * @param {{
@@ -225,8 +225,8 @@ function appendFollowupRunsToWorkflow({
   if (submittedRuns.length === 0) return runState
 
   const timestamp = now.toISOString()
-  const sourceId = safeStepId(source.id || `followup-${timestamp}`, 'visualizer-followup')
-  const stepId = `visualizer-${sourceId}`
+  const sourceId = safeStepId(source.id || `followup-${timestamp}`, 'dashboard-followup')
+  const stepId = `dashboard-${sourceId}`
   const agents = uniqueAgents(submittedRuns)
   const stepSource = followupSource({ runState, target, source })
   const normalizedRuns = submittedRuns.map((run) => normalizeFollowupRun({
@@ -240,7 +240,7 @@ function appendFollowupRunsToWorkflow({
   const step = {
     id: stepId,
     title: followupStepTitle(target || {}, submittedRuns, followupOrdinal(runState)),
-    description: 'Follow-up submitted from the visualizer.',
+    description: 'Follow-up submitted from the dashboard.',
     action: 'agent-run',
     submit: submittedRuns.some((run) => run.existingRunnerId) ? 'follow-up' : 'new-run',
     waitFor: '',
@@ -283,9 +283,9 @@ function freshAgentFlow({ title = 'Agent Run', stepTitle = 'Fresh Agent Runner' 
   return {
     id: 'agent-run',
     title,
-    description: 'One-off Netlify agent runner launched from visualizer follow-up.',
-    source: 'visualizer',
-    sourceLabel: 'visualizer',
+    description: 'One-off Netlify agent runner launched from dashboard follow-up.',
+    source: 'dashboard',
+    sourceLabel: 'dashboard',
     steps: [{
       id: 'fresh-agent-runner',
       title: stepTitle,
@@ -335,14 +335,14 @@ function persistFreshPseudoWorkflow({
     options: {
       models: agents,
       context: '',
-      visualizerFollowup: true,
+      dashboardFollowup: true,
     },
     now,
   })
   const timestamp = now.toISOString()
   state.status = status
   state.source = {
-    type: 'visualizer-followup',
+    type: 'dashboard-followup',
     mode: 'fresh-runner',
     ...source,
   }
@@ -378,7 +378,7 @@ function persistFreshPseudoWorkflow({
 }
 
 /**
- * Refresh submitted visualizer follow-ups from Netlify Agent Runner sessions and
+ * Refresh submitted dashboard follow-ups from Netlify Agent Runner sessions and
  * merge terminal remote state back into the durable workflow graph state.
  *
  * @param {{
@@ -401,7 +401,7 @@ function syncSubmittedFollowupRunsToWorkflow({
   const steps = titleNormalization.steps
   const candidates = []
   for (const step of steps) {
-    if (step?.source?.type !== 'visualizer-followup') continue
+    if (step?.source?.type !== 'dashboard-followup') continue
     for (const run of Array.isArray(step.runs) ? step.runs : []) {
       if (!isActiveFollowupStatus(run?.status) || !run?.runnerId) continue
       candidates.push({ step, run })
@@ -436,7 +436,7 @@ function syncSubmittedFollowupRunsToWorkflow({
 
   let changed = titleNormalization.changed
   const nextSteps = candidates.length === 0 ? steps : steps.map((step) => {
-    if (step?.source?.type !== 'visualizer-followup') return step
+    if (step?.source?.type !== 'dashboard-followup') return step
     let stepChanged = false
     const nextRuns = (Array.isArray(step.runs) ? step.runs : []).map((run) => {
       if (!isActiveFollowupStatus(run?.status) || !run?.runnerId) return run
@@ -552,7 +552,7 @@ function cancelFollowupRunInWorkflow({
         raw: {
           ...(run.raw || {}),
           cancelledAt: updatedAt,
-          cancelSource: 'visualizer',
+          cancelSource: 'dashboard',
         },
       }
       return selectedRun

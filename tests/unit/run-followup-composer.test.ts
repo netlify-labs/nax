@@ -12,8 +12,8 @@ import {
   followupPlanLine,
   formatArtifactBytes,
   selectedFollowupArtifacts,
-} from '../../web/src/run-followup-composer'
-import type { RunDetails } from '../../web/src/types'
+} from '../../src/dashboard/web/src/run-followup-composer'
+import type { RunDetails } from '../../src/dashboard/web/src/types'
 
 function detailsFixture(): RunDetails {
   return {

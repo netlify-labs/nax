@@ -6,12 +6,13 @@ import react from '@vitejs/plugin-react'
 import { codeInspectorPlugin } from 'code-inspector-plugin'
 
 const require = createRequire(import.meta.url)
-const { listFlows, loadFlow } = require('../src/flows')
-const { isUnfinishedRun, listRunStates } = require('../src/run-state')
-const { flowToGraph } = require('../src/visualize-graph')
-const { buildRunDetails } = require('../src/visualize-run-details')
+const { listFlows, loadFlow } = require('../../flows')
+const { isUnfinishedRun, listRunStates } = require('../../run-state')
+const { flowToGraph } = require('../shared/graph')
+const { buildRunDetails } = require('../shared/run-details')
 
-const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
+const webRoot = path.dirname(fileURLToPath(import.meta.url))
+const repoRoot = path.resolve(webRoot, '../../..')
 const flowOptions = { projectRoot: repoRoot }
 
 function jsonResponse(res, statusCode, payload) {
@@ -157,7 +158,7 @@ function devApiPlugin() {
             const runId = safeDecode(runGraphMatch[1])
             const runState = listRunStates(repoRoot).find((state) => state.runId === runId)
             if (!runState) {
-              jsonResponse(res, 404, errorPayload(404, 'not_found', 'Unknown visualize run.'))
+              jsonResponse(res, 404, errorPayload(404, 'not_found', 'Unknown dashboard run.'))
               return
             }
             const flow = runState.flow && Array.isArray(runState.flow.steps)
@@ -180,7 +181,7 @@ function devApiPlugin() {
             const runId = safeDecode(runDetailsMatch[1])
             const runState = listRunStates(repoRoot).find((state) => state.runId === runId)
             if (!runState) {
-              jsonResponse(res, 404, errorPayload(404, 'not_found', 'Unknown visualize run.'))
+              jsonResponse(res, 404, errorPayload(404, 'not_found', 'Unknown dashboard run.'))
               return
             }
             jsonResponse(res, 200, {
@@ -217,7 +218,7 @@ function devApiPlugin() {
           jsonResponse(
             res,
             501,
-            errorPayload(501, 'vite_dev_api_read_only', 'Vite dev API only supports workflow browsing. Use `nax visualize` for dry-run and run actions.'),
+            errorPayload(501, 'vite_dev_api_read_only', 'Vite dev API only supports workflow browsing. Use `nax dashboard` for dry-run and run actions.'),
           )
         } catch (error) {
           const message = error?.message || String(error)
@@ -246,13 +247,13 @@ function normalizeBackendTarget(rawValue) {
 
 function devBackendProxy() {
   const target = normalizeBackendTarget(
-    process.env.NAX_VISUALIZE_API_URL || process.env.VITE_NAX_VISUALIZE_API_URL,
+    process.env.NAX_DASHBOARD_API_URL || process.env.VITE_NAX_DASHBOARD_API_URL,
   )
   if (!target) {
     return null
   }
 
-  const token = String(process.env.NAX_VISUALIZE_TOKEN || '').trim()
+  const token = String(process.env.NAX_DASHBOARD_TOKEN || '').trim()
   return {
     target,
     changeOrigin: true,
@@ -275,7 +276,7 @@ function devApiModePlugin(proxy) {
       const mode = proxy
         ? `proxying /api to ${proxy.target}`
         : 'serving read-only workflow data from Vite'
-      console.log(`Nax visualize dev: ${mode}`)
+      console.log(`Nax dashboard dev: ${mode}`)
     },
   }
 }
@@ -295,7 +296,7 @@ if (!realApiProxy) {
 
 export default defineConfig({
   plugins,
-  root: 'web',
+  root: webRoot,
   build: {
     outDir: 'dist',
     emptyOutDir: true,

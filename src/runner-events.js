@@ -18,7 +18,7 @@ const { appendEventLog } = require('./runner-event-log')
  * @typedef {{
  *   runId?: string,
  *   flowId?: string,
- *   visualizeRunId?: string,
+ *   dashboardRunId?: string,
  *   logPath?: string,
  * }} RunnerEventContext
  *
@@ -26,7 +26,7 @@ const { appendEventLog } = require('./runner-event-log')
  * @typedef {{
  *   runId?: string,
  *   flowId?: string,
- *   visualizeRunId?: string,
+ *   dashboardRunId?: string,
  *   logPath?: string,
  *   seqStart?: number,
  *   env?: NodeJS.ProcessEnv,
@@ -138,7 +138,7 @@ function normalizeRunnerEvent(base = {}, type, payload = {}, seq, now = new Date
     at: now.toISOString(),
     ...(runId ? { runId } : {}),
     ...(flowId ? { flowId } : {}),
-    ...(base.visualizeRunId ? { visualizeRunId: base.visualizeRunId } : {}),
+    ...(base.dashboardRunId ? { dashboardRunId: base.dashboardRunId } : {}),
     ...sanitized,
   }
 }
@@ -169,7 +169,7 @@ function writeLine(stream, line) {
 function createRunnerEventEmitter(options = {}) {
   let runId = options.runId || ''
   let flowId = options.flowId || ''
-  let visualizeRunId = options.visualizeRunId || ''
+  let dashboardRunId = options.dashboardRunId || ''
   let logPath = options.logPath || ''
   let seq = Number.isFinite(Number(options.seqStart)) ? Number(options.seqStart) : 0
   const env = options.env || process.env
@@ -182,7 +182,7 @@ function createRunnerEventEmitter(options = {}) {
 
   function emit(type, payload = {}) {
     seq += 1
-    const event = normalizeRunnerEvent({ runId, flowId, visualizeRunId }, type, payload, seq, now())
+    const event = normalizeRunnerEvent({ runId, flowId, dashboardRunId }, type, payload, seq, now())
     if (!isEnabled()) return event
     try {
       if (logPath) appendEventLog(logPath, event)
@@ -198,7 +198,7 @@ function createRunnerEventEmitter(options = {}) {
 
   async function emitAsync(type, payload = {}) {
     seq += 1
-    const event = normalizeRunnerEvent({ runId, flowId, visualizeRunId }, type, payload, seq, now())
+    const event = normalizeRunnerEvent({ runId, flowId, dashboardRunId }, type, payload, seq, now())
     if (!isEnabled()) return event
     try {
       if (logPath) appendEventLog(logPath, event)
@@ -221,7 +221,7 @@ function createRunnerEventEmitter(options = {}) {
     setContext(context = {}) {
       if (context.runId !== undefined) runId = context.runId || ''
       if (context.flowId !== undefined) flowId = context.flowId || ''
-      if (context.visualizeRunId !== undefined) visualizeRunId = context.visualizeRunId || ''
+      if (context.dashboardRunId !== undefined) dashboardRunId = context.dashboardRunId || ''
       if (context.logPath !== undefined) logPath = context.logPath || ''
     },
     close() {

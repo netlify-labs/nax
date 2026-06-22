@@ -6,7 +6,7 @@ import { agentLabel, isDoneStatus, recordList, recordValue, runId, statusBadgeSt
 import { extractMarkdownToc } from '../run-details-toc'
 import { selectRunDetailsSection, selectorKey, type RunDetailsSelector } from '../run-details-selection'
 import { displayAgentStatuses, displayStepStatus, selectedAgentsForStep } from '../run-projection'
-import type { RunDetailsResponse, RunDetailsSection, RunFollowupResponse, Target, VisualizeRun } from '../types'
+import type { RunDetailsResponse, RunDetailsSection, RunFollowupResponse, Target, DashboardRun } from '../types'
 import { AgentIcon } from './AgentIcon'
 import { MarkdownRenderer } from './MarkdownRenderer'
 import { RunFollowupContent } from './RunFollowupModal'
@@ -31,7 +31,7 @@ type RunDetailsModalProps = {
   liveRevision?: string
   missingRunMessage?: string
   onFollowupSubmitted?: (response: RunFollowupResponse) => void | Promise<void>
-  onRunUpdated?: (run: VisualizeRun) => void | Promise<void>
+  onRunUpdated?: (run: DashboardRun) => void | Promise<void>
 }
 
 type StepItem = {
@@ -108,7 +108,7 @@ function timelineBullet(entry: TimelineEntry) {
 
 function buildStepItems(
   details: RunDetailsResponse['details'] | undefined,
-  run: VisualizeRun | undefined,
+  run: DashboardRun | undefined,
   liveContext?: RunDetailsLiveContext | null,
 ): StepItem[] {
   const stepSections = details?.sections.filter((section) => section.kind === 'step') || []
@@ -245,7 +245,7 @@ function runInfoLiveContext(step: StepItem, agent: string): RunDetailsLiveContex
 
 function buildTimelineEntries(
   details: RunDetailsResponse['details'] | undefined,
-  run: VisualizeRun | undefined,
+  run: DashboardRun | undefined,
   steps: StepItem[],
   liveContext?: RunDetailsLiveContext | null,
 ): TimelineEntry[] {
@@ -451,9 +451,9 @@ export function RunDetailsModal({
     const summaryEntry = timelineEntries.find((entry) => entry.kind === 'summary')
     const stepEntries = timelineEntries.filter((entry) => entry.kind === 'step')
     if (!summaryEntry) return stepEntries
-    const followupSteps = stepEntries.filter((entry) => entry.sourceType === 'visualizer-followup')
+    const followupSteps = stepEntries.filter((entry) => entry.sourceType === 'dashboard-followup')
     if (followupSteps.length === 0) return [...stepEntries, summaryEntry]
-    const regularSteps = stepEntries.filter((entry) => entry.sourceType !== 'visualizer-followup')
+    const regularSteps = stepEntries.filter((entry) => entry.sourceType !== 'dashboard-followup')
     return [...regularSteps, ...followupSteps, summaryEntry]
   }, [timelineEntries])
   const activeTimelineIndex = Math.max(0, timelineEntries.findIndex((entry) => entry.id === activeTimelineId))
@@ -478,7 +478,7 @@ export function RunDetailsModal({
   const cancelFollowupEntry = async (entry: TimelineEntry) => {
     const target = cancelTargetForEntry(entry)
     if (!detailsRunId || !target) throw new Error('This entry is no longer cancellable.')
-    const response = entry.sourceType === 'visualizer-followup'
+    const response = entry.sourceType === 'dashboard-followup'
       ? await cancelFollowupRun(detailsRunId, target)
       : await cancelWorkflowRun(detailsRunId)
     await refreshDetails()
@@ -498,7 +498,7 @@ export function RunDetailsModal({
     if (!detailsRunId || !entry.stepNumber) throw new Error('This review gate is no longer active.')
     const response = await cancelHumanReviewGate(detailsRunId, {
       stepId: entry.id.replace(/^step:/, ''),
-      reason: 'cancelled from visualizer',
+      reason: 'cancelled from dashboard',
     })
     await refreshDetails()
     await onRunUpdated?.(response.run)
@@ -1208,7 +1208,7 @@ function RunDetailsMetadata({
   section,
   liveContext,
 }: {
-  run: VisualizeRun | undefined
+  run: DashboardRun | undefined
   workflowName: string
   section?: RunDetailsSection
   liveContext?: RunDetailsLiveContext

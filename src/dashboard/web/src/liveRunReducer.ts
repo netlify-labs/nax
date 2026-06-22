@@ -1,4 +1,4 @@
-import type { RunnerEvent, VisualizeRun } from './types'
+import type { RunnerEvent, DashboardRun } from './types'
 
 export type LiveVisualStatus =
   | 'queued'
@@ -15,7 +15,7 @@ export type LiveVisualStatus =
   | 'running'
 
 export type LiveRunState = {
-  run: VisualizeRun | null
+  run: DashboardRun | null
   output: string
   stepStatuses: Record<string, string>
   agentStatuses: Record<string, Record<string, string>>
@@ -28,12 +28,12 @@ export type LiveRunState = {
 }
 
 export type LiveRunAction =
-  | { type: 'reset'; run?: VisualizeRun | null }
+  | { type: 'reset'; run?: DashboardRun | null }
   | { type: 'patch_step_statuses'; update: Record<string, string> | ((value: Record<string, string>) => Record<string, string>) }
   | { type: 'patch_agent_statuses'; update: Record<string, Record<string, string>> | ((value: Record<string, Record<string, string>>) => Record<string, Record<string, string>>) }
   | { type: 'event'; event: RunnerEvent }
 
-export function initialLiveRunState(run: VisualizeRun | null = null): LiveRunState {
+export function initialLiveRunState(run: DashboardRun | null = null): LiveRunState {
   return {
     run,
     output: '',

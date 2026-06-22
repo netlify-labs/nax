@@ -116,9 +116,9 @@ Concrete gaps exploration found in the wired code:
 
 **A.1d — SIGINT cleanup.** Cleanup fires on success/failure but exploration flagged that interrupted runs (Ctrl-C) may orphan blobs until the 24h TTL sweep. Confirm the graceful-shutdown path calls `cleanupWorkflowBlobsForRun`; if not, wire it. *Test:* simulated interrupt leaves refs marked `pending-cleanup` and the sweep collects them.
 
-**A.1e — Artifact serialization.** `src/workflow-artifacts.js` is modified in the working tree — confirm it serializes the new `promptDelivery`/`blobRefs`/`contextFetchStatus` fields into run artifacts so visualize/handoff can show offload state. *Test:* a run with an offloaded step round-trips its blob metadata through artifact build.
+**A.1e — Artifact serialization.** `src/workflow-artifacts.js` is modified in the working tree — confirm it serializes the new `promptDelivery`/`blobRefs`/`contextFetchStatus` fields into run artifacts so dashboard/handoff can show offload state. *Test:* a run with an offloaded step round-trips its blob metadata through artifact build.
 
-**A.1f — `getBlob` is dead code outside tests.** Decide: wire it into a nax-side read path (e.g. `nax show`/visualize reconstructing full prompt) or annotate it as intentionally runner-only. No code change required if the latter — just remove the ambiguity.
+**A.1f — `getBlob` is dead code outside tests.** Decide: wire it into a nax-side read path (e.g. `nax show`/dashboard reconstructing full prompt) or annotate it as intentionally runner-only. No code change required if the latter — just remove the ambiguity.
 
 ### A.1g–A.1m — Defects from the multi-model consensus review
 
@@ -252,7 +252,7 @@ Fail closed: if it can't prove the target for a transport that needs it (netlify
 
 **C.4 — Project into artifacts.** `src/workflow-artifacts.js` builders (`:163, :250, :367, :378, :507`) include target fields. (File already modified in tree — fold in.)
 
-**C.5 — Surface in visualization.** `src/visualize-server.js:443/456` expose target; `web/src/types.ts:105/138`; `web/src/components/RecentRuns.tsx:458`; add a target panel to `web/src/components/DryRunPanel.tsx` (currently shows no branch/sha).
+**C.5 — Surface in dashboard view.** `src/dashboard/server.js:443/456` expose target; `src/dashboard/web/src/types.ts:105/138`; `src/dashboard/web/src/components/RecentRuns.tsx:458`; add a target panel to `src/dashboard/web/src/components/DryRunPanel.tsx` (currently shows no branch/sha).
 
 **C.6 — GitHub transport gap** (see D2). `createIssue` `bin/nax.js:710` / `executeGithubFlow` `:5523` pass no ref. Per D2(a): record `sourceType: "github-actions-implicit"`, `verified: false`, and warn that operated-on code = whatever Actions checks out. Full dispatch-with-ref fix deferred.
 
@@ -267,7 +267,7 @@ Fail closed: if it can't prove the target for a transport that needs it (netlify
 
 - `resolveTarget` for each `sourceType` returns expected shape; unverifiable SHA → `verified: false` + caveat, and **throws** for netlify-api.
 - `createRunState` persists `target`; resume reads it without re-deriving (mock a branch change → resume still targets the original).
-- Artifact + visualize projections include target.
+- Artifact + dashboard projections include target.
 - GHA path records `github-actions-implicit` + warns.
 
 ---
@@ -287,7 +287,7 @@ Critical path: A.1 → C
 B parallelizes immediately (no deps).
 ```
 
-Why C last: it touches the most surfaces (`workflow.json` schema, ~6 derivation sites, artifacts, visualize, both transports). Doing it after A stabilizes `prepareLocalPromptDelivery`/`workflow.json` and after B can validate the flow means one pass over shared plumbing instead of repeated retrofits.
+Why C last: it touches the most surfaces (`workflow.json` schema, ~6 derivation sites, artifacts, dashboard, both transports). Doing it after A stabilizes `prepareLocalPromptDelivery`/`workflow.json` and after B can validate the flow means one pass over shared plumbing instead of repeated retrofits.
 
 ---
 

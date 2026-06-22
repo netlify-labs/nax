@@ -1,4 +1,4 @@
-import type { DryRunOptions, DryRunResponse, HealthResponse, RunDetailsResponse, RunFollowupRequest, RunFollowupResponse, RunGraphResponse, RunsResponse, StartRunResponse, WorkflowGraphResponse, WorkflowListResponse, VisualizeRun } from './types'
+import type { DryRunOptions, DryRunResponse, HealthResponse, RunDetailsResponse, RunFollowupRequest, RunFollowupResponse, RunGraphResponse, RunsResponse, StartRunResponse, WorkflowGraphResponse, WorkflowListResponse, DashboardRun } from './types'
 
 function sessionToken(): string {
   const params = new URLSearchParams(window.location.search)
@@ -77,8 +77,8 @@ export async function startWorkflowRun(id: string, options: DryRunOptions): Prom
   })
 }
 
-export async function cancelWorkflowRun(id: string): Promise<{ run: VisualizeRun; cancelled: boolean; remoteStopped?: number; remoteStopAttempted?: number; warnings?: string[] }> {
-  return fetchJson<{ run: VisualizeRun; cancelled: boolean; remoteStopped?: number; remoteStopAttempted?: number; warnings?: string[] }>(`/api/runs/${encodeURIComponent(id)}/cancel`, {
+export async function cancelWorkflowRun(id: string): Promise<{ run: DashboardRun; cancelled: boolean; remoteStopped?: number; remoteStopAttempted?: number; warnings?: string[] }> {
+  return fetchJson<{ run: DashboardRun; cancelled: boolean; remoteStopped?: number; remoteStopAttempted?: number; warnings?: string[] }>(`/api/runs/${encodeURIComponent(id)}/cancel`, {
     method: 'POST',
     headers: {
     },
@@ -88,8 +88,8 @@ export async function cancelWorkflowRun(id: string): Promise<{ run: VisualizeRun
 export async function cancelFollowupRun(
   id: string,
   target: { stepId?: string; agent?: string; runnerId?: string; sessionId?: string },
-): Promise<{ run: VisualizeRun; cancelled: boolean; remoteStopped?: boolean; warnings: string[] }> {
-  return fetchJson<{ run: VisualizeRun; cancelled: boolean; remoteStopped?: boolean; warnings: string[] }>(
+): Promise<{ run: DashboardRun; cancelled: boolean; remoteStopped?: boolean; warnings: string[] }> {
+  return fetchJson<{ run: DashboardRun; cancelled: boolean; remoteStopped?: boolean; warnings: string[] }>(
     `/api/runs/${encodeURIComponent(id)}/followups/cancel`,
     {
       method: 'POST',
@@ -104,8 +104,8 @@ export async function cancelFollowupRun(
 export async function approveHumanReviewGate(
   id: string,
   target: { stepId?: string },
-): Promise<{ run: VisualizeRun; approved: boolean; stepId: string }> {
-  return fetchJson<{ run: VisualizeRun; approved: boolean; stepId: string }>(
+): Promise<{ run: DashboardRun; approved: boolean; stepId: string }> {
+  return fetchJson<{ run: DashboardRun; approved: boolean; stepId: string }>(
     `/api/runs/${encodeURIComponent(id)}/review/approve`,
     {
       method: 'POST',
@@ -120,8 +120,8 @@ export async function approveHumanReviewGate(
 export async function cancelHumanReviewGate(
   id: string,
   target: { stepId?: string; reason?: string },
-): Promise<{ run: VisualizeRun; cancelled: boolean }> {
-  return fetchJson<{ run: VisualizeRun; cancelled: boolean }>(
+): Promise<{ run: DashboardRun; cancelled: boolean }> {
+  return fetchJson<{ run: DashboardRun; cancelled: boolean }>(
     `/api/runs/${encodeURIComponent(id)}/review/cancel`,
     {
       method: 'POST',

@@ -37,7 +37,7 @@ import { initialLiveRunState, liveRunReducer, visualStatus } from './liveRunRedu
 import { projectWorkflowGraph, workflowGraphNodeByStepId } from './run-projection'
 import { recordValue, runId } from './run-format'
 import type { RunDetailsSelector } from './run-details-selection'
-import type { DryRunOptions, DryRunResult, RunFollowupResponse, RunnerEvent, VisualizeRun, Workflow, WorkflowGraph, WorkflowGraphNodeData } from './types'
+import type { DryRunOptions, DryRunResult, RunFollowupResponse, RunnerEvent, DashboardRun, Workflow, WorkflowGraph, WorkflowGraphNodeData } from './types'
 
 type ContextModalAction = '' | 'dry-run' | 'run'
 type DetailsModalContext = {
@@ -105,7 +105,7 @@ function runForAgent(node: WorkflowGraphNodeData, agent: string): Record<string,
   return undefined
 }
 
-function liveStatusMapsFromRun(run: VisualizeRun): {
+function liveStatusMapsFromRun(run: DashboardRun): {
   stepStatuses: Record<string, string>
   agentStatuses: Record<string, Record<string, string>>
 } {
@@ -181,11 +181,11 @@ function savedRunUrl(run: Record<string, unknown> | undefined): string {
   return runValue(run, 'commentUrl') || runValue(run, 'issueUrl')
 }
 
-function runIdentifier(run: Partial<VisualizeRun>): string {
+function runIdentifier(run: Partial<DashboardRun>): string {
   return runId(run)
 }
 
-function mergeRunLists(active: VisualizeRun[], durable: VisualizeRun[]): VisualizeRun[] {
+function mergeRunLists(active: DashboardRun[], durable: DashboardRun[]): DashboardRun[] {
   const seen = new Set<string>()
   return [...active, ...durable].filter((run) => {
     const id = runIdentifier(run)
@@ -212,14 +212,14 @@ function graphHasActiveRemoteRuns(graph: WorkflowGraph | null): boolean {
   )))
 }
 
-function replaceRunInList(runs: VisualizeRun[], nextRun: VisualizeRun): VisualizeRun[] {
+function replaceRunInList(runs: DashboardRun[], nextRun: DashboardRun): DashboardRun[] {
   const nextId = nextRun.runId || nextRun.id
   if (!nextId) return runs
   const filtered = runs.filter((candidate) => candidate.runId !== nextId && candidate.id !== nextId)
   return [nextRun, ...filtered]
 }
 
-function sameRun(left: Partial<VisualizeRun>, right: Partial<VisualizeRun>): boolean {
+function sameRun(left: Partial<DashboardRun>, right: Partial<DashboardRun>): boolean {
   const leftIds = [left.id, left.runId].filter(Boolean)
   const rightIds = [right.id, right.runId].filter(Boolean)
   return leftIds.some((id) => rightIds.includes(id))
@@ -276,8 +276,8 @@ export default function App() {
   const [dryRunResult, setDryRunResult] = useState<DryRunResult | null>(null)
   const [dryRunRunning, setDryRunRunning] = useState(false)
   const [dryRunError, setDryRunError] = useState('')
-  const [activeRun, setActiveRun] = useState<VisualizeRun | null>(null)
-  const [runs, setRuns] = useState<VisualizeRun[]>([])
+  const [activeRun, setActiveRun] = useState<DashboardRun | null>(null)
+  const [runs, setRuns] = useState<DashboardRun[]>([])
   const [selectedRunId, setSelectedRunId] = useState('')
   const [runOutput, setRunOutput] = useState('')
   const [runRunning, setRunRunning] = useState(false)
@@ -307,7 +307,7 @@ export default function App() {
     [workflows, selectedWorkflowId],
   )
 
-  const refreshRuns = useCallback(async (): Promise<VisualizeRun[]> => {
+  const refreshRuns = useCallback(async (): Promise<DashboardRun[]> => {
     const response = await listRuns()
     const combined = mergeRunLists(response.active, response.durable)
     setRuns(combined)
@@ -731,7 +731,7 @@ export default function App() {
     }
   }
 
-  const selectRun = async (run: VisualizeRun) => {
+  const selectRun = async (run: DashboardRun) => {
     const id = run.runId || run.id
     if (!id) return
     setSelectedRunId(id)
@@ -796,7 +796,7 @@ export default function App() {
     }
   }, [graph, selectedRunId, selectedWorkflowId])
 
-  const handleRunUpdated = async (updated: VisualizeRun) => {
+  const handleRunUpdated = async (updated: DashboardRun) => {
     const latestRuns = await refreshRuns()
     const updatedRunId = updated.runId || updated.id
     if (!updatedRunId) return
@@ -810,7 +810,7 @@ export default function App() {
     await handleRunUpdated(persisted)
   }
 
-  const resumeRun = async (run: VisualizeRun) => {
+  const resumeRun = async (run: DashboardRun) => {
     const flowId = run.flowId
     if (!flowId) return
     const confirmed = window.confirm(`Resume "${run.flowTitle || flowId}" run ${run.runId || run.id}?`)

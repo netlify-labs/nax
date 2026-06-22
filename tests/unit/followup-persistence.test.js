@@ -4,8 +4,8 @@ const fs = require('fs')
 const os = require('os')
 const path = require('path')
 
-const { buildRunDetails } = require('../../src/visualize-run-details')
-const { flowToGraph } = require('../../src/visualize-graph')
+const { buildRunDetails } = require('../../src/dashboard/shared/run-details')
+const { flowToGraph } = require('../../src/dashboard/shared/graph')
 const { listRunStates, workflowStatePath } = require('../../src/run-state')
 const {
   appendFollowupRunsToWorkflow,
@@ -40,7 +40,7 @@ test('submittedStepStatus summarizes submitted run statuses', () => {
   assert.equal(submittedStepStatus([{ status: 'completed' }, { status: 'failed' }]), 'failed')
 })
 
-test('followupStepTitle prefixes visualizer follow-up steps', () => {
+test('followupStepTitle prefixes dashboard follow-up steps', () => {
   assert.equal(
     followupStepTitle({ stepTitle: 'Synthesize Security Findings' }, [{ agent: 'codex' }]),
     'Follow-up 1: Synthesize Security Findings (codex)',
@@ -55,7 +55,7 @@ test('followupStepTitle prefixes visualizer follow-up steps', () => {
   )
 })
 
-test('freshAgentFlow creates a one-step visualizer flow definition', () => {
+test('freshAgentFlow creates a one-step dashboard flow definition', () => {
   const flow = freshAgentFlow({ title: 'Follow-up', stepTitle: 'Run agents' })
   assert.equal(flow.id, 'agent-run')
   assert.equal(flow.title, 'Follow-up')
@@ -92,7 +92,7 @@ test('persistFreshPseudoWorkflow writes a renderable one-step workflow state', (
   })
 
   assert.equal(state.runId, '2026-06-20T20-00-00-000Z-agent-run')
-  assert.equal(state.source.type, 'visualizer-followup')
+  assert.equal(state.source.type, 'dashboard-followup')
   assert.equal(state.source.mode, 'fresh-runner')
   assert.equal(state.steps[0].status, 'submitted')
   assert.deepEqual(state.steps[0].agents, ['codex'])
@@ -149,7 +149,7 @@ test('appendFollowupRunsToWorkflow numbers repeated follow-ups without duplicati
   const second = appendFollowupRunsToWorkflow({
     runState: first,
     now: new Date('2026-06-20T20:01:00.000Z'),
-    target: { id: 'agent-result:visualizer-followup-1:codex', stepId: 'visualizer-followup-1', stepTitle: first.steps[1].title },
+    target: { id: 'agent-result:dashboard-followup-1:codex', stepId: 'dashboard-followup-1', stepTitle: first.steps[1].title },
     source: { id: 'followup-2' },
     runs: [{ agent: 'codex', status: 'submitted', runnerId: 'runner-1', sessionId: 'session-3' }],
   })
@@ -286,25 +286,25 @@ test('syncSubmittedFollowupRunsToWorkflow renumbers existing completed follow-up
       title: 'Security Audit',
       steps: [
         { id: 'synthesize', title: 'Synthesize Security Findings', agents: ['codex'], submit: 'new-run' },
-        { id: 'visualizer-followup-1', title: 'Follow up: Synthesize Security Findings (codex)', agents: ['codex'], submit: 'follow-up' },
-        { id: 'visualizer-followup-2', title: 'Follow up: Synthesize Security Findings (codex) follow-up (codex)', agents: ['codex'], submit: 'follow-up' },
+        { id: 'dashboard-followup-1', title: 'Follow up: Synthesize Security Findings (codex)', agents: ['codex'], submit: 'follow-up' },
+        { id: 'dashboard-followup-2', title: 'Follow up: Synthesize Security Findings (codex) follow-up (codex)', agents: ['codex'], submit: 'follow-up' },
       ],
     },
     steps: [
       { id: 'synthesize', title: 'Synthesize Security Findings', status: 'completed', agents: ['codex'], runs: [] },
       {
-        id: 'visualizer-followup-1',
+        id: 'dashboard-followup-1',
         title: 'Follow up: Synthesize Security Findings (codex)',
         status: 'completed',
-        source: { type: 'visualizer-followup' },
+        source: { type: 'dashboard-followup' },
         agents: ['codex'],
         runs: [{ agent: 'codex', status: 'completed', runnerId: 'runner-1', sessionId: 'session-2' }],
       },
       {
-        id: 'visualizer-followup-2',
+        id: 'dashboard-followup-2',
         title: 'Follow up: Synthesize Security Findings (codex) follow-up (codex)',
         status: 'completed',
-        source: { type: 'visualizer-followup' },
+        source: { type: 'dashboard-followup' },
         agents: ['codex'],
         runs: [{ agent: 'codex', status: 'completed', runnerId: 'runner-1', sessionId: 'session-3' }],
       },
@@ -354,7 +354,7 @@ test('cancelFollowupRunInWorkflow marks a submitted follow-up run cancelled', ()
   assert.equal(result.run.status, 'cancelled')
   assert.equal(result.runState.status, 'cancelled')
   assert.equal(result.runState.steps[0].status, 'cancelled')
-  assert.equal(result.runState.steps[0].runs[0].raw.cancelSource, 'visualizer')
+  assert.equal(result.runState.steps[0].runs[0].raw.cancelSource, 'dashboard')
 
   const listed = listRunStates(projectRoot)
   assert.equal(listed[0].steps[0].runs[0].status, 'cancelled')

@@ -1,7 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 
-import { extractMarkdownToc } from '../../web/src/run-details-toc'
+import { extractMarkdownToc } from '../../src/dashboard/web/src/run-details-toc'
 
 test('run details toc excludes generated contents and repository state headings', () => {
   const toc = extractMarkdownToc([

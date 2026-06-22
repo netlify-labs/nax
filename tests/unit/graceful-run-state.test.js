@@ -5,8 +5,8 @@ const os = require('os')
 const path = require('path')
 
 const {
-  _private,
   clearTrackedRunState,
+  persistActiveRunState,
   trackRunState,
 } = require('../../src/graceful-run-state')
 
@@ -38,7 +38,7 @@ test('persistActiveRunState marks an active run interrupted and preserves step s
   const state = runState(tmp)
 
   trackRunState(state)
-  _private.persistActiveRunState('test-interrupt', new Date('2026-05-12T01:00:00.000Z'))
+  persistActiveRunState('test-interrupt', new Date('2026-05-12T01:00:00.000Z'))
   clearTrackedRunState(state)
 
   const saved = readSaved(state)
@@ -76,7 +76,7 @@ test('persistActiveRunState records stack and warns when interrupt cleanup throw
         throw new Error('blob cleanup boom')
       },
     })
-    _private.persistActiveRunState('test-interrupt', new Date('2026-05-12T01:00:00.000Z'))
+    persistActiveRunState('test-interrupt', new Date('2026-05-12T01:00:00.000Z'))
     clearTrackedRunState(state)
   } finally {
     console.warn = originalWarn
@@ -102,7 +102,7 @@ test('persistActiveRunState invokes interrupt cleanup hook before saving', () =>
       active.blobCleanupWarning = 'cleanup attempted'
     },
   })
-  _private.persistActiveRunState('test-interrupt', new Date('2026-05-12T01:00:00.000Z'))
+  persistActiveRunState('test-interrupt', new Date('2026-05-12T01:00:00.000Z'))
   clearTrackedRunState(state)
 
   const saved = readSaved(state)

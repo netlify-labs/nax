@@ -177,7 +177,7 @@ async function submitAgentRun({
   projectRoot,
   agent,
   promptText,
-  source = { type: 'visualizer-followup' },
+  source = { type: 'dashboard-followup' },
   raw = {},
   existingRunnerId = '',
   branch = '',
@@ -227,7 +227,7 @@ function submitFreshAgentRunner(options = {}) {
     ...options,
     existingRunnerId: '',
     source: {
-      type: 'visualizer-followup',
+      type: 'dashboard-followup',
       mode: 'fresh-runner',
       ...(options.source || {}),
     },
@@ -238,7 +238,7 @@ function submitFollowupSession(options = {}) {
   return submitAgentRun({
     ...options,
     source: {
-      type: 'visualizer-followup',
+      type: 'dashboard-followup',
       mode: 'follow-up-thread',
       ...(options.source || {}),
     },
@@ -246,7 +246,7 @@ function submitFollowupSession(options = {}) {
 }
 
 /**
- * One visualizer handoff plan submission.
+ * One dashboard handoff plan submission.
  * @typedef {{
  *   mode?: string,
  *   agent?: string,

@@ -45,7 +45,7 @@ const { DEFAULT_MODEL_CSV, DEFAULT_MODELS } = require('../constants')
  *   run: (workflow: string | null | undefined, options: JsonMap) => CommandActionResult,
  *   skills: (subcommand: string, options: JsonMap) => CommandActionResult,
  *   sync: (target: string, options: JsonMap) => CommandActionResult,
- *   visualize: (flow: string, options: JsonMap) => CommandActionResult,
+ *   dashboard: (flow: string, options: JsonMap) => CommandActionResult,
  * }} NaxCommandHandlers
  */
 
@@ -387,16 +387,16 @@ function buildNaxProgram({
     }))
 
   addFlowsDir(program
-    .command('visualize [workflow]')
-    .description('Open the experimental local workflow visualizer')
+    .command('dashboard [workflow]')
+    .description('Open the local workflow dashboard')
     .option('--project-root <path>', 'Project root containing project workflows')
-    .option('--host <host>', 'Host for the local visualizer server', '127.0.0.1')
-    .option('--port <port>', 'Port for the local visualizer server; defaults to an available port')
-    .option('--no-open', 'Print the visualizer URL without opening a browser')
-    .option('--tail', 'Stream child workflow stdout/stderr to this terminal while visualizing')
-    .option('--dev', 'Use development-mode visualizer behavior')
+    .option('--host <host>', 'Host for the local dashboard server', '127.0.0.1')
+    .option('--port <port>', 'Port for the local dashboard server; defaults to an available port')
+    .option('--no-open', 'Print the dashboard URL without opening a browser')
+    .option('--tail', 'Stream child workflow stdout/stderr to this terminal while using the dashboard')
+    .option('--dev', 'Use development-mode dashboard behavior')
     .action((flow, options, command) => {
-      return settleAction(handlers.visualize(flow || '', actionOptions(options, command)))
+      return settleAction(handlers.dashboard(flow || '', actionOptions(options, command)))
     }))
 
   program

@@ -1,7 +1,7 @@
-# Spec - Visualizer Follow-up Continuity UX
+# Spec - Dashboard Follow-up Continuity UX
 
 > Status: PLANNING.
-> Scope: make visualizer-submitted follow-ups visible, durable, and traceable after submission.
+> Scope: make dashboard-submitted follow-ups visible, durable, and traceable after submission.
 > Out of scope: waiting for remote completion before returning from submit, GitHub Actions transport follow-ups, and redesigning the whole workflow graph.
 
 ---
@@ -10,7 +10,7 @@
 
 The current **Send to next agent** composer can successfully submit a follow-up, including blob-backed oversized context. The UX after submission is still incomplete:
 
-- `node bin/nax.js visualize --tail` shows no activity for follow-up submissions.
+- `node bin/nax.js dashboard --tail` shows no activity for follow-up submissions.
 - True follow-up sessions on an existing runner are not attached to the source workflow state.
 - The toast is the only strong signal that anything happened.
 - The running remote Agent Runner can feel disconnected from the current React Flow view, Recent runs list, and run-details timeline.
@@ -28,7 +28,7 @@ So the natural expectation is that the follow-up appears under that workflow's `
 
 ## Product Principle
 
-Visualizer follow-ups should behave like child activity of the source workflow unless the user explicitly opens them as separate one-off runs.
+Dashboard follow-ups should behave like child activity of the source workflow unless the user explicitly opens them as separate one-off runs.
 
 Submitting a follow-up should answer four questions immediately:
 
@@ -78,7 +78,7 @@ That means a pure "follow-up prompt on previous Agent Run" has no visible post-s
 
 ### Tail Output
 
-`--tail` is currently wired to child `nax run` stdout/stderr and structured events. Follow-up submission happens inside the visualizer server request path, not in a child `nax run` process, so nothing is printed unless the endpoint explicitly writes follow-up events/status to the same output path.
+`--tail` is currently wired to child `nax run` stdout/stderr and structured events. Follow-up submission happens inside the dashboard server request path, not in a child `nax run` process, so nothing is printed unless the endpoint explicitly writes follow-up events/status to the same output path.
 
 ---
 
@@ -188,14 +188,14 @@ source: Security Audit · Synthesize Security Findings
 
 ### Tail Output
 
-When `nax visualize --tail` is running, follow-up submissions should print concise lifecycle lines:
+When `nax dashboard --tail` is running, follow-up submissions should print concise lifecycle lines:
 
 ```text
-[visualize] follow-up followup-2026-... packaging 1 artifact (80.0 KB)
-[visualize] follow-up followup-2026-... context delivery: blob (80.0 KB offloaded)
-[visualize] follow-up followup-2026-... submitting codex to runner 6a37250...
-[visualize] follow-up followup-2026-... accepted codex session 6a37...
-[visualize] follow-up followup-2026-... persisted under .nax/workflows/2026-.../followups/...
+[dashboard] follow-up followup-2026-... packaging 1 artifact (80.0 KB)
+[dashboard] follow-up followup-2026-... context delivery: blob (80.0 KB offloaded)
+[dashboard] follow-up followup-2026-... submitting codex to runner 6a37250...
+[dashboard] follow-up followup-2026-... accepted codex session 6a37...
+[dashboard] follow-up followup-2026-... persisted under .nax/workflows/2026-.../followups/...
 ```
 
 Tail output should not try to stream remote agent stdout. Netlify Agent Runner does not expose that through this endpoint today. It should report local submission and persistence lifecycle only.
@@ -236,7 +236,7 @@ Also update the source `workflow.json` with a compact reference so existing grap
         "offloadedBytes": 82082,
         "blobRef": {
           "store": "nax-...",
-          "key": "visualizer-followup-prior-results"
+          "key": "dashboard-followup-prior-results"
         }
       },
       "submissions": [
@@ -321,9 +321,9 @@ The activity status should be:
 
 Remote completion can be handled later by explicit sync/polling.
 
-### 3. Emit visualize lifecycle events
+### 3. Emit dashboard lifecycle events
 
-For follow-up submissions, emit local visualize events:
+For follow-up submissions, emit local dashboard events:
 
 ```json
 { "type": "followup_packaging", "followupId": "...", "artifactCount": 1, "bytes": 82082 }
@@ -510,7 +510,7 @@ This should call the existing Netlify Agent Runner session list/show path and up
 
 ### Later
 
-Background polling from the visualizer server while the page is open:
+Background polling from the dashboard server while the page is open:
 
 - poll submitted follow-up runners every N seconds
 - stop when terminal
@@ -528,36 +528,36 @@ Do not implement background polling in the first continuity pass unless it is ch
 - `src/followup-activity.js`
   - new persistence and rollup helpers
   - unit-tested independently
-- `src/visualize-server.js`
+- `src/dashboard/server.js`
   - call `persistFollowupActivity` for every accepted follow-up
   - emit follow-up lifecycle events
   - print follow-up tail lines when `--tail` is enabled
   - include persisted activity in response
-- `src/visualize-run-details.js`
+- `src/dashboard/shared/run-details.js`
   - read source workflow follow-up activities
   - expose `details.followups`
   - create follow-up timeline-compatible objects
-- `src/visualize-graph.js`
+- `src/dashboard/shared/graph.js`
   - attach follow-ups to node data by `sourceStepId`
 - `src/run-state.js`
   - optionally add helper to save workflow state after follow-up activity updates
 
 ### Frontend
 
-- `web/src/types.ts`
+- `src/dashboard/web/src/types.ts`
   - add `RunFollowupActivity`
   - add `followups` to `RunDetails`
   - add `followups` to `WorkflowGraphNodeData`
-- `web/src/components/RunDetailsModal.tsx`
+- `src/dashboard/web/src/components/RunDetailsModal.tsx`
   - render follow-up rows in timeline
   - support active follow-up entry
   - show submitted follow-up prompt/context metadata
-- `web/src/components/WorkflowNode.tsx`
+- `src/dashboard/web/src/components/WorkflowNode.tsx`
   - render compact follow-up badge/strip
-- `web/src/App.tsx`
+- `src/dashboard/web/src/App.tsx`
   - after submit, refresh source run graph/details
   - select new follow-up row instead of only navigating to fresh pseudo-workflow
-- `web/src/components/RecentRuns.tsx`
+- `src/dashboard/web/src/components/RecentRuns.tsx`
   - show follow-up count/status if available
 
 ---
@@ -572,14 +572,14 @@ Do not implement background polling in the first continuity pass unless it is ch
   - writes prompt/context files
   - updates `workflow.json.followups[]`
   - handles partial submission warnings
-- `visualize-run-details.test.js` or existing `visualize-server.test.js`
+- `dashboard-run-details.test.js` or existing `dashboard-server.test.js`
   - details response includes follow-ups
   - source step association is correct
   - prompt path/content is exposed for follow-up entries
-- `visualize-graph.test.js`
+- `dashboard-graph.test.js`
   - graph node includes follow-up summary
   - follow-up status does not erase original completed result status
-- `visualize-server.test.js`
+- `dashboard-server.test.js`
   - `--tail` formatter produces useful lines
   - submit response includes `persistedFollowupActivity`
 
@@ -594,7 +594,7 @@ Do not implement background polling in the first continuity pass unless it is ch
   - source timeline shows all submissions
   - fresh pseudo-workflow still appears in Recent runs
   - UI remains on source workflow unless only fresh submissions were requested
-- Run `nax visualize --tail`:
+- Run `nax dashboard --tail`:
   - follow-up submission prints packaging, delivery, submission, accepted, persisted lines
 
 ---
@@ -664,7 +664,7 @@ Add manual refresh first. Consider background polling later if users need live c
 ## Success Criteria
 
 - After submitting a follow-up on an existing thread, the current source workflow view visibly changes.
-- A user can close and reopen `nax visualize` and still see the submitted follow-up attached to the source workflow.
+- A user can close and reopen `nax dashboard` and still see the submitted follow-up attached to the source workflow.
 - `--tail` prints enough local lifecycle information that the terminal user knows what was submitted and where it was persisted.
 - Fresh and continued follow-ups both have a durable source-workflow reference.
 - No UI state is fabricated without persisted backing.

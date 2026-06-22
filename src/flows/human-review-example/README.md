@@ -19,7 +19,7 @@ flowchart TD
 | # | Step | Agents | Purpose |
 |---|------|--------|---------|
 | 1 | `audit` | codex | Produce a reviewable plan without changing files. |
-| 2 | `human-review` | none | Pause the run until a person continues or cancels it in the visualizer. |
+| 2 | `human-review` | none | Pause the run until a person continues or cancels it in the dashboard. |
 | 3 | `implement` | codex | Continue the prior runner thread and implement only the approved work. |
 
 ## Human Review Step
@@ -42,8 +42,8 @@ The workflow runner normalizes this to `submit: human-review` and `waitFor: huma
 nax human-review-example
 ```
 
-Or inspect it in the visualizer:
+Or inspect it in the dashboard:
 
 ```bash
-nax visualize human-review-example
+nax dashboard human-review-example
 ```

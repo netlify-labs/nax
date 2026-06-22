@@ -37,13 +37,13 @@ Completed output is also projected into artifact summaries:
 
 Use `.nax/workflows/latest/artifacts/summary.md` for the latest workflow rollup when the filesystem supports symlinks. Use `nax handoff -c` to copy the latest useful summary to the clipboard.
 
-## Visualizer
+## Dashboard
 
 Use the browser workbench when terminal summaries are not enough:
 
 ```bash
-nax visualize
-nax visualize review --no-open
+nax dashboard
+nax dashboard review --no-open
 ```
 
 Run details can render saved workflow, step, runner, session, and result artifacts. When the selected entry maps back to a flow prompt, the center pane can switch between **Results** and **Prompt**; copy/open actions follow the active view.

@@ -1,4 +1,4 @@
-# Spec - Visualizer `Run a followup`
+# Spec - Dashboard `Run a followup`
 
 > Status: IMPLEMENTED.
 > Scope implemented: enable `Run a followup` in `RunDetailsModal` and add the supporting backend/API path.
@@ -23,7 +23,7 @@ The composer must also let the user choose which artifacts to include. Not every
 
 The shipped implementation adds explicit follow-up targets and artifacts to run details, a token-protected `POST /api/runs/:id/followups` endpoint, and a `RunFollowupModal` opened from **Send to next agent** -> **Run a followup**.
 
-The endpoint submits through the Netlify API transport and returns `202` after remote acceptance. It does not wait for completion. A compatible selected model continues the matching prior runner thread; additional selected models become fresh seeded runner threads. Fresh runner submissions are persisted as one-step pseudo-workflow runs so the visualizer can open them from Recent runs. If remote submission succeeds but local persistence fails, the response remains successful and includes `warnings[]`.
+The endpoint submits through the Netlify API transport and returns `202` after remote acceptance. It does not wait for completion. A compatible selected model continues the matching prior runner thread; additional selected models become fresh seeded runner threads. Fresh runner submissions are persisted as one-step pseudo-workflow runs so the dashboard can open them from Recent runs. If remote submission succeeds but local persistence fails, the response remains successful and includes `warnings[]`.
 
 The browser composer requires a non-empty user prompt, defaults to the server-selected target and artifacts, uses the existing prompt delivery/blob policy for selected context, shows mixed follow-up/fresh submission plan lines, and refreshes/navigates after submission. GitHub transport support, wait-for-completion behavior, and a separate follow-up ledger remain non-goals for this MVP.
 
@@ -76,7 +76,7 @@ Default to the original workflow target SHA for both modes, because the selected
 
 Append a visual follow-up node only when that submitted run/session is persisted into the current workflow run state. Do not fake graph state.
 
-Fresh one-off agent runs should become durable single-step pseudo-workflow runs so the visualizer can show a one-node graph and reuse existing run details surfaces.
+Fresh one-off agent runs should become durable single-step pseudo-workflow runs so the dashboard can show a one-node graph and reuse existing run details surfaces.
 
 ### Post-submit UX
 
@@ -145,7 +145,7 @@ submitLocalAgentRun({
 
 ### Run details
 
-`src/visualize-run-details.js` returns every rendered section for a workflow run, including agent session sections with:
+`src/dashboard/shared/run-details.js` returns every rendered section for a workflow run, including agent session sections with:
 
 - `agent`
 - `runnerId`
@@ -563,7 +563,7 @@ Purpose:
 - one-node React Flow graph
 - regular Recent Runs entry
 - regular run-details modal
-- no separate visualization model
+- no separate dashboard view model
 
 Suggested run ID:
 
@@ -587,7 +587,7 @@ When a fresh runner is launched from workflow results, store source metadata on 
 
 ```json
 {
-  "type": "visualizer-followup",
+  "type": "dashboard-followup",
   "mode": "fresh-runner",
   "sourceWorkflowRunId": "...",
   "sourceTargetId": "...",
@@ -627,7 +627,7 @@ If persistence fails after Netlify accepts:
 
 ### API client
 
-Add to `web/src/api.ts`:
+Add to `src/dashboard/web/src/api.ts`:
 
 ```ts
 export async function startRunFollowup(
@@ -638,7 +638,7 @@ export async function startRunFollowup(
 
 ### Types
 
-Add to `web/src/types.ts`:
+Add to `src/dashboard/web/src/types.ts`:
 
 - `RunFollowupTarget`
 - `RunFollowupArtifact`
@@ -655,7 +655,7 @@ Extend `RunDetailsResponse.details` with:
 Add:
 
 ```text
-web/src/components/RunFollowupModal.tsx
+src/dashboard/web/src/components/RunFollowupModal.tsx
 ```
 
 Props:
@@ -664,7 +664,7 @@ Props:
 type RunFollowupModalProps = {
   opened: boolean
   onClose: () => void
-  run: VisualizeRun
+  run: DashboardRun
   details: RunDetails
   activeEntry?: TimelineEntry | null
   onSubmitted?: (response: RunFollowupResponse) => void
@@ -739,7 +739,7 @@ Use the repo's existing `node:test` + `tsx` pattern. Relevant current guards:
 
 - `tests/unit/handoff-sources.test.js`
 - `tests/unit/local-runner.test.js`
-- `tests/unit/visualize-server.test.js`
+- `tests/unit/dashboard-server.test.js`
 - `tests/unit/flow-execution.test.js`
 - `tests/unit/workflow-artifacts.test.js`
 
@@ -830,7 +830,7 @@ Use the repo's existing `node:test` + `tsx` pattern. Relevant current guards:
 ## Non-Goals For MVP
 
 - Waiting for terminal completion in the HTTP request.
-- GitHub transport support for the visualizer follow-up action.
+- GitHub transport support for the dashboard follow-up action.
 - Full generated prompt preview.
 - A workflow-level `followups.jsonl` ledger with no reader.
 - Cross-model follow-up in the same existing runner thread unless Netlify behavior is proven safe.

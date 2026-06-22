@@ -5,26 +5,26 @@ const http = require('http')
 const path = require('path')
 const { URL } = require('url')
 
-const { listFlows, loadFlow } = require('./flows')
-const { isUnfinishedRun, listRunStates, saveRunState } = require('./run-state')
-const { flowToGraph } = require('./visualize-graph')
-const { resumeWorkflow, runWorkflow, workflowCommand } = require('./workflow-runner')
-const { normalizeAgentList, normalizeStepModels, selectionValidationErrors } = require('./agent-selection')
-const { buildRunDetails } = require('./visualize-run-details')
-const { appendEventLog, eventLogPathForRunState, readEventLog } = require('./runner-event-log')
-const { formatAgentRunUrl } = require('./agent-run-results')
-const { buildFollowupContextPackage } = require('./followup-context')
-const { prepareFollowupContextDelivery } = require('./followup-delivery')
-const { buildFollowupSubmissionPlan } = require('./followup-plan')
-const { buildFollowupPrompt, submitFollowupPlan } = require('./handoff-runner')
-const { appendFollowupRunsToWorkflow, cancelFollowupRunInWorkflow, persistFreshPseudoWorkflow, syncSubmittedFollowupRunsToWorkflow } = require('./followup-persistence')
-const { cancelHumanReviewGate, findReviewStep } = require('./human-review')
-const { archiveAgentRun, stopAgentRun } = require('./local-runner')
-const { setBlob } = require('./netlify-blobs')
-const { readLinkedSiteId } = require('./init')
-const { isCancelledRunStatus, isFailedRunStatus, isTerminalRunStatus } = require('./status')
+const { listFlows, loadFlow } = require('../flows')
+const { isUnfinishedRun, listRunStates, saveRunState } = require('../run-state')
+const { flowToGraph } = require('./shared/graph')
+const { resumeWorkflow, runWorkflow, workflowCommand } = require('../workflow-runner')
+const { normalizeAgentList, normalizeStepModels, selectionValidationErrors } = require('../agent-selection')
+const { buildRunDetails } = require('./shared/run-details')
+const { appendEventLog, eventLogPathForRunState, readEventLog } = require('../runner-event-log')
+const { formatAgentRunUrl } = require('../agent-run-results')
+const { buildFollowupContextPackage } = require('../followup-context')
+const { prepareFollowupContextDelivery } = require('../followup-delivery')
+const { buildFollowupSubmissionPlan } = require('../followup-plan')
+const { buildFollowupPrompt, submitFollowupPlan } = require('../handoff-runner')
+const { appendFollowupRunsToWorkflow, cancelFollowupRunInWorkflow, persistFreshPseudoWorkflow, syncSubmittedFollowupRunsToWorkflow } = require('../followup-persistence')
+const { cancelHumanReviewGate, findReviewStep } = require('../human-review')
+const { archiveAgentRun, stopAgentRun } = require('../local-runner')
+const { setBlob } = require('../netlify-blobs')
+const { readLinkedSiteId } = require('../init')
+const { isCancelledRunStatus, isFailedRunStatus, isTerminalRunStatus } = require('../status')
 
-const SESSION_COOKIE_NAME = 'nax_visualize_token'
+const SESSION_COOKIE_NAME = 'nax_dashboard_token'
 
 function jsonResponse(res, statusCode, payload, headers = {}) {
   const body = `${JSON.stringify(payload, null, 2)}\n`
@@ -89,7 +89,7 @@ function safeDecode(value) {
 
 // Live-run memory caps: the durable event log on disk is the source of truth for
 // full history; the in-memory window is bounded so long/verbose runs cannot grow
-// the visualize process without limit.
+// the dashboard process without limit.
 const MAX_LIVE_OUTPUT_CHARS = 512 * 1024
 const MAX_LIVE_EVENTS = 2000
 const MAX_FINISHED_RUNS = 50
@@ -330,7 +330,7 @@ function followupId(sourceRunId = '') {
 /**
  * Follow-up blob write callback.
  * @callback FollowupBlobWriter
- * @param {{ ref: import('./types').BlobRef, payload: string }} input
+ * @param {{ ref: import('../types').BlobRef, payload: string }} input
  * @returns {unknown}
  *
  * Options for creating a follow-up blob writer.
@@ -409,7 +409,7 @@ function tokenFromRequest(req) {
 function assertToken(req, _requestUrl, token) {
   const provided = tokenFromRequest(req)
   if (!timingSafeTokenEqual(provided, token)) {
-    throw requestError(401, 'unauthorized', 'A valid visualize session token is required.')
+    throw requestError(401, 'unauthorized', 'A valid dashboard session token is required.')
   }
 }
 
@@ -430,7 +430,7 @@ function allowedHostnames(bindHost = '127.0.0.1') {
 function assertAllowedHost(req, bindHost) {
   const host = hostWithoutPort(req.headers.host)
   if (!host || !allowedHostnames(bindHost).has(host)) {
-    throw requestError(403, 'forbidden_host', 'The Host header is not allowed for this visualize server.')
+    throw requestError(403, 'forbidden_host', 'The Host header is not allowed for this dashboard server.')
   }
 }
 
@@ -467,7 +467,7 @@ function defaultIndexHtml({ token, initialWorkflow = '' } = {}) {
     '<head>',
     '  <meta charset="utf-8">',
     '  <meta name="viewport" content="width=device-width, initial-scale=1">',
-    '  <title>Nax Visualize</title>',
+    '  <title>Nax Dashboard</title>',
     '  <style>',
     '    body { margin: 0; font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; background: #f8fafc; color: #111827; }',
     '    main { max-width: 720px; margin: 12vh auto; padding: 0 24px; line-height: 1.5; }',
@@ -476,8 +476,8 @@ function defaultIndexHtml({ token, initialWorkflow = '' } = {}) {
     '</head>',
     '<body>',
     '  <main>',
-    '    <h1>Nax Visualize</h1>',
-    '    <p>The visualize API is running. Build the web UI with <code>npm run visualize:build</code> to serve the full workbench.</p>',
+    '    <h1>Nax Dashboard</h1>',
+    '    <p>The dashboard API is running. Build the web UI with <code>npm run dashboard:build</code> to serve the full workbench.</p>',
     `    ${workflowText}`,
     '    <p>API health: <a href="/api/health">/api/health</a></p>',
     '  </main>',
@@ -490,7 +490,7 @@ function normalizePort(port) {
   if (port === undefined || port === null || port === '') return 0
   const parsed = Number.parseInt(String(port), 10)
   if (!Number.isFinite(parsed) || parsed < 0 || parsed > 65535) {
-    throw new Error(`Invalid visualize port: ${port}`)
+    throw new Error(`Invalid dashboard port: ${port}`)
   }
   return parsed
 }
@@ -543,15 +543,15 @@ function runDryRunCommand({ flowId, projectRoot, options, tailOutput = false }) 
 }
 
 /**
- * @typedef {(event: Record<string, unknown>) => void} VisualizeEventSink
+ * @typedef {(event: Record<string, unknown>) => void} DashboardEventSink
  * @typedef {{ code?: string, message: string, line?: number, text?: string }} RunnerEventParseError
  *
  * Child-process workflow run options.
  * @typedef {{
  *   flowId: string,
  *   projectRoot: string,
- *   options?: import('./workflow-runner').WorkflowCommandOptions,
- *   eventSink?: VisualizeEventSink,
+ *   options?: import('../workflow-runner').WorkflowCommandOptions,
+ *   eventSink?: DashboardEventSink,
  *   tailOutput?: boolean,
  * }} RunWorkflowChildInput
  */
@@ -559,7 +559,7 @@ function runDryRunCommand({ flowId, projectRoot, options, tailOutput = false }) 
 /** @param {RunWorkflowChildInput} input */
 function runWorkflowChild({ flowId, projectRoot, options = {}, eventSink = () => {}, tailOutput = false }) {
   const command = workflowCommand({ flowId, projectRoot, options })
-  const args = [path.resolve(__dirname, '..', 'bin', 'nax.js'), ...command.slice(1)]
+  const args = [path.resolve(__dirname, '..', '..', 'bin', 'nax.js'), ...command.slice(1)]
   const startedAt = new Date().toISOString()
   const started = Date.now()
   let stdout = ''
@@ -939,14 +939,14 @@ function cancellableWorkflowRunnerIds(runState = {}) {
  *   env?: NodeJS.ProcessEnv,
  * }} StopWorkflowRunnerInput
  *
- * Stop-runner callback used by visualizer cancellation.
+ * Stop-runner callback used by dashboard cancellation.
  * @callback StopWorkflowRunner
  * @param {StopWorkflowRunnerInput} input
  * @returns {StopWorkflowRunnerResult | Promise<StopWorkflowRunnerResult>}
  *
  * Options for cancelling active workflow Agent Runners.
  * @typedef {{
- *   runState?: import('./types').WorkflowRunState,
+ *   runState?: import('../types').WorkflowRunState,
  *   projectRoot?: string,
  *   env?: NodeJS.ProcessEnv,
  *   stopRun?: StopWorkflowRunner,
@@ -999,7 +999,7 @@ function appendDurableWorkflowEvent(runState = {}, type, data = {}) {
   return event
 }
 
-function applyRemoteCancelToWorkflow(runState = {}, remoteCancel = {}, { reason = 'cancelled from visualizer' } = {}) {
+function applyRemoteCancelToWorkflow(runState = {}, remoteCancel = {}, { reason = 'cancelled from dashboard' } = {}) {
   hydrateWorkflowRunsFromEvents(runState)
   const stopped = new Set(Array.isArray(remoteCancel.stopped) ? remoteCancel.stopped : Array.isArray(remoteCancel.archived) ? remoteCancel.archived : [])
   const runnerIds = Array.isArray(remoteCancel.runnerIds) ? remoteCancel.runnerIds : []
@@ -1101,7 +1101,7 @@ function staticFileForPath(distDir, pathname) {
 function createRequestHandler(options = {}) {
   const projectRoot = path.resolve(options.projectRoot || process.cwd())
   const bindHost = options.host || '127.0.0.1'
-  const distDir = options.distDir || path.resolve(__dirname, '..', 'web', 'dist')
+  const distDir = options.distDir || path.resolve(__dirname, 'web', 'dist')
   const tailOutput = options.tail === true || options.tailOutput === true
   const flowOptions = {
     projectRoot,
@@ -1197,7 +1197,7 @@ function createRequestHandler(options = {}) {
     if (existingRunId) {
       const existing = runs.get(existingRunId)
       if (existing && existing.status === 'running') {
-        throw requestError(409, 'duplicate_run', `Workflow "${flowId}" already has an active visualize run.`)
+        throw requestError(409, 'duplicate_run', `Workflow "${flowId}" already has an active dashboard run.`)
       }
       activeByWorkflow.delete(flowId)
     }
@@ -1319,7 +1319,7 @@ function createRequestHandler(options = {}) {
     if (existingRunId) {
       const existing = runs.get(existingRunId)
       if (existing && existing.status === 'running') {
-        throw requestError(409, 'duplicate_run', `Workflow "${flowId}" already has an active visualize run.`)
+        throw requestError(409, 'duplicate_run', `Workflow "${flowId}" already has an active dashboard run.`)
       }
       activeByWorkflow.delete(flowId)
     }
@@ -1357,7 +1357,7 @@ function createRequestHandler(options = {}) {
     const promise = resumeWorkflow({
       runId: durable.runId,
       projectRoot,
-      options: { projectRoot, stepId, reviewer: 'visualizer', yes: true, force: true },
+      options: { projectRoot, stepId, reviewer: 'dashboard', yes: true, force: true },
       passthrough: tailOutput,
       eventSink: (event) => {
         if (event.type === 'stdout') {
@@ -1539,7 +1539,7 @@ function createRequestHandler(options = {}) {
           const run = runs.get(runId)
           const durable = run ? null : durableRunStateForId(runId)
           if (!run && !durable) {
-            notFound(res, 'Unknown visualize run.')
+            notFound(res, 'Unknown dashboard run.')
             return
           }
           const since = Number(requestUrl.searchParams.get('since') || 0)
@@ -1571,7 +1571,7 @@ function createRequestHandler(options = {}) {
           const run = runs.get(runId)
           const durable = run ? null : durableRunStateForId(runId)
           if (!run && !durable) {
-            notFound(res, 'Unknown visualize run.')
+            notFound(res, 'Unknown dashboard run.')
             return
           }
           const since = Number(requestUrl.searchParams.get('since') || 0)
@@ -1615,7 +1615,7 @@ function createRequestHandler(options = {}) {
           assertToken(req, requestUrl, token)
           const durable = syncDurableFollowups(durableRunStateForId(runGraphMatch[1]))
           if (!durable) {
-            notFound(res, 'Unknown visualize run.')
+            notFound(res, 'Unknown dashboard run.')
             return
           }
           let flow
@@ -1648,7 +1648,7 @@ function createRequestHandler(options = {}) {
           assertToken(req, requestUrl, token)
           const durable = syncDurableFollowups(durableRunStateForId(runDetailsMatch[1]))
           if (!durable) {
-            notFound(res, 'Unknown visualize run.')
+            notFound(res, 'Unknown dashboard run.')
             return
           }
           let flow
@@ -1673,7 +1673,7 @@ function createRequestHandler(options = {}) {
           assertToken(req, requestUrl, token)
           const durable = durableRunStateForId(reviewApproveMatch[1])
           if (!durable) {
-            notFound(res, 'Unknown visualize run.')
+            notFound(res, 'Unknown dashboard run.')
             return
           }
           const body = await readJsonBody(req)
@@ -1697,14 +1697,14 @@ function createRequestHandler(options = {}) {
           assertToken(req, requestUrl, token)
           const durable = durableRunStateForId(reviewCancelMatch[1])
           if (!durable) {
-            notFound(res, 'Unknown visualize run.')
+            notFound(res, 'Unknown dashboard run.')
             return
           }
           const body = await readJsonBody(req)
           const next = cancelHumanReviewGate({
             runState: durable,
             stepId: body.stepId || '',
-            reviewer: 'visualizer',
+            reviewer: 'dashboard',
             reason: body.reason || 'cancelled by reviewer',
           })
           jsonResponse(res, 200, {
@@ -1724,7 +1724,7 @@ function createRequestHandler(options = {}) {
           const sourceRunId = safeDecode(runFollowupsMatch[1])
           const durable = durableRunStateForId(sourceRunId)
           if (!durable) {
-            notFound(res, 'Unknown visualize run.')
+            notFound(res, 'Unknown dashboard run.')
             return
           }
           const body = await readJsonBody(req)
@@ -1738,7 +1738,7 @@ function createRequestHandler(options = {}) {
           const delivery = await prepareFollowupContextDelivery({
             contextPackage,
             runId: durable.runId || sourceRunId,
-            stepId: 'visualizer-followup',
+            stepId: 'dashboard-followup',
             options: durable.options || {},
             writeBlob: makeFollowupBlobWriter({
               projectRoot,
@@ -1781,7 +1781,7 @@ function createRequestHandler(options = {}) {
                 sourceArtifactIds,
               },
               raw: {
-                visualizerFollowup: {
+                dashboardFollowup: {
                   id,
                   sourceWorkflowRunId: durable.runId || sourceRunId,
                   targetId: normalized.target.id,
@@ -1822,7 +1822,7 @@ function createRequestHandler(options = {}) {
                 target: {
                   sha: normalized.targetSha,
                   branch: normalized.targetBranch,
-                  sourceType: 'visualizer-followup',
+                  sourceType: 'dashboard-followup',
                 },
                 source: {
                   id,
@@ -1873,7 +1873,7 @@ function createRequestHandler(options = {}) {
           const sourceRunId = safeDecode(runFollowupCancelMatch[1])
           const durable = durableRunStateForId(sourceRunId)
           if (!durable) {
-            notFound(res, 'Unknown visualize run.')
+            notFound(res, 'Unknown dashboard run.')
             return
           }
           const body = await readJsonBody(req)
@@ -1920,7 +1920,7 @@ function createRequestHandler(options = {}) {
           const run = runs.get(requestedRunId)
           const durable = durableRunStateForId(run?.runId || run?.id || requestedRunId)
           if (!run && !durable) {
-            notFound(res, 'Unknown visualize run.')
+            notFound(res, 'Unknown dashboard run.')
             return
           }
           const remoteCancel = durable
@@ -1932,7 +1932,7 @@ function createRequestHandler(options = {}) {
               })
             : { runnerIds: [], stopped: [], warnings: [] }
           if (durable) {
-            applyRemoteCancelToWorkflow(durable, remoteCancel, { reason: 'cancelled from visualizer' })
+            applyRemoteCancelToWorkflow(durable, remoteCancel, { reason: 'cancelled from dashboard' })
           }
           if (!run) {
             jsonResponse(res, 200, {
@@ -1984,7 +1984,7 @@ function createRequestHandler(options = {}) {
           }
           const durable = durableRunStateForId(runMatch[1])
           if (!durable) {
-            notFound(res, 'Unknown visualize run.')
+            notFound(res, 'Unknown dashboard run.')
             return
           }
           jsonResponse(res, 200, { run: publicRunState(durable) })
@@ -2103,7 +2103,7 @@ function createRequestHandler(options = {}) {
   }
 }
 
-function startVisualizeServer(options = {}) {
+function startDashboardServer(options = {}) {
   const host = options.host || '127.0.0.1'
   const port = normalizePort(options.port)
   const handler = createRequestHandler(options)
@@ -2162,5 +2162,5 @@ module.exports = {
   },
   createRequestHandler,
   publicFlow,
-  startVisualizeServer,
+  startDashboardServer,
 }

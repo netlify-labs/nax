@@ -1,7 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 
-import { initialLiveRunState, liveRunReducer, visualStatus } from '../../web/src/liveRunReducer'
+import { initialLiveRunState, liveRunReducer, visualStatus } from '../../src/dashboard/web/src/liveRunReducer'
 
 test('live run reducer maps ordered workflow, step, agent, and output events', () => {
   let state = initialLiveRunState({ id: 'tmp-run', flowId: 'review', status: 'running' })
@@ -36,17 +36,17 @@ test('live run reducer ignores older durable replay statuses after newer live st
 })
 
 test('live run reducer bootstraps a temporary run from workflow_started on reconnect', () => {
-  let state = initialLiveRunState({ id: 'visualize-run', flowId: 'review', status: 'running' })
+  let state = initialLiveRunState({ id: 'dashboard-run', flowId: 'review', status: 'running' })
   state = liveRunReducer(state, { type: 'event', event: { type: 'workflow_started', eventId: 'real-run:1', seq: 1, runId: 'real-run', flowId: 'review', flowTitle: 'Review', status: 'running', command: ['nax', 'run', 'review'] } })
 
-  assert.equal(state.run?.id, 'visualize-run')
+  assert.equal(state.run?.id, 'dashboard-run')
   assert.equal(state.run?.runId, 'real-run')
   assert.equal(state.run?.flowTitle, 'Review')
   assert.deepEqual(state.run?.command, ['nax', 'run', 'review'])
 })
 
 test('live run reducer records artifacts, parser errors, and terminal run metadata', () => {
-  let state = initialLiveRunState({ id: 'visualize-run', flowId: 'review', status: 'running' })
+  let state = initialLiveRunState({ id: 'dashboard-run', flowId: 'review', status: 'running' })
   state = liveRunReducer(state, { type: 'event', event: { type: 'artifact_written', eventId: 'run-1:11', seq: 11, runId: 'run-1', path: 'artifacts/summary.md' } })
   state = liveRunReducer(state, { type: 'event', event: { type: 'future_event', eventId: 'run-1:12', seq: 12, runId: 'run-1', payload: 'ignored' } })
   state = liveRunReducer(state, { type: 'event', event: { type: 'runner_event_error', id: 12, message: 'Malformed event' } })

@@ -30,7 +30,8 @@ test('nax command help smoke covers public and hidden commands', () => {
   assert.match(rootHelp, /Usage: nax \[options\] \[command\] \[workflow\]/)
   assert.match(rootHelp, /Run multi step Netlify agent workflows/)
   assert.match(rootHelp, /run \[options\] \[flow\]/)
-  assert.match(rootHelp, /visualize \[options\] \[workflow\]/)
+  assert.match(rootHelp, /dashboard \[options\] \[workflow\]/)
+  assert.doesNotMatch(rootHelp, /visualize/i)
 
   /** @type {HelpExpectation[]} */
   const expectedCommands = [

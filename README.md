@@ -207,7 +207,7 @@ npm link    # exposes `nax` globally
 
 **Prerequisites:**
 
-- Node 18+ for the published CLI. Developing or rebuilding the visualizer UI requires Node 20.19+ or 22.12+.
+- Node 18+ for the published CLI. Developing or rebuilding the dashboard UI requires Node 20.19+ or 22.12+.
 - [Netlify CLI](https://docs.netlify.com/cli/get-started/) — authenticated (`netlify login`)
 - [GitHub CLI](https://cli.github.com/) — authenticated (`gh auth login`)
 
@@ -314,7 +314,7 @@ nax recent                Browse recent workflow/session/runner artifacts
 nax retry [run-id]        Retry one failed Netlify API agent run, then continue
 nax sync last             Pull remote updates for the latest local Agent Runner
 nax clean blobs           Preview or delete stale prompt blob refs
-nax visualize [flow]      Open the experimental local workflow visualizer
+nax dashboard [flow]      Open the local workflow dashboard
 nax ci '<command>'        Run a command only inside Netlify Agent Runner
 nax skills install        Install bundled agent skills into detected harness dirs
 nax skills check          Show installed skill versions
@@ -322,16 +322,16 @@ nax skills update         Reinstall the latest bundled skill copy
 nax list                  List available flows
 ```
 
-### `nax visualize`
+### `nax dashboard`
 
 ```bash
-nax visualize review
-nax visualize --no-open
-nax visualize --no-open --tail
-nax visualize --project-root ../my-site --flows-dir .github/nax-flows
+nax dashboard review
+nax dashboard --no-open
+nax dashboard --no-open --tail
+nax dashboard --project-root ../my-site --flows-dir .github/nax-flows
 ```
 
-`nax visualize` starts a localhost workbench for browsing workflows and renders the selected flow as a React Flow graph. Browsing and graph rendering are read-only. Dry-run and run controls are explicit actions inside the workbench.
+`nax dashboard` starts a localhost workbench for browsing workflows and renders the selected flow as a React Flow graph. Browsing and graph rendering are read-only. Dry-run and run controls are explicit actions inside the workbench.
 
 The workbench includes:
 
@@ -344,15 +344,15 @@ The workbench includes:
 | Recent runs | Reads durable `.nax/workflows` state, highlights resumable runs, and overlays run status on the graph. |
 | Run details actions | Opens saved workflow, step, and agent results; switches between Results and Prompt when prompt markdown is available; copies or opens the active markdown source; and can send selected artifacts to a follow-up agent. |
 
-The browser talks only to the local visualize server. Mutating endpoints require a per-process token embedded in the opened URL, and the server binds to `127.0.0.1` by default. Real runs still use the same transport setup as the CLI, so GitHub Actions and Netlify API prerequisites are unchanged.
+The browser talks only to the local dashboard server. Mutating endpoints require a per-process token embedded in the opened URL, and the server binds to `127.0.0.1` by default. Real runs still use the same transport setup as the CLI, so GitHub Actions and Netlify API prerequisites are unchanged.
 
 Run details resolve the original step prompt from the workflow definition when possible. The center pane switches between rendered **Results** and **Prompt**, while the table of contents, copy button, open-file actions, and markdown source links follow the active view.
 
 From a completed run details modal, **Send to next agent** opens a follow-up composer. The composer requires fresh user instructions before submission, defaults to the last meaningful result artifact, and lets you choose which workflow, step, runner, session, or result artifacts to include. In **Follow up prompt on previous Agent Run** mode, the selected model continues the matching prior Netlify Agent Runner when one exists; extra selected models start fresh runner threads seeded with the selected artifacts. **Start fresh agent runner** always starts new runner threads.
 
-Visualizer follow-up submission returns after Netlify accepts the runner/session, not after the remote agent finishes. The notification includes remote links and any local artifact path the server could persist. Fresh runner submissions are saved as one-step pseudo-workflow runs so they can be opened from Recent runs. If Netlify accepts work but local artifact persistence fails, the API still returns success with `warnings[]` so the remote link is not lost.
+Dashboard follow-up submission returns after Netlify accepts the runner/session, not after the remote agent finishes. The notification includes remote links and any local artifact path the server could persist. Fresh runner submissions are saved as one-step pseudo-workflow runs so they can be opened from Recent runs. If Netlify accepts work but local artifact persistence fails, the API still returns success with `warnings[]` so the remote link is not lost.
 
-Live graph status is event-driven. When the visualizer starts a real run, the child `nax run` process writes JSONL lifecycle events on file descriptor 3 while stdout/stderr are captured for the UI. The visualize server relays those structured events to the browser with Server-Sent Events at `/api/runs/<id>/events`, and the UI reducer updates step cards, model pills, edges, output, and diagnostics from those events. Pass `--tail` to also stream the child workflow stdout/stderr back to the `nax visualize` terminal while debugging.
+Live graph status is event-driven. When the dashboard starts a real run, the child `nax run` process writes JSONL lifecycle events on file descriptor 3 while stdout/stderr are captured for the UI. The dashboard server relays those structured events to the browser with Server-Sent Events at `/api/runs/<id>/events`, and the UI reducer updates step cards, model pills, edges, output, and diagnostics from those events. Pass `--tail` to also stream the child workflow stdout/stderr back to the `nax dashboard` terminal while debugging.
 
 Each durable run also stores the same structured stream at:
 
@@ -371,27 +371,27 @@ The Output panel diagnostics button shows the latest raw events and parser error
 The published command serves built UI assets from the package. Developing or rebuilding the UI uses Vite 8, which requires Node 20.19+ or 22.12+:
 
 ```bash
-npm run visualize:dev
-npm run visualize:build
-npm run visualize:smoke
+npm run dashboard:dev
+npm run dashboard:build
+npm run dashboard:smoke
 ```
 
-By default, `npm run visualize:dev` serves read-only workflow data from Vite so the UI can boot without a running backend. To iterate against the real local API runner, start the visualize server in one terminal:
+By default, `npm run dashboard:dev` serves read-only workflow data from Vite so the UI can boot without a running backend. To iterate against the real local API runner, start the dashboard server in one terminal:
 
 ```bash
-node bin/nax.js visualize --no-open --port 53734
+node bin/nax.js dashboard --no-open --port 53734
 ```
 
 For terminal-side debugging of runs started from the browser:
 
 ```bash
-node bin/nax.js visualize --no-open --tail --port 53734
+node bin/nax.js dashboard --no-open --tail --port 53734
 ```
 
 Copy the `token` value from the printed URL, then start Vite in another terminal:
 
 ```bash
-NAX_VISUALIZE_API_URL=http://127.0.0.1:53734 npm run visualize:dev
+NAX_DASHBOARD_API_URL=http://127.0.0.1:53734 npm run dashboard:dev
 ```
 
 Open the Vite URL with the same token:
@@ -403,10 +403,10 @@ http://127.0.0.1:5173/?token=<token>&workflow=do-next
 You can also inject the token from the proxy process and omit it from the Vite URL:
 
 ```bash
-NAX_VISUALIZE_API_URL=http://127.0.0.1:53734 NAX_VISUALIZE_TOKEN=<token> npm run visualize:dev
+NAX_DASHBOARD_API_URL=http://127.0.0.1:53734 NAX_DASHBOARD_TOKEN=<token> npm run dashboard:dev
 ```
 
-`NAX_VISUALIZE_API_URL` may point at either the backend origin or its `/api` path. For the common fixed-port loop, `npm run visualize:dev:real` defaults the backend to `http://127.0.0.1:53734`.
+`NAX_DASHBOARD_API_URL` may point at either the backend origin or its `/api` path. For the common fixed-port loop, `npm run dashboard:dev:real` defaults the backend to `http://127.0.0.1:53734`.
 
 ### `nax ci`
 
@@ -594,8 +594,8 @@ src/flows/<id>/flow.*   # one workflow file per built-in flow
 src/flows/<id>/prompts/ # one Markdown prompt per step
 .github/nax-flows/ # optional committed project-local workflows
 src/templates/      # bundled GitHub Actions workflow and skill templates
-web/src/            # React visualizer source
-web/dist/           # packaged visualizer assets served by `nax visualize`
+src/dashboard/web/src/            # React dashboard source
+src/dashboard/web/dist/           # packaged dashboard assets served by `nax dashboard`
 tests/              # unit, integration, and e2e suites
 ```
 
@@ -606,10 +606,10 @@ Key modules:
 - `src/run-state.js:1` — `.nax/workflows/<id>/workflow.json` durable state.
 - `src/workflow-artifacts.js:1` — summary rollups.
 - `src/round-results.js:1` — prior-round result fetching for follow-up steps.
-- `src/visualize-server.js:1` — local visualizer API, SSE, and mutation auth.
-- `src/visualize-run-details.js:1` — run-details data assembly for workflow, step, runner, session, result, and prompt markdown.
-- `src/followup-plan.js:1` — visualizer follow-up target, artifact, model, and mode planning.
-- `src/followup-delivery.js:1` — prompt/context delivery policy for visualizer follow-ups.
+- `src/dashboard/server.js:1` — local dashboard API, SSE, and mutation auth.
+- `src/dashboard/shared/run-details.js:1` — run-details data assembly for workflow, step, runner, session, result, and prompt markdown.
+- `src/followup-plan.js:1` — dashboard follow-up target, artifact, model, and mode planning.
+- `src/followup-delivery.js:1` — prompt/context delivery policy for dashboard follow-ups.
 - `src/followup-persistence.js:1` — submitted follow-up and fresh-run artifact projection.
 - `src/runner-event-log.js:1` — structured event JSONL append/replay support.
 
@@ -735,7 +735,7 @@ nax handoff --runner  <id> --agent codex
 nax handoff --workflow <id> --flow review     # chain a follow-up flow
 ```
 
-`nax visualize` offers a browser-based handoff path from Run details: choose **Send to next agent** to submit a Netlify Agent Runner follow-up or a fresh seeded runner from selected artifacts. The CLI `nax handoff` command remains the terminal path for copying or chaining saved results.
+`nax dashboard` offers a browser-based handoff path from Run details: choose **Send to next agent** to submit a Netlify Agent Runner follow-up or a fresh seeded runner from selected artifacts. The CLI `nax handoff` command remains the terminal path for copying or chaining saved results.
 
 ### Browsing recents
 
@@ -774,15 +774,15 @@ nax run review --step <step-id>      # re-run one step from scratch
 | `Pinned SHA not on remote` | Auto-injected context pins to a SHA. Push first, or pass `--no-auto-context`. |
 | Resume keeps offering an old run | Decline the prompt; the run state is moved out of "unfinished" once you do. |
 | A Netlify UI follow-up is missing from `.nax` | Run `nax sync last` to refresh the latest local runner from remote sessions. |
-| `nax visualize` shows the fallback HTML page | Build the packaged UI with `npm run visualize:build`, or reinstall a package that includes `web/dist`. |
-| `nax visualize --port <n>` fails with address in use | Omit `--port` to let the server choose an available port, or pass a different port. |
-| Visualize API returns `unauthorized` | Reopen the full URL printed by `nax visualize`; mutating API calls require that session's `token` query value or `x-nax-token` header. |
+| `nax dashboard` shows the fallback HTML page | Build the packaged UI with `npm run dashboard:build`, or reinstall a package that includes `src/dashboard/web/dist`. |
+| `nax dashboard --port <n>` fails with address in use | Omit `--port` to let the server choose an available port, or pass a different port. |
+| Dashboard API returns `unauthorized` | Reopen the full URL printed by `nax dashboard`; mutating API calls require that session's `token` query value or `x-nax-token` header. |
 | Run details has no Prompt tab | The selected entry only shows Prompt when its workflow definition and prompt file can still be resolved. Verify the flow root, prompt path, or open the prompt from the graph node. |
-| Visualize follow-up is unavailable | The browser follow-up composer currently submits through the Netlify API transport. Use CLI handoff/workflow commands for GitHub Actions transport. |
-| Visualize reports an unknown workflow | Run `nax list` and use the displayed flow id. For project flows, also verify `--project-root` and `--flows-dir`. |
-| Visualize Run fails before submission | Fix the same GitHub/Netlify transport prerequisites you would fix for `nax run`: authenticated CLIs, linked Netlify site, or initialized GitHub Actions workflow. |
-| Visualize model pills stay on `submitted` or `waiting` | The UI only shows states `nax` can prove from the active transport. Open Output diagnostics or inspect `.nax/workflows/<run-id>/events.jsonl` to see the raw event stream. |
-| Visualize diagnostics show malformed runner events | stdout/stderr are still valid, but the structured status stream had invalid JSON or a bad envelope. Save the raw diagnostic event and rerun with the same workflow if you need to report it. |
+| Dashboard follow-up is unavailable | The browser follow-up composer currently submits through the Netlify API transport. Use CLI handoff/workflow commands for GitHub Actions transport. |
+| Dashboard reports an unknown workflow | Run `nax list` and use the displayed flow id. For project flows, also verify `--project-root` and `--flows-dir`. |
+| Dashboard Run fails before submission | Fix the same GitHub/Netlify transport prerequisites you would fix for `nax run`: authenticated CLIs, linked Netlify site, or initialized GitHub Actions workflow. |
+| Dashboard model pills stay on `submitted` or `waiting` | The UI only shows states `nax` can prove from the active transport. Open Output diagnostics or inspect `.nax/workflows/<run-id>/events.jsonl` to see the raw event stream. |
+| Dashboard diagnostics show malformed runner events | stdout/stderr are still valid, but the structured status stream had invalid JSON or a bad envelope. Save the raw diagnostic event and rerun with the same workflow if you need to report it. |
 
 ---
 
@@ -814,7 +814,7 @@ A: Yes — `.github/nax-flows/<id>/flow.*` plus a `prompts/` dir is the whole co
 A: Set the step's `agents:` list to one entry (e.g. `agents: [codex]`). The `synthesize` step in the bundled flows does this.
 
 **Q: Can I inspect the prompt that produced a result?**
-A: Yes. In `nax visualize`, open Run details and switch from **Results** to **Prompt**. Copy and open-file actions follow the active view, so copying from the Prompt tab copies prompt markdown instead of result markdown.
+A: Yes. In `nax dashboard`, open Run details and switch from **Results** to **Prompt**. Copy and open-file actions follow the active view, so copying from the Prompt tab copies prompt markdown instead of result markdown.
 
 **Q: What happens if one agent fails mid-step?**
 A: The step still completes when the other agents finish or time out. The failed agent's result is recorded as a failure; downstream steps that depend on it can still run with the surviving results. Use `nax retry` to redo just the failed one.

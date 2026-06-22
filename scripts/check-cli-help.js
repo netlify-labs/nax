@@ -36,6 +36,10 @@ const targets = [
     mustContain: ['Usage: nax preview-boxes [options] [flow]'],
   },
   {
+    args: ['dashboard', '--help'],
+    mustContain: ['Usage: nax dashboard [options] [workflow]'],
+  },
+  {
     args: ['preview-spinner', '--help'],
     mustContain: ['Usage: nax preview-spinner [options]'],
   },

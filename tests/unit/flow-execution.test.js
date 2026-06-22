@@ -5,7 +5,6 @@ const os = require('os')
 const path = require('path')
 const { spawnSync } = require('child_process')
 
-const { _private } = require('../../bin/nax')
 const {
   AD_HOC_RUN_CHOICE,
   formatFlowList,
@@ -24,6 +23,13 @@ const {
   enforceGithubActionPromptBudget,
   githubActionTriggerTextMetrics,
 } = require('../../src/github/prompt-budget')
+const {
+  applyGithubStatusCommentToRun,
+  findGithubRunnerFailures,
+  githubStepStatus,
+  resultsScopedToGithubRuns,
+  waitForGithubStep,
+} = require('../../src/github/polling')
 const { buildPlan } = require('../../src/github/issue-plan')
 const {
   AGENT_RUNNER_USE_CASES,
@@ -50,6 +56,53 @@ const {
   savedAgentStatus,
   stepResultsSummaryPath,
 } = require('../../src/workflow/resume')
+const {
+  archiveEligibleCompletedLocalRuns,
+  formatSubmittedLocalRunBoxes,
+  futureFollowUpReferencesStep,
+  localAgentRunUrl,
+  shouldArchiveCompletedStep,
+} = require('../../src/workflow/local-executor')
+const { buildAndMaybeFallbackPlan } = require('../../src/workflow/github-executor')
+const {
+  applyContextFetchClassification,
+  cleanupLocalWorkflowBlobs,
+  ensureGithubPlanBlobOffload,
+  formatCompactLocalRunResults,
+  formatLocalRunResults,
+  prepareLocalPromptDelivery,
+} = require('../../src/workflow/prompt-delivery')
+const { usageSummariesForRunState } = require('../../src/agent-run-results')
+const {
+  cancelLocalWorkflowRunnersForInterrupt,
+  flowAgents,
+  isAdHocRunTarget,
+  orderSingleRunTransports,
+  runnableSteps,
+  withSelectedAgents,
+  withSelectedStepModels,
+} = require('../../src/cli/legacy-main')
+const { printSuccessBox } = require('../../src/cli/run')
+const {
+  contextWithOutputBudget,
+  firstRunnableStepIndex,
+  sourceIssueNumbersForStep,
+  sourceRunsForStep,
+} = require('../../src/workflow/execution-context')
+const {
+  buildHandoffPrompt,
+  copyToClipboard,
+  findRunStateForHandoff,
+  formatHandoffSourceDetailBox,
+  formatHandoffSourceHint,
+  formatHandoffSourceLabel,
+  handoffSourceDetailLines,
+  handoffSourceMenuOptions,
+  handoffSourceQuery,
+  openHandoffSource,
+  printPostSuccessHandoffHint,
+  readHandoffSummary,
+} = require('../../src/cli/handoff')
 
 function tmpRoot() {
   return fs.mkdtempSync(path.join(os.tmpdir(), 'nax-flow-execution-'))
@@ -132,7 +185,7 @@ test('sourceIssueNumbersForStep dedupes issue numbers across prior steps', () =>
     ],
   }
 
-  assert.deepEqual(_private.sourceIssueNumbersForStep(step, completed), [83, 84, 85])
+  assert.deepEqual(sourceIssueNumbersForStep(step, completed), [83, 84, 85])
 })
 
 test('sourceRunsForStep keeps follow-up results per input step even when runner id is reused', () => {
@@ -147,7 +200,7 @@ test('sourceRunsForStep keeps follow-up results per input step even when runner 
     ],
   }
 
-  assert.deepEqual(_private.sourceRunsForStep(step, completed), [
+  assert.deepEqual(sourceRunsForStep(step, completed), [
     { agent: 'codex', runnerId: 'runner-1', resultText: 'done', sourceStep: 'review' },
     { agent: 'codex', runnerId: 'runner-1', resultText: 'done again', sourceStep: 'cross-review' },
   ])
@@ -162,7 +215,7 @@ test('sourceRunsForStep dedupes within a single input step', () => {
   ])
   const step = { input: [{ step: 'review', results: 'all' }] }
 
-  assert.deepEqual(_private.sourceRunsForStep(step, completed), [
+  assert.deepEqual(sourceRunsForStep(step, completed), [
     { agent: 'codex', runnerId: 'runner-1', resultText: 'a', sourceStep: 'review' },
   ])
 })
@@ -175,9 +228,9 @@ test('prepareLocalPromptDelivery offloads unsafe fan-in prompts before first sub
   ]
   const runState = { runId: 'run-blob', projectRoot }
   const stepState = { id: 'synthesize' }
-  const roundResults = _private.formatLocalRunResults(sourceRuns)
+  const roundResults = formatLocalRunResults(sourceRuns)
 
-  const delivery = _private.prepareLocalPromptDelivery({
+  const delivery = prepareLocalPromptDelivery({
     agent: 'codex',
     prompt: { name: 'synthesize', instruction: 'Synthesize.', body: 'Use the prior work.' },
     step: { id: 'synthesize' },
@@ -206,9 +259,9 @@ test('prepareLocalPromptDelivery falls back to compact prompt when blob offload 
   const sourceRuns = [
     { agent: 'codex', runnerId: 'r1', sourceStep: 'review', resultText: `Codex full prose ${'A'.repeat(9000)} codex-tail` },
   ]
-  const roundResults = _private.formatLocalRunResults(sourceRuns)
+  const roundResults = formatLocalRunResults(sourceRuns)
 
-  const delivery = _private.prepareLocalPromptDelivery({
+  const delivery = prepareLocalPromptDelivery({
     agent: 'codex',
     prompt: { name: 'synthesize', instruction: 'Synthesize.', body: 'Use the prior work.' },
     step: { id: 'synthesize' },
@@ -233,9 +286,9 @@ test('prepareLocalPromptDelivery falls back to compact prompt when blob auth con
   const sourceRuns = [
     { agent: 'codex', runnerId: 'r1', sourceStep: 'review', resultText: `Codex full prose ${'A'.repeat(9000)} codex-tail` },
   ]
-  const roundResults = _private.formatLocalRunResults(sourceRuns)
+  const roundResults = formatLocalRunResults(sourceRuns)
 
-  const delivery = _private.prepareLocalPromptDelivery({
+  const delivery = prepareLocalPromptDelivery({
     agent: 'codex',
     prompt: { name: 'synthesize', instruction: 'Synthesize.', body: 'Use the prior work.' },
     step: { id: 'synthesize' },
@@ -262,7 +315,7 @@ test('prepareLocalPromptDelivery offloads an oversized first-step prompt with no
   const runState = { runId: 'run-full-prompt', projectRoot }
   const stepState = { id: 'ideate' }
 
-  const delivery = _private.prepareLocalPromptDelivery({
+  const delivery = prepareLocalPromptDelivery({
     agent: 'claude',
     prompt: { name: 'ideate', instruction: 'Ideate.', body: largeBody },
     step: { id: 'ideate' },
@@ -298,7 +351,7 @@ test('applyContextFetchClassification records confidence without requiring rerun
     },
   }
 
-  const classified = _private.applyContextFetchClassification(run)
+  const classified = applyContextFetchClassification(run)
 
   assert.equal(classified.contextFetchStatus, 'probable')
   assert.equal(classified.contextFetchConfirmed, true)
@@ -318,7 +371,7 @@ test('applyContextFetchClassification confirms transcript marker and ignores pro
     },
   }
 
-  const classified = _private.applyContextFetchClassification(run)
+  const classified = applyContextFetchClassification(run)
 
   assert.equal(classified.contextFetchStatus, 'confirmed')
   assert.equal(classified.contextFetchConfirmed, true)
@@ -330,7 +383,7 @@ test('buildAndMaybeFallbackPlan offloads oversized GitHub issue prompts', () => 
   const largeReply = `Prior prose ${'A'.repeat(9000)} raw-tail`
   const runState = { runId: 'github-run', projectRoot }
   const stepState = { id: 'synthesize' }
-  const plan = _private.buildAndMaybeFallbackPlan({
+  const plan = buildAndMaybeFallbackPlan({
     promptName: 'synthesize',
     prompt: { name: 'synthesize', title: 'Synthesize', instruction: 'synthesize', body: 'Use prior work.' },
     options: {
@@ -367,7 +420,7 @@ test('buildAndMaybeFallbackPlan offloads oversized GitHub issue prompts', () => 
 })
 
 test('ensureGithubPlanBlobOffload tolerates missing stepState for standalone issue path', () => {
-  const ref = _private.ensureGithubPlanBlobOffload({
+  const ref = ensureGithubPlanBlobOffload({
     results: [{
       issueNumber: 29,
       issueTitle: 'Prior',
@@ -405,7 +458,7 @@ test('cleanupLocalWorkflowBlobs defers GitHub refs without completed consumers',
     }],
   }
 
-  const results = _private.cleanupLocalWorkflowBlobs({
+  const results = cleanupLocalWorkflowBlobs({
     runState,
     projectRoot: tmpRoot(),
     netlify: { siteId: 'site-1', env: { NETLIFY_AUTH_TOKEN: 'token-1' } },
@@ -437,7 +490,7 @@ test('buildAndMaybeFallbackPlan offloads oversized GitHub comment-shaped prompts
     }],
   })
 
-  const plan = _private.buildAndMaybeFallbackPlan({
+  const plan = buildAndMaybeFallbackPlan({
     promptName: 'cross-review',
     prompt: { name: 'cross-review', title: 'Cross Review', instruction: 'cross review', body: 'Compare prior work.' },
     options: {
@@ -477,7 +530,7 @@ test('buildAndMaybeFallbackPlan offloads oversized GitHub first-step prompts wit
   const largeBody = `Generate ideas from this complete brief. ${'C'.repeat(12000)} github-tail`
   const runState = { runId: 'github-first-run', projectRoot }
   const stepState = { id: 'ideate' }
-  const plan = _private.buildAndMaybeFallbackPlan({
+  const plan = buildAndMaybeFallbackPlan({
     promptName: 'ideate',
     prompt: { name: 'ideate', title: 'Ideate', instruction: 'ideate', body: largeBody },
     options: {
@@ -595,8 +648,8 @@ test('futureFollowUpReferencesStep detects deferred archive dependencies', () =>
     { id: 'synthesize', submit: 'new-run', input: [{ step: 'review', results: 'all' }] },
   ]
 
-  assert.equal(_private.futureFollowUpReferencesStep(steps, 0, 'review'), true)
-  assert.equal(_private.futureFollowUpReferencesStep(steps, 1, 'review'), false)
+  assert.equal(futureFollowUpReferencesStep(steps, 0, 'review'), true)
+  assert.equal(futureFollowUpReferencesStep(steps, 1, 'review'), false)
 })
 
 test('shouldArchiveCompletedStep archives intermediate steps only when requested', () => {
@@ -606,37 +659,37 @@ test('shouldArchiveCompletedStep archives intermediate steps only when requested
     { id: 'synthesize', isArchivable: true },
   ]
 
-  assert.equal(_private.shouldArchiveCompletedStep({
+  assert.equal(shouldArchiveCompletedStep({
     step: steps[0],
     options: { archive: true },
     flowSteps: steps,
     currentStepIndex: 0,
   }), true)
-  assert.equal(_private.shouldArchiveCompletedStep({
+  assert.equal(shouldArchiveCompletedStep({
     step: steps[2],
     options: { archive: true },
     flowSteps: steps,
     currentStepIndex: 2,
   }), false)
-  assert.equal(_private.shouldArchiveCompletedStep({
+  assert.equal(shouldArchiveCompletedStep({
     step: steps[0],
     options: {},
     flowSteps: steps,
     currentStepIndex: 0,
   }), false)
-  assert.equal(_private.shouldArchiveCompletedStep({
+  assert.equal(shouldArchiveCompletedStep({
     step: { id: 'review', isArchivable: false },
     options: { archive: true },
     flowSteps: steps,
     currentStepIndex: 0,
   }), false)
-  assert.equal(_private.shouldArchiveCompletedStep({
+  assert.equal(shouldArchiveCompletedStep({
     step: { id: 'synthesize', autoArchive: true },
     options: {},
     flowSteps: steps,
     currentStepIndex: 2,
   }), true)
-  assert.equal(_private.shouldArchiveCompletedStep({
+  assert.equal(shouldArchiveCompletedStep({
     step: { id: 'review', autoArchive: false },
     options: { archive: true },
     flowSteps: steps,
@@ -671,7 +724,7 @@ test('archiveEligibleCompletedLocalRuns defers runs needed by follow-up steps an
     return { archived: true, error: '' }
   }
 
-  _private.archiveEligibleCompletedLocalRuns({
+  archiveEligibleCompletedLocalRuns({
     runState,
     flowSteps,
     currentStepIndex: 0,
@@ -697,7 +750,7 @@ test('archiveEligibleCompletedLocalRuns defers runs needed by follow-up steps an
     }],
   })
 
-  _private.archiveEligibleCompletedLocalRuns({
+  archiveEligibleCompletedLocalRuns({
     runState,
     flowSteps,
     currentStepIndex: 1,
@@ -714,7 +767,7 @@ test('archiveEligibleCompletedLocalRuns defers runs needed by follow-up steps an
 
 test('formatCompactLocalRunResults truncates prior local outputs for retry prompts', () => {
   const longResult = `${'A'.repeat(800)}\nimportant tail`
-  const formatted = _private.formatCompactLocalRunResults([
+  const formatted = formatCompactLocalRunResults([
     {
       agent: 'claude',
       sourceStep: 'ideate',
@@ -733,7 +786,7 @@ test('formatCompactLocalRunResults truncates prior local outputs for retry promp
 })
 
 test('usageSummariesForRunState aggregates usage by step and total', () => {
-  const summary = _private.usageSummariesForRunState({
+  const summary = usageSummariesForRunState({
     steps: [
       {
         id: 'review',
@@ -847,7 +900,7 @@ test('GitHub status comments attach Netlify run links before result comments com
     agent: 'claude',
     status: 'submitted',
   }
-  const update = _private.applyGithubStatusCommentToRun({
+  const update = applyGithubStatusCommentToRun({
     issueNumber: 23,
     comments: [
       {
@@ -881,7 +934,7 @@ test('GitHub completed status comments mark progress rows complete', () => {
     agent: 'gemini',
     status: 'submitted',
   }
-  const update = _private.applyGithubStatusCommentToRun({
+  const update = applyGithubStatusCommentToRun({
     issueNumber: 24,
     comments: [
       {
@@ -1103,10 +1156,10 @@ test('handoff helpers default to the latest run summary', () => {
   writeRunState(projectRoot, 'older', { updatedAt: '2026-05-20T20:00:00.000Z' })
   writeRunState(projectRoot, 'newer', { updatedAt: '2026-05-20T21:00:00.000Z' })
 
-  const latest = _private.findRunStateForHandoff(projectRoot)
+  const latest = findRunStateForHandoff(projectRoot)
   assert.equal(latest.runId, 'newer')
 
-  const handoff = _private.readHandoffSummary({ projectRoot })
+  const handoff = readHandoffSummary({ projectRoot })
   assert.equal(handoff.id, 'newer')
   assert.equal(handoff.kind, 'workflow')
   assert.equal(handoff.displayPath, '.nax/workflows/newer/artifacts/summary.md')
@@ -1115,7 +1168,7 @@ test('handoff helpers default to the latest run summary', () => {
 })
 
 test('buildHandoffPrompt inlines instructions and summary contents', () => {
-  const prompt = _private.buildHandoffPrompt({
+  const prompt = buildHandoffPrompt({
     instructions: 'Focus on the next smallest task.',
     summaryPath: '.nax/workflows/latest/artifacts/summary.md',
     summaryText: '# Summary\n\nDone.',
@@ -1130,14 +1183,14 @@ test('buildHandoffPrompt inlines instructions and summary contents', () => {
 test('success handoff hint is TTY-only and points at the summary file', () => {
   const projectRoot = tmpRoot()
   const state = writeRunState(projectRoot, 'newer')
-  _private.readHandoffSummary({ projectRoot, runId: 'newer' })
+  readHandoffSummary({ projectRoot, runId: 'newer' })
   const originalLog = console.log
   const originalIsTTY = Object.getOwnPropertyDescriptor(process.stdout, 'isTTY')
   const lines = []
   console.log = (line = '') => lines.push(line)
   Object.defineProperty(process.stdout, 'isTTY', { configurable: true, value: true })
   try {
-    _private.printPostSuccessHandoffHint(state, projectRoot)
+    printPostSuccessHandoffHint(state, projectRoot)
   } finally {
     console.log = originalLog
     if (originalIsTTY) {
@@ -1153,7 +1206,7 @@ test('success handoff hint is TTY-only and points at the summary file', () => {
 
 test('copyToClipboard uses the platform clipboard command', () => {
   const calls = []
-  const command = _private.copyToClipboard('summary', {
+  const command = copyToClipboard('summary', {
     platform: 'darwin',
     runCommand: (cmd, args, options) => {
       calls.push({ cmd, args, input: options.input })
@@ -1172,7 +1225,7 @@ test('openHandoffSource opens the absolute summary path', async () => {
   fs.writeFileSync(summaryPath, '# Summary\n')
   const calls = []
 
-  const opened = await _private.openHandoffSource({
+  const opened = await openHandoffSource({
     displayPath: '.nax/agent-runners/runner-1/summary.md',
   }, {
     projectRoot,
@@ -1184,19 +1237,19 @@ test('openHandoffSource opens the absolute summary path', async () => {
 })
 
 test('handoff source flags map to explicit artifact queries', () => {
-  assert.deepEqual(_private.handoffSourceQuery({ runId: 'workflow-1', options: {} }), {
+  assert.deepEqual(handoffSourceQuery({ runId: 'workflow-1', options: {} }), {
     kind: 'workflow',
     id: 'workflow-1',
   })
-  assert.deepEqual(_private.handoffSourceQuery({ options: { session: 'session-1' } }), {
+  assert.deepEqual(handoffSourceQuery({ options: { session: 'session-1' } }), {
     kind: 'agent-session',
     id: 'session-1',
   })
-  assert.deepEqual(_private.handoffSourceQuery({ options: { runner: 'runner-1' } }), {
+  assert.deepEqual(handoffSourceQuery({ options: { runner: 'runner-1' } }), {
     kind: 'agent-runner',
     id: 'runner-1',
   })
-  assert.deepEqual(_private.handoffSourceQuery({ options: { sourceType: 'sessions', source: 'session-2' } }), {
+  assert.deepEqual(handoffSourceQuery({ options: { sourceType: 'sessions', source: 'session-2' } }), {
     kind: 'agent-session',
     id: 'session-2',
   })
@@ -1210,8 +1263,8 @@ test('handoff source labels render source kind and relative path', () => {
     displayPath: '.nax/agent-sessions/session-1/summary.md',
   }
 
-  assert.match(_private.formatHandoffSourceLabel(source), /Codex session session-1/)
-  assert.equal(_private.formatHandoffSourceHint(source, process.cwd()), 'agent session · .nax/agent-sessions/session-1/summary.md')
+  assert.match(formatHandoffSourceLabel(source), /Codex session session-1/)
+  assert.equal(formatHandoffSourceHint(source, process.cwd()), 'agent session · .nax/agent-sessions/session-1/summary.md')
 })
 
 test('handoff source details summarize latest workflow content', () => {
@@ -1232,16 +1285,16 @@ test('handoff source details summarize latest workflow content', () => {
       }],
     }],
   })
-  const source = _private.readHandoffSummary({ projectRoot, runId: 'workflow-1' })
+  const source = readHandoffSummary({ projectRoot, runId: 'workflow-1' })
 
-  const lines = _private.handoffSourceDetailLines(source, projectRoot)
+  const lines = handoffSourceDetailLines(source, projectRoot)
 
   assert.match(lines[0], /^Date:\s+May/)
   assert.match(lines[1], /Summary:\s+\.nax\/workflows\/workflow-1\/artifacts\/summary\.md/)
   assert.equal(lines[2], 'Preview:')
   assert.match(lines[3], /^\*\*Recommended Next Task:\*\* Add focused artifact tests/)
 
-  const box = _private.formatHandoffSourceDetailBox(source, projectRoot)
+  const box = formatHandoffSourceDetailBox(source, projectRoot)
   assert.match(box, /Latest result from "Do Next" workflow "Synthesize Next Task" step using Codex/)
   assert.match(box, /Summary: \.nax\/workflows\/workflow-1\/artifacts\/summary\.md/)
   assert.match(box, /Preview:/)
@@ -1256,7 +1309,7 @@ test('handoff source menu exposes latest actions before previous-source pickers'
     displayPath: '.nax/agent-runners/6a20be9c14c516253be5fe14/summary.md',
     source: { agent: 'codex' },
   }
-  const options = _private.handoffSourceMenuOptions({
+  const options = handoffSourceMenuOptions({
     latestSource,
     sources: [
       { kind: 'workflow' },
@@ -1324,7 +1377,7 @@ test('non-TTY progress reporter repeats unchanged run status after heartbeat int
 })
 
 test('formatSubmittedLocalRunBoxes renders submitted local run details', () => {
-  const output = _private.formatSubmittedLocalRunBoxes({
+  const output = formatSubmittedLocalRunBoxes({
     prompt: { title: 'Review' },
     runs: [
       {
@@ -1351,7 +1404,7 @@ test('submitted local run boxes keep non-TTY run links on one line', () => {
   Object.defineProperty(process.stdout, 'isTTY', { configurable: true, value: false })
   Object.defineProperty(process.stdout, 'columns', { configurable: true, value: 80 })
   try {
-    const output = stripAnsi(_private.formatSubmittedLocalRunBoxes({
+    const output = stripAnsi(formatSubmittedLocalRunBoxes({
       prompt: { title: 'Cross Review' },
       runs: [
         {
@@ -1403,7 +1456,7 @@ test('localAgentRunUrl uses nested Netlify config directory and rejects root sit
   const originalPath = process.env.PATH
   process.env.PATH = `${binDir}${path.delimiter}${originalPath || ''}`
   try {
-    const nestedUrl = _private.localAgentRunUrl({
+    const nestedUrl = localAgentRunUrl({
       projectRoot,
       runnerId: 'runner-1',
       options: {
@@ -1413,7 +1466,7 @@ test('localAgentRunUrl uses nested Netlify config directory and rejects root sit
     })
     assert.equal(nestedUrl, 'https://app.netlify.com/projects/revenue-engine-frontend/agent-runs/runner-1')
 
-    const mismatchedRootUrl = _private.localAgentRunUrl({
+    const mismatchedRootUrl = localAgentRunUrl({
       projectRoot,
       runnerId: 'runner-1',
       options: { netlifySiteId: 'frontend-site' },
@@ -1441,7 +1494,7 @@ test('cancelLocalWorkflowRunnersForInterrupt stops active fresh Netlify runners 
     }],
   }
 
-  const result = _private.cancelLocalWorkflowRunnersForInterrupt({
+  const result = cancelLocalWorkflowRunnersForInterrupt({
     runState,
     projectRoot,
     options: { netlifySiteId: 'site-123' },
@@ -1627,14 +1680,14 @@ test('agentStepCompletionSummary includes USD cost when requested', () => {
 })
 
 test('isAdHocRunTarget recognizes one-off agent run aliases', () => {
-  assert.equal(_private.isAdHocRunTarget('ad-hoc'), true)
-  assert.equal(_private.isAdHocRunTarget('adhoc'), true)
-  assert.equal(_private.isAdHocRunTarget('agent-run'), true)
-  assert.equal(_private.isAdHocRunTarget('review'), false)
+  assert.equal(isAdHocRunTarget('ad-hoc'), true)
+  assert.equal(isAdHocRunTarget('adhoc'), true)
+  assert.equal(isAdHocRunTarget('agent-run'), true)
+  assert.equal(isAdHocRunTarget('review'), false)
 })
 
 test('orderSingleRunTransports puts Netlify API first', () => {
-  const ordered = _private.orderSingleRunTransports([
+  const ordered = orderSingleRunTransports([
     { id: 'github', title: 'GitHub Actions' },
     { id: 'netlify-api', title: 'Netlify API' },
   ])
@@ -1767,7 +1820,7 @@ test('success box keeps non-TTY links on one line', () => {
   Object.defineProperty(process.stdout, 'isTTY', { configurable: true, value: false })
   Object.defineProperty(process.stdout, 'columns', { configurable: true, value: 80 })
   try {
-    _private.printSuccessBox({
+    printSuccessBox({
       flow: { title: 'Do Next' },
       transport: 'netlify-api',
       projectRoot: process.cwd(),
@@ -1849,11 +1902,11 @@ test('firstRunnableStepIndex finds incomplete saved local step', () => {
     ],
   }
 
-  assert.equal(_private.firstRunnableStepIndex(flow, runState), 1)
+  assert.equal(firstRunnableStepIndex(flow, runState), 1)
 })
 
 test('findGithubRunnerFailures extracts failed Netlify status comments', () => {
-  const failures = _private.findGithubRunnerFailures([
+  const failures = findGithubRunnerFailures([
     {
       issueNumber: 91,
       issueTitle: '2026-05-14 Claude Generate Ideas',
@@ -1903,7 +1956,7 @@ test('findGithubRunnerFailures extracts failed Netlify status comments', () => {
 })
 
 test('resultsScopedToGithubRuns only counts result comments after the submitted prompt comment', () => {
-  const scoped = _private.resultsScopedToGithubRuns([
+  const scoped = resultsScopedToGithubRuns([
     {
       issueNumber: 91,
       replies: [],
@@ -1945,8 +1998,8 @@ test('GitHub result comments marked failed are failures, not completed replies',
   }
   const runs = [{ issueNumber: 91, commentUrl: 'https://x/issues/91#prompt' }]
 
-  assert.deepEqual(_private.resultsScopedToGithubRuns([result], runs)[0].replies, [])
-  assert.deepEqual(_private.findGithubRunnerFailures([result], runs), [
+  assert.deepEqual(resultsScopedToGithubRuns([result], runs)[0].replies, [])
+  assert.deepEqual(findGithubRunnerFailures([result], runs), [
     {
       issueNumber: 91,
       issueTitle: '2026-05-14 Claude Generate Ideas',
@@ -1957,7 +2010,7 @@ test('GitHub result comments marked failed are failures, not completed replies',
 })
 
 test('findGithubRunnerFailures ignores old failures before the submitted prompt comment', () => {
-  const failures = _private.findGithubRunnerFailures([
+  const failures = findGithubRunnerFailures([
     {
       issueNumber: 91,
       issueTitle: '2026-05-14 Claude Generate Ideas',
@@ -2011,7 +2064,7 @@ test('shouldPollGithubRun repairs timed out GitHub runs without saved result tex
 })
 
 test('githubStepStatus derives completion from completed runs even when saved step status is stale', () => {
-  assert.equal(_private.githubStepStatus({
+  assert.equal(githubStepStatus({
     status: 'running',
     runs: [
       { agent: 'claude', status: 'completed', resultText: 'claude result' },
@@ -2255,7 +2308,7 @@ test('waitForGithubStep does a final GitHub reconciliation before timing out', a
     ],
   }
   const terminalResults = []
-  const results = await _private.waitForGithubStep({
+  const results = await waitForGithubStep({
     repo: 'example/repo',
     issueNumbers: [97],
     runs: [{ issueNumber: 97, commentUrl: promptUrl, agent: 'codex' }],
@@ -2296,7 +2349,7 @@ test('waitForGithubStep retries transient loader errors and still completes', as
     return issue
   }
 
-  const results = await _private.waitForGithubStep({
+  const results = await waitForGithubStep({
     repo: 'example/repo',
     issueNumbers: [97],
     runs: [{ issueNumber: 97, commentUrl: promptUrl, agent: 'codex' }],
@@ -2368,7 +2421,7 @@ test('waitForGithubStep waits for remaining runs after one agent fails', async (
   const terminalResults = []
 
   await assert.rejects(
-    _private.waitForGithubStep({
+    waitForGithubStep({
       repo: 'example/repo',
       issueNumbers: [23, 24, 25],
       runs,
@@ -2413,7 +2466,7 @@ test('waitForGithubStep reports already saved failed runs after remaining runs c
   ]
 
   await assert.rejects(
-    _private.waitForGithubStep({
+    waitForGithubStep({
       repo: 'example/repo',
       issueNumbers: [23, 24, 25],
       runs,
@@ -2460,7 +2513,7 @@ test('waitForGithubStep aborts after maxConsecutiveFailures poll errors', async 
     throw new Error('HTTP 500: gateway')
   }
   await assert.rejects(
-    _private.waitForGithubStep({
+    waitForGithubStep({
       repo: 'example/repo',
       issueNumbers: [42],
       runs: [{ issueNumber: 42, commentUrl: 'https://x/issues/42#prompt', agent: 'claude' }],
@@ -2498,7 +2551,7 @@ test('waitForGithubStep surfaces failed GitHub Actions runs before status commen
   const terminalResults = []
 
   await assert.rejects(
-    _private.waitForGithubStep({
+    waitForGithubStep({
       repo: 'example/repo',
       issueNumbers: [97],
       runs: [run],
@@ -2542,12 +2595,12 @@ test('withSelectedAgents filters each workflow step and runnableSteps drops empt
     ],
   }
 
-  assert.deepEqual(_private.flowAgents(flow), ['claude', 'gemini', 'codex'])
+  assert.deepEqual(flowAgents(flow), ['claude', 'gemini', 'codex'])
 
-  const filtered = _private.withSelectedAgents(flow, ['claude', 'gemini'])
+  const filtered = withSelectedAgents(flow, ['claude', 'gemini'])
   assert.deepEqual(filtered.steps[0].agents, ['claude', 'gemini'])
   assert.deepEqual(filtered.steps[1].agents, [])
-  assert.deepEqual(_private.runnableSteps(filtered, {}).map((step) => step.id), ['review'])
+  assert.deepEqual(runnableSteps(filtered, {}).map((step) => step.id), ['review'])
 })
 
 test('withSelectedStepModels applies step-specific agent overrides', () => {
@@ -2560,7 +2613,7 @@ test('withSelectedStepModels applies step-specific agent overrides', () => {
     ],
   }
 
-  const configured = _private.withSelectedStepModels(flow, {
+  const configured = withSelectedStepModels(flow, {
     models: 'claude',
     stepModels: ['review=gemini,codex', 'summarize='],
   })
@@ -2571,7 +2624,7 @@ test('withSelectedStepModels applies step-specific agent overrides', () => {
   })
   assert.deepEqual(configured.flow.steps[0].agents, ['gemini', 'codex'])
   assert.deepEqual(configured.flow.steps[1].agents, [])
-  assert.deepEqual(_private.runnableSteps(configured.flow, {}).map((step) => step.id), ['review'])
+  assert.deepEqual(runnableSteps(configured.flow, {}).map((step) => step.id), ['review'])
 })
 
 test('workflowPickerHint uses compact bundled flow descriptions without source labels', () => {
@@ -2738,13 +2791,13 @@ test('workflowPickerHint compacts project flow descriptions without source prefi
 })
 
 test('contextWithOutputBudget does not append chained-output guidance by default', () => {
-  const context = _private.contextWithOutputBudget('Base context', {}, { hasFutureSteps: true })
+  const context = contextWithOutputBudget('Base context', {}, { hasFutureSteps: true })
 
   assert.equal(context, 'Base context')
 })
 
 test('contextWithOutputBudget appends opt-in chained-output guidance', () => {
-  const context = _private.contextWithOutputBudget('Base context', { outputBudget: true }, { hasFutureSteps: true })
+  const context = contextWithOutputBudget('Base context', { outputBudget: true }, { hasFutureSteps: true })
 
   assert.match(context, /Base context/)
   assert.match(context, /## Output Budget/)
@@ -2754,12 +2807,12 @@ test('contextWithOutputBudget appends opt-in chained-output guidance', () => {
 })
 
 test('contextWithOutputBudget is configurable and can be disabled', () => {
-  const tuned = _private.contextWithOutputBudget('', { outputBudgetBytes: '8000' }, { hasPriorResults: true })
+  const tuned = contextWithOutputBudget('', { outputBudgetBytes: '8000' }, { hasPriorResults: true })
   assert.match(tuned, /8,000 bytes/)
 
-  const disabled = _private.contextWithOutputBudget('Base context', { outputBudget: false }, { hasFutureSteps: true })
+  const disabled = contextWithOutputBudget('Base context', { outputBudget: false }, { hasFutureSteps: true })
   assert.equal(disabled, 'Base context')
 
-  const notChained = _private.contextWithOutputBudget('Base context', {}, {})
+  const notChained = contextWithOutputBudget('Base context', {}, {})
   assert.equal(notChained, 'Base context')
 })

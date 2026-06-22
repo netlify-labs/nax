@@ -7,7 +7,7 @@
 
 ## Executive Summary
 
-The visualizer has two result modals:
+The dashboard has two result modals:
 
 - **Run-details modal** (`RecentRuns.tsx:333`) — rich: left timeline of steps + per-agent sessions, clickable to swap, center markdown that fills to modal bottom, right metadata panel. Opened from the run list.
 - **Individual agent-result modal** (`App.tsx:1074`) — a single agent's markdown in isolation, plus a live "still running" panel. Opened from the graph (clicking an agent node's "view result").
@@ -16,7 +16,7 @@ The individual modal is conceptually a **degenerate view of the details modal** 
 
 ### The big de-risk (verified)
 
-Both modals already fetch the **same** `getRunDetails(runId)` endpoint (`api.ts:110`) and consume the **same** `RunDetailsSection`. The individual modal (`App.tsx:581-597`) just filters `details.sections` to one `kind === 'session'` section by `(stepId, agent)` then `(runnerId|sessionId)`. The server attaches full markdown to every session section (`visualize-run-details.js:99,115`). **So this refactor needs zero backend change** and no new fetch — only a client reorganization.
+Both modals already fetch the **same** `getRunDetails(runId)` endpoint (`api.ts:110`) and consume the **same** `RunDetailsSection`. The individual modal (`App.tsx:581-597`) just filters `details.sections` to one `kind === 'session'` section by `(stepId, agent)` then `(runnerId|sessionId)`. The server attaches full markdown to every session section (`src/dashboard/shared/run-details.js:99,115`). **So this refactor needs zero backend change** and no new fetch — only a client reorganization.
 
 ### The two real wrinkles
 
@@ -52,7 +52,7 @@ Recommend **Stage 2b first** (most value, low risk), then fold in **2a** later t
 
 ### D3. Shared helpers — extract a module (Stage 0) or just export in place?
 
-`runId`, `recordValue`, `recordList`, `isDoneStatus`, `agentLabel`, `statusLabel`, `statusColor`, `statusBadgeTone`, `statusBadgeStyle`, `statusBadgeColor`, `workflowName` are duplicated/near-duplicated across `App.tsx:91-167` and `RecentRuns.tsx:37-95`. Recommend a small **Stage 0**: move them to `web/src/run-format.ts` and import from both. Removes duplication and resolves the "App badge helpers are private" blocker the reuse needs. Confirm vs. just exporting from one file.
+`runId`, `recordValue`, `recordList`, `isDoneStatus`, `agentLabel`, `statusLabel`, `statusColor`, `statusBadgeTone`, `statusBadgeStyle`, `statusBadgeColor`, `workflowName` are duplicated/near-duplicated across `App.tsx:91-167` and `RecentRuns.tsx:37-95`. Recommend a small **Stage 0**: move them to `src/dashboard/web/src/run-format.ts` and import from both. Removes duplication and resolves the "App badge helpers are private" blocker the reuse needs. Confirm vs. just exporting from one file.
 
 Use App's status vocabulary as the canonical superset when reconciling: it already covers `waiting`, `retrying`, `queued`, and `error` (`App.tsx:142-146`), while `RecentRuns` currently only covers `running|submitted|interrupted` and `failed|timeout|cancelled|dismissed` (`RecentRuns.tsx:76-80`). This is a deliberate behavior-preserving broadening for graph/live states, not a blind dedupe.
 
@@ -66,7 +66,7 @@ Use App's status vocabulary as the canonical superset when reconciling: it alrea
 
 ### Run-details modal (the component to extract)
 
-Owned by `RecentRuns` (`web/src/components/RecentRuns.tsx`):
+Owned by `RecentRuns` (`src/dashboard/web/src/components/RecentRuns.tsx`):
 
 - **State:** `detailsOpen`, `detailsLoading`, `detailsError`, `detailsResponse` (`:203-206`); `activeTimelineId` (`:233`); reset-to-summary effect (`:239-241`).
 - **Fetch:** `openRunDetails(run)` → `getRunDetails(id)` (`:208-222`).
@@ -77,7 +77,7 @@ Owned by `RecentRuns` (`web/src/components/RecentRuns.tsx`):
 
 ### Individual agent-result modal (the call site to reroute)
 
-In `web/src/App.tsx`:
+In `src/dashboard/web/src/App.tsx`:
 
 - **Open trigger:** graph node "view result" → `onViewAgentResult` (`types.ts:55`, wired `App.tsx:927`) → `openAgentResult(node, agent)` (`:559-603`); sets `agentResultContext = { node, agent }` (`:563`; type `:40-43`).
 - **Run id source:** `selectedRunId || activeRun?.runId` (`:562`) — ambient app state, not on the node.
@@ -90,9 +90,9 @@ In `web/src/App.tsx`:
 ### API / types (no change required)
 
 - `getRunDetails(id)` → `GET /api/runs/{id}/details` (`api.ts:110-112`); no single-agent endpoint exists (`api.ts` exports list confirmed).
-- `RunDetailsResponse = { run: VisualizeRun, details: RunDetails }` (`types.ts:200`); `RunDetails.sections: RunDetailsSection[]` (`types.ts:197`).
+- `RunDetailsResponse = { run: DashboardRun, details: RunDetails }` (`types.ts:200`); `RunDetails.sections: RunDetailsSection[]` (`types.ts:197`).
 - `RunDetailsSection` (`types.ts:174-189`) carries `id, kind, stepId, stepTitle, agent, status, runnerId, sessionId, markdown, path, absolutePath, links, usage`.
-- Server: `buildRunDetails` (`visualize-run-details.js:62-132`) emits a `session` section per `agent-runners/*.md` (attempts excluded, `:40`), each with full markdown.
+- Server: `buildRunDetails` (`src/dashboard/shared/run-details.js:62-132`) emits a `session` section per `agent-runners/*.md` (attempts excluded, `:40`), each with full markdown.
 
 ---
 
@@ -100,7 +100,7 @@ In `web/src/App.tsx`:
 
 **Goal:** one source of truth for status/format helpers; unblock reuse of App's private badge helpers.
 
-**Create `web/src/run-format.ts`** exporting: `runId`, `recordValue`, `recordList`, `isDoneStatus`, `agentLabel`, `statusLabel`, `statusColor`, `statusBadgeTone`, `statusBadgeStyle`, `statusBadgeColor`, `workflowName`.
+**Create `src/dashboard/web/src/run-format.ts`** exporting: `runId`, `recordValue`, `recordList`, `isDoneStatus`, `agentLabel`, `statusLabel`, `statusColor`, `statusBadgeTone`, `statusBadgeStyle`, `statusBadgeColor`, `workflowName`.
 
 - Reconcile the two copies. They're near-identical but not identical; confirm `statusColor` (RecentRuns `:66`) vs `statusBadgeColor` (App `:149`) and use App's broader status set as the canonical tone mapping unless a visual regression is found. Keep both exported names as thin wrappers if call sites read better with both (`statusColor` for Mantine `color`, `statusBadgeColor` for badge call sites). **Diff them before merging — do not assume identical.**
 - Update `App.tsx` and `RecentRuns.tsx` to import from `run-format.ts`; delete the local copies.
@@ -115,7 +115,7 @@ In `web/src/App.tsx`:
 
 **Goal:** move the run-details modal into a standalone, reusable component with no behavior change for RecentRuns.
 
-**Create `web/src/components/RunDetailsModal.tsx`.** Interface (per D1a):
+**Create `src/dashboard/web/src/components/RunDetailsModal.tsx`.** Interface (per D1a):
 
 ```ts
 type RunDetailsModalProps = {
@@ -198,8 +198,8 @@ Stage 0 and 1 are zero-behavior-change and independently shippable/committable. 
 
 ## Testing Strategy
 
-- **Typecheck/build:** `npm run typecheck` + `npm run visualize:build` must stay clean after each stage.
-- **Existing E2E harness (use it):** there IS a Playwright smoke spec — `npm run visualize:smoke` (`playwright test tests/e2e/visualize.spec.js`). Read it first to see what it already covers; run it after each stage, and extend it in Stage 2 to assert that a graph agent-click opens the rich modal on the correct entry and that sibling-swap works. This is the real regression guard for Stages 1–2, not just manual smoke.
+- **Typecheck/build:** `npm run typecheck` + `npm run dashboard:build` must stay clean after each stage.
+- **Existing E2E harness (use it):** there IS a Playwright smoke spec — `npm run dashboard:smoke` (`playwright test tests/e2e/dashboard.spec.js`). Read it first to see what it already covers; run it after each stage, and extend it in Stage 2 to assert that a graph agent-click opens the rich modal on the correct entry and that sibling-swap works. This is the real regression guard for Stages 1–2, not just manual smoke.
 - **Pure matcher unit test:** extract the section-match logic as a pure function and unit-test it with the repo's Node test runner (no rendering needed) — cover: exact `runnerId`/`sessionId` match, single-candidate, multi-candidate-no-exact (the stricter unresolved path), and no-match. This is the highest-value test because the matcher is where Stage 2 changes behavior.
 - The `buildTimelineEntries` initial-entry resolution is also pure-testable the same way.
 - **Manual smoke per stage** (above). Stages 0–1 must be visually identical to pre-refactor.

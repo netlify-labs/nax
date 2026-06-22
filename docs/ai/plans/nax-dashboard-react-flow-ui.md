@@ -1,8 +1,8 @@
-# Nax Visualize React Flow UI Plan
+# Nax Dashboard React Flow UI Plan
 
 ## Summary
 
-Add a `nax visualize` command that opens a local browser UI for discovering,
+Add a `nax dashboard` command that opens a local browser UI for discovering,
 inspecting, previewing, and eventually running Nax workflows.
 
 The first useful milestone is a running Vite 8 + React 19 + React Flow
@@ -11,7 +11,7 @@ workflow steps as interactive React Flow nodes. This should feel like the
 existing terminal preview, but with a workflow list, selectable workflows, a
 canvas view, and an inspector for step details.
 
-The second milestone turns that visualizer into an operational cockpit: the UI
+The second milestone turns that dashboard into an operational cockpit: the UI
 can submit workflow runs through a localhost API, stream run output/status, and
 link to generated `.nax/` artifacts.
 
@@ -49,7 +49,7 @@ link to generated `.nax/` artifacts.
 
 ## Product Shape
 
-`nax visualize` should open a local workbench, not a marketing page.
+`nax dashboard` should open a local workbench, not a marketing page.
 
 Primary layout:
 
@@ -63,7 +63,7 @@ Primary layout:
 
 Initial demo scope:
 
-- Start local visualize server.
+- Start local dashboard server.
 - Open browser.
 - List all workflows from `listFlows()`.
 - Select a workflow.
@@ -90,7 +90,7 @@ Out of scope for the first demo:
 Recommended structure:
 
 ```text
-web/
+src/dashboard/web/
   index.html
   package marker files only if needed
   src/
@@ -110,43 +110,43 @@ web/
   dist/
 
 src/
-  visualize-server.js
-  visualize-graph.js
-  visualize-api.js
+  src/dashboard/server.js
+  src/dashboard/shared/graph.js
+  dashboard-api.js
 ```
 
 Keep package installation simple by adding Vite/React/React Flow dependencies to
 the root `package.json` instead of creating a separate unpublished workspace.
-The package can still keep the UI source isolated under `web/`.
+The package can still keep the UI source isolated under `src/dashboard/web/`.
 
 Root scripts:
 
 ```json
 {
   "scripts": {
-    "visualize:dev": "vite --config web/vite.config.mjs",
-    "visualize:build": "vite build --config web/vite.config.mjs",
-    "visualize:preview": "vite preview --config web/vite.config.mjs"
+    "dashboard:dev": "vite --config src/dashboard/web/vite.config.mjs",
+    "dashboard:build": "vite build --config src/dashboard/web/vite.config.mjs",
+    "dashboard:preview": "vite preview --config src/dashboard/web/vite.config.mjs"
   }
 }
 ```
 
 Publishing:
 
-- Include built static assets in the npm package, for example `web/dist`.
-- Update `files` so `nax visualize` works after global install.
+- Include built static assets in the npm package, for example `src/dashboard/web/dist`.
+- Update `files` so `nax dashboard` works after global install.
 - Do not require end users to install dev dependencies just to open the UI.
 
 ### Local Server
 
-Add `src/visualize-server.js` as a CommonJS module that uses Node's built-in
+Add `src/dashboard/server.js` as a CommonJS module that uses Node's built-in
 `http` server.
 
 Responsibilities:
 
 - Bind to `127.0.0.1` by default.
 - Choose an available port, defaulting to `0` or a preferred configurable port.
-- Serve `web/dist` static assets in production mode.
+- Serve `src/dashboard/web/dist` static assets in production mode.
 - In development mode, optionally proxy or print the Vite dev URL.
 - Generate a per-process random token and include it in the opened URL.
 - Require that token for mutating API requests.
@@ -177,7 +177,7 @@ POST /api/runs/:runId/cancel
 Add:
 
 ```text
-nax visualize [workflow]
+nax dashboard [workflow]
 ```
 
 Options:
@@ -194,7 +194,7 @@ Options:
 The command should:
 
 1. Resolve `projectRoot` using the same helper as `run` and `list`.
-2. Start the visualize server.
+2. Start the dashboard server.
 3. Open the browser with the selected workflow id encoded in the URL when
    provided.
 4. Keep the process alive until interrupted.
@@ -202,7 +202,7 @@ The command should:
 
 ### Graph Mapping
 
-Add a pure transform in `src/visualize-graph.js`.
+Add a pure transform in `src/dashboard/shared/graph.js`.
 
 Input:
 
@@ -310,7 +310,7 @@ Visual tone:
 ### Run Execution Strategy
 
 The browser should never call Netlify or GitHub directly. It should call the
-local `nax visualize` server, and that server should run Nax on behalf of the
+local `nax dashboard` server, and that server should run Nax on behalf of the
 operator.
 
 There are two acceptable implementation stages.
@@ -332,7 +332,7 @@ Stage B: reusable orchestration module
 - Extract `handleRun()` and related orchestration code out of `bin/nax.js` into
   a reusable module.
 - Keep `bin/nax.js` as command wiring.
-- Let the visualize API call orchestration directly with a structured logger.
+- Let the dashboard API call orchestration directly with a structured logger.
 - This removes argv coupling and makes cancellation/status cleaner.
 
 Recommendation:
@@ -382,18 +382,18 @@ cross-process history that `.nax/` cannot provide.
 
 ## Implementation Phases
 
-### Phase 1: Demo Visualizer
+### Phase 1: Demo Dashboard
 
-Goal: `nax visualize` opens a UI that lists and renders workflows.
+Goal: `nax dashboard` opens a UI that lists and renders workflows.
 
 Tasks:
 
 1. Add Vite 8, React 19, React DOM 19, `@xyflow/react`, and likely
    `@vitejs/plugin-react` to the root package.
-2. Add `web/` Vite application.
-3. Add `src/visualize-graph.js` pure transform.
-4. Add `src/visualize-server.js` with read-only API routes.
-5. Add `visualize [workflow]` command to `bin/nax.js`.
+2. Add `src/dashboard/web/` Vite application.
+3. Add `src/dashboard/shared/graph.js` pure transform.
+4. Add `src/dashboard/server.js` with read-only API routes.
+5. Add `dashboard [workflow]` command to `bin/nax.js`.
 6. Build custom React Flow workflow step node.
 7. Add workflow list and workflow inspector.
 8. Add unit tests for graph transform.
@@ -404,8 +404,8 @@ Acceptance criteria:
 
 - `npm run check` passes.
 - `npm test` passes.
-- `npm run visualize:build` passes.
-- `nax visualize review` opens a browser.
+- `npm run dashboard:build` passes.
+- `nax dashboard review` opens a browser.
 - The Review workflow shows three nodes and two edges.
 - Project-local workflows appear before bundled workflows.
 - Workflow source labels match `nax list --verbose`.
@@ -459,18 +459,18 @@ Tasks:
 1. Move run orchestration from `bin/nax.js` into `src/workflow-runner.js`.
 2. Keep Commander-specific prompt/option wiring in `bin/nax.js`.
 3. Provide a structured logger/event sink interface.
-4. Reuse the module from both CLI and visualize API.
+4. Reuse the module from both CLI and dashboard API.
 5. Expand tests around non-TTY execution.
 
 Acceptance criteria:
 
 - CLI behavior remains unchanged.
-- Visualize API can run workflows without spawning `node bin/nax.js`.
+- Dashboard API can run workflows without spawning `node bin/nax.js`.
 - Existing flow execution tests remain meaningful and pass.
 
 ### Phase 5: Artifact Browser
 
-Goal: visualize completed and unfinished workflow runs.
+Goal: dashboard completed and unfinished workflow runs.
 
 Tasks:
 
@@ -498,7 +498,7 @@ Unit tests:
 
 Integration tests:
 
-- Start visualize server on an ephemeral port.
+- Start dashboard server on an ephemeral port.
 - Fetch `/api/health`.
 - Fetch `/api/workflows`.
 - Fetch `/api/workflows/review/graph`.
@@ -506,7 +506,7 @@ Integration tests:
 
 Frontend checks:
 
-- `npm run visualize:build`.
+- `npm run dashboard:build`.
 - Playwright or lightweight browser smoke test once UI stabilizes.
 - Desktop and narrow viewport screenshots before marking the UI polished.
 
@@ -516,8 +516,8 @@ Manual smoke:
 npm install
 npm run check
 npm test
-npm run visualize:build
-node bin/nax.js visualize review --no-open
+npm run dashboard:build
+node bin/nax.js dashboard review --no-open
 ```
 
 ## Key Tradeoffs
@@ -557,11 +557,11 @@ or building the UI requires Node 20.19+ or 22.12+.
 
 ## Open Questions
 
-1. Should `nax visualize` be marked experimental in help text for the first
+1. Should `nax dashboard` be marked experimental in help text for the first
    release?
 2. Should the first run button perform dry-run only, with real runs hidden
    behind an explicit flag?
-3. Should the visualizer open the latest unfinished workflow automatically when
+3. Should the dashboard open the latest unfinished workflow automatically when
    one exists?
 4. Do we want workflow editing eventually, or should this stay inspect/run only?
 5. Should branch selection default to the same `resolveWorkflowBranch()` logic
@@ -571,10 +571,10 @@ or building the UI requires Node 20.19+ or 22.12+.
 
 Build Phase 1 only:
 
-- Vite React app under `web/`.
+- Vite React app under `src/dashboard/web/`.
 - `@xyflow/react` custom node rendering.
 - Read-only localhost API.
-- `nax visualize [workflow]`.
+- `nax dashboard [workflow]`.
 - Tests for graph conversion and workflow API.
 
 This creates visible product value without risking accidental remote workflow

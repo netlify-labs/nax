@@ -1,14 +1,14 @@
-# Event-Driven Visualize Run Status Plan
+# Event-Driven Dashboard Run Status Plan
 
 ## Summary
 
-Move `nax visualize` run updates from derived status polling to a structured
+Move `nax dashboard` run updates from derived status polling to a structured
 event stream emitted by the workflow runner itself.
 
-The current visualizer already has a useful live path:
+The current dashboard already has a useful live path:
 
 - The browser starts a run through `POST /api/workflows/:id/runs`.
-- The visualize server starts a child `node bin/nax.js run ...` process.
+- The dashboard server starts a child `node bin/nax.js run ...` process.
 - The browser opens `EventSource` against `/api/runs/:id/events`.
 - stdout/stderr stream over Server-Sent Events.
 - The server polls `.nax/workflows/<run-id>/workflow.json` every second and
@@ -35,16 +35,16 @@ should not be the primary live transport.
 
 Implemented on 2026-06-19.
 
-The shipped local visualizer now uses a structured child-process event channel
+The shipped local dashboard now uses a structured child-process event channel
 for live workflow state:
 
-- The visualize server still starts a child `node bin/nax.js run ...` process
+- The dashboard server still starts a child `node bin/nax.js run ...` process
   for real runs.
 - stdout and stderr remain human terminal output and continue to stream to the
   Output panel.
 - The child process receives `NAX_EVENT_STREAM=jsonl` and `NAX_EVENT_FD=3`.
 - The runner writes JSONL lifecycle events to file descriptor 3.
-- The visualize server parses fd 3 incrementally, stores valid events in memory,
+- The dashboard server parses fd 3 incrementally, stores valid events in memory,
   relays them to the browser as SSE, and records malformed chunks as diagnostic
   events instead of crashing the run.
 - The browser reducer consumes structured events directly. It does not parse
@@ -119,8 +119,8 @@ Validation commands used for this implementation:
 npm run check
 npm test
 node --import tsx --test tests/unit/live-run-reducer.test.ts
-npm run visualize:build
-npm run visualize:smoke
+npm run dashboard:build
+npm run dashboard:smoke
 ```
 
 Developer debugging workflow:
@@ -138,14 +138,14 @@ Developer debugging workflow:
 - Avoid parsing stdout for semantics.
 - Preserve durable `.nax` workflow state as the reload/reconnect source.
 - Support reconnecting a browser after a run has started.
-- Keep `nax run` useful without the visualizer.
+- Keep `nax run` useful without the dashboard.
 - Make the event protocol testable with unit tests and integration tests.
 - Keep the first implementation small enough to ship incrementally.
 
 ## Non-Goals
 
 - Do not replace workflow artifacts.
-- Do not make the visualizer depend on a browser being connected.
+- Do not make the dashboard depend on a browser being connected.
 - Do not require a database or daemon.
 - Do not remove the existing `.nax` polling fallback until event coverage is
   proven.
@@ -159,7 +159,7 @@ Developer debugging workflow:
 The following decisions are locked for this spec:
 
 - The runner emits an immediate `workflow_started` handshake with the durable
-  `.nax/workflows/<run-id>` id. The visualize server may still keep an internal
+  `.nax/workflows/<run-id>` id. The dashboard server may still keep an internal
   temporary id for the `POST /runs` response, but the durable run id becomes the
   canonical id for graph state, event logs, artifact lookup, and historical UI
   links as soon as the handshake arrives.
@@ -191,13 +191,13 @@ The following decisions are locked for this spec:
 
 ### Run Start
 
-`web/src/App.tsx` starts a real run with:
+`src/dashboard/web/src/App.tsx` starts a real run with:
 
 ```text
 POST /api/workflows/:id/runs
 ```
 
-The server creates an in-memory visualize run id and spawns:
+The server creates an in-memory dashboard run id and spawns:
 
 ```text
 node bin/nax.js run <workflow> ...
@@ -205,7 +205,7 @@ node bin/nax.js run <workflow> ...
 
 ### Live Output
 
-`src/visualize-server.js` captures child stdout/stderr and records events:
+`src/dashboard/server.js` captures child stdout/stderr and records events:
 
 ```text
 started
@@ -263,7 +263,7 @@ know that:
 ### stdout Is Human UI, Not Machine API
 
 Parsing terminal output would be brittle. Output formatting should remain free
-to change without breaking the visualizer.
+to change without breaking the dashboard.
 
 ### Durable Writes Are Not Lifecycle Events
 
@@ -279,7 +279,7 @@ stdout/stderr  -> human terminal stream
 fd 3 JSONL     -> structured runner events
 ```
 
-The visualize server will spawn `nax run` with an extra pipe:
+The dashboard server will spawn `nax run` with an extra pipe:
 
 ```js
 const child = spawn(process.execPath, args, {
@@ -297,13 +297,13 @@ const child = spawn(process.execPath, args, {
 descriptor is available. If it is not available, nothing changes for normal CLI
 users.
 
-The visualize server will parse fd 3 JSONL and relay each event over SSE.
+The dashboard server will parse fd 3 JSONL and relay each event over SSE.
 
 ```text
 nax run lifecycle
   -> emit structured JSONL event on fd 3
-  -> visualize server parses event
-  -> visualize server records/replays event
+  -> dashboard server parses event
+  -> dashboard server records/replays event
   -> browser EventSource receives event
   -> React reducer updates graph cards, model pills, output, and run metadata
 ```
@@ -393,7 +393,7 @@ type NaxRunnerEvent = {
   type: string
   at: string
   runId: string
-  visualizeRunId?: string
+  dashboardRunId?: string
   flowId: string
   stepId?: string
   stepTitle?: string
@@ -413,7 +413,7 @@ Rules:
 - `type` is required.
 - `at` is ISO 8601.
 - `runId` is the durable workflow run id when known.
-- `visualizeRunId` is optional and only exists when a local visualize server
+- `dashboardRunId` is optional and only exists when a local dashboard server
   started the process with a temporary id.
 - `flowId` is the workflow id.
 - `stepId` is required for step and agent events.
@@ -442,8 +442,8 @@ type WorkflowStartedEvent = {
 
 `workflow_started` is the durable id handshake. It must be emitted immediately
 after `createRunState()` and the first `saveRunState()`, before the first step
-is submitted. The visualize server uses this event to bind any temporary
-visualize id to the durable run id without scraping stdout.
+is submitted. The dashboard server uses this event to bind any temporary
+dashboard id to the durable run id without scraping stdout.
 
 ```ts
 type WorkflowCompletedEvent = {
@@ -636,7 +636,7 @@ UI mapping:
 
 ## Runner Instrumentation Points
 
-The event emitter should live near workflow execution, not in the visualizer.
+The event emitter should live near workflow execution, not in the dashboard.
 
 ### Add a Runner Event Emitter Module
 
@@ -754,11 +754,11 @@ artifact_written
 
 This should be emitted from artifact writer helpers where paths are known.
 
-## Visualize Server Changes
+## Dashboard Server Changes
 
 ### Spawn With Event FD
 
-Change `runWorkflowChild()` in `src/visualize-server.js`:
+Change `runWorkflowChild()` in `src/dashboard/server.js`:
 
 ```js
 const child = spawn(process.execPath, args, {
@@ -781,7 +781,7 @@ Rules:
 - Ignore blank lines.
 - Parse JSON.
 - Reject malformed event lines by recording a `runner_event_error`.
-- Do not crash the visualize server on malformed child events.
+- Do not crash the dashboard server on malformed child events.
 - Include the raw line in debug output only if safe.
 
 ### Record and Replay Structured Events
@@ -911,7 +911,7 @@ Normal path:
 On refresh:
 
 - UI loads `/api/runs`
-- active run is listed from server memory when the local visualize server still
+- active run is listed from server memory when the local dashboard server still
   owns the child process
 - UI opens `/api/runs/:id/events`
 - server replays in-memory events first when available
@@ -931,7 +931,7 @@ Use durable state:
 - `/api/runs/:runId/events?since=<seq>` can replay the persisted event log for
   debugging and future polling clients
 
-### Visualize Server Restarts
+### Dashboard Server Restarts
 
 In-memory events are gone. Durable state and `events.jsonl` remain.
 
@@ -1008,7 +1008,7 @@ That lets historical graphs match the live event-driven graph after refresh.
 
 ### Malformed Event JSON
 
-The visualize server should emit:
+The dashboard server should emit:
 
 ```text
 runner_event_error
@@ -1055,11 +1055,11 @@ them. A future remote cancellation/archive feature can upgrade those semantics.
 
 - fd 3 events are local child-process IPC, not exposed directly.
 - SSE endpoint already uses unguessable local run ids and is localhost-only.
-- Mutating endpoints still require the visualize token.
+- Mutating endpoints still require the dashboard token.
 - Do not include secrets in event payloads.
 - Avoid embedding full prompt body in events.
 - Artifact paths may be local absolute paths; only expose them through the
-  existing local visualizer context.
+  existing local dashboard context.
 
 ## Testing Plan
 
@@ -1072,7 +1072,7 @@ Add tests for `src/runner-events.js`:
 - includes schema version and timestamp
 - does not throw on write errors in normal mode
 
-Add tests for visualize server JSONL parser:
+Add tests for dashboard server JSONL parser:
 
 - parses complete lines
 - buffers partial chunks
@@ -1088,12 +1088,12 @@ Add tests for frontend reducer:
 
 ### Integration Tests
 
-Add a fake child runner mode for visualize tests.
+Add a fake child runner mode for dashboard tests.
 
 Options:
 
 - `NAX_TEST_RUNNER_EVENTS_FIXTURE=<path>`
-- or a test-only command hook injected into `startVisualizeServer()`
+- or a test-only command hook injected into `startDashboardServer()`
 
 The fake runner should emit:
 
@@ -1116,9 +1116,9 @@ Then assert:
 
 ### E2E Test
 
-Extend `tests/e2e/visualize.spec.js`:
+Extend `tests/e2e/dashboard.spec.js`:
 
-- start visualize server with fake eventing runner
+- start dashboard server with fake eventing runner
 - open UI
 - start workflow
 - verify React Flow node turns yellow
@@ -1135,7 +1135,7 @@ Deliverables:
 
 - `src/runner-events.js`
 - append-only `events.jsonl` writer
-- fd 3 JSONL parser in visualize server
+- fd 3 JSONL parser in dashboard server
 - server relays parsed runner events over SSE
 - `/api/runs/:runId/events?since=<seq>` can replay persisted events for durable
   runs
@@ -1196,7 +1196,7 @@ Acceptance:
 
 - Refresh during active run reconstructs current state from replay plus durable
   graph.
-- Visualize server restart still shows completed durable run state.
+- Dashboard server restart still shows completed durable run state.
 - Persisted event replay never regresses a newer in-memory event.
 
 ### Phase 5: Polish and Observability
@@ -1206,7 +1206,7 @@ Deliverables:
 - status legend or tooltip copy if needed
 - debug toggle for raw runner events
 - clear error display for malformed event stream
-- documentation in visualize plan / README
+- documentation in dashboard plan / README
 
 Acceptance:
 
@@ -1218,17 +1218,17 @@ Acceptance:
 ```text
 src/runner-events.js                new
 src/runner-event-log.js             new append-only events.jsonl helpers
-src/visualize-server.js             fd 3 parsing and SSE relay
+src/dashboard/server.js             fd 3 parsing and SSE relay
 src/workflow-runner.js              optional event plumbing for dry-run/run helpers
 bin/nax.js                          create/pass runner event emitter into run execution
 src/workflow-artifacts.js           artifact_written events
-web/src/App.tsx                     EventSource handlers and reducer integration
-web/src/types.ts                    event and live state types
-web/src/components/WorkflowNode.tsx pill status rendering
+src/dashboard/web/src/App.tsx                     EventSource handlers and reducer integration
+src/dashboard/web/src/types.ts                    event and live state types
+src/dashboard/web/src/components/WorkflowNode.tsx pill status rendering
 tests/unit/runner-events.test.js    new
 tests/unit/runner-event-log.test.js new
-tests/unit/visualize-server.test.js parser/SSE coverage
-tests/e2e/visualize.spec.js         realtime status coverage
+tests/unit/dashboard-server.test.js parser/SSE coverage
+tests/e2e/dashboard.spec.js         realtime status coverage
 ```
 
 ## Implementation Decisions
@@ -1249,11 +1249,11 @@ tests/e2e/visualize.spec.js         realtime status coverage
   `completed_with_warnings` in this plan unless runtime failure policy work adds
   that state later.
 - Artifact events should include both a run-relative path for portability and an
-  absolute path for the local visualizer open/copy actions.
+  absolute path for the local dashboard open/copy actions.
 
 ## Definition of Done
 
-- A real `nax visualize` run updates React Flow step cards from structured
+- A real `nax dashboard` run updates React Flow step cards from structured
   events.
 - Model pills update independently from structured `agent_status` events.
 - Terminal output still streams live.

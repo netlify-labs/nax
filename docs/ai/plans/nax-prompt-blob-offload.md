@@ -468,7 +468,7 @@ Instead compute a fetch-confidence status:
 
 Persist `contextFetchStatus`, `contextFetchSignals`, and
 `contextFetchConfirmed: status === "confirmed" || status === "probable"` on the
-run. Surface `suspect`/`failed` states in the run summary and visualize UI so a
+run. Surface `suspect`/`failed` states in the run summary and dashboard UI so a
 quietly-under-informed synthesis is visible rather than silent.
 
 Add an explicit context policy on each offloaded run:

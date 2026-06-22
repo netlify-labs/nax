@@ -1,4 +1,4 @@
-const { isHumanReviewStep, loadStepPrompt } = require('./flows')
+const { isHumanReviewStep, loadStepPrompt } = require('../../flows')
 
 function normalizeSelectedAgents(selectedAgents) {
   if (!Array.isArray(selectedAgents)) return null
@@ -149,9 +149,9 @@ function reduceTransitiveEdges(edges = []) {
  * Convert a Nax workflow definition into React Flow nodes and edges.
  *
  * @typedef {{
- *   flow?: import('./types').WorkflowFlow,
+ *   flow?: import('../../types').WorkflowFlow,
  *   selectedAgents?: string[] | null,
- *   runState?: import('./types').WorkflowRunState | null,
+ *   runState?: import('../../types').WorkflowRunState | null,
  * }} FlowToGraphOptions
  *
  * @param {FlowToGraphOptions} [options]

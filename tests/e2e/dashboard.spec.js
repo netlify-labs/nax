@@ -2,12 +2,12 @@ const { test, expect } = require('@playwright/test')
 const fs = require('fs')
 const os = require('os')
 const path = require('path')
-const { startVisualizeServer } = require('../../src/visualize-server')
+const { startDashboardServer } = require('../../src/dashboard/server')
 
 let instance
 
 test.beforeAll(async () => {
-  instance = await startVisualizeServer({
+  instance = await startDashboardServer({
     projectRoot: process.cwd(),
     initialWorkflow: 'review',
   })
@@ -29,7 +29,7 @@ async function openReview(page, viewport) {
 }
 
 function tmpRoot() {
-  return fs.mkdtempSync(path.join(os.tmpdir(), 'nax-visualize-e2e-'))
+  return fs.mkdtempSync(path.join(os.tmpdir(), 'nax-dashboard-e2e-'))
 }
 
 function writeCompletedRunFixture(projectRoot) {
@@ -205,7 +205,7 @@ function writeRunningRunFixture(projectRoot) {
   return runId
 }
 
-test('visualize renders Review graph on desktop', async ({ page }, testInfo) => {
+test('dashboard renders Review graph on desktop', async ({ page }, testInfo) => {
   await openReview(page, { width: 1360, height: 860 })
   await testInfo.attach('desktop', {
     body: await page.screenshot({ fullPage: true }),
@@ -213,7 +213,7 @@ test('visualize renders Review graph on desktop', async ({ page }, testInfo) => 
   })
 })
 
-test('visualize renders Review graph on narrow viewport', async ({ page }, testInfo) => {
+test('dashboard renders Review graph on narrow viewport', async ({ page }, testInfo) => {
   await openReview(page, { width: 390, height: 820 })
   await testInfo.attach('narrow', {
     body: await page.screenshot({ fullPage: true }),
@@ -221,7 +221,7 @@ test('visualize renders Review graph on narrow viewport', async ({ page }, testI
   })
 })
 
-test('visualize dry-run simulation updates step, model pill, and output without credits', async ({ page }, testInfo) => {
+test('dashboard dry-run simulation updates step, model pill, and output without credits', async ({ page }, testInfo) => {
   await page.setViewportSize({ width: 1360, height: 860 })
   await page.goto(instance.url, { waitUntil: 'networkidle' })
 
@@ -247,7 +247,7 @@ test('visualize dry-run simulation updates step, model pill, and output without 
 test('run details timeline shows all configured agents for running steps', async ({ page }) => {
   const projectRoot = tmpRoot()
   const runId = writeRunningRunFixture(projectRoot)
-  const server = await startVisualizeServer({
+  const server = await startDashboardServer({
     projectRoot,
     initialWorkflow: 'security-audit',
   })
@@ -265,8 +265,9 @@ test('run details timeline shows all configured agents for running steps', async
     await expect(timeline.locator('.run-details-timeline-card').filter({ hasText: 'Audit Security' })).toContainText('running')
     await expect(timeline.locator('.run-details-timeline-child-button')).toHaveCount(4)
     await expect(timeline.locator('.run-details-timeline-child-button').filter({ hasText: 'Claude - submitted' })).toBeVisible()
-    await expect(timeline.locator('.run-details-timeline-child-button').filter({ hasText: 'Gemini - pending' })).toBeVisible()
-    await expect(timeline.locator('.run-details-timeline-child-button').filter({ hasText: 'Codex - pending' })).toHaveCount(2)
+    await expect(timeline.locator('.run-details-timeline-child-button').filter({ hasText: 'Gemini - running' })).toBeVisible()
+    await expect(timeline.locator('.run-details-timeline-child-button').filter({ hasText: 'Codex - running' })).toBeVisible()
+    await expect(timeline.locator('.run-details-timeline-child-button').filter({ hasText: 'Codex - queued' })).toBeVisible()
     await expect(timeline.locator('.run-details-timeline-card').filter({ hasText: '"Security Audit" Workflow Running' })).toContainText('Running')
     await expect(timeline.locator('.run-details-timeline-card').filter({ hasText: '"Security Audit" Workflow Running' })).not.toContainText('click to view results')
   } finally {
@@ -274,10 +275,10 @@ test('run details timeline shows all configured agents for running steps', async
   }
 })
 
-test('visualize opens shared run details modal from runs and graph agent results', async ({ page }) => {
+test('dashboard opens shared run details modal from runs and graph agent results', async ({ page }) => {
   const projectRoot = tmpRoot()
   const runId = writeCompletedRunFixture(projectRoot)
-  const server = await startVisualizeServer({
+  const server = await startDashboardServer({
     projectRoot,
     initialWorkflow: 'review',
   })
@@ -315,12 +316,12 @@ test('visualize opens shared run details modal from runs and graph agent results
   }
 })
 
-test('visualize submits a follow-up from run details composer', async ({ page }) => {
+test('dashboard submits a follow-up from run details composer', async ({ page }) => {
   const projectRoot = tmpRoot()
   const runId = writeCompletedRunFixture(projectRoot)
   const followupRequests = []
   const submissions = []
-  const server = await startVisualizeServer({
+  const server = await startDashboardServer({
     projectRoot,
     initialWorkflow: 'review',
     siteName: 'netlify-agent-executor',
@@ -372,7 +373,10 @@ test('visualize submits a follow-up from run details composer', async ({ page })
     await page.getByRole('button', { name: 'Run follow-up' }).click()
 
     await expect(page.locator('.mantine-Notification-root').filter({ hasText: 'Follow-up submitted' })).toBeVisible()
-    await expect(page.getByRole('dialog', { name: 'Send to next agent' })).toBeHidden()
+    const followupDialog = page.getByRole('dialog', { name: 'Send to next agent' })
+    await expect(followupDialog).toBeVisible()
+    await expect(followupDialog.getByRole('button', { name: 'Run follow-up' })).toBeDisabled()
+    await expect(followupDialog.getByRole('button', { name: 'Back to results' })).toBeVisible()
     expect(followupRequests).toHaveLength(1)
     expect(followupRequests[0]).toMatchObject({
       mode: 'follow-up-thread',
@@ -386,6 +390,8 @@ test('visualize submits a follow-up from run details composer', async ({ page })
       ['gemini', ''],
     ])
 
+    await followupDialog.getByRole('button', { name: 'Back to results' }).click()
+    await expect(followupDialog).toBeHidden()
     await page.keyboard.press('Escape')
     await expect(page.getByRole('dialog', { name: /Workflow results for "Review"/ })).toBeHidden()
     await expect(page.locator('.run-item').filter({ hasText: 'Follow-up on Review (Gemini)' })).toBeVisible()

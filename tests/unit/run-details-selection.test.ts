@@ -1,8 +1,8 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 
-import { selectRunDetailsSection } from '../../web/src/run-details-selection'
-import type { RunDetailsSection } from '../../web/src/types'
+import { selectRunDetailsSection } from '../../src/dashboard/web/src/run-details-selection'
+import type { RunDetailsSection } from '../../src/dashboard/web/src/types'
 
 function section(overrides: Partial<RunDetailsSection>): RunDetailsSection {
   return {

@@ -5,13 +5,13 @@ import { Check, CheckCircle2, ExternalLink, FileSearch, Play, RefreshCw } from '
 import { openLocalFile, startRunFollowup } from '../api'
 import { agentLabel, workflowName } from '../run-format'
 import { buildRunFollowupRequest, defaultFollowupArtifactIds, defaultFollowupMode, defaultFollowupModels, defaultFollowupTarget, defaultFollowupThreadTarget, followupPlanLine, followupThreadTargets, formatArtifactBytes, selectedFollowupArtifacts, SUPPORTED_FOLLOWUP_MODELS } from '../run-followup-composer'
-import type { RunDetails, RunFollowupResponse, VisualizeRun } from '../types'
+import type { RunDetails, RunFollowupResponse, DashboardRun } from '../types'
 import { AgentIcon } from './AgentIcon'
 
 type RunFollowupModalProps = {
   opened: boolean
   onClose: () => void
-  run: VisualizeRun
+  run: DashboardRun
   details: RunDetails
   onSubmitted: (response: RunFollowupResponse) => void | Promise<void>
 }

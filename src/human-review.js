@@ -85,7 +85,7 @@ function findReviewStep(runState = {}, stepId = '') {
 }
 
 /** @param {HumanReviewGateInput} input @returns {import('./types').WorkflowRunState} */
-function approveHumanReviewGate({ runState, stepId = '', reviewer = 'visualizer', now = new Date() }) {
+function approveHumanReviewGate({ runState, stepId = '', reviewer = 'dashboard', now = new Date() }) {
   const target = findReviewStep(runState, stepId)
   if (!target) {
     const error = /** @type {Error & { code?: string }} */ (new Error('No human review gate is awaiting approval for this workflow.'))
@@ -114,7 +114,7 @@ function approveHumanReviewGate({ runState, stepId = '', reviewer = 'visualizer'
 }
 
 /** @param {HumanReviewGateInput} input @returns {import('./types').WorkflowRunState} */
-function cancelHumanReviewGate({ runState, stepId = '', reviewer = 'visualizer', reason = 'cancelled by reviewer', now = new Date() }) {
+function cancelHumanReviewGate({ runState, stepId = '', reviewer = 'dashboard', reason = 'cancelled by reviewer', now = new Date() }) {
   const target = findReviewStep(runState, stepId)
   if (!target) {
     const error = /** @type {Error & { code?: string }} */ (new Error('No human review gate is awaiting cancellation for this workflow.'))

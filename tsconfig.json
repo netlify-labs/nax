@@ -18,6 +18,7 @@
     "tests/**/*.js"
   ],
   "exclude": [
+    "src/dashboard/web/dist",
     "node_modules"
   ]
 }

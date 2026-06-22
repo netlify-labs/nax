@@ -56,8 +56,8 @@ function workflowCommand(input) {
 }
 
 function loadCliRunner() {
-  const cli = require(path.resolve(__dirname, '..', 'bin', 'nax.js'))
-  const handleRun = cli?._private?.handleRunEngine || cli?._private?.handleRun
+  const cli = require('./cli/legacy-main')
+  const handleRun = cli?.handleRunEngine || cli?.handleRun
   if (typeof handleRun !== 'function') {
     throw new Error('Internal workflow runner is unavailable.')
   }
@@ -65,8 +65,8 @@ function loadCliRunner() {
 }
 
 function loadCliResumeRunner() {
-  const cli = require(path.resolve(__dirname, '..', 'bin', 'nax.js'))
-  const resumeRun = cli?._private?.resumeRunById
+  const cli = require('./cli/legacy-main')
+  const resumeRun = cli?.resumeRunById
   if (typeof resumeRun !== 'function') {
     throw new Error('Internal workflow resume runner is unavailable.')
   }

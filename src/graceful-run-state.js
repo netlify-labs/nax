@@ -69,10 +69,8 @@ function clearTrackedRunState(runState, { completed = false } = {}) {
 }
 
 module.exports = {
-  _private: {
-    persistActiveRunState,
-  },
   clearTrackedRunState,
   installGracefulRunStateHandlers,
+  persistActiveRunState,
   trackRunState,
 }

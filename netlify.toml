@@ -1,6 +1,6 @@
 [build]
-  command = "npm run visualize:build"
-  publish = "web/dist"
+  command = "npm run dashboard:build"
+  publish = "src/dashboard/web/dist"
 
 [functions]
   directory = "netlify/functions"

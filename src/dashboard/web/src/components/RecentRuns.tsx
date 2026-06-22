@@ -2,21 +2,21 @@ import { useState } from 'react'
 import { ActionIcon, Badge, Box, Group, Paper, ScrollArea, Stack, Text, Title, Tooltip, UnstyledButton } from '@mantine/core'
 import { GitBranch, History, RotateCcw } from 'lucide-react'
 import { runId, statusBadgeStyle, statusColor } from '../run-format'
-import type { RunFollowupResponse, VisualizeRun } from '../types'
+import type { RunFollowupResponse, DashboardRun } from '../types'
 import { RunDetailsModal } from './RunDetailsModal'
 
 type Props = {
-  runs: VisualizeRun[]
+  runs: DashboardRun[]
   selectedRunId: string
-  onSelect: (run: VisualizeRun) => void
-  onResume: (run: VisualizeRun) => void
+  onSelect: (run: DashboardRun) => void
+  onResume: (run: DashboardRun) => void
   onFollowupSubmitted?: (response: RunFollowupResponse) => void | Promise<void>
 }
 
 export function RecentRuns({ runs, selectedRunId, onSelect, onResume, onFollowupSubmitted }: Props) {
   const [detailsRunId, setDetailsRunId] = useState('')
 
-  const openRunDetails = (run: VisualizeRun) => {
+  const openRunDetails = (run: DashboardRun) => {
     const id = runId(run)
     if (id) setDetailsRunId(id)
   }

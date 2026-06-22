@@ -22,7 +22,7 @@ nax handoff
 nax recent
 nax sync last
 nax clean blobs
-nax visualize
+nax dashboard
 nax skills install
 ```
 
@@ -82,7 +82,7 @@ Use to pick the next best task. Steps:
 - Warn that local uncommitted/unpushed changes are invisible to remote Netlify agent runners.
 - Use `--branch '#123'` for PR-specific runs when the user references a PR number.
 - Use `--step` only for deliberate partial reruns; otherwise resume/retry saved Netlify API state.
-- Use `nax visualize` when the user wants to browse workflow state, inspect graph status, compare Results vs Prompt in run details, or send selected artifacts to a follow-up agent from the browser.
+- Use `nax dashboard` when the user wants to browse workflow state, inspect graph status, compare Results vs Prompt in run details, or send selected artifacts to a follow-up agent from the browser.
 - Treat `.nax/workflows/<workflow-run-id>/workflow.json` as the source of truth for workflow recovery.
 - Use `.nax/workflows/<workflow-run-id>/artifacts/summary.md` for full workflow handoff context.
 - Use `.nax/agent-sessions/<session-id>/summary.md` for one concrete agent result.
@@ -110,7 +110,7 @@ Use `nax handoff` to continue from prior results interactively, or `nax handoff 
 
 Use `nax sync last` when a Netlify UI follow-up happened outside the local process and the latest local runner is missing remote sessions.
 
-Use `nax visualize` to inspect saved runs in a browser. Run details can switch between rendered Results and the original Prompt when the prompt file is still resolvable from the flow definition.
+Use `nax dashboard` to inspect saved runs in a browser. Run details can switch between rendered Results and the original Prompt when the prompt file is still resolvable from the flow definition.
 
 For a terminal failed Netlify API run that needs a compact follow-up prompt, use:
 

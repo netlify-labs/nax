@@ -6,8 +6,8 @@ const http = require('http')
 const os = require('os')
 const path = require('path')
 
-const { _private, startVisualizeServer } = require('../../src/visualize-server')
-const { buildRunDetails } = require('../../src/visualize-run-details')
+const { _private, startDashboardServer } = require('../../src/dashboard/server')
+const { buildRunDetails } = require('../../src/dashboard/shared/run-details')
 const { appendFollowupRunsToWorkflow } = require('../../src/followup-persistence')
 const { appendEventLog } = require('../../src/runner-event-log')
 
@@ -79,7 +79,7 @@ function postJson(url, token, payload) {
 }
 
 function tmpRoot() {
-  return fs.mkdtempSync(path.join(os.tmpdir(), 'nax-visualize-server-'))
+  return fs.mkdtempSync(path.join(os.tmpdir(), 'nax-dashboard-server-'))
 }
 
 test('run details follow-up targets are labelled by step and sorted newest first', () => {
@@ -119,7 +119,7 @@ function writeProjectFlow(projectRoot, id, { title = id } = {}) {
   fs.writeFileSync(path.join(flowDir, 'flow.yml'), [
     `id: ${id}`,
     `title: ${title}`,
-    'description: Project-local visualize flow',
+    'description: Project-local dashboard flow',
     'defaults:',
     '  agents: [codex]',
     'steps:',
@@ -194,7 +194,7 @@ function writeFollowupRunFixture(projectRoot, runId = 'fixture-followup-run') {
   return { runId, dir, artifactsDir, stepDir, runnerDir }
 }
 
-test('visualize extracts durable workflow run id from runner output', () => {
+test('dashboard extracts durable workflow run id from runner output', () => {
   const output = [
     'Run 2026-06-19T04-40-05-602Z-do-next',
     'Flow: Do Next',
@@ -204,7 +204,7 @@ test('visualize extracts durable workflow run id from runner output', () => {
   assert.equal(_private.extractDurableRunId(output), '2026-06-19T04-40-05-602Z-do-next')
 })
 
-test('visualize builds compact step status snapshots from workflow state', () => {
+test('dashboard builds compact step status snapshots from workflow state', () => {
   const snapshot = _private.stepStatusSnapshot({
     steps: [
       { id: 'review', title: 'Review', status: 'running', agents: ['claude', 'codex'], runs: [{}, {}] },
@@ -231,7 +231,7 @@ test('visualize builds compact step status snapshots from workflow state', () =>
   ])
 })
 
-test('visualize parses runner event JSONL across chunks and reports malformed lines', () => {
+test('dashboard parses runner event JSONL across chunks and reports malformed lines', () => {
   const events = []
   const errors = []
   const parser = _private.createRunnerEventParser({
@@ -250,8 +250,8 @@ test('visualize parses runner event JSONL across chunks and reports malformed li
   assert.equal(errors[1].code, 'missing_runner_event_type')
 })
 
-test('visualize server exposes health, workflow list, and graph routes', async () => {
-  const server = await startVisualizeServer({ projectRoot: process.cwd(), initialWorkflow: 'review' })
+test('dashboard server exposes health, workflow list, and graph routes', async () => {
+  const server = await startDashboardServer({ projectRoot: process.cwd(), initialWorkflow: 'review' })
   try {
     const base = `http://127.0.0.1:${server.port}`
     const health = await requestJson(`${base}/api/health`)
@@ -278,10 +278,10 @@ test('visualize server exposes health, workflow list, and graph routes', async (
   }
 })
 
-test('visualize server requires auth for sensitive run reads and rejects untrusted Host headers', async () => {
+test('dashboard server requires auth for sensitive run reads and rejects untrusted Host headers', async () => {
   const projectRoot = tmpRoot()
   const { runId } = writeFollowupRunFixture(projectRoot, 'secure-run')
-  const server = await startVisualizeServer({ projectRoot })
+  const server = await startDashboardServer({ projectRoot })
   try {
     const base = `http://127.0.0.1:${server.port}`
     const unauthenticatedRuns = await requestJson(`${base}/api/runs`)
@@ -309,8 +309,8 @@ test('visualize server requires auth for sensitive run reads and rejects untrust
   }
 })
 
-test('visualize server startup url does not include the session token', async () => {
-  const server = await startVisualizeServer({ projectRoot: process.cwd(), initialWorkflow: 'review' })
+test('dashboard server startup url does not include the session token', async () => {
+  const server = await startDashboardServer({ projectRoot: process.cwd(), initialWorkflow: 'review' })
   try {
     assert.doesNotMatch(server.url, new RegExp(server.token))
     assert.doesNotMatch(server.url, /token=/)
@@ -320,13 +320,13 @@ test('visualize server startup url does not include the session token', async ()
   }
 })
 
-test('visualize html bootstraps auth with an httpOnly session cookie', async () => {
-  const server = await startVisualizeServer({ projectRoot: process.cwd(), initialWorkflow: 'review', distDir: path.join(os.tmpdir(), 'missing-nax-dist') })
+test('dashboard html bootstraps auth with an httpOnly session cookie', async () => {
+  const server = await startDashboardServer({ projectRoot: process.cwd(), initialWorkflow: 'review', distDir: path.join(os.tmpdir(), 'missing-nax-dist') })
   try {
     const html = await requestText(`http://127.0.0.1:${server.port}/`)
     assert.equal(html.statusCode, 200)
     assert.doesNotMatch(html.body, new RegExp(server.token))
-    assert.match(String(html.headers['set-cookie'] || ''), /nax_visualize_token=/)
+    assert.match(String(html.headers['set-cookie'] || ''), /nax_dashboard_token=/)
     assert.match(String(html.headers['set-cookie'] || ''), /HttpOnly/)
     assert.match(String(html.headers['set-cookie'] || ''), /SameSite=Strict/)
   } finally {
@@ -334,10 +334,10 @@ test('visualize html bootstraps auth with an httpOnly session cookie', async () 
   }
 })
 
-test('visualize server discovers project workflows before bundled workflows', async () => {
+test('dashboard server discovers project workflows before bundled workflows', async () => {
   const projectRoot = tmpRoot()
   writeProjectFlow(projectRoot, 'conversion-audit', { title: 'Conversion Audit' })
-  const server = await startVisualizeServer({ projectRoot })
+  const server = await startDashboardServer({ projectRoot })
   try {
     const workflows = await requestJson(`http://127.0.0.1:${server.port}/api/workflows`)
     assert.equal(workflows.statusCode, 200)
@@ -349,8 +349,8 @@ test('visualize server discovers project workflows before bundled workflows', as
   }
 })
 
-test('visualize server returns structured 404 for unknown workflows', async () => {
-  const server = await startVisualizeServer({ projectRoot: process.cwd() })
+test('dashboard server returns structured 404 for unknown workflows', async () => {
+  const server = await startDashboardServer({ projectRoot: process.cwd() })
   try {
     const response = await requestJson(`http://127.0.0.1:${server.port}/api/workflows/nope/graph`, { token: server.token })
     assert.equal(response.statusCode, 404)
@@ -361,13 +361,13 @@ test('visualize server returns structured 404 for unknown workflows', async () =
   }
 })
 
-test('visualize server serves built static assets when dist exists', async () => {
-  const distDir = fs.mkdtempSync(path.join(os.tmpdir(), 'nax-visualize-dist-'))
+test('dashboard server serves built static assets when dist exists', async () => {
+  const distDir = fs.mkdtempSync(path.join(os.tmpdir(), 'nax-dashboard-dist-'))
   fs.mkdirSync(path.join(distDir, 'assets'), { recursive: true })
   fs.writeFileSync(path.join(distDir, 'index.html'), '<script type="module" src="/assets/app.js"></script>')
   fs.writeFileSync(path.join(distDir, 'assets', 'app.js'), 'console.log("ok")\n')
 
-  const server = await startVisualizeServer({ projectRoot: process.cwd(), distDir })
+  const server = await startDashboardServer({ projectRoot: process.cwd(), distDir })
   try {
     const base = `http://127.0.0.1:${server.port}`
     const html = await requestText(`${base}/`)
@@ -383,8 +383,8 @@ test('visualize server serves built static assets when dist exists', async () =>
   }
 })
 
-test('visualize dry-run requires token and validates options', async () => {
-  const server = await startVisualizeServer({ projectRoot: process.cwd() })
+test('dashboard dry-run requires token and validates options', async () => {
+  const server = await startDashboardServer({ projectRoot: process.cwd() })
   try {
     const base = `http://127.0.0.1:${server.port}`
     const missingToken = await postJson(`${base}/api/workflows/review/dry-run`, '', {})
@@ -415,9 +415,9 @@ test('visualize dry-run requires token and validates options', async () => {
   }
 })
 
-test('visualize dry-run returns preview output without writing artifacts', async () => {
+test('dashboard dry-run returns preview output without writing artifacts', async () => {
   const projectRoot = tmpRoot()
-  const server = await startVisualizeServer({ projectRoot })
+  const server = await startDashboardServer({ projectRoot })
   try {
     const response = await postJson(`http://127.0.0.1:${server.port}/api/workflows/review/dry-run`, server.token, {
       transport: 'netlify-api',
@@ -448,9 +448,9 @@ test('visualize dry-run returns preview output without writing artifacts', async
   }
 })
 
-test('visualize tail streams dry-run output to the server console', async () => {
+test('dashboard tail streams dry-run output to the server console', async () => {
   const projectRoot = tmpRoot()
-  const server = await startVisualizeServer({ projectRoot, tail: true })
+  const server = await startDashboardServer({ projectRoot, tail: true })
   const originalLog = console.log
   const lines = []
   console.log = (...args) => {
@@ -470,9 +470,9 @@ test('visualize tail streams dry-run output to the server console', async () => 
   }
 })
 
-test('visualize real-run endpoint starts a tracked process and replays events', async () => {
+test('dashboard real-run endpoint starts a tracked process and replays events', async () => {
   const projectRoot = tmpRoot()
-  const server = await startVisualizeServer({ projectRoot })
+  const server = await startDashboardServer({ projectRoot })
   try {
     const base = `http://127.0.0.1:${server.port}`
     const unauthorized = await postJson(`${base}/api/workflows/review/runs`, '', {
@@ -509,7 +509,7 @@ test('visualize real-run endpoint starts a tracked process and replays events', 
   }
 })
 
-test('visualize cancel endpoint stops durable workflow runners without a live run', async () => {
+test('dashboard cancel endpoint stops durable workflow runners without a live run', async () => {
   const projectRoot = tmpRoot()
   const runId = 'fixture-durable-cancel'
   const dir = path.join(projectRoot, '.nax', 'workflows', runId)
@@ -586,7 +586,7 @@ test('visualize cancel endpoint stops durable workflow runners without a live ru
   ].join('\n'))
 
   const stopped = []
-  const server = await startVisualizeServer({
+  const server = await startDashboardServer({
     projectRoot,
     cancelStopRun: async ({ runnerId }) => {
       stopped.push(runnerId)
@@ -620,14 +620,14 @@ test('visualize cancel endpoint stops durable workflow runners without a live ru
   }
 })
 
-test('visualize runs API reads durable workflow state from .nax', async () => {
+test('dashboard runs API reads durable workflow state from .nax', async () => {
   const projectRoot = tmpRoot()
   const flowDir = path.join(projectRoot, '.github', 'nax-flows', 'review')
   fs.mkdirSync(path.join(flowDir, 'prompts'), { recursive: true })
   fs.writeFileSync(path.join(flowDir, 'flow.yml'), [
     'id: review',
     'title: Review',
-    'description: Project-local visualize flow',
+    'description: Project-local dashboard flow',
     'defaults:',
     '  agents: [claude, gemini, codex]',
     'steps:',
@@ -711,7 +711,7 @@ test('visualize runs API reads durable workflow state from .nax', async () => {
   fs.writeFileSync(path.join(externalRunnerDir, 'summary.md'), '# Runner summary\n\nRunner text.\n')
   fs.writeFileSync(path.join(externalSessionDir, 'summary.md'), '# Session summary\n\nSession text.\n')
 
-  const server = await startVisualizeServer({ projectRoot })
+  const server = await startDashboardServer({ projectRoot })
   try {
     const base = `http://127.0.0.1:${server.port}`
     const runs = await requestJson(`${base}/api/runs`, { token: server.token })
@@ -784,10 +784,10 @@ test('visualize runs API reads durable workflow state from .nax', async () => {
   }
 })
 
-test('visualize follow-up endpoint validates auth, prompt, artifact IDs, and run ID', async () => {
+test('dashboard follow-up endpoint validates auth, prompt, artifact IDs, and run ID', async () => {
   const projectRoot = tmpRoot()
   const { runId } = writeFollowupRunFixture(projectRoot)
-  const server = await startVisualizeServer({
+  const server = await startDashboardServer({
     projectRoot,
     followupSubmitRun: async ({ run }) => ({ ...run, status: 'submitted', runnerId: run.existingRunnerId || 'runner-new', sessionId: 'session-new' }),
   })
@@ -821,12 +821,12 @@ test('visualize follow-up endpoint validates auth, prompt, artifact IDs, and run
   }
 })
 
-test('visualize follow-up endpoint submits matching runner and fresh additional models', async () => {
+test('dashboard follow-up endpoint submits matching runner and fresh additional models', async () => {
   const projectRoot = tmpRoot()
   const { runId } = writeFollowupRunFixture(projectRoot)
   const submissions = []
   const stopped = []
-  const server = await startVisualizeServer({
+  const server = await startDashboardServer({
     projectRoot,
     siteName: 'netlify-agent-executor',
     followupSubmitRun: async ({ run }) => {
@@ -898,7 +898,7 @@ test('visualize follow-up endpoint submits matching runner and fresh additional 
     const runs = await requestJson(`${base}/api/runs`, { token: server.token })
     assert.equal(runs.payload.durable.some((run) => run.flowTitle === 'Follow-up on Review (Gemini)'), true)
     const graph = await requestJson(`${base}/api/runs/${runId}/graph`, { token: server.token })
-    const followupNode = graph.payload.graph.nodes.find((node) => node.id.startsWith('visualizer-followup-'))
+    const followupNode = graph.payload.graph.nodes.find((node) => node.id.startsWith('dashboard-followup-'))
     assert.ok(followupNode)
     assert.equal(followupNode.data.status, 'submitted')
     assert.deepEqual(followupNode.data.runs.map((run) => run.sessionId), ['session-codex-followup', 'session-gemini'])
@@ -924,7 +924,7 @@ test('visualize follow-up endpoint submits matching runner and fresh additional 
   }
 })
 
-test('visualize run graph syncs completed remote follow-up sessions', async () => {
+test('dashboard run graph syncs completed remote follow-up sessions', async () => {
   const projectRoot = tmpRoot()
   const { runId, dir } = writeFollowupRunFixture(projectRoot)
   const state = JSON.parse(fs.readFileSync(path.join(dir, 'workflow.json'), 'utf8'))
@@ -941,7 +941,7 @@ test('visualize run graph syncs completed remote follow-up sessions', async () =
       links: { sessionUrl: 'https://app.netlify.com/projects/site/agent-runs/runner-1?session=session-followup' },
     }],
   })
-  const server = await startVisualizeServer({
+  const server = await startDashboardServer({
     projectRoot,
     followupSyncRunCommand: (_command, args) => {
       const data = JSON.parse(args[args.indexOf('--data') + 1] || '{}')
@@ -964,7 +964,7 @@ test('visualize run graph syncs completed remote follow-up sessions', async () =
     const base = `http://127.0.0.1:${server.port}`
     const graph = await requestJson(`${base}/api/runs/${runId}/graph`, { token: server.token })
     assert.equal(graph.statusCode, 200, graph.payload?.error?.message)
-    const followupNode = graph.payload.graph.nodes.find((node) => node.id.startsWith('visualizer-followup-sync'))
+    const followupNode = graph.payload.graph.nodes.find((node) => node.id.startsWith('dashboard-followup-sync'))
     assert.ok(followupNode)
     assert.equal(followupNode.data.status, 'completed')
     assert.equal(followupNode.data.runs[0].status, 'completed')
@@ -974,7 +974,7 @@ test('visualize run graph syncs completed remote follow-up sessions', async () =
   }
 })
 
-test('visualize follow-up endpoint offloads oversized context using linked site state', async () => {
+test('dashboard follow-up endpoint offloads oversized context using linked site state', async () => {
   const projectRoot = tmpRoot()
   fs.mkdirSync(path.join(projectRoot, '.netlify'), { recursive: true })
   fs.writeFileSync(path.join(projectRoot, '.netlify', 'state.json'), JSON.stringify({ siteId: 'linked-site-id' }))
@@ -982,7 +982,7 @@ test('visualize follow-up endpoint offloads oversized context using linked site 
   fs.writeFileSync(path.join(dir, 'artifacts', 'summary.md'), `# Huge summary\n\n${'prior result detail '.repeat(5000)}\n`)
   const submissions = []
   const blobWrites = []
-  const server = await startVisualizeServer({
+  const server = await startDashboardServer({
     projectRoot,
     siteName: 'netlify-agent-executor',
     env: {
@@ -1026,7 +1026,7 @@ test('visualize follow-up endpoint offloads oversized context using linked site 
   }
 })
 
-test('visualize events API replays durable event log with since filter', async () => {
+test('dashboard events API replays durable event log with since filter', async () => {
   const projectRoot = tmpRoot()
   const runId = 'fixture-events-run'
   const dir = path.join(projectRoot, '.nax', 'workflows', runId)
@@ -1050,7 +1050,7 @@ test('visualize events API replays durable event log with since filter', async (
   appendEventLog(logPath, { schemaVersion: 1, seq: 2, type: 'step_started', runId, flowId: 'review', stepId: 'review' })
   appendEventLog(logPath, { schemaVersion: 1, seq: 3, type: 'workflow_completed', runId, flowId: 'review' })
 
-  const server = await startVisualizeServer({ projectRoot })
+  const server = await startDashboardServer({ projectRoot })
   try {
     const events = await requestText(`http://127.0.0.1:${server.port}/api/runs/${runId}/events?since=1`, { token: server.token })
     assert.equal(events.statusCode, 200)

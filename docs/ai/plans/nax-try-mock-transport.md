@@ -19,7 +19,7 @@ Two payoffs from one feature:
    `netlify login` + `nax init` + repo secrets + a linked Netlify site before a
    user sees *anything* happen. `npx @davidwells/netlify-agent-executor try`
    should render the whole experience — fan-out, step gating, artifacts under
-   `.nax/`, the visualizer graph going green — in ~10 seconds with none of that.
+   `.nax/`, the dashboard graph going green — in ~10 seconds with none of that.
    That is the difference between a star and a bounce.
 
 2. **Testability.** The engine — steps, fan-out, `waitFor` gating, round-results
@@ -35,12 +35,12 @@ Two payoffs from one feature:
 npx @davidwells/netlify-agent-executor try
 # 🧪  MOCK MODE — no real agents, no credits, no network.
 # pick a flow → watch review → cross-review → synthesize run green
-# artifacts written to .nax/  (browse with `nax recent`, open in `nax visualize`)
+# artifacts written to .nax/  (browse with `nax recent`, open in `nax dashboard`)
 
 nax try review            # run a specific bundled flow
 nax try ./my-flow         # run a custom flow with synthesized results
 nax try review --json     # robot-mode summary for scripts/CI
-nax visualize review      # then Run → fully offline graph demo
+nax dashboard review      # then Run → fully offline graph demo
 ```
 
 ---
@@ -77,7 +77,7 @@ nax visualize review      # then Run → fully offline graph demo
 | Auto-context | `src/review-context.js:245` `buildAutomaticContext` | pins SHA, builds PR ledger — **shells to git + gh** |
 | Round-results chaining | `src/round-results.js:101` `fetchRoundResults` | pulls prior step output forward |
 | Result normalization | `src/agent-run-results.js:497` `normalizeAgentRunResult` | the shape a mock must produce |
-| Visualizer re-entry | `src/workflow-runner.js:24` | runs engine in-process with `--transport <kind>` |
+| Dashboard re-entry | `src/workflow-runner.js:24` | runs engine in-process with `--transport <kind>` |
 | Blob offload | `src/prompt-offload.js`, `src/netlify-blobs.js` | shells `netlify blobs:set/get` |
 
 The engine is fused into `bin/nax.js`, but the transport choice already funnels
@@ -171,7 +171,7 @@ its own prerequisite refactor.
 - `waitForMockStep(...)` → resolves immediately by default; honors a per-fixture
   `delayMs` and `status` so tests can drive slow / failed / timeout paths.
 - Emits the same structured lifecycle events (`runner-events.js`) so the
-  visualizer graph transitions submitted → running → completed exactly like real
+  dashboard graph transitions submitted → running → completed exactly like real
   runs.
 
 ### 4.4 Fixture resolution: synthetic-by-default, override-by-file
@@ -241,7 +241,7 @@ tests (and optionally by `nax try` for reproducible demos):
 - Tags the run `mode: "mock"` in `workflow.json`.
 - Works outside a git repo and in an empty `npx` directory.
 - Prints where artifacts landed + the next commands (`nax recent`,
-  `nax visualize <flow>`, `nax handoff`).
+  `nax dashboard <flow>`, `nax handoff`).
 
 ### 4.9 Artifacts: sandboxed under `.nax/try/` (DECIDED: D2)
 
@@ -257,17 +257,17 @@ defense in depth.
 .nax/try/agent-runners/... / agent-sessions/...
 ```
 
-Cost: `recent`, `visualize`, and `handoff` must learn a **second search root**.
+Cost: `recent`, `dashboard`, and `handoff` must learn a **second search root**.
 Approach — introduce a `naxRoots()` resolver returning `[.nax]` normally and
 `[.nax, .nax/try]` when mock browsing is in scope:
 
 - `nax recent` — include `.nax/try` only with `--mock`/`--include-mock`; tag
   mock entries with 🧪 so they're never confused with real runs.
-- `nax visualize` — resolve a run id across both roots; mock runs render with a
+- `nax dashboard` — resolve a run id across both roots; mock runs render with a
   🧪 badge.
 - `nax handoff` — does **not** include `.nax/try` by default (handing off fake
   results is almost never intended); `--from-try` opts in explicitly.
-- `nax try` prints the exact sandbox path + the `nax visualize <flow>` /
+- `nax try` prints the exact sandbox path + the `nax dashboard <flow>` /
   `nax recent --mock` follow-ups.
 
 `gitignore`: `.nax/try/` should be ignored (mock output is ephemeral demo data).
@@ -277,7 +277,7 @@ Approach — introduce a `naxRoots()` resolver returning `[.nax]` normally and
 ## 5. User workflows enabled
 
 1. **Evaluator** runs `npx ... try`, sees fan-out + gating + a green graph in
-   the visualizer, decides nax is worth wiring up — *then* does `nax init`.
+   the dashboard, decides nax is worth wiring up — *then* does `nax init`.
 2. **Flow author** iterates on a custom `flow.yml` with `nax try ./my-flow`,
    confirming step order, `input` chaining, and prompt assembly with no credits.
 3. **Contributor / CI** asserts engine behavior deterministically:
@@ -310,9 +310,9 @@ Write failing tests first; `node --import tsx --test` per repo convention.
   interrupted mock run continues from first incomplete step.
 - Determinism: `NAX_FIXED_NOW` → stable `workflow.json` snapshot.
 
-**Visualizer**
-- Extend `visualize:smoke` (Playwright): launch a mock run, assert graph reaches
-  all-green and an artifact opens — a fully offline e2e of the visualizer.
+**Dashboard**
+- Extend `dashboard:smoke` (Playwright): launch a mock run, assert graph reaches
+  all-green and an artifact opens — a fully offline e2e of the dashboard.
 
 **Robot mode**
 - `nax try --json` emits one stable JSON doc on stdout, decorative output to
@@ -337,10 +337,10 @@ T7  sandbox artifacts under .nax/try/ + naxRoots() resolver + .gitignore        
 T8  determinism hooks (NAX_FIXED_NOW threading)                                        (dep T3)
 T9  recorded `review` fixture (realistic demo)                                         (dep T4)
 T10 --json robot mode for `nax try`                                                    (dep T6)
-T11 second search root in recent/visualize/handoff (🧪 badge, opt-in flags)            (dep T7)
+T11 second search root in recent/dashboard/handoff (🧪 badge, opt-in flags)            (dep T7)
 T12 Refactor github + netlify-api to implement Transport interface (under mock tests)  (dep T2,T3,T13) [seq]
 T13 Tests: mock unit + engine integration + failure-path + determinism (TDD, FIRST)    (dep T3-T8)
-T14 visualizer offline mock run + smoke test                                           (dep T3,T6,T11)
+T14 dashboard offline mock run + smoke test                                           (dep T3,T6,T11)
 T15 Docs: README (`nax try`, mock transport, fidelity caveat) + roadmap update         (dep T6)
 T16 Extension-point note: fixture == recording format for nax-mgi                      (dep T4)
 ```
@@ -384,7 +384,7 @@ TDD and goes green as T3–T8 land.
   implement (not a thin selector, not inline branches). Derived from current
   behavior; real drivers refactored under mock's test net. See §4.2.
 - **D2 — Artifact location.** ✅ **Sandboxed `.nax/try/`** by default; `recent`/
-  `visualize`/`handoff` gain a second, opt-in search root. See §4.9.
+  `dashboard`/`handoff` gain a second, opt-in search root. See §4.9.
 - **D3 — v1 scope.** ✅ **Synthetic generator + one recorded `review` fixture.**
   Ships independent of `nax-mgi`.
 - **D4 — Command surface.** ✅ **`nax try` sugar + raw `--transport mock`.**

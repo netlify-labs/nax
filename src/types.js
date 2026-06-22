@@ -58,7 +58,7 @@
  *   isDefault?: boolean,
  * }} TargetLike
  *
- * Visualizer follow-up target or selectable artifact descriptor.
+ * Dashboard follow-up target or selectable artifact descriptor.
  * @typedef {TargetLike & {
  *   kind?: string,
  *   title?: string,
@@ -185,6 +185,11 @@
  *   contextFetchSignals?: string[],
  *   contextFetchConfirmed?: boolean,
  *   blobRef?: BlobRef,
+ *   archived?: boolean,
+ *   archivedAt?: string,
+ *   archiveError?: string,
+ *   cancelledAt?: string,
+ *   cancelReason?: string,
  *   createdAt?: string,
  *   updatedAt?: string,
  *   submittedAfterSeconds?: number,
@@ -200,6 +205,8 @@
  *   agent?: string,
  *   status?: string,
  *   resultText?: string,
+ *   stepId?: string,
+ *   sourceStep?: string,
  *   usage?: UsageSummary,
  *   fileChanges?: FileChangesSummary,
  *   links?: StringMap,
@@ -274,7 +281,7 @@
  * Callback used by command-wrapper injection points.
  * @typedef {(command: string, args: string[], options?: Record<string, unknown>) => CommandResult} RunCommand
  *
- * Generic event sink for runner, workflow, notification, and visualizer events.
+ * Generic event sink for runner, workflow, notification, and dashboard events.
  * @typedef {(event: JsonMap) => void} EventSink
  */
 

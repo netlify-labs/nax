@@ -141,7 +141,7 @@ export type DryRunResponse = {
   dryRun: DryRunResult
 }
 
-export type VisualizeRun = {
+export type DashboardRun = {
   id: string
   runId?: string
   flowId: string
@@ -171,16 +171,16 @@ export type VisualizeRun = {
 
 export type StartRunResponse = {
   workflow: Workflow
-  run: VisualizeRun
+  run: DashboardRun
 }
 
 export type RunsResponse = {
-  active: VisualizeRun[]
-  durable: VisualizeRun[]
+  active: DashboardRun[]
+  durable: DashboardRun[]
 }
 
 export type RunGraphResponse = {
-  run: VisualizeRun
+  run: DashboardRun
   workflow: Workflow
   graph: WorkflowGraph
 }
@@ -274,7 +274,7 @@ export type RunDetails = {
 }
 
 export type RunDetailsResponse = {
-  run: VisualizeRun
+  run: DashboardRun
   details: RunDetails
 }
 
@@ -321,8 +321,8 @@ export type RunFollowupResponse = {
       summary: string[]
     }
     submissions: RunFollowupSubmission[]
-    sourceWorkflow: VisualizeRun | null
-    persistedWorkflow: VisualizeRun | null
+    sourceWorkflow: DashboardRun | null
+    persistedWorkflow: DashboardRun | null
     warnings: string[]
   }
 }

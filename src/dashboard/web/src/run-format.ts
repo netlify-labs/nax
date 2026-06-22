@@ -1,7 +1,7 @@
 import type { CSSProperties } from 'react'
-import type { VisualizeRun } from './types'
+import type { DashboardRun } from './types'
 
-export function runId(run: Partial<VisualizeRun>): string {
+export function runId(run: Partial<DashboardRun>): string {
   return run.runId || run.id || ''
 }
 
@@ -64,6 +64,6 @@ export function statusBadgeStyle(status: string): CSSProperties | undefined {
   } as CSSProperties
 }
 
-export function workflowName(run: VisualizeRun | undefined): string {
+export function workflowName(run: DashboardRun | undefined): string {
   return run ? run.flowTitle || run.flowId || runId(run) : ''
 }

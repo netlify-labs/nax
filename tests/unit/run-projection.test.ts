@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { projectWorkflowGraph } from '../../web/src/run-projection'
-import type { WorkflowGraph } from '../../web/src/types'
+import { projectWorkflowGraph } from '../../src/dashboard/web/src/run-projection'
+import type { WorkflowGraph } from '../../src/dashboard/web/src/types'
 
 function graphWithStep(step: Partial<WorkflowGraph['nodes'][number]['data']>): WorkflowGraph {
   return {

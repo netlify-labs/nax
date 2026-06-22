@@ -1,7 +1,7 @@
 const fs = require('fs')
 const path = require('path')
 
-const { loadStepPrompt } = require('./flows')
+const { loadStepPrompt } = require('../../flows')
 
 /**
  * File-name predicate used while scanning artifact directories.
@@ -11,23 +11,23 @@ const { loadStepPrompt } = require('./flows')
  */
 
 /**
- * Step metadata persisted beside visualizer step artifacts.
- * @typedef {import('./types').JsonMap & {
+ * Step metadata persisted beside dashboard step artifacts.
+ * @typedef {import('../../types').JsonMap & {
  *   id?: string,
  *   title?: string,
  *   status?: string,
- *   usage?: import('./types').UsageSummary,
+ *   usage?: import('../../types').UsageSummary,
  * }} StepArtifactMetadata
  *
- * Agent metadata persisted beside visualizer result artifacts.
- * @typedef {import('./types').JsonMap & {
+ * Agent metadata persisted beside dashboard result artifacts.
+ * @typedef {import('../../types').JsonMap & {
  *   agent?: string,
  *   stepId?: string,
  *   status?: string,
  *   runnerId?: string,
  *   sessionId?: string,
- *   links?: import('./types').StringMap,
- *   usage?: import('./types').UsageSummary,
+ *   links?: import('../../types').StringMap,
+ *   usage?: import('../../types').UsageSummary,
  * }} AgentArtifactMetadata
  *
  * Prompt details associated with a workflow step.
@@ -52,12 +52,12 @@ const { loadStepPrompt } = require('./flows')
  *   stepTitle?: string,
  *   runnerId?: string,
  *   sessionId?: string,
- *   links?: import('./types').StringMap,
+ *   links?: import('../../types').StringMap,
  *   defaultMode?: string,
  * }} FollowupTargetInput
  *
- * Selectable follow-up target shown in the visualizer.
- * @typedef {import('./types').FollowupTarget & {
+ * Selectable follow-up target shown in the dashboard.
+ * @typedef {import('../../types').FollowupTarget & {
  *   id: string,
  *   kind: string,
  *   label: string,
@@ -70,7 +70,7 @@ const { loadStepPrompt } = require('./flows')
  *   status: string,
  *   path: string,
  *   absolutePath: string,
- *   links: import('./types').StringMap,
+ *   links: import('../../types').StringMap,
  *   defaultMode: string,
  *   isDefault: boolean,
  * }} RunDetailFollowupTarget
@@ -91,7 +91,7 @@ const { loadStepPrompt } = require('./flows')
  *   sessionId?: string,
  * }} FollowupArtifactInput
  *
- * Selectable follow-up artifact shown in the visualizer.
+ * Selectable follow-up artifact shown in the dashboard.
  * @typedef {{
  *   id: string,
  *   kind: string,
@@ -112,7 +112,7 @@ const { loadStepPrompt } = require('./flows')
  */
 
 /**
- * Markdown section displayed in visualizer run details.
+ * Markdown section displayed in dashboard run details.
  * @typedef {{
  *   id: string,
  *   kind: string,
@@ -125,20 +125,20 @@ const { loadStepPrompt } = require('./flows')
  *   sessionId: string,
  *   path: string,
  *   absolutePath: string,
- *   links: import('./types').StringMap,
- *   usage: import('./types').UsageSummary | null,
+ *   links: import('../../types').StringMap,
+ *   usage: import('../../types').UsageSummary | null,
  *   markdown: string,
  *   promptMarkdown?: string,
  *   promptPath?: string,
  *   promptTitle?: string,
  * }} RunDetailSection
  *
- * Options for building visualizer run details.
+ * Options for building dashboard run details.
  * @typedef {{
- *   flow?: import('./types').WorkflowFlow | null,
+ *   flow?: import('../../types').WorkflowFlow | null,
  * }} BuildRunDetailsOptions
  *
- * Visualizer run detail payload.
+ * Dashboard run detail payload.
  * @typedef {{
  *   summaryPath: string,
  *   summaryAbsolutePath: string,
@@ -161,7 +161,7 @@ function readText(filePath) {
   }
 }
 
-/** @param {string} filePath @returns {import('./types').JsonMap | null} */
+/** @param {string} filePath @returns {import('../../types').JsonMap | null} */
 function readJson(filePath) {
   try {
     const text = readText(filePath)
@@ -362,7 +362,7 @@ function stepNumberFromDir(stepDir) {
   return match ? Number.parseInt(match[1], 10) : 0
 }
 
-/** @param {import('./types').WorkflowRunState} [runState] @returns {Map<string, number>} */
+/** @param {import('../../types').WorkflowRunState} [runState] @returns {Map<string, number>} */
 function stepNumberLookup(runState = {}) {
   const lookup = new Map()
   const steps = Array.isArray(runState.steps) && runState.steps.length > 0
@@ -394,7 +394,7 @@ function stepLabel(stepNumber, label) {
 }
 
 /**
- * @param {import('./types').WorkflowFlow | null} flow
+ * @param {import('../../types').WorkflowFlow | null} flow
  * @param {StepArtifactMetadata} [stepMeta]
  * @returns {PromptDetails | null}
  */
@@ -487,7 +487,7 @@ function sortArtifactsNewestFirst(artifacts = []) {
 }
 
 /**
- * @param {import('./types').WorkflowRunState} [runState]
+ * @param {import('../../types').WorkflowRunState} [runState]
  * @param {BuildRunDetailsOptions} [options]
  * @returns {RunDetails}
  */

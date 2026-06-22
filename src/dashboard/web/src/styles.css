@@ -1510,13 +1510,51 @@ body {
 }
 
 .react-flow__controls {
-  box-shadow: var(--mantine-shadow-sm);
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  background: transparent;
+  box-shadow: none;
 }
 
-.react-flow__controls button {
+.react-flow__controls .react-flow__controls-button {
+  display: grid;
+  place-items: center;
+  box-sizing: border-box;
+  width: 30px;
+  height: 30px;
   color: var(--mantine-color-text);
-  background: var(--mantine-color-default);
-  border-bottom-color: var(--mantine-color-default-border);
+  border: 1px solid var(--mantine-color-default-border);
+  border-radius: 7px;
+  background: light-dark(
+    color-mix(in srgb, var(--mantine-color-white), transparent 8%),
+    color-mix(in srgb, var(--mantine-color-dark-7), transparent 4%)
+  );
+  box-shadow: var(--mantine-shadow-sm);
+  transition: background-color 120ms ease, border-color 120ms ease, color 120ms ease;
+}
+
+.react-flow__controls .react-flow__controls-button:hover {
+  color: var(--mantine-color-text);
+  border-color: light-dark(var(--mantine-color-gray-5), var(--mantine-color-dark-3));
+  background: light-dark(var(--mantine-color-gray-1), var(--mantine-color-dark-5));
+}
+
+.react-flow__controls .react-flow__controls-button:focus-visible {
+  outline: 2px solid var(--mantine-primary-color-5);
+  outline-offset: 2px;
+}
+
+.react-flow__controls .react-flow__controls-button:disabled {
+  color: var(--mantine-color-dimmed);
+  background: light-dark(var(--mantine-color-gray-1), var(--mantine-color-dark-6));
+  opacity: 0.7;
+}
+
+.react-flow__controls .react-flow__controls-button svg {
+  width: 13px;
+  height: 13px;
+  fill: currentColor;
 }
 
 .react-flow__minimap {

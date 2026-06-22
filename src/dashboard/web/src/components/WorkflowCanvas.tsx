@@ -198,7 +198,7 @@ function FlowBody({ graph, loading, mode, onSelectNode, onViewNodeDetails, fitVi
       }}
     >
       <Background color="#d6dde6" gap={18} />
-      <Controls showInteractive={false} />
+      <Controls showFitView={false} showInteractive={false} />
     </ReactFlow>
   )
 }

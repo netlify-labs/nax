@@ -243,6 +243,10 @@ body {
   border-bottom: 1px solid var(--mantine-color-default-border);
 }
 
+.dry-run-header[data-clickable] {
+  cursor: pointer;
+}
+
 .dry-run-output {
   min-height: 0;
 }

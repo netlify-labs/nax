@@ -17,6 +17,7 @@ type Props = {
   events?: RunnerEvent[]
   eventErrors?: string[]
   onViewEvents?: () => void
+  onToggleSize?: () => void
 }
 
 function statusColor(panel: OutputPanel): string {
@@ -93,7 +94,7 @@ function OutputSection({ panel }: { panel: OutputPanel }) {
   )
 }
 
-export function WorkflowOutputTabs({ dryRun, run, events = [], eventErrors = [], onViewEvents }: Props) {
+export function WorkflowOutputTabs({ dryRun, run, events = [], eventErrors = [], onViewEvents, onToggleSize }: Props) {
   const viewportRef = useRef<HTMLDivElement>(null)
   const panels: OutputPanel[] = [
     { title: 'Dry Run', ...dryRun },
@@ -122,7 +123,17 @@ export function WorkflowOutputTabs({ dryRun, run, events = [], eventErrors = [],
 
   return (
     <Paper className="dry-run-panel" component="section" aria-label="Workflow output" radius={0} withBorder>
-      <Group className="dry-run-header" justify="space-between" wrap="nowrap">
+      <Group
+        className="dry-run-header"
+        justify="space-between"
+        wrap="nowrap"
+        data-clickable={onToggleSize ? true : undefined}
+        onClick={onToggleSize ? (event) => {
+          // Ignore clicks on the action buttons (copy, view events)
+          if ((event.target as HTMLElement).closest('button')) return
+          onToggleSize()
+        } : undefined}
+      >
         <Group gap={7} wrap="nowrap">
           <Terminal size={15} />
           <Text fw={700} size="sm">Output</Text>

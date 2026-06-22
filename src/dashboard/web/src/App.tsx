@@ -20,7 +20,7 @@ import {
   Tooltip,
   useMantineColorScheme,
 } from '@mantine/core'
-import { useDisclosure } from '@mantine/hooks'
+import { useDisclosure, type UseSplitterReturnValue } from '@mantine/hooks'
 import { Check, Copy, FolderGit2, GitBranch, Moon, RefreshCw, Sun } from 'lucide-react'
 import { ReactFlowProvider } from '@xyflow/react'
 import { cancelWorkflowRun, getHealth, getRunGraph, getWorkflowGraph, listRuns, listWorkflows, runEventsStream, runWorkflowDryRun, startWorkflowRun, type RunEventStream } from './api'
@@ -283,6 +283,7 @@ export default function App() {
   const runEventsRef = useRef<RunEventStream | null>(null)
   const runReconnectTimerRef = useRef<number | null>(null)
   const skipWorkflowGraphLoadRef = useRef('')
+  const workflowSplitterRef = useRef<UseSplitterReturnValue | null>(null)
   const selectedWorkflow = useMemo(
     () => workflows.find((workflow) => workflow.id === selectedWorkflowId) || null,
     [workflows, selectedWorkflowId],
@@ -293,6 +294,14 @@ export default function App() {
     const combined = mergeRunLists(response.active, response.durable)
     setRuns(combined)
     return combined
+  }, [])
+
+  // Toggle the output pane between minimized and ~35% expanded
+  const toggleOutputPane = useCallback(() => {
+    const splitter = workflowSplitterRef.current
+    if (!splitter) return
+    const outputSize = splitter.sizes[1] ?? 0
+    splitter.setSizes(outputSize <= 10 ? [65, 35] : [95, 5])
   }, [])
 
   const clearDryRunSimulation = useCallback(() => {
@@ -1016,7 +1025,7 @@ export default function App() {
                   <Badge className="workflow-status-badge" variant="light" color={error ? 'red' : 'blue'}>
                     {error ? 'Error' : statusText}
                   </Badge>
-                  <Splitter orientation="vertical" className="workflow-splitter" lineSize={1} handleColor="blue">
+                  <Splitter orientation="vertical" className="workflow-splitter" lineSize={1} handleColor="blue" splitterRef={workflowSplitterRef}>
                     <Splitter.Pane defaultSize={95} min={35}>
                       <WorkflowCanvas
                         graph={projectedGraph}
@@ -1036,6 +1045,7 @@ export default function App() {
                         events={liveRunState.rawEvents}
                         eventErrors={liveRunState.errors}
                         onViewEvents={openEventDiagnostics}
+                        onToggleSize={toggleOutputPane}
                       />
                     </Splitter.Pane>
                   </Splitter>

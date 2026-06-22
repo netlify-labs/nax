@@ -1,4 +1,5 @@
 import { type CSSProperties, useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react'
+import { useQueryClient } from '@tanstack/react-query'
 import {
   ActionIcon,
   Alert,
@@ -23,7 +24,7 @@ import {
 import { useDisclosure, type UseSplitterReturnValue } from '@mantine/hooks'
 import { Check, Copy, FolderGit2, GitBranch, Moon, RefreshCw, Sun } from 'lucide-react'
 import { ReactFlowProvider } from '@xyflow/react'
-import { cancelWorkflowRun, getHealth, getRunGraph, getWorkflowGraph, listRuns, listWorkflows, runEventsStream, runWorkflowDryRun, startWorkflowRun, type RunEventStream } from './api'
+import { runEventsStream, type RunEventStream } from './api'
 import { WorkflowOutputTabs } from './components/DryRunPanel'
 import { Inspector } from './components/Inspector'
 import { RecentRuns } from './components/RecentRuns'
@@ -33,10 +34,15 @@ import { WorkflowControls } from './components/WorkflowControls'
 import { WorkflowList } from './components/WorkflowList'
 import { WorkflowPromptModal } from './components/WorkflowPromptModal'
 import { initialLiveRunState, liveRunReducer, visualStatus } from './liveRunReducer'
+import { dashboardQueryKeys } from './query-keys'
+import { invalidateDashboardLists, invalidateRunViews, sameRun, upsertRunInDashboardCache } from './queries/dashboard-cache'
+import { useCancelWorkflowRunMutation, useDryRunWorkflowMutation, useStartWorkflowRunMutation } from './queries/dashboard-mutations'
+import { useDashboardHealthQuery, useRunGraphQuery, useRunsQuery, useWorkflowGraphQuery, useWorkflowsQuery } from './queries/dashboard-queries'
+import { applyRunnerEventToDashboardCache } from './queries/query-event-bridge'
 import { projectWorkflowGraph, workflowGraphNodeByStepId } from './run-projection'
-import { recordValue, runId } from './run-format'
+import { recordValue } from './run-format'
 import type { RunDetailsSelector } from './run-details-selection'
-import { isActiveStatus, isTerminalStatus, statusKey } from './status-model'
+import { isTerminalStatus, statusKey } from './status-model'
 import type { DryRunOptions, DryRunResult, RunFollowupResponse, RunnerEvent, DashboardRun, Workflow, WorkflowGraph, WorkflowGraphNodeData } from './types'
 
 type ContextModalAction = '' | 'dry-run' | 'run'
@@ -170,42 +176,6 @@ function savedRunUrl(run: Record<string, unknown> | undefined): string {
   return runValue(run, 'commentUrl') || runValue(run, 'issueUrl')
 }
 
-function runIdentifier(run: Partial<DashboardRun>): string {
-  return runId(run)
-}
-
-function mergeRunLists(active: DashboardRun[], durable: DashboardRun[]): DashboardRun[] {
-  const seen = new Set<string>()
-  return [...active, ...durable].filter((run) => {
-    const id = runIdentifier(run)
-    if (!id || seen.has(id)) return false
-    seen.add(id)
-    return true
-  })
-}
-
-function graphHasActiveRemoteRuns(graph: WorkflowGraph | null): boolean {
-  return Boolean(graph?.nodes.some((node) => (
-    (node.data.runs || []).some((run) => (
-      isActiveStatus(runValue(run, 'status')) &&
-      Boolean(runValue(run, 'runnerId') || runValue(run, 'sessionId'))
-    ))
-  )))
-}
-
-function replaceRunInList(runs: DashboardRun[], nextRun: DashboardRun): DashboardRun[] {
-  const nextId = nextRun.runId || nextRun.id
-  if (!nextId) return runs
-  const filtered = runs.filter((candidate) => candidate.runId !== nextId && candidate.id !== nextId)
-  return [nextRun, ...filtered]
-}
-
-function sameRun(left: Partial<DashboardRun>, right: Partial<DashboardRun>): boolean {
-  const leftIds = [left.id, left.runId].filter(Boolean)
-  const rightIds = [right.id, right.runId].filter(Boolean)
-  return leftIds.some((id) => rightIds.includes(id))
-}
-
 function NetlifyLogo() {
   return (
     <svg
@@ -235,16 +205,13 @@ function NetlifyLogo() {
 }
 
 export default function App() {
+  const queryClient = useQueryClient()
   const [navbarOpened, { toggle: toggleNavbar }] = useDisclosure(false)
   const [eventDiagnosticsOpened, { open: openEventDiagnostics, close: closeEventDiagnostics }] = useDisclosure(false)
   const { colorScheme, toggleColorScheme } = useMantineColorScheme()
-  const [workflows, setWorkflows] = useState<Workflow[]>([])
-  const [projectRoot, setProjectRoot] = useState('')
   const [selectedWorkflowId, setSelectedWorkflowId] = useState(initialWorkflowFromUrl)
   const [selectedNode, setSelectedNode] = useState<WorkflowGraphNodeData | null>(null)
   const [graph, setGraph] = useState<WorkflowGraph | null>(null)
-  const [loadingWorkflows, setLoadingWorkflows] = useState(true)
-  const [loadingGraph, setLoadingGraph] = useState(false)
   const [dryRunOptions, setDryRunOptions] = useState<DryRunOptions>({
     branch: 'master',
     transport: 'netlify-api',
@@ -258,7 +225,6 @@ export default function App() {
   const [dryRunRunning, setDryRunRunning] = useState(false)
   const [dryRunError, setDryRunError] = useState('')
   const [activeRun, setActiveRun] = useState<DashboardRun | null>(null)
-  const [runs, setRuns] = useState<DashboardRun[]>([])
   const [selectedRunId, setSelectedRunId] = useState('')
   const [runOutput, setRunOutput] = useState('')
   const [runRunning, setRunRunning] = useState(false)
@@ -274,7 +240,6 @@ export default function App() {
     dispatchLiveRun({ type: 'patch_agent_statuses', update })
   }, [])
   const [error, setError] = useState('')
-  const [refreshKey, setRefreshKey] = useState(0)
   const [contextModalAction, setContextModalAction] = useState<ContextModalAction>('')
   const [contextDraft, setContextDraft] = useState('')
   const [promptModalStepId, setPromptModalStepId] = useState<string | null>(null)
@@ -282,19 +247,33 @@ export default function App() {
   const dryRunSimulationTimers = useRef<number[]>([])
   const runEventsRef = useRef<RunEventStream | null>(null)
   const runReconnectTimerRef = useRef<number | null>(null)
-  const skipWorkflowGraphLoadRef = useRef('')
   const workflowSplitterRef = useRef<UseSplitterReturnValue | null>(null)
+  const healthQuery = useDashboardHealthQuery()
+  const workflowsQuery = useWorkflowsQuery()
+  const runsQuery = useRunsQuery({
+    refetchInterval: runRunning && activeRun ? 2500 : false,
+  })
+  const workflowGraphQuery = useWorkflowGraphQuery(selectedWorkflowId, {
+    enabled: Boolean(selectedWorkflowId && !selectedRunId),
+  })
+  const runGraphQuery = useRunGraphQuery(selectedRunId, {
+    enabled: Boolean(selectedRunId),
+    refetchActiveGraphs: true,
+  })
+  const dryRunMutation = useDryRunWorkflowMutation()
+  const startWorkflowRunMutation = useStartWorkflowRunMutation()
+  const cancelWorkflowRunMutation = useCancelWorkflowRunMutation()
+  const workflows = workflowsQuery.data?.items || []
+  const projectRoot = healthQuery.data?.projectRoot || ''
+  const runs = runsQuery.data || []
+  const loadingWorkflows = workflowsQuery.isPending
+  const loadingGraph = selectedRunId
+    ? runGraphQuery.isFetching && !runGraphQuery.data
+    : workflowGraphQuery.isFetching && !workflowGraphQuery.data
   const selectedWorkflow = useMemo(
     () => workflows.find((workflow) => workflow.id === selectedWorkflowId) || null,
     [workflows, selectedWorkflowId],
   )
-
-  const refreshRuns = useCallback(async (): Promise<DashboardRun[]> => {
-    const response = await listRuns()
-    const combined = mergeRunLists(response.active, response.durable)
-    setRuns(combined)
-    return combined
-  }, [])
 
   // Toggle the output pane between minimized and ~35% expanded
   const toggleOutputPane = useCallback(() => {
@@ -324,6 +303,7 @@ export default function App() {
     setRunOutput('')
     setRunError('')
     setRunRunning(false)
+    setGraph(null)
     closeRunEvents()
     dispatchLiveRun({ type: 'reset' })
     setSelectedWorkflowId(id)
@@ -414,62 +394,32 @@ export default function App() {
     })
   }, [clearDryRunSimulation, graph, selectedWorkflow])
 
-  useEffect(() => {
-    let cancelled = false
-    getHealth()
-      .then((response) => {
-        if (!cancelled) setProjectRoot(response.projectRoot || '')
-      })
-      .catch(() => {
-        if (!cancelled) setProjectRoot('')
-      })
-    return () => {
-      cancelled = true
-    }
-  }, [refreshKey])
-
   useEffect(() => () => clearDryRunSimulation(), [clearDryRunSimulation])
   useEffect(() => () => closeRunEvents(), [closeRunEvents])
 
   useEffect(() => {
-    let cancelled = false
-    setLoadingWorkflows(true)
-    listWorkflows()
-      .then((response) => {
-        if (cancelled) return
-        setWorkflows(response.items)
-        setError('')
-        const requested = selectedWorkflowId
-        const next = response.items.some((workflow) => workflow.id === requested)
-          ? requested
-          : response.items[0]?.id || ''
-        setSelectedWorkflowId(next)
-        if (next) setWorkflowUrl(next)
-      })
-      .catch((err) => {
-        if (!cancelled) setError(err instanceof Error ? err.message : String(err))
-      })
-      .finally(() => {
-        if (!cancelled) setLoadingWorkflows(false)
-      })
-    return () => {
-      cancelled = true
-    }
-  }, [refreshKey])
+    if (!workflowsQuery.data) return
+    setError('')
+    const requested = selectedWorkflowId
+    const next = workflowsQuery.data.items.some((workflow) => workflow.id === requested)
+      ? requested
+      : workflowsQuery.data.items[0]?.id || ''
+    if (next !== selectedWorkflowId) setSelectedWorkflowId(next)
+    if (next) setWorkflowUrl(next)
+  }, [selectedWorkflowId, workflowsQuery.data])
 
   useEffect(() => {
-    if (!selectedWorkflowId) {
-      setGraph(null)
-      clearDryRunSimulation()
-      dispatchLiveRun({ type: 'reset' })
-      return
-    }
-    if (skipWorkflowGraphLoadRef.current === selectedWorkflowId) {
-      skipWorkflowGraphLoadRef.current = ''
-      setWorkflowUrl(selectedWorkflowId)
-      return
-    }
-    if (skipWorkflowGraphLoadRef.current) skipWorkflowGraphLoadRef.current = ''
+    if (!workflowsQuery.error) return
+    setError(workflowsQuery.error instanceof Error ? workflowsQuery.error.message : String(workflowsQuery.error))
+  }, [workflowsQuery.error])
+
+  useEffect(() => {
+    if (!healthQuery.error) return
+    queryClient.setQueryData(dashboardQueryKeys.health(), { ok: false, projectRoot: '', tokenRequiredForMutations: false, tokenRequiredForSensitiveReads: false })
+  }, [healthQuery.error, queryClient])
+
+  useEffect(() => {
+    if (!selectedWorkflowId || selectedRunId) return
     clearDryRunSimulation()
     dispatchLiveRun({ type: 'reset' })
     setDryRunOptions((options) => ({
@@ -480,69 +430,56 @@ export default function App() {
       step: '',
       fromStep: '',
     }))
-    let cancelled = false
-    setLoadingGraph(true)
-    getWorkflowGraph(selectedWorkflowId)
-      .then((response) => {
-        if (cancelled) return
-        setGraph(response.graph)
-        setSelectedNode(null)
-        setError('')
-        setWorkflowUrl(selectedWorkflowId)
-      })
-      .catch((err) => {
-        if (!cancelled) setError(err instanceof Error ? err.message : String(err))
-      })
-      .finally(() => {
-        if (!cancelled) setLoadingGraph(false)
-      })
-    return () => {
-      cancelled = true
-    }
-  }, [clearDryRunSimulation, selectedWorkflowId, refreshKey])
+  }, [clearDryRunSimulation, selectedRunId, selectedWorkflowId])
 
   useEffect(() => {
-    let cancelled = false
-    refreshRuns()
-      .then(() => {
-        // State is updated in refreshRuns.
-      })
-      .catch(() => {
-        if (!cancelled) setRuns([])
-      })
-    return () => {
-      cancelled = true
-    }
-  }, [refreshKey, activeRun?.status, refreshRuns])
+    if (!workflowGraphQuery.data || selectedRunId) return
+    setGraph(workflowGraphQuery.data.graph)
+    setSelectedNode(null)
+    setError('')
+    setWorkflowUrl(selectedWorkflowId)
+  }, [selectedRunId, selectedWorkflowId, workflowGraphQuery.data])
 
   useEffect(() => {
-    if (!runRunning || !activeRun) return undefined
-    let cancelled = false
+    if (!workflowGraphQuery.error || selectedRunId) return
+    setError(workflowGraphQuery.error instanceof Error ? workflowGraphQuery.error.message : String(workflowGraphQuery.error))
+  }, [selectedRunId, workflowGraphQuery.error])
 
-    const reconcile = async () => {
-      try {
-        const latestRuns = await refreshRuns()
-        if (cancelled) return
-        const latest = latestRuns.find((run) => sameRun(run, activeRun))
-        if (!latest || !isTerminalStatus(latest.status || '')) return
-        setActiveRun((value) => value ? { ...value, ...latest } : latest)
-        setRunRunning(false)
-        setCancelRunning(false)
-        closeRunEvents()
-      } catch {
-        // Keep the EventSource path as the primary signal; polling is only a stale-state repair path.
-      }
-    }
+  useEffect(() => {
+    if (!runGraphQuery.data || !selectedRunId) return
+    const response = runGraphQuery.data
+    const runOptions = response.run.options || {}
+    if (response.workflow.id !== selectedWorkflowId) setSelectedWorkflowId(response.workflow.id)
+    setGraph(response.graph)
+    setDryRunOptions((options) => ({
+      ...options,
+      branch: typeof runOptions.branch === 'string' ? runOptions.branch : response.run.branch || options.branch,
+      transport: typeof runOptions.transport === 'string' ? runOptions.transport : response.run.transport || options.transport,
+      context: '',
+      step: typeof runOptions.step === 'string' ? runOptions.step : '',
+      fromStep: typeof runOptions.fromStep === 'string' ? runOptions.fromStep : '',
+      models: [],
+      stepModels: stepModelsFromRunGraph(response.graph),
+    }))
+    setSelectedNode(null)
+    setError('')
+    setWorkflowUrl(response.workflow.id)
+  }, [runGraphQuery.data, selectedRunId, selectedWorkflowId])
 
-    void reconcile()
-    const timer = window.setInterval(() => {
-      void reconcile()
-    }, 2500)
-    return () => {
-      cancelled = true
-      window.clearInterval(timer)
-    }
-  }, [activeRun, closeRunEvents, refreshRuns, runRunning])
+  useEffect(() => {
+    if (!runGraphQuery.error || !selectedRunId) return
+    setError(runGraphQuery.error instanceof Error ? runGraphQuery.error.message : String(runGraphQuery.error))
+  }, [runGraphQuery.error, selectedRunId])
+
+  useEffect(() => {
+    if (!runRunning || !activeRun) return
+    const latest = runs.find((run) => sameRun(run, activeRun))
+    if (!latest || !isTerminalStatus(latest.status || '')) return
+    setActiveRun((value) => value ? { ...value, ...latest } : latest)
+    setRunRunning(false)
+    setCancelRunning(false)
+    closeRunEvents()
+  }, [activeRun, closeRunEvents, runRunning, runs])
 
   const toggleStepAgent = useCallback((stepId: string, agent: string, allAgents: string[]) => {
     setDryRunOptions((options) => {
@@ -578,7 +515,7 @@ export default function App() {
     setDryRunResult(null)
     simulateDryRunStepStatuses(optionsOverride)
     try {
-      const response = await runWorkflowDryRun(selectedWorkflow.id, optionsOverride)
+      const response = await dryRunMutation.mutateAsync({ workflowId: selectedWorkflow.id, options: optionsOverride })
       setDryRunResult(response.dryRun)
     } catch (err) {
       setDryRunError(err instanceof Error ? err.message : String(err))
@@ -638,14 +575,16 @@ export default function App() {
     closeRunEvents()
     dispatchLiveRun({ type: 'reset' })
     try {
-      const response = await startWorkflowRun(workflow.id, optionsOverride)
+      const response = await startWorkflowRunMutation.mutateAsync({ workflowId: workflow.id, options: optionsOverride })
       setActiveRun(response.run)
+      upsertRunInDashboardCache(queryClient, response.run)
       dispatchLiveRun({ type: 'reset', run: response.run })
       setSelectedRunId(response.run.runId || response.run.id)
       let eventCursor = 0
       let terminal = false
       const dispatchEvent = (event: Event) => {
         const data = parseRunEvent(event)
+        applyRunnerEventToDashboardCache(queryClient, data, response.run.id)
         const cursor = Number(data.seq ?? data.id ?? 0)
         if (Number.isFinite(cursor) && cursor > eventCursor) eventCursor = cursor
         dispatchLiveRun({ type: 'event', event: data })
@@ -677,6 +616,7 @@ export default function App() {
             if (event.type === 'exited') {
               terminal = true
               const data = parseRunEvent(event)
+              applyRunnerEventToDashboardCache(queryClient, data, response.run.id)
               const cursor = Number(data.seq ?? data.id ?? 0)
               if (Number.isFinite(cursor) && cursor > eventCursor) eventCursor = cursor
               dispatchLiveRun({ type: 'event', event: data })
@@ -718,8 +658,9 @@ export default function App() {
     setCancelRunning(true)
     setRunError('')
     try {
-      const response = await cancelWorkflowRun(activeRun.id)
+      const response = await cancelWorkflowRunMutation.mutateAsync(activeRun.id)
       setActiveRun(response.run)
+      upsertRunInDashboardCache(queryClient, response.run)
       const statusMaps = liveStatusMapsFromRun(response.run)
       setLiveStepStatuses((current) => ({ ...current, ...statusMaps.stepStatuses }))
       setLiveAgentStatuses((current) => {
@@ -745,74 +686,19 @@ export default function App() {
   const selectRun = async (run: DashboardRun) => {
     const id = run.runId || run.id
     if (!id) return
+    upsertRunInDashboardCache(queryClient, run)
     setSelectedRunId(id)
-    setLoadingGraph(true)
-    try {
-      const response = await getRunGraph(id)
-      const runOptions = response.run.options || {}
-      if (response.workflow.id !== selectedWorkflowId) {
-        skipWorkflowGraphLoadRef.current = response.workflow.id
-      }
-      setSelectedWorkflowId(response.workflow.id)
-      setGraph(response.graph)
-      dispatchLiveRun({ type: 'reset' })
-      setDryRunOptions((options) => ({
-        ...options,
-        branch: typeof runOptions.branch === 'string' ? runOptions.branch : response.run.branch || options.branch,
-        transport: typeof runOptions.transport === 'string' ? runOptions.transport : response.run.transport || options.transport,
-        context: '',
-        step: typeof runOptions.step === 'string' ? runOptions.step : '',
-        fromStep: typeof runOptions.fromStep === 'string' ? runOptions.fromStep : '',
-        models: [],
-        stepModels: stepModelsFromRunGraph(response.graph),
-      }))
-      setSelectedNode(null)
-      setError('')
-      setWorkflowUrl(response.workflow.id)
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err))
-    } finally {
-      setLoadingGraph(false)
-    }
+    dispatchLiveRun({ type: 'reset' })
+    setError('')
+    await queryClient.invalidateQueries({ queryKey: dashboardQueryKeys.runGraph(id) })
   }
 
-  useEffect(() => {
-    if (!selectedRunId || !graphHasActiveRemoteRuns(graph)) return undefined
-    let stopped = false
-    let polling = false
-    const poll = async () => {
-      if (polling) return
-      polling = true
-      try {
-        const response = await getRunGraph(selectedRunId)
-        if (stopped) return
-        if (response.workflow.id !== selectedWorkflowId) {
-          skipWorkflowGraphLoadRef.current = response.workflow.id
-          setSelectedWorkflowId(response.workflow.id)
-        }
-        setGraph(response.graph)
-        setRuns((current) => replaceRunInList(current, response.run))
-      } catch {
-        // Keep the last rendered graph if remote sync is temporarily unavailable.
-      } finally {
-        polling = false
-      }
-    }
-    const timer = window.setInterval(() => {
-      void poll()
-    }, 7000)
-    return () => {
-      stopped = true
-      window.clearInterval(timer)
-    }
-  }, [graph, selectedRunId, selectedWorkflowId])
-
   const handleRunUpdated = async (updated: DashboardRun) => {
-    const latestRuns = await refreshRuns()
+    upsertRunInDashboardCache(queryClient, updated)
     const updatedRunId = updated.runId || updated.id
     if (!updatedRunId) return
-    const nextRun = latestRuns.find((candidate) => candidate.runId === updatedRunId || candidate.id === updatedRunId) || updated
-    await selectRun(nextRun)
+    await invalidateRunViews(queryClient, updatedRunId)
+    setSelectedRunId(updatedRunId)
   }
 
   const handleFollowupSubmitted = async (response: RunFollowupResponse) => {
@@ -850,6 +736,12 @@ export default function App() {
     } else {
       await runWorkflow(undefined, nextOptions, true)
     }
+  }
+
+  const refreshDashboard = async () => {
+    await invalidateDashboardLists(queryClient)
+    if (selectedWorkflowId) await queryClient.invalidateQueries({ queryKey: dashboardQueryKeys.workflowGraph(selectedWorkflowId) })
+    if (selectedRunId) await invalidateRunViews(queryClient, selectedRunId)
   }
 
   const statusText = loadingWorkflows
@@ -985,7 +877,9 @@ export default function App() {
                 <ActionIcon
                   variant="light"
                   aria-label="Refresh workflows"
-                  onClick={() => setRefreshKey((value) => value + 1)}
+                  onClick={() => {
+                    void refreshDashboard()
+                  }}
                 >
                   <RefreshCw size={17} />
                 </ActionIcon>

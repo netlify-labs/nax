@@ -66,6 +66,7 @@
     "@davidwells/graceful-exit": "^0.0.2",
     "@davidwells/md-utils": "^0.0.54",
     "@netlify/build-info": "^10.5.1",
+    "@tanstack/react-query": "^5.101.0",
     "commander": "^14.0.3",
     "comment-block-parser": "^1.5.4",
     "configorama": "^0.9.15",

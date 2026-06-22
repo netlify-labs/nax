@@ -625,24 +625,8 @@ body {
   height: calc(90vh - 110px);
   max-height: none;
   overflow: auto;
-  scroll-padding-bottom: 540px;
+  padding-bottom: 540px;
   overscroll-behavior: contain;
-}
-
-.run-details-markdown::after {
-  content: '';
-  display: block;
-  height: 540px;
-  user-select: none;
-  pointer-events: none;
-}
-
-.workflow-prompt-markdown {
-  scroll-padding-bottom: 0;
-}
-
-.workflow-prompt-markdown::after {
-  content: none;
 }
 
 .run-details-markdown-shell {
@@ -837,6 +821,7 @@ body {
   top: 0;
   min-width: 0;
   padding-top: 8px;
+  user-select: none;
 }
 
 .run-details-timeline-heading {
@@ -1605,10 +1590,6 @@ body {
     height: auto;
     max-height: none;
     overflow: visible;
-  }
-
-  .run-details-markdown::after {
-    display: none;
   }
 
   .run-details-timeline {

@@ -160,7 +160,7 @@ function FlowBody({ graph, loading, mode, onSelectNode, onViewNodeDetails, fitVi
     if (lastFitViewKey.current === layoutFitViewKey) return
     lastFitViewKey.current = layoutFitViewKey
     window.requestAnimationFrame(() => {
-      fitView({ padding: 0.08, duration: 180 })
+      fitView({ padding: 0.08 })
     })
   }, [fitView, graph, layoutFitViewKey])
 

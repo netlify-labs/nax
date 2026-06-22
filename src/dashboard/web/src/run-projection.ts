@@ -59,10 +59,14 @@ export function displayAgentStatuses(
   liveStatuses: Record<string, string> = {},
   selectedAgents = selectedAgentsForStep(step),
 ): Record<string, string> {
+  const runStatuses = agentStatusesFromRuns(step.runs || [])
   const merged = {
-    ...agentStatusesFromRuns(step.runs || []),
+    ...runStatuses,
     ...(step.agentStatuses || {}),
     ...liveStatuses,
+  }
+  for (const [agent, status] of Object.entries(runStatuses)) {
+    if (isTerminalStatus(status)) merged[agent] = status
   }
   const stepStatus = visualStatus(step.status || '')
   if (isTerminalStatus(stepStatus)) {

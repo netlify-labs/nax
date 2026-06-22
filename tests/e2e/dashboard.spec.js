@@ -275,10 +275,7 @@ test('dashboard dry-run simulation updates step, model pill, and output without 
   await page.locator('.workflow-item').filter({ hasText: 'Local Smoke Test' }).click()
   await expect(page.locator('.workflow-node')).toHaveCount(1)
 
-  await page.getByRole('button', { name: 'Run options' }).click()
-  await page.getByRole('menuitem', { name: 'Dry run' }).click()
-  await expect(page.getByRole('dialog', { name: 'Dry run workflow' })).toBeVisible()
-  await page.getByRole('button', { name: 'Dry Run' }).click()
+  await page.getByRole('button', { name: 'Dry run' }).click()
 
   await expect(page.locator('.workflow-node.status-running')).toHaveCount(1, { timeout: 2000 })
   await expect(page.locator('.agent-chip.agent-completed')).toHaveCount(1, { timeout: 7000 })
@@ -314,10 +311,10 @@ test('run details timeline shows all configured agents for running steps', async
     await expect(timeline.locator('.run-details-timeline-child-button').filter({ hasText: 'Claude - In progress' })).toBeVisible()
     await expect(timeline.locator('.run-details-timeline-child-button').filter({ hasText: 'Gemini - In progress' })).toBeVisible()
     await expect(timeline.locator('.run-details-timeline-child-button').filter({ hasText: 'Codex - In progress' })).toBeVisible()
-    await expect(timeline.locator('.run-details-timeline-card').filter({ hasText: 'Synthesize Security Findings' })).toContainText('In progress')
-    await expect(timeline.locator('.run-details-timeline-child-button').filter({ hasText: 'Codex - In progress' })).toBeVisible()
-    await expect(timeline.locator('.run-details-timeline-card').filter({ hasText: '"Security Audit" Workflow In progress' })).toContainText('In progress')
-    await expect(timeline.locator('.run-details-timeline-card').filter({ hasText: '"Security Audit" Workflow In progress' })).not.toContainText('click to view results')
+    await expect(timeline.locator('.run-details-timeline-card').filter({ hasText: 'Synthesize Security Findings' })).toContainText('Queued')
+    await expect(timeline.locator('.run-details-timeline-child-button').filter({ hasText: 'Codex - Queued' })).toBeVisible()
+    await expect(timeline.locator('.run-details-timeline-card').filter({ hasText: '"Security Audit" Workflow Queued' })).toContainText('Queued')
+    await expect(timeline.locator('.run-details-timeline-card').filter({ hasText: '"Security Audit" Workflow Queued' })).not.toContainText('click to view results')
   } finally {
     await server.close()
   }
@@ -434,9 +431,9 @@ test('dashboard submits a follow-up from run details composer', async ({ page })
     await page.getByLabel('What should the next agent do?').fill('Verify the proposed fix and call out risk.')
     await page.getByRole('button', { name: 'Run follow-up' }).click()
 
-    await expect(page.locator('.mantine-Notification-root').filter({ hasText: 'Follow-up started' })).toBeVisible()
     const followupDialog = page.getByRole('dialog', { name: 'Send to next agent' })
     await expect(followupDialog).toBeVisible()
+    await expect(followupDialog.getByText('Follow-up started')).toBeVisible()
     await expect(followupDialog.getByRole('button', { name: 'Run follow-up' })).toBeDisabled()
     await expect(followupDialog.getByRole('button', { name: 'Back to results' })).toBeVisible()
     expect(followupRequests).toHaveLength(1)

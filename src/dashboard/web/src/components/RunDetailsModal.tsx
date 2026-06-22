@@ -1,7 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type RefObject } from 'react'
 import { ActionIcon, Alert, Anchor, Badge, Box, Button, Code, Group, Menu, Modal, Paper, ScrollArea, Stack, Text, Timeline, Title, Tooltip, UnstyledButton } from '@mantine/core'
 import { Ban, Check, ChevronsDownUp, ChevronsUpDown, ChevronDown, ChevronRight, ExternalLink, FileText, Files, Play } from 'lucide-react'
-import { approveHumanReviewGate, cancelFollowupRun, cancelHumanReviewGate, cancelWorkflowRun, getRunDetails, openLocalFile } from '../api'
+import { openLocalFile } from '../api'
+import { useApproveHumanReviewGateMutation, useCancelFollowupRunMutation, useCancelHumanReviewGateMutation, useCancelWorkflowRunMutation } from '../queries/dashboard-mutations'
+import { useRunDetailsQuery } from '../queries/dashboard-queries'
 import { agentLabel, isDoneStatus, recordList, recordValue, runId, statusBadgeStyle, statusColor, statusLabel, workflowName } from '../run-format'
 import { extractMarkdownToc } from '../run-details-toc'
 import { selectRunDetailsSection, selectorKey, type RunDetailsSelector } from '../run-details-selection'
@@ -104,6 +106,28 @@ function timelineContentTitle(entry: TimelineEntry, name: string): string {
   return entry.title
 }
 
+function isQueuedTimelineStatus(status: string): boolean {
+  return status.toLowerCase() === 'queued'
+}
+
+function timelineStatusLabel(status: string): string {
+  const normalized = status.toLowerCase()
+  if (normalized === 'queued') return 'Queued'
+  if (normalized === 'pending') return 'Pending'
+  return statusLabel(status)
+}
+
+function timelineSummaryStatus(workflowStatus: string): string {
+  return isActiveLiveStatus(workflowStatus) ? 'queued' : workflowStatus
+}
+
+function timelineProgressIndexForEntries(entries: TimelineEntry[]): number {
+  if (entries.length === 0) return 0
+  const firstQueuedIndex = entries.findIndex((entry) => isQueuedTimelineStatus(entry.status))
+  if (firstQueuedIndex === -1) return entries.length - 1
+  return Math.max(0, firstQueuedIndex - 1)
+}
+
 function timelineBullet(entry: TimelineEntry) {
   if (entry.kind === 'step') return <Text component="span" size="10px" fw={800}>{entry.stepNumber}</Text>
   if (isDoneStatus(entry.status)) return <Check size={12} strokeWidth={3} />
@@ -172,8 +196,12 @@ function buildStepItems(
     if (liveContext?.selector.stepId === id && liveContext.selector.agent && !agents.includes(liveContext.selector.agent)) {
       agents.push(liveContext.selector.agent)
     }
+    const rawStepStatus = recordValue(savedStep, 'status') || section?.status || definition?.status || ''
+    const hasStarted = Boolean(section || runs.length > 0 || liveContext?.selector.stepId === id)
+    const shouldQueue = !hasStarted && isActiveLiveStatus(run?.status || '') && statusKey(rawStepStatus || 'pending') === 'running'
+    const stepStatus = shouldQueue ? 'queued' : rawStepStatus || 'pending'
     const statusInput = {
-      status: recordValue(savedStep, 'status') || section?.status || definition?.status || 'pending',
+      status: stepStatus,
       agents,
       selectedAgents: agents,
       runs: runs.filter((runRecord): runRecord is Record<string, unknown> => (
@@ -184,7 +212,13 @@ function buildStepItems(
       ? { [liveContext.selector.agent]: liveContext.status }
       : {}
     const selectedAgents = selectedAgentsForStep(statusInput)
-    const projectedAgentStatuses = displayAgentStatuses(statusInput, liveAgentStatuses, selectedAgents)
+    const queuedAgentStatuses: Record<string, string> = {}
+    selectedAgents.forEach((agent) => {
+      queuedAgentStatuses[agent] = 'queued'
+    })
+    const projectedAgentStatuses = shouldQueue
+      ? queuedAgentStatuses
+      : displayAgentStatuses(statusInput, liveAgentStatuses, selectedAgents)
     Object.entries(projectedAgentStatuses).forEach(([agent, status]) => {
       if (!agents.includes(agent)) agents.push(agent)
       const existing = agentRuns[agent]
@@ -203,7 +237,7 @@ function buildStepItems(
     items.push({
       id,
       title: recordValue(savedStep, 'title') || definition?.title || section?.stepTitle || section?.title || id || `Step ${index + 1}`,
-      status: displayStepStatus(statusInput, projectedAgentStatuses, selectedAgents),
+      status: shouldQueue ? 'queued' : displayStepStatus(statusInput, projectedAgentStatuses, selectedAgents),
       sourceType: recordValue(source, 'type') || definition?.sourceType || '',
       agents,
       promptMarkdown: section?.promptMarkdown || definition?.promptMarkdown || '',
@@ -246,7 +280,7 @@ function buildStepItems(
 }
 
 function stepDescription(step: StepItem, sessions: RunDetailsSection[]): string {
-  const parts = [statusLabel(step.status)]
+  const parts = [timelineStatusLabel(step.status)]
   if (sessions.length > 0) parts.push(`${sessions.length} result${sessions.length === 1 ? '' : 's'}`)
   if (step.agents.length > 0) parts.push(step.agents.join(', '))
   return parts.filter(Boolean).join(' · ')
@@ -270,7 +304,7 @@ function runInfoLiveContext(step: StepItem, agent: string): RunDetailsLiveContex
       sessionId: runInfo?.sessionId || '',
     },
     stepTitle: step.title,
-    status: runInfo?.status || 'pending',
+    status: runInfo?.status || step.status || 'pending',
     runnerId: runInfo?.runnerId || '',
     sessionId: runInfo?.sessionId || '',
     submittedAfterSeconds: runInfo?.submittedAfterSeconds ?? null,
@@ -293,13 +327,14 @@ function buildTimelineEntries(
 ): TimelineEntry[] {
   if (!details) return []
   const workflowStatus = effectiveWorkflowStatus(run, steps)
+  const summaryStatus = timelineSummaryStatus(workflowStatus)
   const sessionSections = details.sections.filter((section) => section.kind === 'session')
   const entries: TimelineEntry[] = [{
     id: 'summary',
     kind: 'summary',
-    title: run ? `"${workflowName(run)}" Workflow ${statusLabel(workflowStatus)}` : 'Workflow results',
-    subtitle: isSuccessfulWorkflowStatus(workflowStatus) ? 'click to view results' : statusLabel(workflowStatus),
-    status: workflowStatus,
+    title: run ? `"${workflowName(run)}" Workflow ${timelineStatusLabel(summaryStatus)}` : 'Workflow results',
+    subtitle: isSuccessfulWorkflowStatus(workflowStatus) ? 'click to view results' : timelineStatusLabel(summaryStatus),
+    status: summaryStatus,
     path: details.summaryPath || run?.summaryPath || runId(run || {}),
     absolutePath: details.summaryAbsolutePath || '',
     markdown: details.summaryMarkdown,
@@ -340,7 +375,7 @@ function buildTimelineEntries(
           id: `session:${section.id}`,
           kind: 'session',
           title: `${agentLabel(section.agent)} · ${section.stepTitle || step.title}`,
-          subtitle: status ? statusLabel(status) : section.runnerId || section.sessionId,
+          subtitle: status ? timelineStatusLabel(status) : section.runnerId || section.sessionId,
           status,
           sourceType: step.sourceType,
           path: section.path,
@@ -362,7 +397,7 @@ function buildTimelineEntries(
           : agentEntryId(step.id, agent),
         kind: 'session',
         title: `${agentLabel(agent)} · ${context.stepTitle || step.title}`,
-        subtitle: statusLabel(context.status || 'pending'),
+        subtitle: timelineStatusLabel(context.status || 'pending'),
         status: context.status || 'pending',
         sourceType: step.sourceType,
         path: '',
@@ -376,12 +411,13 @@ function buildTimelineEntries(
     })
   })
 
+  const finalStatus = timelineSummaryStatus(workflowStatus) || 'completed'
   entries.push({
     id: 'final',
     kind: 'final',
     title: details.finalTitle || 'Final result',
-    subtitle: workflowStatus || 'final',
-    status: workflowStatus || 'completed',
+    subtitle: timelineStatusLabel(finalStatus),
+    status: finalStatus,
     path: '',
     absolutePath: '',
     markdown: details.finalMarkdown,
@@ -476,14 +512,29 @@ export function RunDetailsModal({
   onFollowupSubmitted,
   onRunUpdated,
 }: RunDetailsModalProps) {
-  const [detailsLoading, setDetailsLoading] = useState(false)
-  const [detailsError, setDetailsError] = useState('')
-  const [detailsResponse, setDetailsResponse] = useState<RunDetailsResponse | null>(null)
   const [activeTimelineId, setActiveTimelineId] = useState('summary')
   const [selectionWarning, setSelectionWarning] = useState('')
   const [detailsView, setDetailsView] = useState<'results' | 'followup'>('results')
   const [contentView, setContentView] = useState<'results' | 'prompt'>('results')
   const [followupSubmitting, setFollowupSubmitting] = useState(false)
+  const cancelWorkflowRunMutation = useCancelWorkflowRunMutation()
+  const cancelFollowupRunMutation = useCancelFollowupRunMutation()
+  const approveHumanReviewGateMutation = useApproveHumanReviewGateMutation()
+  const cancelHumanReviewGateMutation = useCancelHumanReviewGateMutation()
+  const detailsQuery = useRunDetailsQuery(detailsRunId, {
+    enabled: opened && Boolean(detailsRunId),
+    refetchInterval: (query) => {
+      if (!opened || !detailsRunId || detailsView !== 'results') return false
+      const response = query.state.data
+      if (!response) return false
+      const queryStepItems = buildStepItems(response.details, response.run, liveContext)
+      const queryEntries = buildTimelineEntries(response.details, response.run, queryStepItems, liveContext)
+      return queryEntries.some((entry) => cancelTargetForEntry(entry)) ? 7000 : false
+    },
+  })
+  const detailsResponse = detailsQuery.data || null
+  const detailsLoading = detailsQuery.isPending && Boolean(detailsRunId)
+  const detailsError = detailsQuery.error instanceof Error ? detailsQuery.error.message : detailsQuery.error ? String(detailsQuery.error) : ''
   const details = detailsResponse?.details
   const detailRun = detailsResponse?.run
   const followupTargets = details?.followupTargets || []
@@ -506,7 +557,7 @@ export function RunDetailsModal({
     return [...regularSteps, ...followupSteps, summaryEntry]
   }, [timelineEntries])
   const activeTimelineIndex = Math.max(0, timelineEntries.findIndex((entry) => entry.id === activeTimelineId))
-  const timelineProgressIndex = Math.max(0, parentTimelineEntries.length - 1)
+  const timelineProgressIndex = timelineProgressIndexForEntries(parentTimelineEntries)
   const activeEntry = timelineEntries[activeTimelineIndex] || null
   const activeContentMarkdown = activeEntry?.promptMarkdown && contentView === 'prompt'
     ? activeEntry.promptMarkdown
@@ -519,17 +570,17 @@ export function RunDetailsModal({
 
   const refreshDetails = useCallback(async () => {
     if (!detailsRunId) return
-    const response = await getRunDetails(detailsRunId)
-    setDetailsResponse(response)
-    return response
-  }, [detailsRunId])
+    const result = await detailsQuery.refetch()
+    if (result.error) throw result.error
+    return result.data
+  }, [detailsQuery, detailsRunId])
 
   const cancelFollowupEntry = async (entry: TimelineEntry) => {
     const target = cancelTargetForEntry(entry)
     if (!detailsRunId || !target) throw new Error('This entry is no longer cancellable.')
     const response = entry.sourceType === 'dashboard-followup'
-      ? await cancelFollowupRun(detailsRunId, target)
-      : await cancelWorkflowRun(detailsRunId)
+      ? await cancelFollowupRunMutation.mutateAsync({ runId: detailsRunId, target })
+      : await cancelWorkflowRunMutation.mutateAsync(detailsRunId)
     await refreshDetails()
     await onRunUpdated?.(response.run)
     if (!response.cancelled) throw new Error('This run is no longer active.')
@@ -538,14 +589,15 @@ export function RunDetailsModal({
 
   const approveReviewEntry = async (entry: TimelineEntry) => {
     if (!detailsRunId || !entry.stepNumber) throw new Error('This review gate is no longer active.')
-    const response = await approveHumanReviewGate(detailsRunId, { stepId: entry.id.replace(/^step:/, '') })
+    const response = await approveHumanReviewGateMutation.mutateAsync({ runId: detailsRunId, stepId: entry.id.replace(/^step:/, '') })
     await refreshDetails()
     await onRunUpdated?.(response.run)
   }
 
   const cancelReviewEntry = async (entry: TimelineEntry) => {
     if (!detailsRunId || !entry.stepNumber) throw new Error('This review gate is no longer active.')
-    const response = await cancelHumanReviewGate(detailsRunId, {
+    const response = await cancelHumanReviewGateMutation.mutateAsync({
+      runId: detailsRunId,
       stepId: entry.id.replace(/^step:/, ''),
       reason: 'cancelled from dashboard',
     })
@@ -554,64 +606,12 @@ export function RunDetailsModal({
   }
 
   useEffect(() => {
-    if (!opened) return undefined
     setSelectionWarning('')
-    if (!detailsRunId) {
-      setDetailsResponse(null)
-      setDetailsLoading(false)
-      setDetailsError('')
-      return undefined
-    }
-
-    let cancelled = false
-    setDetailsLoading(true)
-    setDetailsError('')
-    setDetailsResponse(null)
-    getRunDetails(detailsRunId)
-      .then((response) => {
-        if (!cancelled) setDetailsResponse(response)
-      })
-      .catch((err) => {
-        if (!cancelled) setDetailsError(err instanceof Error ? err.message : String(err))
-      })
-      .finally(() => {
-        if (!cancelled) setDetailsLoading(false)
-      })
-
-    return () => {
-      cancelled = true
-    }
   }, [detailsRunId, opened, selectorIdentity])
 
   useEffect(() => {
     if (!opened) setDetailsView('results')
   }, [opened])
-
-  useEffect(() => {
-    if (!opened || !detailsRunId || detailsView !== 'results') return undefined
-    if (!timelineEntries.some((entry) => cancelTargetForEntry(entry))) return undefined
-    let stopped = false
-    let polling = false
-    const poll = async () => {
-      if (polling) return
-      polling = true
-      try {
-        const response = await refreshDetails()
-        if (!stopped && response?.run) await onRunUpdated?.(response.run)
-      } catch {
-        // Keep the visible stale state rather than interrupting the modal while Netlify polling fails.
-      } finally {
-        polling = false
-      }
-    }
-    const timer = window.setInterval(() => {
-      void poll()
-    }, 7000)
-    return () => {
-      stopped = true
-      window.clearInterval(timer)
-    }
-  }, [detailsRunId, detailsView, onRunUpdated, opened, refreshDetails, timelineEntries])
 
   useEffect(() => {
     if (!opened || !detailsRunId || !liveRevision || detailsView !== 'results') return undefined
@@ -949,7 +949,7 @@ function RunDetailsContent({
             size="xs"
             style={statusBadgeStyle(entry.status)}
           >
-            {statusLabel(entry.status)}
+            {timelineStatusLabel(entry.status)}
           </Badge>
         ) : null}
         {actionFilePath || canCancel ? (
@@ -1201,7 +1201,7 @@ function RunDetailsStandaloneLivePanel({ context }: { context: RunDetailsLiveCon
           w="fit-content"
           style={statusBadgeStyle(context.status)}
         >
-          {statusLabel(context.status || 'unknown')}
+          {timelineStatusLabel(context.status || 'unknown')}
         </Badge>
       </Group>
       <Box className="prompt-markdown run-details-markdown">
@@ -1213,6 +1213,7 @@ function RunDetailsStandaloneLivePanel({ context }: { context: RunDetailsLiveCon
 
 function LivePanel({ context }: { context: RunDetailsLiveContext }) {
   if (context.status === 'dry-run') return <Text c="dimmed">No results from dry runs.</Text>
+  if (isQueuedTimelineStatus(context.status)) return <Text c="dimmed">This agent run is queued.</Text>
   const contextSessionHref = context.sessionId ? linkWithSession(context.url || '', context.sessionId) : ''
   return (
     <Stack gap={6}>

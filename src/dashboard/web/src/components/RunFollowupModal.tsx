@@ -2,7 +2,8 @@ import { useEffect, useMemo, useState } from 'react'
 import { ActionIcon, Alert, Anchor, Badge, Box, Button, Checkbox, Code, Group, Modal, Paper, ScrollArea, SegmentedControl, Select, Spoiler, Stack, Text, Textarea, Tooltip } from '@mantine/core'
 import { notifications } from '@mantine/notifications'
 import { Check, CheckCircle2, ExternalLink, FileSearch, Play, RefreshCw } from 'lucide-react'
-import { openLocalFile, startRunFollowup } from '../api'
+import { openLocalFile } from '../api'
+import { useStartRunFollowupMutation } from '../queries/dashboard-mutations'
 import { agentLabel, workflowName } from '../run-format'
 import { buildRunFollowupRequest, defaultFollowupArtifactIds, defaultFollowupMode, defaultFollowupModels, defaultFollowupTarget, defaultFollowupThreadTarget, followupPlanLine, followupThreadTargets, formatArtifactBytes, selectedFollowupArtifacts, SUPPORTED_FOLLOWUP_MODELS } from '../run-followup-composer'
 import type { RunDetails, RunFollowupResponse, DashboardRun } from '../types'
@@ -128,8 +129,10 @@ export function RunFollowupContent({ onClose, run, details, onSubmitted, closeLa
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState('')
   const [success, setSuccess] = useState<RunFollowupResponse | null>(null)
+  const startRunFollowupMutation = useStartRunFollowupMutation()
 
   useEffect(() => {
+    if (submitting || success) return
     const threadTarget = defaultFollowupThreadTarget(details)
     const target = threadTarget || defaultFollowupTarget(details)
     setTargetId(target?.id || '')
@@ -140,7 +143,7 @@ export function RunFollowupContent({ onClose, run, details, onSubmitted, closeLa
     setPrompt('')
     setError('')
     setSuccess(null)
-  }, [details])
+  }, [details, submitting, success])
 
   useEffect(() => {
     onSubmittingChange?.(submitting)
@@ -159,7 +162,7 @@ export function RunFollowupContent({ onClose, run, details, onSubmitted, closeLa
   const totalArtifactBytes = selectedArtifacts.reduce((sum, artifact) => sum + (artifact.sizeBytes || 0), 0)
   const targetUrl = targetNetlifyUrl(target)
   const artifactSelectionValid = selectedArtifacts.length > 0 || noContextConfirmed
-  const submitDisabled = submitting || !target || !prompt.trim() || models.length === 0 || !artifactSelectionValid
+  const submitDisabled = submitting || Boolean(success) || !target || !prompt.trim() || models.length === 0 || !artifactSelectionValid
 
   const toggleModel = (model: string) => {
     setModels((value) => (
@@ -185,13 +188,13 @@ export function RunFollowupContent({ onClose, run, details, onSubmitted, closeLa
     setError('')
     setSuccess(null)
     try {
-      const response = await startRunFollowup(run.runId, buildRunFollowupRequest({
+      const response = await startRunFollowupMutation.mutateAsync({ runId: run.runId, request: buildRunFollowupRequest({
         mode,
         prompt,
         target,
         models,
         artifacts: selectedArtifacts,
-      }))
+      }) })
       setSuccess(response)
       notifyFollowupSubmitted(response)
       await onSubmitted(response)

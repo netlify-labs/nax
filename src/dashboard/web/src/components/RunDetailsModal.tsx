@@ -7,6 +7,7 @@ import { extractMarkdownToc } from '../run-details-toc'
 import { selectRunDetailsSection, selectorKey, type RunDetailsSelector } from '../run-details-selection'
 import { displayAgentStatuses, displayStepStatus, selectedAgentsForStep } from '../run-projection'
 import type { RunDetailsResponse, RunDetailsSection, RunFollowupResponse, Target, DashboardRun } from '../types'
+import { isActiveStatus, statusKey } from '../status-model'
 import { AgentIcon } from './AgentIcon'
 import { MarkdownRenderer } from './MarkdownRenderer'
 import { RunFollowupContent } from './RunFollowupModal'
@@ -148,9 +149,10 @@ function buildStepItems(
         recordValue(record, 'agentRunUrl') ||
         (typeof links.sessionUrl === 'string' ? links.sessionUrl : '') ||
         (typeof links.agentRunUrl === 'string' ? links.agentRunUrl : '')
+      const rawStatus = recordValue(record, 'status') ||
+        (recordValue(record, 'runnerId') || recordValue(record, 'sessionId') ? 'submitted' : '')
       agentRuns[agent] = {
-        status: recordValue(record, 'status') ||
-          (recordValue(record, 'runnerId') || recordValue(record, 'sessionId') ? 'submitted' : ''),
+        status: rawStatus ? statusKey(rawStatus) : '',
         runnerId: recordValue(record, 'runnerId'),
         sessionId: recordValue(record, 'sessionId'),
         url,
@@ -244,7 +246,7 @@ function buildStepItems(
 }
 
 function stepDescription(step: StepItem, sessions: RunDetailsSection[]): string {
-  const parts = [step.status]
+  const parts = [statusLabel(step.status)]
   if (sessions.length > 0) parts.push(`${sessions.length} result${sessions.length === 1 ? '' : 's'}`)
   if (step.agents.length > 0) parts.push(step.agents.join(', '))
   return parts.filter(Boolean).join(' · ')
@@ -338,7 +340,7 @@ function buildTimelineEntries(
           id: `session:${section.id}`,
           kind: 'session',
           title: `${agentLabel(section.agent)} · ${section.stepTitle || step.title}`,
-          subtitle: status || section.runnerId || section.sessionId,
+          subtitle: status ? statusLabel(status) : section.runnerId || section.sessionId,
           status,
           sourceType: step.sourceType,
           path: section.path,
@@ -360,7 +362,7 @@ function buildTimelineEntries(
           : agentEntryId(step.id, agent),
         kind: 'session',
         title: `${agentLabel(agent)} · ${context.stepTitle || step.title}`,
-        subtitle: context.status || 'pending',
+        subtitle: statusLabel(context.status || 'pending'),
         status: context.status || 'pending',
         sourceType: step.sourceType,
         path: '',
@@ -416,7 +418,7 @@ function resolveInitialTimelineId(
 }
 
 function isActiveLiveStatus(status: string): boolean {
-  return ['pending', 'running', 'submitted', 'submitting', 'waiting', 'retrying', 'queued'].includes(status.toLowerCase())
+  return isActiveStatus(status)
 }
 
 function cancelTargetForEntry(entry: TimelineEntry): { stepId?: string; agent?: string; runnerId?: string; sessionId?: string } | null {
@@ -933,13 +935,13 @@ function RunDetailsContent({
         <Title order={2} size="h4">{showingPrompt ? `${promptTitle} prompt` : timelineContentTitle(entry, name)}</Title>
         {!showingPrompt && entry.status ? (
           <Badge
-            className={`run-status ${entry.status}`}
+            className={`run-status ${statusKey(entry.status)}`}
             variant="light"
             color={statusColor(entry.status)}
             size="xs"
             style={statusBadgeStyle(entry.status)}
           >
-            {entry.status}
+            {statusLabel(entry.status)}
           </Badge>
         ) : null}
         {actionFilePath || canCancel ? (
@@ -1185,13 +1187,13 @@ function RunDetailsStandaloneLivePanel({ context }: { context: RunDetailsLiveCon
       <Group gap="xs" wrap="wrap">
         <Title order={2} size="h4">{`${agentLabel(context.selector.agent)} · ${context.stepTitle}`}</Title>
         <Badge
-          className={`run-status ${context.status}`}
+          className={`run-status ${statusKey(context.status)}`}
           variant="light"
           color={statusColor(context.status)}
           w="fit-content"
           style={statusBadgeStyle(context.status)}
         >
-          {context.status || 'unknown'}
+          {statusLabel(context.status || 'unknown')}
         </Badge>
       </Group>
       <Box className="prompt-markdown run-details-markdown">
@@ -1231,7 +1233,7 @@ function LivePanel({ context }: { context: RunDetailsLiveContext }) {
       ) : null}
       {typeof context.submittedAfterSeconds === 'number' ? (
         <Group gap="xs" wrap="nowrap">
-          <Text size="sm" c="dimmed" w={92}>Submitted</Text>
+          <Text size="sm" c="dimmed" w={92}>Accepted</Text>
           <Text size="sm">after {context.submittedAfterSeconds}s</Text>
         </Group>
       ) : null}
@@ -1286,7 +1288,7 @@ function RunDetailsMetadata({
       <Text size="xs" fw={800} c="dimmed" className="run-details-meta-heading">Metadata</Text>
       <Stack gap={10}>
         <MetadataRow label="Workflow" value={name} />
-        <MetadataRow label="Status" value={workflowStatus || run?.status || liveContext?.status || 'unknown'} />
+        <MetadataRow label="Status" value={statusLabel(workflowStatus || run?.status || liveContext?.status || 'unknown')} />
         <MetadataRow label="Transport" value={run?.transport || ''} />
         <MetadataRow label="Branch" value={run?.branch || ''} />
         <MetadataRow label="Target" value={targetLabel(run?.target)} />

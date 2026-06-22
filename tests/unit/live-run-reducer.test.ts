@@ -12,7 +12,7 @@ test('live run reducer maps ordered workflow, step, agent, and output events', (
 
   assert.equal(state.run?.runId, 'run-1')
   assert.equal(state.stepStatuses.review, 'running')
-  assert.equal(state.agentStatuses.review.codex, 'submitted')
+  assert.equal(state.agentStatuses.review.codex, 'running')
   assert.equal(state.output, 'hello\n')
 })
 
@@ -62,7 +62,8 @@ test('live run reducer records artifacts, parser errors, and terminal run metada
 })
 
 test('visual status maps raw runner statuses into UI vocabulary', () => {
-  assert.equal(visualStatus('pending'), 'queued')
+  assert.equal(visualStatus('pending'), 'running')
+  assert.equal(visualStatus('submitted'), 'running')
   assert.equal(visualStatus('submitting'), 'running')
   assert.equal(visualStatus('timeout'), 'failed')
   assert.equal(visualStatus('abandoned'), 'abandoned')

@@ -37,6 +37,7 @@ import { initialLiveRunState, liveRunReducer, visualStatus } from './liveRunRedu
 import { projectWorkflowGraph, workflowGraphNodeByStepId } from './run-projection'
 import { recordValue, runId } from './run-format'
 import type { RunDetailsSelector } from './run-details-selection'
+import { isActiveStatus, isTerminalStatus, statusKey } from './status-model'
 import type { DryRunOptions, DryRunResult, RunFollowupResponse, RunnerEvent, DashboardRun, Workflow, WorkflowGraph, WorkflowGraphNodeData } from './types'
 
 type ContextModalAction = '' | 'dry-run' | 'run'
@@ -115,7 +116,7 @@ function liveStatusMapsFromRun(run: DashboardRun): {
     const stepId = recordValue(step, 'id')
     if (!stepId) continue
     const stepStatus = recordValue(step, 'status')
-    if (stepStatus) stepStatuses[stepId] = visualStatus(stepStatus)
+    if (stepStatus) stepStatuses[stepId] = statusKey(stepStatus)
     const runs = Array.isArray(step.runs) ? step.runs : []
     for (const runRecord of runs) {
       if (!runRecord || typeof runRecord !== 'object' || Array.isArray(runRecord)) continue
@@ -124,7 +125,7 @@ function liveStatusMapsFromRun(run: DashboardRun): {
       if (!agent || !status) continue
       agentStatuses[stepId] = {
         ...(agentStatuses[stepId] || {}),
-        [agent]: visualStatus(status),
+        [agent]: statusKey(status),
       }
     }
   }
@@ -195,18 +196,10 @@ function mergeRunLists(active: DashboardRun[], durable: DashboardRun[]): Dashboa
   })
 }
 
-function isTerminalRunStatus(status: string): boolean {
-  return ['completed', 'failed', 'timeout', 'cancelled', 'canceled', 'dry-run'].includes(status.toLowerCase())
-}
-
-function isActiveRemoteStatus(status: string): boolean {
-  return ['pending', 'queued', 'running', 'submitted', 'submitting', 'waiting', 'retrying'].includes(status.toLowerCase())
-}
-
 function graphHasActiveRemoteRuns(graph: WorkflowGraph | null): boolean {
   return Boolean(graph?.nodes.some((node) => (
     (node.data.runs || []).some((run) => (
-      isActiveRemoteStatus(runValue(run, 'status')) &&
+      isActiveStatus(runValue(run, 'status')) &&
       Boolean(runValue(run, 'runnerId') || runValue(run, 'sessionId'))
     ))
   )))
@@ -523,7 +516,7 @@ export default function App() {
         const latestRuns = await refreshRuns()
         if (cancelled) return
         const latest = latestRuns.find((run) => sameRun(run, activeRun))
-        if (!latest || !isTerminalRunStatus(latest.status || '')) return
+        if (!latest || !isTerminalStatus(latest.status || '')) return
         setActiveRun((value) => value ? { ...value, ...latest } : latest)
         setRunRunning(false)
         setCancelRunning(false)
@@ -900,8 +893,8 @@ export default function App() {
     const savedRun = runForAgent(latestNode, detailsModalContext.agent)
     const savedStatus = runValue(savedRun, 'status')
     const status = latestNode.agentStatuses?.[detailsModalContext.agent] ||
-      event?.status ||
-      (savedStatus ? visualStatus(savedStatus) : '')
+      (event?.status ? statusKey(event.status) : '') ||
+      (savedStatus ? statusKey(savedStatus) : '')
     return {
       selector: {
         ...detailsModalContext.selector,

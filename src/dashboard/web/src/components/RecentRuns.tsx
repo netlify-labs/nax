@@ -1,7 +1,8 @@
 import { useState } from 'react'
 import { ActionIcon, Badge, Box, Group, Paper, ScrollArea, Stack, Text, Title, Tooltip, UnstyledButton } from '@mantine/core'
 import { GitBranch, History, RotateCcw } from 'lucide-react'
-import { runId, statusBadgeStyle, statusColor } from '../run-format'
+import { runId, statusBadgeStyle, statusColor, statusLabel } from '../run-format'
+import { statusKey } from '../status-model'
 import type { RunFollowupResponse, DashboardRun } from '../types'
 import { RunDetailsModal } from './RunDetailsModal'
 
@@ -90,13 +91,13 @@ export function RecentRuns({ runs, selectedRunId, onSelect, onResume, onFollowup
                     onClick={() => openRunDetails(run)}
                   >
                     <Badge
-                      className={`run-status ${run.status}`}
+                      className={`run-status ${statusKey(run.status || '')}`}
                       variant="light"
                       color={statusColor(run.status || '')}
                       size="xs"
                       style={statusBadgeStyle(run.status || '')}
                     >
-                      {run.status || 'unknown'}
+                      {statusLabel(run.status || 'unknown')}
                     </Badge>
                     <Text size="xs" c="dimmed" truncate>{runId(run)}</Text>
                   </UnstyledButton>

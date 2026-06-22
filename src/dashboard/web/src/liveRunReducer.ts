@@ -1,18 +1,18 @@
 import type { RunnerEvent, DashboardRun } from './types'
+import { statusKey } from './status-model'
 
 export type LiveVisualStatus =
-  | 'queued'
-  | 'active'
-  | 'waiting'
+  | 'running'
   | 'completed'
   | 'failed'
   | 'cancelled'
   | 'abandoned'
   | 'skipped'
   | 'dry-run'
-  | 'retrying'
-  | 'submitted'
-  | 'running'
+  | 'awaiting_review'
+  | 'interrupted'
+  | 'dismissed'
+  | 'unknown'
 
 export type LiveRunState = {
   run: DashboardRun | null
@@ -60,19 +60,7 @@ function eventDedupeKey(event: RunnerEvent): string {
 }
 
 export function visualStatus(status = ''): LiveVisualStatus {
-  const normalized = status.toLowerCase()
-  if (['pending', 'queued'].includes(normalized)) return 'queued'
-  if (['running', 'submitting', 'processing', 'executing'].includes(normalized)) return 'running'
-  if (['submitted'].includes(normalized)) return 'submitted'
-  if (['waiting'].includes(normalized)) return 'waiting'
-  if (['retrying'].includes(normalized)) return 'retrying'
-  if (['complete', 'completed'].includes(normalized)) return 'completed'
-  if (['failed', 'timeout', 'error'].includes(normalized)) return 'failed'
-  if (['cancelled', 'canceled'].includes(normalized)) return 'cancelled'
-  if (['abandoned'].includes(normalized)) return 'abandoned'
-  if (['skipped'].includes(normalized)) return 'skipped'
-  if (['dry-run'].includes(normalized)) return 'dry-run'
-  return normalized ? normalized as LiveVisualStatus : 'queued'
+  return statusKey(status) as LiveVisualStatus
 }
 
 function applyEvent(state: LiveRunState, event: RunnerEvent): LiveRunState {

@@ -85,3 +85,21 @@ test('projectWorkflowGraph completes active step when all selected agents are co
   assert.equal(node?.status, 'completed')
   assert.deepEqual(node?.agentStatuses, { codex: 'completed' })
 })
+
+test('projectWorkflowGraph keeps terminal step status ahead of stale active run snapshots', () => {
+  const projected = projectWorkflowGraph({
+    graph: graphWithStep({
+      status: 'submitted',
+      selectedAgents: ['codex'],
+      runs: [{ agent: 'codex', status: 'submitted', runnerId: 'runner-1' }],
+    }),
+    stepModels: {},
+    stepStatuses: {
+      review: 'completed',
+    },
+    stepAgentStatuses: {},
+  })
+  const node = projected?.nodes[0].data
+  assert.equal(node?.status, 'completed')
+  assert.deepEqual(node?.agentStatuses, { codex: 'completed' })
+})

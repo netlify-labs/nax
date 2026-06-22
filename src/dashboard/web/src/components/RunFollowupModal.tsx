@@ -89,7 +89,7 @@ function notifyFollowupSubmitted(response: RunFollowupResponse) {
   const localPath = firstLocalArtifact?.sessionArtifactPath || firstLocalArtifact?.runnerArtifactPath || ''
   notifications.show({
     color: warnings.length > 0 ? 'yellow' : 'green',
-    title: warnings.length > 0 ? 'Follow-up submitted, but local artifact persistence needs attention' : 'Follow-up submitted',
+    title: warnings.length > 0 ? 'Follow-up started, but local artifact persistence needs attention' : 'Follow-up started',
     message: (
       <Stack gap={6}>
         <Text size="sm">
@@ -215,7 +215,7 @@ export function RunFollowupContent({ onClose, run, details, onSubmitted, closeLa
         {success ? (
           <Alert color="green" variant="light" icon={<CheckCircle2 size={16} />}>
             <Stack gap={4}>
-              <Text fw={700}>Follow-up submitted</Text>
+              <Text fw={700}>Follow-up started</Text>
               {success.followup.submissions.map((submission) => (
                 <Group key={`${submission.agent}:${submission.runnerId}:${submission.sessionId}`} gap="xs" wrap="nowrap">
                   <Text size="sm">{agentLabel(submission.agent)} · {submission.mode === 'continue-runner' ? 'follow-up thread' : 'fresh runner'}</Text>

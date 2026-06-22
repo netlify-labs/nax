@@ -1,5 +1,6 @@
 import { ActionIcon, Badge, Box, Code, Divider, Group, ScrollArea, Stack, Table, Text, ThemeIcon, Title } from '@mantine/core'
 import { GitBranch, Info, Layers, Route } from 'lucide-react'
+import { statusLabel } from '../run-format'
 import type { Workflow, WorkflowGraph, WorkflowGraphNodeData } from '../types'
 
 type Props = {
@@ -57,7 +58,7 @@ export function Inspector({ workflow, selectedNode, graph, onViewPrompt }: Props
                 <Field label="Action" value={selectedNode.action} />
                 <Field label="Submit" value={selectedNode.submit} />
                 <Field label="Wait for" value={selectedNode.waitFor} />
-                <Field label="Status" value={selectedNode.status} />
+                <Field label="Status" value={statusLabel(selectedNode.status)} />
               </Table.Tbody>
             </Table>
             <Group gap="xs">

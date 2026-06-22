@@ -1,4 +1,5 @@
 import type { CSSProperties } from 'react'
+import { isCompletedStatus, statusLabel as displayStatusLabel, statusTone } from './status-model'
 import type { DashboardRun } from './types'
 
 export function runId(run: Partial<DashboardRun>): string {
@@ -16,7 +17,7 @@ export function recordList(record: Record<string, unknown> | undefined, key: str
 }
 
 export function isDoneStatus(status: string): boolean {
-  return ['complete', 'completed', 'dry-run'].includes(status.toLowerCase())
+  return isCompletedStatus(status)
 }
 
 export function agentLabel(agent: string): string {
@@ -24,20 +25,11 @@ export function agentLabel(agent: string): string {
 }
 
 export function statusLabel(status: string): string {
-  const normalized = status.toLowerCase()
-  if (!normalized) return 'Unknown'
-  if (isDoneStatus(normalized)) return 'Completed'
-  const label = normalized.replace(/_/g, ' ')
-  return label.charAt(0).toUpperCase() + label.slice(1)
+  return displayStatusLabel(status)
 }
 
 export function statusBadgeTone(status: string): 'green' | 'yellow' | 'red' | undefined {
-  const normalized = status.toLowerCase()
-  if (isDoneStatus(normalized)) return 'green'
-  if (['pending', 'running', 'submitted', 'submitting', 'waiting', 'retrying', 'queued', 'interrupted', 'awaiting_review'].includes(normalized)) return 'yellow'
-  return ['failed', 'timeout', 'cancelled', 'canceled', 'dismissed', 'error', 'abandoned'].includes(normalized)
-    ? 'red'
-    : undefined
+  return statusTone(status)
 }
 
 export function statusColor(status: string): string {

@@ -1,10 +1,16 @@
 import { visualStatus } from './liveRunReducer'
+import {
+  activeOrCompletedStatuses,
+  activeStatuses,
+  completedStatuses,
+  failedStatuses,
+  isActiveStatus,
+  isTerminalStatus,
+  statusKey,
+} from './status-model'
 import type { WorkflowGraph, WorkflowGraphNodeData } from './types'
 
-export const completedStatuses = new Set(['completed', 'dry-run'])
-export const activeOrCompletedStatuses = new Set(['running', 'submitted', 'completed', 'dry-run'])
-export const activeStatuses = new Set(['running', 'submitted', 'waiting', 'retrying', 'queued'])
-export const failedStatuses = new Set(['failed', 'timeout', 'cancelled', 'abandoned'])
+export { activeOrCompletedStatuses, activeStatuses, completedStatuses, failedStatuses }
 
 type StepStatusInput = {
   status?: string
@@ -33,7 +39,7 @@ export function agentStatusesFromRuns(runs: Array<Record<string, unknown>> = [])
     if (!agent) continue
     const status = runString(run, 'status')
     if (status) statuses[agent] = visualStatus(status)
-    else if (runString(run, 'runnerId') || runString(run, 'sessionId')) statuses[agent] = 'submitted'
+    else if (runString(run, 'runnerId') || runString(run, 'sessionId')) statuses[agent] = statusKey('submitted')
   }
   return statuses
 }
@@ -59,7 +65,11 @@ export function displayAgentStatuses(
     ...liveStatuses,
   }
   const stepStatus = visualStatus(step.status || '')
-  if (activeStatuses.has(stepStatus)) {
+  if (isTerminalStatus(stepStatus)) {
+    for (const agent of selectedAgents) {
+      if (!merged[agent] || isActiveStatus(merged[agent])) merged[agent] = stepStatus
+    }
+  } else if (activeStatuses.has(stepStatus)) {
     for (const agent of selectedAgents) {
       if (!merged[agent]) merged[agent] = stepStatus
     }

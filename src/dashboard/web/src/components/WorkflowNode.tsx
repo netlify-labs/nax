@@ -1,6 +1,8 @@
 import { memo } from 'react'
 import { Handle, Position, type NodeProps } from '@xyflow/react'
 import { Info, UserCheck } from 'lucide-react'
+import { statusLabel } from '../run-format'
+import { isActiveStatus, isCompletedStatus } from '../status-model'
 import type { WorkflowGraphNodeData } from '../types'
 import { AgentIcon } from './AgentIcon'
 
@@ -10,17 +12,16 @@ function titleCase(value: string): string {
 
 function hasCompletedRun(node: WorkflowGraphNodeData, agent: string): boolean {
   return node.runs.some((run) => (
-    String(run.agent || '') === agent &&
-    ['complete', 'completed'].includes(String(run.status || '').toLowerCase())
+    String(run.agent || '') === agent && isCompletedStatus(String(run.status || ''))
   ))
 }
 
 function agentStatusTitle(node: WorkflowGraphNodeData, agent: string, active: boolean, status: string, hasResult: boolean): string {
   const label = titleCase(agent)
   if (hasResult) return `View ${label} result for ${node.title}`
-  if (['running', 'submitted', 'waiting', 'retrying', 'queued'].includes(status)) return `${label} is ${status}; view available run details`
+  if (isActiveStatus(status)) return `${label} is in progress; view available run details`
   if (status === 'abandoned') return `${label} was abandoned after cancellation; view available run details`
-  if (['failed', 'cancelled'].includes(status)) return `${label} ${status}; view available run details`
+  if (['failed', 'cancelled'].includes(status)) return `${label} ${statusLabel(status).toLowerCase()}; view available run details`
   return `${active ? 'Disable' : 'Enable'} ${label} for ${node.title}`
 }
 

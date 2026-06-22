@@ -257,13 +257,23 @@ test('dashboard server exposes health, workflow list, and graph routes', async (
     const health = await requestJson(`${base}/api/health`)
     assert.equal(health.statusCode, 200)
     assert.equal(health.payload.ok, true)
-    assert.equal(health.payload.projectRoot, process.cwd())
+    assert.equal(Object.hasOwn(health.payload, 'projectRoot'), false)
     assert.equal(health.payload.tokenRequiredForSensitiveReads, true)
 
     const workflows = await requestJson(`${base}/api/workflows`)
-    assert.equal(workflows.statusCode, 200)
-    assert.ok(workflows.payload.count >= 14)
-    assert.ok(workflows.payload.items.some((workflow) => workflow.id === 'review'))
+    assert.equal(workflows.statusCode, 401)
+    assert.equal(String(workflows.headers['set-cookie'] || ''), '')
+
+    const authenticatedHealth = await requestJson(`${base}/api/health?token=${server.token}`)
+    assert.equal(authenticatedHealth.statusCode, 200)
+    assert.equal(authenticatedHealth.payload.projectRoot, process.cwd())
+    assert.match(String(authenticatedHealth.headers['set-cookie'] || ''), /nax_dashboard_token=/)
+
+    const authenticatedWorkflows = await requestJson(`${base}/api/workflows`, { token: server.token })
+    assert.equal(authenticatedWorkflows.statusCode, 200)
+    assert.match(String(authenticatedWorkflows.headers['set-cookie'] || ''), /nax_dashboard_token=/)
+    assert.ok(authenticatedWorkflows.payload.count >= 14)
+    assert.ok(authenticatedWorkflows.payload.items.some((workflow) => workflow.id === 'review'))
 
     const unauthenticatedGraph = await requestJson(`${base}/api/workflows/review/graph`)
     assert.equal(unauthenticatedGraph.statusCode, 401)
@@ -309,26 +319,31 @@ test('dashboard server requires auth for sensitive run reads and rejects untrust
   }
 })
 
-test('dashboard server startup url does not include the session token', async () => {
+test('dashboard server startup url includes a removable session token', async () => {
   const server = await startDashboardServer({ projectRoot: process.cwd(), initialWorkflow: 'review' })
   try {
-    assert.doesNotMatch(server.url, new RegExp(server.token))
-    assert.doesNotMatch(server.url, /token=/)
-    assert.match(server.url, /workflow=review/)
+    const url = new URL(server.url)
+    assert.equal(url.searchParams.get('token'), server.token)
+    assert.equal(url.searchParams.get('workflow'), 'review')
   } finally {
     await server.close()
   }
 })
 
-test('dashboard html bootstraps auth with an httpOnly session cookie', async () => {
+test('dashboard html only bootstraps auth with an explicit session token', async () => {
   const server = await startDashboardServer({ projectRoot: process.cwd(), initialWorkflow: 'review', distDir: path.join(os.tmpdir(), 'missing-nax-dist') })
   try {
     const html = await requestText(`http://127.0.0.1:${server.port}/`)
     assert.equal(html.statusCode, 200)
     assert.doesNotMatch(html.body, new RegExp(server.token))
-    assert.match(String(html.headers['set-cookie'] || ''), /nax_dashboard_token=/)
-    assert.match(String(html.headers['set-cookie'] || ''), /HttpOnly/)
-    assert.match(String(html.headers['set-cookie'] || ''), /SameSite=Strict/)
+    assert.equal(String(html.headers['set-cookie'] || ''), '')
+
+    const authenticatedHtml = await requestText(`http://127.0.0.1:${server.port}/?token=${server.token}`)
+    assert.equal(authenticatedHtml.statusCode, 200)
+    assert.doesNotMatch(authenticatedHtml.body, new RegExp(server.token))
+    assert.match(String(authenticatedHtml.headers['set-cookie'] || ''), /nax_dashboard_token=/)
+    assert.match(String(authenticatedHtml.headers['set-cookie'] || ''), /HttpOnly/)
+    assert.match(String(authenticatedHtml.headers['set-cookie'] || ''), /SameSite=Strict/)
   } finally {
     await server.close()
   }
@@ -339,7 +354,7 @@ test('dashboard server discovers project workflows before bundled workflows', as
   writeProjectFlow(projectRoot, 'conversion-audit', { title: 'Conversion Audit' })
   const server = await startDashboardServer({ projectRoot })
   try {
-    const workflows = await requestJson(`http://127.0.0.1:${server.port}/api/workflows`)
+    const workflows = await requestJson(`http://127.0.0.1:${server.port}/api/workflows`, { token: server.token })
     assert.equal(workflows.statusCode, 200)
     assert.equal(workflows.payload.items[0].id, 'conversion-audit')
     assert.equal(workflows.payload.items[0].source, 'project')

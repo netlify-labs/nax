@@ -1,6 +1,7 @@
 const fs = require('fs')
 const path = require('path')
 const {
+  ID_FORMAT,
   buildAgentRunnerJson,
   buildAgentRunnerMarkdown,
   buildAgentRunnerUsageJson,
@@ -40,9 +41,29 @@ function agentRunnersRoot(projectRoot) {
   return path.join(projectRoot, '.nax', 'agent-runners')
 }
 
+/** @param {string} parentDir @param {string} targetPath */
+function isInsideDir(parentDir, targetPath) {
+  const relative = path.relative(parentDir, targetPath)
+  return relative === '' || (relative && !relative.startsWith('..') && !path.isAbsolute(relative))
+}
+
+/** @param {string} runnerId */
+function validateAgentRunnerId(runnerId) {
+  const value = String(runnerId || '').trim()
+  if (!ID_FORMAT.test(value)) {
+    throw new Error(`Invalid Netlify agent runner ID: ${value || '(empty)'}`)
+  }
+  return value
+}
+
 /** @param {string} projectRoot @param {string} runnerId */
 function agentRunnerDir(projectRoot, runnerId) {
-  return path.join(agentRunnersRoot(projectRoot), runnerId)
+  const root = path.resolve(agentRunnersRoot(projectRoot))
+  const resolved = path.resolve(root, validateAgentRunnerId(runnerId))
+  if (!isInsideDir(root, resolved)) {
+    throw new Error('Agent runner artifact path escaped the agent-runners directory.')
+  }
+  return resolved
 }
 
 /** @param {string} target @param {unknown} value */
@@ -116,8 +137,9 @@ function sessionSummary(projectRoot, sessionId) {
  */
 function persistAgentRunnerArtifact(input = {}, options = {}) {
   const projectRoot = input.projectRoot || options.projectRoot
-  const runnerId = input.runnerId || input.run?.runnerId || input.session?.runnerId
-  if (!projectRoot || !runnerId) return null
+  const rawRunnerId = input.runnerId || input.run?.runnerId || input.session?.runnerId
+  if (!projectRoot || !rawRunnerId) return null
+  const runnerId = validateAgentRunnerId(rawRunnerId)
   const dir = agentRunnerDir(projectRoot, runnerId)
   const sessionsDir = path.join(dir, 'sessions')
   const existing = readJsonIfExists(path.join(dir, 'agent-runner.json')) || {}

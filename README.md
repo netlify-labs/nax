@@ -621,6 +621,8 @@ A flow is `<flow-root>/<id>/flow.*` plus a `prompts/` directory beside it. Built
 
 Flow files can be YAML, JSON, JavaScript, TypeScript, or TOML. The examples use YAML because it is compact and easy to skim, but the filename can match your preferred format: `flow.yml`, `flow.json`, `flow.js`, `flow.ts`, or `flow.toml`. TypeScript flow files need a TypeScript runtime such as `tsx` or `ts-node` available in the project.
 
+JavaScript and TypeScript flow/config files are executable project code: `nax list`, `nax run`, and `nax dashboard` evaluate them while loading flows. Use YAML, JSON, or TOML for flows from repositories you do not already trust.
+
 Project-local example:
 
 ```text

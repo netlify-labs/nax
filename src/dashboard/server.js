@@ -399,15 +399,26 @@ function timingSafeTokenEqual(provided, expected) {
   return crypto.timingSafeEqual(providedDigest, expectedDigest)
 }
 
-function tokenFromRequest(req) {
+function explicitTokenFromRequest(req, requestUrl) {
   const raw = req.headers['x-nax-token']
   const headerToken = Array.isArray(raw) ? raw[0] : raw
   if (headerToken) return headerToken
+  return requestUrl?.searchParams?.get('token') || ''
+}
+
+function tokenFromRequest(req, requestUrl) {
+  const explicitToken = explicitTokenFromRequest(req, requestUrl)
+  if (explicitToken) return explicitToken
   return cookieValue(req, SESSION_COOKIE_NAME)
 }
 
-function assertToken(req, _requestUrl, token) {
-  const provided = tokenFromRequest(req)
+function sessionBootstrapHeadersForRequest(req, requestUrl, token) {
+  const explicitToken = explicitTokenFromRequest(req, requestUrl)
+  return timingSafeTokenEqual(explicitToken, token) ? sessionBootstrapHeaders(token) : {}
+}
+
+function assertToken(req, requestUrl, token) {
+  const provided = tokenFromRequest(req, requestUrl)
   if (!timingSafeTokenEqual(provided, token)) {
     throw requestError(401, 'unauthorized', 'A valid dashboard session token is required.')
   }
@@ -1482,12 +1493,14 @@ function createRequestHandler(options = {}) {
             methodNotAllowed(res, req.method || 'UNKNOWN')
             return
           }
-          jsonResponse(res, 200, {
+          /** @type {{ ok: boolean, tokenRequiredForMutations: boolean, tokenRequiredForSensitiveReads: boolean, projectRoot?: string }} */
+          const health = {
             ok: true,
-            projectRoot,
             tokenRequiredForMutations: true,
             tokenRequiredForSensitiveReads: true,
-          }, sessionBootstrapHeaders(token))
+          }
+          if (timingSafeTokenEqual(tokenFromRequest(req, requestUrl), token)) health.projectRoot = projectRoot
+          jsonResponse(res, 200, health, sessionBootstrapHeadersForRequest(req, requestUrl, token))
           return
         }
 
@@ -1496,11 +1509,12 @@ function createRequestHandler(options = {}) {
             methodNotAllowed(res, req.method || 'UNKNOWN')
             return
           }
+          assertToken(req, requestUrl, token)
           const flows = await listFlows(flowOptions)
           jsonResponse(res, 200, {
             count: flows.length,
             items: flows.map(publicFlow),
-          })
+          }, sessionBootstrapHeadersForRequest(req, requestUrl, token))
           return
         }
 
@@ -2043,7 +2057,7 @@ function createRequestHandler(options = {}) {
           jsonResponse(res, 200, {
             workflow: publicFlow(flow),
             graph: flowToGraph({ flow }),
-          })
+          }, sessionBootstrapHeadersForRequest(req, requestUrl, token))
           return
         }
 
@@ -2053,9 +2067,10 @@ function createRequestHandler(options = {}) {
             methodNotAllowed(res, req.method || 'UNKNOWN')
             return
           }
+          assertToken(req, requestUrl, token)
           const id = safeDecode(workflowMatch[1])
           const flow = await loadFlow(id, flowOptions)
-          jsonResponse(res, 200, publicFlow(flow))
+          jsonResponse(res, 200, publicFlow(flow), sessionBootstrapHeadersForRequest(req, requestUrl, token))
           return
         }
 
@@ -2069,7 +2084,7 @@ function createRequestHandler(options = {}) {
             const body = fs.readFileSync(staticFile)
             res.writeHead(200, {
               ...securityHeaders(),
-              ...sessionBootstrapHeaders(token),
+              ...sessionBootstrapHeadersForRequest(req, requestUrl, token),
               'content-type': contentTypeFor(staticFile),
               'content-length': body.length,
             })
@@ -2083,7 +2098,7 @@ function createRequestHandler(options = {}) {
             methodNotAllowed(res, req.method || 'UNKNOWN')
             return
           }
-          textResponse(res, 200, defaultIndexHtml({ token, initialWorkflow }), 'text/html; charset=utf-8', sessionBootstrapHeaders(token))
+          textResponse(res, 200, defaultIndexHtml({ token, initialWorkflow }), 'text/html; charset=utf-8', sessionBootstrapHeadersForRequest(req, requestUrl, token))
           return
         }
 
@@ -2091,8 +2106,7 @@ function createRequestHandler(options = {}) {
       } catch (error) {
         const message = error?.message || String(error)
         if (error?.statusCode) {
-          const headers = error.statusCode === 401 ? sessionBootstrapHeaders(token) : {}
-          jsonResponse(res, error.statusCode, errorPayload(error.statusCode, error.code || 'request_error', message), headers)
+          jsonResponse(res, error.statusCode, errorPayload(error.statusCode, error.code || 'request_error', message))
           return
         }
         if (/^Unknown flow /.test(message)) {
@@ -2119,8 +2133,9 @@ function startDashboardServer(options = {}) {
       server.off('error', reject)
       const address = server.address()
       const actualPort = typeof address === 'object' && address ? address.port : port
-      const workflow = options.initialWorkflow ? `&workflow=${encodeURIComponent(options.initialWorkflow)}` : ''
-      const url = `http://${host}:${actualPort}/${workflow ? `?${workflow.slice(1)}` : ''}`
+      const params = new URLSearchParams({ token: handler.token })
+      if (options.initialWorkflow) params.set('workflow', options.initialWorkflow)
+      const url = `http://${host}:${actualPort}/?${params.toString()}`
       resolve({
         server,
         host,

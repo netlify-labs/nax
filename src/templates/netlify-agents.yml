@@ -43,7 +43,15 @@ jobs:
       (
         github.event.sender.login != 'github-actions[bot]' &&
         github.event.sender.login != 'netlify-coding[bot]' &&
-        github.event.sender.login != 'netlify[bot]'
+        github.event.sender.login != 'netlify[bot]' &&
+        contains(
+          fromJSON('["OWNER","MEMBER","COLLABORATOR"]'),
+          github.event.pull_request.author_association ||
+          github.event.issue.author_association ||
+          github.event.comment.author_association ||
+          github.event.review.author_association ||
+          ''
+        )
       )
     runs-on: ubuntu-latest
     timeout-minutes: 25
@@ -52,7 +60,7 @@ jobs:
       pull-requests: write
       issues: write
     steps:
-      - uses: netlify-labs/agent-runner-action@v1
+      - uses: netlify-labs/agent-runner-action@4e06b4897d1d69c619af6a25e00ee65e8cb9c91f
         with:
           netlify-auth-token: ${{ secrets.NETLIFY_AUTH_TOKEN }}
           netlify-site-id: ${{ secrets.NETLIFY_SITE_ID }}

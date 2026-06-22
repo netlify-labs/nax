@@ -90,3 +90,16 @@ test('listAgentRunnerArtifacts returns newest runner threads first', () => {
 
   assert.deepEqual(listAgentRunnerArtifacts(projectRoot).map((runner) => runner.runnerId), ['runner-new', 'runner-old'])
 })
+
+test('persistAgentRunnerArtifact rejects runner IDs that escape artifact root', () => {
+  const projectRoot = tmpRoot()
+  const escapedPath = path.join(projectRoot, '.nax', 'outside-runner', 'agent-runner.json')
+
+  assert.throws(
+    () => persistAgentRunnerArtifact({ projectRoot, runnerId: '../outside-runner', agent: 'codex', status: 'completed' }),
+    /Invalid Netlify agent runner ID/,
+  )
+  assert.equal(fs.existsSync(escapedPath), false)
+  assert.throws(() => agentRunnerDir(projectRoot, '/tmp/outside-runner'), /Invalid Netlify agent runner ID/)
+  assert.throws(() => agentRunnerDir(projectRoot, 'nested/runner'), /Invalid Netlify agent runner ID/)
+})

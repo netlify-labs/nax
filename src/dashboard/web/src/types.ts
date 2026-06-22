@@ -94,7 +94,7 @@ export type WorkflowListResponse = {
 
 export type HealthResponse = {
   ok: boolean
-  projectRoot: string
+  projectRoot?: string
   tokenRequiredForMutations: boolean
   tokenRequiredForSensitiveReads: boolean
 }

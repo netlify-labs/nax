@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { Alert, Box, Group, Modal, Paper, ScrollArea, Stack, Text, Title } from '@mantine/core'
 import { MarkdownRenderer } from './MarkdownRenderer'
 import { ArtifactActions, MarkdownTableOfContents, RunDetailsTimeline, type TimelineEntry } from './RunDetailsModal'
@@ -21,6 +21,7 @@ type PromptStepMetadata = {
   agents: string
   promptTitle: string
   promptFile: string
+  promptFilePath: string
 }
 
 type PromptTimelineEntry = TimelineEntry & {
@@ -36,6 +37,11 @@ function shortHomePath(value: string, projectRoot = ''): string {
     return `~${value.slice('/Users/david'.length)}`
   }
   return value
+}
+
+function fileNameFromPath(value: string): string {
+  const normalized = value.replace(/\\/g, '/').replace(/\/+$/, '')
+  return normalized.split('/').pop() || value
 }
 
 function graphDataByStepId(graph: WorkflowGraph | null): Map<string, WorkflowGraphNodeData> {
@@ -93,7 +99,8 @@ function stepMetadataForStep({
     waitFor: node?.waitFor || step.waitFor || '',
     agents: agentsLabel(agents),
     promptTitle: promptTitleForStep(step, node),
-    promptFile: promptPath ? shortHomePath(promptPath, projectRoot) : '',
+    promptFile: promptPath ? fileNameFromPath(shortHomePath(promptPath, projectRoot)) : '',
+    promptFilePath: promptPath,
   }
 }
 
@@ -146,12 +153,25 @@ function buildPromptEntries({
   })
 }
 
-function MetadataField({ label, value }: { label: string; value: string }) {
+function MetadataField({
+  actions = null,
+  label,
+  truncate = false,
+  value,
+}: {
+  actions?: ReactNode
+  label: string
+  truncate?: boolean
+  value: string
+}) {
   if (!value) return null
   return (
     <Box>
       <Text size="10px" fw={800} c="dimmed" tt="uppercase">{label}</Text>
-      <Text size="xs" className="field-value">{value}</Text>
+      <Group gap={6} wrap="nowrap" className="metadata-field-row">
+        <Text size="xs" className={`field-value${truncate ? ' field-value-truncated' : ''}`} title={value}>{value}</Text>
+        {actions}
+      </Group>
     </Box>
   )
 }
@@ -168,7 +188,12 @@ function PromptStepMetadataPanel({ entry }: { entry: PromptTimelineEntry | null 
         <MetadataField label="Wait for" value={entry.metadata.waitFor} />
         <MetadataField label="Agents" value={entry.metadata.agents} />
         <MetadataField label="Prompt title" value={entry.metadata.promptTitle} />
-        <MetadataField label="Prompt file" value={entry.metadata.promptFile} />
+        <MetadataField
+          actions={<ArtifactActions filePath={entry.metadata.promptFilePath} />}
+          label="Prompt file"
+          truncate
+          value={entry.metadata.promptFile}
+        />
       </Stack>
     </Paper>
   )

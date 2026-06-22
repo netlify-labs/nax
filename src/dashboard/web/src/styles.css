@@ -287,6 +287,22 @@ body {
   overflow-wrap: anywhere;
 }
 
+.metadata-field-row {
+  min-width: 0;
+}
+
+.metadata-field-row .field-value-truncated {
+  min-width: 0;
+  flex: 1 1 auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.metadata-field-row .artifact-actions {
+  flex: 0 0 auto;
+}
+
 .artifact-actions {
   display: inline-flex;
 }

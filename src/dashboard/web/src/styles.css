@@ -1392,8 +1392,19 @@ body {
 .agent-chip.agent-submitted:hover,
 .agent-chip.agent-waiting:hover,
 .agent-chip.agent-retrying:hover,
-.agent-chip.agent-queued:hover {
+.agent-chip.agent-queued:hover,
+.agent-chip.agent-awaiting_review:hover {
   border-color: var(--mantine-color-yellow-4);
+  background:
+    linear-gradient(
+      90deg,
+      color-mix(in srgb, var(--mantine-color-yellow-4), transparent 92%) 0%,
+      color-mix(in srgb, var(--mantine-color-yellow-3), transparent 82%) 25%,
+      color-mix(in srgb, var(--mantine-color-yellow-4), transparent 92%) 50%,
+      color-mix(in srgb, var(--mantine-color-yellow-3), transparent 82%) 75%,
+      color-mix(in srgb, var(--mantine-color-yellow-4), transparent 92%) 100%
+    );
+  background-size: 200% 100%;
   color: light-dark(var(--mantine-color-yellow-9), var(--mantine-color-yellow-1));
   box-shadow: 0 0 0 1px color-mix(in srgb, var(--mantine-color-yellow-4), transparent 76%), 0 0 20px color-mix(in srgb, var(--mantine-color-yellow-4), transparent 84%);
 }

@@ -22,9 +22,11 @@ const nodeTypes = {
 type Props = {
   graph: WorkflowGraph | null
   loading: boolean
+  mode: 'configure' | 'inspect'
+  selectedNode: WorkflowGraphNodeData | null
   onToggleStepAgent: (stepId: string, agent: string, allAgents: string[]) => void
   onSelectNode: (node: WorkflowGraphNodeData | null) => void
-  onViewPrompt: (node: WorkflowGraphNodeData) => void
+  onViewNodeDetails: (node: WorkflowGraphNodeData) => void
   onViewAgentResult: (node: WorkflowGraphNodeData, agent: string) => void
 }
 
@@ -32,7 +34,7 @@ type FlowBodyProps = Props & {
   fitViewKey: string
 }
 
-function FlowBody({ graph, loading, onSelectNode, fitViewKey }: FlowBodyProps) {
+function FlowBody({ graph, loading, mode, onSelectNode, onViewNodeDetails, fitViewKey }: FlowBodyProps) {
   const { fitView } = useReactFlow()
   const lastFitViewKey = useRef('')
   const nodes = useMemo(() => (graph?.nodes || []) as Node[], [graph])
@@ -70,7 +72,9 @@ function FlowBody({ graph, loading, onSelectNode, fitViewKey }: FlowBodyProps) {
   }, [fitView, fitViewKey, graph])
 
   const handleNodeClick: NodeMouseHandler = (_event, node) => {
-    onSelectNode(node.data as WorkflowGraphNodeData)
+    const workflowNode = node.data as WorkflowGraphNodeData
+    onSelectNode(workflowNode)
+    if (mode === 'inspect') onViewNodeDetails(workflowNode)
   }
 
   if (loading && !graph) {
@@ -125,16 +129,17 @@ export function WorkflowCanvas(props: Props) {
       nodes: props.graph.nodes.map((node) => {
         return {
           ...node,
+          selected: props.selectedNode ? props.selectedNode.stepId === node.data.stepId : false,
           data: {
             ...node.data,
+            agentInteraction: props.mode === 'inspect' ? 'view-result' : 'toggle',
             onToggleAgent: props.onToggleStepAgent,
-            onViewPrompt: props.onViewPrompt,
-            onViewAgentResult: props.onViewAgentResult,
+            onViewAgentResult: props.mode === 'inspect' ? props.onViewAgentResult : undefined,
           },
         }
       }),
     }
-  }, [props.graph, props.onToggleStepAgent, props.onViewAgentResult, props.onViewPrompt])
+  }, [props.graph, props.mode, props.selectedNode, props.onToggleStepAgent, props.onViewAgentResult])
 
   return (
     <Box component="section" className="canvas-shell" aria-label="Workflow graph">

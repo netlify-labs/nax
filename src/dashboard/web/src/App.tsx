@@ -43,7 +43,7 @@ import type { DryRunOptions, DryRunResult, RunFollowupResponse, RunnerEvent, Das
 type ContextModalAction = '' | 'dry-run' | 'run'
 type DetailsModalContext = {
   node: WorkflowGraphNodeData
-  agent: string
+  agent?: string
   runId: string
   selector: RunDetailsSelector
 }
@@ -321,6 +321,17 @@ export default function App() {
     runEventsRef.current = null
   }, [])
 
+  const selectWorkflowDefinition = useCallback((id: string) => {
+    setSelectedRunId('')
+    setActiveRun(null)
+    setRunOutput('')
+    setRunError('')
+    setRunRunning(false)
+    closeRunEvents()
+    dispatchLiveRun({ type: 'reset' })
+    setSelectedWorkflowId(id)
+  }, [closeRunEvents])
+
   const simulateDryRunStepStatuses = useCallback((options: DryRunOptions) => {
     clearDryRunSimulation()
     const graphNodes = graph?.nodes || []
@@ -343,8 +354,8 @@ export default function App() {
     setLiveStepStatuses({})
     setLiveAgentStatuses({})
     let elapsedMs = 0
-    const firstAgentDelayMs = 5000
-    const nextAgentDelayPatternMs = [5000, 4000]
+    const firstAgentDelayMs = 3000
+    const nextAgentDelayPatternMs = [3000, 4000]
     const nextStepDelayMs = 700
 
     selectedNodes.forEach((node) => {
@@ -598,6 +609,16 @@ export default function App() {
     })
   }, [activeRun?.runId, selectedRunId])
 
+  const openNodeDetails = useCallback((node: WorkflowGraphNodeData) => {
+    setDetailsModalContext({
+      node,
+      runId: selectedRunId || activeRun?.runId || '',
+      selector: {
+        stepId: node.stepId,
+      },
+    })
+  }, [activeRun?.runId, selectedRunId])
+
   const runWorkflow = async (workflowOverride?: Workflow, optionsOverride: DryRunOptions = dryRunOptions, confirmed = false) => {
     const workflow = workflowOverride || selectedWorkflow
     if (!workflow) return
@@ -841,6 +862,7 @@ export default function App() {
       : selectedWorkflow
         ? `${selectedWorkflow.title} · ${selectedWorkflow.steps.length} steps`
         : 'No workflow selected'
+  const workflowCanvasMode = selectedRunId || activeRun ? 'inspect' : 'configure'
   const repoName = repoNameFromPath(projectRoot)
   const projectedGraph = useMemo(() => projectWorkflowGraph({
     graph,
@@ -848,6 +870,13 @@ export default function App() {
     stepStatuses: liveStepStatuses,
     stepAgentStatuses: liveAgentStatuses,
   }), [dryRunOptions.stepModels, graph, liveAgentStatuses, liveStepStatuses])
+  useEffect(() => {
+    if (!projectedGraph || projectedGraph.nodes.length === 0) return
+    setSelectedNode((current) => {
+      if (current && projectedGraph.nodes.some((node) => node.data.stepId === current.stepId)) return current
+      return projectedGraph.nodes[0].data
+    })
+  }, [projectedGraph])
   const selectedRunSnapshot = useMemo(() => {
     if (!selectedRunId) return null
     return runs.find((run) => run.runId === selectedRunId || run.id === selectedRunId) || activeRun
@@ -887,7 +916,7 @@ export default function App() {
     stderr: '',
   } : null
   const detailsModalLiveContext = useMemo<RunDetailsLiveContext | null>(() => {
-    if (!detailsModalContext) return null
+    if (!detailsModalContext?.agent) return null
     const latestNode = workflowGraphNodeByStepId(projectedGraph, detailsModalContext.node.stepId) || detailsModalContext.node
     const event = latestAgentEvent(liveRunState.rawEvents, latestNode, detailsModalContext.agent)
     const savedRun = runForAgent(latestNode, detailsModalContext.agent)
@@ -898,6 +927,7 @@ export default function App() {
     return {
       selector: {
         ...detailsModalContext.selector,
+        agent: detailsModalContext.agent,
         runnerId: detailsModalContext.selector.runnerId || runValue(savedRun, 'runnerId') || event?.runnerId || '',
         sessionId: detailsModalContext.selector.sessionId || runValue(savedRun, 'sessionId') || event?.sessionId || '',
       },
@@ -972,7 +1002,7 @@ export default function App() {
             workflows={workflows}
             selectedWorkflowId={selectedWorkflowId}
             loading={loadingWorkflows}
-            onSelect={setSelectedWorkflowId}
+            onSelect={selectWorkflowDefinition}
           />
         </AppShell.Navbar>
 
@@ -987,7 +1017,9 @@ export default function App() {
                   realRunning={runRunning}
                   cancelling={cancelRunning}
                   onChange={setDryRunOptions}
-                  onDryRun={() => openContextModal('dry-run')}
+                  onDryRun={() => {
+                    void runDryRun()
+                  }}
                   onRun={() => openContextModal('run')}
                   onCancelRun={cancelActiveRun}
                 />
@@ -1000,9 +1032,11 @@ export default function App() {
                       <WorkflowCanvas
                         graph={projectedGraph}
                         loading={loadingGraph}
+                        mode={workflowCanvasMode}
+                        selectedNode={selectedNode}
                         onToggleStepAgent={toggleStepAgent}
                         onSelectNode={setSelectedNode}
-                        onViewPrompt={setPromptNode}
+                        onViewNodeDetails={openNodeDetails}
                         onViewAgentResult={openAgentResult}
                       />
                     </Splitter.Pane>

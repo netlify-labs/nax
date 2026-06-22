@@ -6,7 +6,7 @@ const path = require('path')
 const { URL } = require('url')
 
 const { listFlows, loadFlow } = require('../flows')
-const { isUnfinishedRun, listRunStates, saveRunState } = require('../run-state')
+const { isUnfinishedRun, listRunStates, listWorkflowStatePage, saveRunState } = require('../run-state')
 const { flowToGraph } = require('./shared/graph')
 const { resumeWorkflow, runWorkflow, workflowCommand } = require('../workflow-runner')
 const { normalizeAgentList, normalizeStepModels, selectionValidationErrors } = require('../agent-selection')
@@ -77,6 +77,62 @@ function requestError(statusCode, code, message) {
   error.statusCode = statusCode
   error.code = code
   return error
+}
+
+const DEFAULT_RUNS_DURABLE_LIMIT = 50
+const MAX_RUNS_DURABLE_LIMIT = 200
+
+/**
+ * @param {string | null | undefined} value
+ * @param {number} fallback
+ * @param {number} max
+ */
+function parsePositiveInteger(value, fallback, max) {
+  const parsed = Number.parseInt(String(value || ''), 10)
+  if (!Number.isFinite(parsed) || parsed <= 0) return fallback
+  return Math.min(parsed, max)
+}
+
+/** @param {{ offset: number }} cursor */
+function encodeRunsCursor(cursor) {
+  return Buffer.from(JSON.stringify({ offset: cursor.offset })).toString('base64url')
+}
+
+/** @param {string} value */
+function decodeRunsCursor(value) {
+  if (!value) return { offset: 0 }
+  try {
+    const parsed = JSON.parse(Buffer.from(value, 'base64url').toString('utf8'))
+    const offset = Number(parsed?.offset)
+    if (!Number.isInteger(offset) || offset < 0) {
+      throw new Error('invalid offset')
+    }
+    return { offset }
+  } catch {
+    throw requestError(400, 'invalid_cursor', 'Invalid runs cursor.')
+  }
+}
+
+/**
+ * @param {string} projectRoot
+ * @param {{ limit?: string | null, cursor?: string | null }} [options]
+ */
+function paginatedDurableRuns(projectRoot, { limit: limitValue, cursor: cursorValue } = {}) {
+  const limit = parsePositiveInteger(limitValue, DEFAULT_RUNS_DURABLE_LIMIT, MAX_RUNS_DURABLE_LIMIT)
+  const { offset } = decodeRunsCursor(String(cursorValue || ''))
+  const page = listWorkflowStatePage(projectRoot, { limit, offset })
+  const nextOffset = page.offset + page.limit
+  const hasMore = nextOffset < page.total
+  return {
+    items: page.items,
+    pagination: {
+      durableLimit: page.limit,
+      durableOffset: page.offset,
+      durableTotal: page.total,
+      nextCursor: hasMore ? encodeRunsCursor({ offset: nextOffset }) : null,
+      hasMore,
+    },
+  }
 }
 
 function safeDecode(value) {
@@ -1538,10 +1594,14 @@ function createRequestHandler(options = {}) {
             return
           }
           assertToken(req, requestUrl, token)
-          const durable = listRunStates(projectRoot).map(publicRunState)
+          const durablePage = paginatedDurableRuns(projectRoot, {
+            limit: requestUrl.searchParams.get('limit') || '',
+            cursor: requestUrl.searchParams.get('cursor') || '',
+          })
           jsonResponse(res, 200, {
             active: [...runs.values()].map(publicRun),
-            durable,
+            durable: durablePage.items.map(publicRunState),
+            pagination: durablePage.pagination,
           })
           return
         }

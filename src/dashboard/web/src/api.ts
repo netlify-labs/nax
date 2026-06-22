@@ -266,8 +266,12 @@ export function runEventsStream(
   }
 }
 
-export function listRuns(): Promise<RunsResponse> {
-  return requestJson<RunsResponse>('/api/runs')
+export function listRuns(options: { limit?: number; cursor?: string } = {}): Promise<RunsResponse> {
+  const params = new URLSearchParams()
+  if (typeof options.limit === 'number') params.set('limit', String(options.limit))
+  if (options.cursor) params.set('cursor', options.cursor)
+  const query = params.toString()
+  return requestJson<RunsResponse>(query ? `/api/runs?${query}` : '/api/runs')
 }
 
 export function getRunGraph(id: string): Promise<RunGraphResponse> {

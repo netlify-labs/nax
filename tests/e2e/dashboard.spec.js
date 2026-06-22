@@ -263,6 +263,35 @@ function writeRunningRunFixture(projectRoot) {
   return runId
 }
 
+/**
+ * @param {string} projectRoot
+ * @param {number} count
+ */
+function writeRecentRunPageFixtures(projectRoot, count) {
+  const baseTime = Date.parse('2026-06-19T00:00:00.000Z')
+  for (let index = 1; index <= count; index += 1) {
+    const runId = `paged-run-${String(index).padStart(2, '0')}`
+    const dir = path.join(projectRoot, '.nax', 'workflows', runId)
+    fs.mkdirSync(dir, { recursive: true })
+    fs.writeFileSync(path.join(dir, 'workflow.json'), JSON.stringify({
+      schemaVersion: 1,
+      runId,
+      flowId: 'review',
+      flowTitle: `Paged Run ${index}`,
+      status: 'completed',
+      transport: 'netlify-api',
+      branch: 'main',
+      createdAt: new Date(baseTime + index * 1000).toISOString(),
+      updatedAt: new Date(baseTime + index * 1000).toISOString(),
+      options: {},
+      steps: [],
+      dir,
+    }, null, 2))
+    const mtime = new Date(baseTime + index * 1000)
+    fs.utimesSync(path.join(dir, 'workflow.json'), mtime, mtime)
+  }
+}
+
 test('dashboard renders Review graph on desktop', async ({ page }, testInfo) => {
   await openReview(page, { width: 1360, height: 860 })
   await testInfo.attach('desktop', {
@@ -464,6 +493,34 @@ test('dashboard opens shared run details modal from runs and graph agent results
     await expect(page.getByText('Review this fixture prompt.')).toBeVisible()
     await page.locator('.run-details-content-switch').getByRole('button', { name: 'Results' }).click()
     await expect(page.getByText('Final result text.')).toBeVisible()
+  } finally {
+    await server.close()
+  }
+})
+
+test('dashboard recent runs loads older durable pages', async ({ page }) => {
+  const projectRoot = tmpRoot()
+  writeRecentRunPageFixtures(projectRoot, 52)
+  const server = await startDashboardServer({
+    projectRoot,
+    initialWorkflow: 'review',
+  })
+
+  try {
+    await page.setViewportSize({ width: 1360, height: 860 })
+    await page.goto(server.url, { waitUntil: 'networkidle' })
+    await expect(page.getByRole('heading', { name: 'Netlify Agent Executor' })).toBeVisible()
+    await expect(page.getByText('Paged Run 52', { exact: true })).toBeVisible()
+    await expect(page.getByText('Showing 50 of 52 saved runs')).toBeVisible()
+    await expect(page.getByText('paged-run-01', { exact: true })).toHaveCount(0)
+
+    const loadOlder = page.getByRole('button', { name: 'Load older' })
+    await loadOlder.scrollIntoViewIfNeeded()
+    await loadOlder.click()
+
+    await expect(page.getByText('paged-run-01', { exact: true })).toHaveCount(1)
+    await expect(page.getByText('Showing 52 of 52 saved runs')).toBeVisible()
+    await expect(page.getByRole('button', { name: 'Load older' })).toHaveCount(0)
   } finally {
     await server.close()
   }

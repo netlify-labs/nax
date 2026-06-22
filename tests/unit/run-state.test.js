@@ -12,6 +12,7 @@ const {
   hasRepairableRuns,
   isUnfinishedRun,
   isUnfinishedLocalRun,
+  listWorkflowStatePage,
   listRunStates,
   saveRunState,
   workflowStatePath,
@@ -40,6 +41,11 @@ function writeRunState(state) {
   fs.mkdirSync(state.dir, { recursive: true })
   fs.writeFileSync(path.join(state.dir, 'workflow.json'), JSON.stringify(state, null, 2) + '\n')
   return state
+}
+
+function setWorkflowMtime(state, iso) {
+  const time = new Date(iso)
+  fs.utimesSync(path.join(state.dir, 'workflow.json'), time, time)
 }
 
 test('isUnfinishedLocalRun detects submitted local runner ids', () => {
@@ -202,6 +208,44 @@ test('listRunStates migrates legacy .nax/runs state to .nax/workflows once', () 
   assert.equal(states[0].runId, 'legacy-run')
   assert.equal(fs.existsSync(path.join(tmp, '.nax', 'runs')), false)
   assert.equal(fs.existsSync(path.join(tmp, '.nax', 'workflows', 'legacy-run', 'workflow.json')), true)
+})
+
+test('listWorkflowStatePage returns newest durable page using file mtimes', () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'nax-run-state-page-test-'))
+  const old = writeRunState(runState(tmp, { runId: 'old' }))
+  const middle = writeRunState(runState(tmp, { runId: 'middle' }))
+  const newest = writeRunState(runState(tmp, { runId: 'newest' }))
+  setWorkflowMtime(old, '2026-05-12T00:00:00.000Z')
+  setWorkflowMtime(middle, '2026-05-12T00:01:00.000Z')
+  setWorkflowMtime(newest, '2026-05-12T00:02:00.000Z')
+
+  const first = listWorkflowStatePage(tmp, { limit: 2 })
+  assert.equal(first.total, 3)
+  assert.equal(first.limit, 2)
+  assert.equal(first.offset, 0)
+  assert.deepEqual(first.items.map((state) => state.runId), ['newest', 'middle'])
+
+  const second = listWorkflowStatePage(tmp, { limit: 2, offset: 2 })
+  assert.deepEqual(second.items.map((state) => state.runId), ['old'])
+  assert.equal(second.total, 3)
+})
+
+test('listWorkflowStatePage parses only selected workflow state files', () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'nax-run-state-page-invalid-test-'))
+  const valid = writeRunState(runState(tmp, { runId: 'valid' }))
+  const invalidDir = path.join(tmp, '.nax', 'workflows', 'invalid')
+  fs.mkdirSync(invalidDir, { recursive: true })
+  fs.writeFileSync(path.join(invalidDir, 'workflow.json'), '{not json')
+  setWorkflowMtime(valid, '2026-05-12T00:02:00.000Z')
+  fs.utimesSync(path.join(invalidDir, 'workflow.json'), new Date('2026-05-12T00:01:00.000Z'), new Date('2026-05-12T00:01:00.000Z'))
+
+  const first = listWorkflowStatePage(tmp, { limit: 1 })
+  assert.deepEqual(first.items.map((state) => state.runId), ['valid'])
+  assert.equal(first.total, 2)
+
+  const second = listWorkflowStatePage(tmp, { limit: 1, offset: 1 })
+  assert.deepEqual(second.items, [])
+  assert.equal(second.total, 2)
 })
 
 test('dismissRunState marks unfinished runs ignored by resume detection', () => {

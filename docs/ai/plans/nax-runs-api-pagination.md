@@ -1,12 +1,12 @@
 # NAX Runs API Pagination Plan
 
-> Status: Draft implementation plan.
+> Status: Implemented on 2026-06-22.
 > Scope: dashboard server `/api/runs`, dashboard client run list query, and Recent Runs UI.
 > Primary goal: keep dashboard startup fast and predictable when `.nax/workflows` contains a large durable run history.
 
 ## Summary
 
-The dashboard currently returns every durable run from:
+The dashboard previously returned every durable run from:
 
 ```txt
 GET /api/runs
@@ -21,7 +21,7 @@ type RunsResponse = {
 }
 ```
 
-The server builds this by calling:
+The server built this by calling:
 
 ```js
 listRunStates(projectRoot).map(publicRunState)
@@ -34,7 +34,7 @@ That is simple and correct for small histories. It becomes a scale problem as `.
 - Recent Runs has no way to ask for "next page"
 - there is no response metadata telling the UI whether history is truncated
 
-This plan adds conservative pagination while preserving the current simple UX.
+The implemented pagination keeps the current simple UX while bounding first-page durable JSON parsing and response size.
 
 ## Why This Matters
 
@@ -57,31 +57,33 @@ Current behavior:
 - method must be `GET`
 - request must pass dashboard token auth
 - response includes all active runs
-- response includes all durable runs
+- response includes a paginated durable run page
+- response includes durable pagination metadata
 
 ### Client
 
 `src/dashboard/web/src/api.ts` exposes:
 
 ```ts
-export function listRuns(): Promise<RunsResponse>
+export function listRuns(options: { limit?: number; cursor?: string } = {}): Promise<RunsResponse>
 ```
 
-`src/dashboard/web/src/queries/dashboard-queries.ts` wraps this with `useRunsQuery`.
+`src/dashboard/web/src/queries/dashboard-queries.ts` wraps this with an infinite-query-backed `useRunsQuery`.
 
-`src/dashboard/web/src/queries/dashboard-cache.ts` merges active and durable runs for display with `runsFromResponse`.
+`src/dashboard/web/src/queries/dashboard-cache.ts` flattens and dedupes active plus durable pages for display with `runsFromResponses`.
 
-`RecentRuns` receives a run array and renders the list.
+`RecentRuns` receives the flattened run array plus pagination controls and renders the list.
 
 ### Cache Behavior
 
 After the cache-key fix, the runs list is keyed independently from run entity keys:
 
 ```ts
-dashboardQueryKeys.runs() // ['dashboard', 'runs', 'list']
+dashboardQueryKeys.runs() // ['dashboard', 'runs', 'list'] invalidation prefix
+dashboardQueryKeys.runsInfinite(50) // ['dashboard', 'runs', 'list', { limit: 50 }]
 ```
 
-That gives this pagination work a stable base. A future paginated list key can include page parameters without colliding with run entity caches.
+That gives this pagination work a stable base without colliding with run entity caches.
 
 ## Goals
 
@@ -167,7 +169,7 @@ Behavior:
 - invalid limits fall back to default
 - limits above max clamp to max
 - invalid cursors throw `requestError(400, 'invalid_cursor', 'Invalid runs cursor.')`
-- pagination happens after `listRunStates(projectRoot)` returns newest-first history
+- pagination must happen before durable workflow JSON parsing; `/api/runs` must not call `listRunStates(projectRoot)` and slice afterward
 
 ### Route Handler
 
@@ -175,9 +177,10 @@ Update `/api/runs`:
 
 1. auth as today
 2. parse `limit` and `cursor`
-3. list durable states
-4. slice durable runs
-5. return active runs plus durable page plus metadata
+3. enumerate/sort durable state files cheaply
+4. slice the durable state-file list
+5. parse only the selected durable page
+6. return active runs plus durable page plus metadata
 
 Pseudo-code:
 
@@ -192,6 +195,8 @@ jsonResponse(res, 200, {
   pagination: page.pagination,
 })
 ```
+
+`paginatedDurableRuns` uses the paged durable listing helper in `src/run-state.js`, which sorts workflow state files by `workflow.json` mtime and parses only the selected page. This intentionally trades exact `updatedAt` ordering for bounded local dashboard startup cost.
 
 ## Client Implementation
 
@@ -231,7 +236,7 @@ Add explicit keys:
 
 ```ts
 runs: () => ['dashboard', 'runs', 'list'] as const
-runsPage: (cursor: string) => ['dashboard', 'runs', 'page', cursor || 'first'] as const
+runsInfinite: (limit: number) => ['dashboard', 'runs', 'list', { limit }] as const
 ```
 
 There are two viable client approaches:
@@ -239,7 +244,7 @@ There are two viable client approaches:
 1. Keep one `useRunsQuery` for the first page and make "load more" call an imperative API function.
 2. Use `useInfiniteQuery` for durable history.
 
-Prefer `useInfiniteQuery` if the change is isolated enough. It models cursor pagination directly and prevents home-grown page state.
+The implementation uses `useInfiniteQuery`. It models cursor pagination directly and prevents home-grown page state.
 
 Recommended hook:
 
@@ -357,12 +362,12 @@ Do not block the first implementation on Playwright if unit and server tests cov
 
 ### Phase 1: Server Pagination Contract
 
-Tasks:
+Implemented:
 
-- Add cursor helpers.
-- Add pagination metadata.
-- Add server tests.
-- Keep `listRuns()` client unchanged initially, so it reads first page.
+- Added cursor helpers.
+- Added pagination metadata.
+- Added server tests.
+- Added a paged durable state helper so the first page does not parse every workflow state.
 
 Validation:
 
@@ -373,7 +378,7 @@ node --test tests/unit/dashboard-server.test.js
 
 ### Phase 2: Client Types And API Options
 
-Tasks:
+Implemented:
 
 - Add `RunsPagination` type.
 - Add `listRuns({ limit, cursor })`.
@@ -389,7 +394,7 @@ node --import tsx --test tests/unit/dashboard-query-cache.test.ts
 
 ### Phase 3: Recent Runs Load More
 
-Tasks:
+Implemented:
 
 - Add `useRunsInfiniteQuery` or equivalent page state.
 - Flatten active/durable pages for `RecentRuns`.
@@ -405,7 +410,7 @@ npm test
 
 ### Phase 4: Cache Bridge Review
 
-Tasks:
+Implemented:
 
 - Verify live events invalidate the first page appropriately.
 - Ensure old pages are not aggressively refetched.
@@ -433,3 +438,22 @@ Validation:
 - Cache invalidation remains scoped and does not collide with per-run entity keys.
 - Typecheck, tests, and dashboard build pass.
 
+## Implementation Notes
+
+Implemented files:
+
+- `src/run-state.js` adds `listWorkflowStatePage`, which enumerates/sorts state files, slices by offset/limit, and parses only the selected page.
+- `src/dashboard/server.js` adds `/api/runs` `limit`/`cursor` handling, opaque offset cursors, durable pagination metadata, and structured `invalid_cursor` errors.
+- `src/dashboard/web/src/types.ts` adds `RunsPagination` and `RunsListData`.
+- `src/dashboard/web/src/api.ts` lets `listRuns` accept `{ limit, cursor }`.
+- `src/dashboard/web/src/queries/dashboard-queries.ts` uses `useInfiniteQuery` for the runs list.
+- `src/dashboard/web/src/queries/dashboard-cache.ts` flattens paginated run responses and invalidates the list instead of writing flat arrays into the infinite-query cache key.
+- `src/dashboard/web/src/components/RecentRuns.tsx` adds the compact `Load older` button and saved-run count.
+
+Validation coverage:
+
+- `tests/unit/run-state.test.js` covers durable page listing without parsing all history.
+- `tests/unit/dashboard-server.test.js` covers default metadata, limit, cursor, max-limit clamp, and invalid cursor behavior.
+- `tests/unit/dashboard-query-cache.test.ts` covers paginated flattening and query-key non-collision.
+- `tests/unit/query-event-bridge.test.ts` covers event-driven invalidation with the paginated list key.
+- `tests/e2e/dashboard.spec.js` covers Recent Runs loading older durable pages.

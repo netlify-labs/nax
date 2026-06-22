@@ -1,4 +1,4 @@
-import { ActionIcon, Badge, Box, Group, Paper, ScrollArea, Stack, Text, Title, Tooltip, UnstyledButton } from '@mantine/core'
+import { ActionIcon, Badge, Box, Button, Group, Paper, ScrollArea, Stack, Text, Title, Tooltip, UnstyledButton } from '@mantine/core'
 import { GitBranch, History, RotateCcw } from 'lucide-react'
 import { runId, statusBadgeStyle, statusColor, statusLabel } from '../run-format'
 import { statusKey } from '../status-model'
@@ -7,12 +7,29 @@ import type { DashboardRun } from '../types'
 type Props = {
   runs: DashboardRun[]
   selectedRunId: string
+  hasMore: boolean
+  loadingMore: boolean
+  durableShownCount: number
+  durableTotal: number
   onSelect: (run: DashboardRun) => void
   onOpenDetails: (run: DashboardRun) => void
+  onLoadMore: () => void
   onResume: (run: DashboardRun) => void
 }
 
-export function RecentRuns({ runs, selectedRunId, onSelect, onOpenDetails, onResume }: Props) {
+export function RecentRuns({
+  runs,
+  selectedRunId,
+  hasMore,
+  loadingMore,
+  durableShownCount,
+  durableTotal,
+  onSelect,
+  onOpenDetails,
+  onLoadMore,
+  onResume,
+}: Props) {
+  const showCount = durableTotal > 0
   return (
     <Box className="recent-runs" component="section" aria-label="Recent runs">
         <Group className="panel-header" justify="space-between" wrap="nowrap">
@@ -94,6 +111,23 @@ export function RecentRuns({ runs, selectedRunId, onSelect, onOpenDetails, onRes
                 </Box>
               </Paper>
             ))}
+            {showCount ? (
+              <Text size="xs" c="dimmed" ta="center">
+                Showing {Math.min(durableShownCount, durableTotal)} of {durableTotal} saved runs
+              </Text>
+            ) : null}
+            {hasMore ? (
+              <Button
+                leftSection={<History size={14} />}
+                loading={loadingMore}
+                onClick={onLoadMore}
+                size="xs"
+                variant="light"
+                fullWidth
+              >
+                Load older
+              </Button>
+            ) : null}
           </Stack>
         </ScrollArea>
     </Box>

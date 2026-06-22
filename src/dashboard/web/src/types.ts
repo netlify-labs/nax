@@ -186,9 +186,25 @@ export type StartRunResponse = {
   run: DashboardRun
 }
 
+export type RunsPagination = {
+  durableLimit: number
+  durableOffset: number
+  durableTotal: number
+  nextCursor: string | null
+  hasMore: boolean
+}
+
 export type RunsResponse = {
   active: DashboardRun[]
   durable: DashboardRun[]
+  pagination?: RunsPagination
+}
+
+export type RunsListData = {
+  runs: DashboardRun[]
+  hasMore: boolean
+  durableShownCount: number
+  durableTotal: number
 }
 
 export type RunGraphResponse = {

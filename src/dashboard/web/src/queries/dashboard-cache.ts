@@ -2,7 +2,7 @@ import type { QueryClient } from '@tanstack/react-query'
 import { dashboardQueryKeys } from '../query-keys'
 import { recordValue, runId } from '../run-format'
 import { isActiveStatus } from '../status-model'
-import type { DashboardRun, RunDetailsResponse, RunGraphResponse, RunsResponse, WorkflowGraph } from '../types'
+import type { DashboardRun, RunDetailsResponse, RunGraphResponse, RunsListData, RunsResponse, WorkflowGraph } from '../types'
 
 export function runIdentifier(run: Partial<DashboardRun>): string {
   return runId(run)
@@ -20,6 +20,23 @@ export function mergeRunLists(active: DashboardRun[], durable: DashboardRun[]): 
 
 export function runsFromResponse(response: RunsResponse): DashboardRun[] {
   return mergeRunLists(response.active, response.durable)
+}
+
+export function runsFromResponses(responses: RunsResponse[]): RunsListData {
+  const first = responses[0] || { active: [], durable: [] }
+  const durable = responses.flatMap((response) => response.durable || [])
+  const durableIds = new Set<string>()
+  for (const run of durable) {
+    const id = runIdentifier(run)
+    if (id) durableIds.add(id)
+  }
+  const last = responses[responses.length - 1]
+  return {
+    runs: mergeRunLists(first.active || [], durable),
+    hasMore: Boolean(last?.pagination?.hasMore),
+    durableShownCount: durableIds.size,
+    durableTotal: first.pagination?.durableTotal ?? durableIds.size,
+  }
 }
 
 export function graphHasActiveRemoteRuns(graph: WorkflowGraph | null): boolean {
@@ -45,9 +62,9 @@ export function sameRun(left: Partial<DashboardRun>, right: Partial<DashboardRun
 }
 
 export function upsertRunInDashboardCache(queryClient: QueryClient, run: DashboardRun): void {
-  queryClient.setQueryData<DashboardRun[]>(dashboardQueryKeys.runs(), (current) => replaceRunInList(current || [], run))
   const id = run.runId || run.id
   if (id) queryClient.setQueryData<DashboardRun>(dashboardQueryKeys.run(id), run)
+  void queryClient.invalidateQueries({ queryKey: dashboardQueryKeys.runs() })
 }
 
 export function upsertRunGraphInDashboardCache(queryClient: QueryClient, response: RunGraphResponse): void {

@@ -194,6 +194,11 @@ function writeFollowupRunFixture(projectRoot, runId = 'fixture-followup-run') {
   return { runId, dir, artifactsDir, stepDir, runnerDir }
 }
 
+function setWorkflowMtime(dir, iso) {
+  const time = new Date(iso)
+  fs.utimesSync(path.join(dir, 'workflow.json'), time, time)
+}
+
 test('dashboard extracts durable workflow run id from runner output', () => {
   const output = [
     'Run 2026-06-19T04-40-05-602Z-do-next',
@@ -773,6 +778,10 @@ test('dashboard runs API reads durable workflow state from .nax', async () => {
     assert.equal(runs.statusCode, 200)
     assert.equal(runs.payload.durable.some((run) => run.runId === runId), true)
     assert.equal(runs.payload.durable.find((run) => run.runId === runId)?.target.branch, 'main')
+    assert.equal(runs.payload.pagination.durableLimit, 50)
+    assert.equal(runs.payload.pagination.durableOffset, 0)
+    assert.equal(runs.payload.pagination.durableTotal, 1)
+    assert.equal(runs.payload.pagination.hasMore, false)
 
     const detail = await requestJson(`${base}/api/runs/${runId}`, { token: server.token })
     assert.equal(detail.statusCode, 200)
@@ -834,6 +843,46 @@ test('dashboard runs API reads durable workflow state from .nax', async () => {
     assert.equal(graph.payload.graph.metadata.hasRunState, true)
     assert.deepEqual(graph.payload.graph.nodes[0].data.agents, ['claude', 'gemini', 'codex'])
     assert.deepEqual(graph.payload.graph.nodes[0].data.selectedAgents, ['codex'])
+  } finally {
+    await server.close()
+  }
+})
+
+test('dashboard runs API paginates durable workflow state with opaque cursors', async () => {
+  const projectRoot = tmpRoot()
+  const newest = writeFollowupRunFixture(projectRoot, 'newest-run')
+  const middle = writeFollowupRunFixture(projectRoot, 'middle-run')
+  const oldest = writeFollowupRunFixture(projectRoot, 'oldest-run')
+  setWorkflowMtime(newest.dir, '2026-06-19T00:03:00.000Z')
+  setWorkflowMtime(middle.dir, '2026-06-19T00:02:00.000Z')
+  setWorkflowMtime(oldest.dir, '2026-06-19T00:01:00.000Z')
+
+  const server = await startDashboardServer({ projectRoot })
+  try {
+    const base = `http://127.0.0.1:${server.port}`
+    const first = await requestJson(`${base}/api/runs?limit=1`, { token: server.token })
+    assert.equal(first.statusCode, 200)
+    assert.deepEqual(first.payload.durable.map((run) => run.runId), ['newest-run'])
+    assert.equal(first.payload.pagination.durableLimit, 1)
+    assert.equal(first.payload.pagination.durableOffset, 0)
+    assert.equal(first.payload.pagination.durableTotal, 3)
+    assert.equal(first.payload.pagination.hasMore, true)
+    assert.equal(typeof first.payload.pagination.nextCursor, 'string')
+
+    const second = await requestJson(`${base}/api/runs?limit=1&cursor=${encodeURIComponent(first.payload.pagination.nextCursor)}`, { token: server.token })
+    assert.equal(second.statusCode, 200)
+    assert.deepEqual(second.payload.durable.map((run) => run.runId), ['middle-run'])
+    assert.equal(second.payload.pagination.durableOffset, 1)
+    assert.equal(second.payload.pagination.hasMore, true)
+
+    const clamped = await requestJson(`${base}/api/runs?limit=999`, { token: server.token })
+    assert.equal(clamped.statusCode, 200)
+    assert.equal(clamped.payload.pagination.durableLimit, 200)
+    assert.equal(clamped.payload.pagination.hasMore, false)
+
+    const invalid = await requestJson(`${base}/api/runs?cursor=not-a-cursor`, { token: server.token })
+    assert.equal(invalid.statusCode, 400)
+    assert.equal(invalid.payload.error.code, 'invalid_cursor')
   } finally {
     await server.close()
   }

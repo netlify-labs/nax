@@ -69,6 +69,7 @@ function runDetails(run: DashboardRun): RunDetailsResponse {
 
 test('query event bridge patches cached runs from workflow lifecycle events', () => {
   const queryClient = new QueryClient()
+  queryClient.setQueryData(dashboardQueryKeys.runsInfinite(50), { pages: [], pageParams: [] })
   queryClient.setQueryData(dashboardQueryKeys.run('run-1'), dashboardRun('run-1'))
 
   applyRunnerEventToDashboardCache(queryClient, {
@@ -86,7 +87,7 @@ test('query event bridge patches cached runs from workflow lifecycle events', ()
   assert.equal(started?.flowTitle, 'Review')
   assert.deepEqual(started?.command, ['nax', 'workflow', 'run'])
   assert.equal(started?.startedAt, '2026-06-22T00:00:00.000Z')
-  assert.equal(queryClient.getQueryData<DashboardRun[]>(dashboardQueryKeys.runs())?.[0]?.status, 'running')
+  assert.equal(queryClient.getQueryState(dashboardQueryKeys.runsInfinite(50))?.isInvalidated, true)
 
   applyRunnerEventToDashboardCache(queryClient, {
     type: 'workflow_failed',
@@ -117,7 +118,7 @@ test('query event bridge patches cached runs from workflow lifecycle events', ()
 test('query event bridge skips missing cached runs but invalidates known run views', () => {
   const queryClient = new QueryClient()
   const run = dashboardRun('run-1', 'running')
-  queryClient.setQueryData(dashboardQueryKeys.runs(), [run])
+  queryClient.setQueryData(dashboardQueryKeys.runsInfinite(50), { pages: [], pageParams: [] })
   queryClient.setQueryData(dashboardQueryKeys.run('run-1'), run)
   queryClient.setQueryData(dashboardQueryKeys.runGraph('run-1'), {
     run,
@@ -132,7 +133,7 @@ test('query event bridge skips missing cached runs but invalidates known run vie
 
   applyRunnerEventToDashboardCache(queryClient, { type: 'artifact_written', runId: 'run-1' }, 'fallback-run')
 
-  assert.equal(queryClient.getQueryState(dashboardQueryKeys.runs())?.isInvalidated, true)
+  assert.equal(queryClient.getQueryState(dashboardQueryKeys.runsInfinite(50))?.isInvalidated, true)
   assert.equal(queryClient.getQueryState(dashboardQueryKeys.run('run-1'))?.isInvalidated, true)
   assert.equal(queryClient.getQueryState(dashboardQueryKeys.runGraph('run-1'))?.isInvalidated, true)
   assert.equal(queryClient.getQueryState(dashboardQueryKeys.runDetails('run-1'))?.isInvalidated, true)

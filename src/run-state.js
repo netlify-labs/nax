@@ -276,6 +276,75 @@ function listRunStates(projectRoot) {
   return listWorkflowStates(projectRoot)
 }
 
+/**
+ * @typedef {{
+ *   filePath: string,
+ *   mtimeMs: number,
+ * }} WorkflowStateFile
+ */
+
+/**
+ * @param {string} projectRoot
+ * @returns {WorkflowStateFile[]}
+ */
+function listWorkflowStateFiles(projectRoot) {
+  cleanupLegacyRunsDir(projectRoot)
+  const workflowsDir = getWorkflowsDir(projectRoot)
+  if (!fs.existsSync(workflowsDir)) return []
+  return fs
+    .readdirSync(workflowsDir, { withFileTypes: true })
+    .filter((entry) => entry.isDirectory())
+    .map((entry) => workflowStatePath(path.join(workflowsDir, entry.name)))
+    .filter((filePath) => fs.existsSync(filePath))
+    .map((filePath) => {
+      try {
+        const stats = fs.statSync(filePath)
+        return { filePath, mtimeMs: stats.mtimeMs }
+      } catch {
+        return null
+      }
+    })
+    .filter(Boolean)
+    .sort((a, b) => {
+      const byMtime = b.mtimeMs - a.mtimeMs
+      return byMtime || b.filePath.localeCompare(a.filePath)
+    })
+}
+
+/**
+ * Lists one durable workflow state page without parsing every workflow.json.
+ *
+ * This intentionally sorts by workflow.json mtime instead of parsing updatedAt
+ * from every state file. That keeps dashboard startup bounded by one page of
+ * JSON parsing; offset cursors can tolerate minor shifts in this local UI.
+ *
+ * @param {string} projectRoot
+ * @param {{ limit?: number, offset?: number }} [options]
+ * @returns {{ items: Array<Record<string, unknown>>, total: number, limit: number, offset: number }}
+ */
+function listWorkflowStatePage(projectRoot, { limit = 50, offset = 0 } = {}) {
+  const normalizedLimit = Number.isFinite(limit) && limit > 0 ? Math.floor(limit) : 50
+  const normalizedOffset = Number.isFinite(offset) && offset > 0 ? Math.floor(offset) : 0
+  const files = listWorkflowStateFiles(projectRoot)
+  const items = files
+    .slice(normalizedOffset, normalizedOffset + normalizedLimit)
+    .map(({ filePath }) => {
+      try {
+        const state = readRunState(filePath)
+        return { ...state, dir: path.dirname(filePath) }
+      } catch {
+        return null
+      }
+    })
+    .filter(Boolean)
+  return {
+    items,
+    total: files.length,
+    limit: normalizedLimit,
+    offset: normalizedOffset,
+  }
+}
+
 function listWorkflowStates(projectRoot) {
   cleanupLegacyRunsDir(projectRoot)
   const workflowsDir = getWorkflowsDir(projectRoot)
@@ -470,6 +539,7 @@ module.exports = {
   isUnfinishedRun,
   isUnfinishedLocalRun,
   listRunStates,
+  listWorkflowStatePage,
   listWorkflowStates,
   readRunState,
   saveRunState,

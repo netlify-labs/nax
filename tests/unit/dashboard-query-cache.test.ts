@@ -6,11 +6,12 @@ import {
   graphHasActiveRemoteRuns,
   mergeRunLists,
   replaceRunInList,
+  runsFromResponses,
   sameRun,
   upsertRunGraphInDashboardCache,
   upsertRunInDashboardCache,
 } from '../../src/dashboard/web/src/queries/dashboard-cache'
-import type { DashboardRun, RunGraphResponse, Workflow, WorkflowGraph } from '../../src/dashboard/web/src/types'
+import type { DashboardRun, RunGraphResponse, RunsResponse, Workflow, WorkflowGraph } from '../../src/dashboard/web/src/types'
 
 function run(id: string, status = 'running'): DashboardRun {
   return {
@@ -71,6 +72,7 @@ test('dashboard query keys keep stable hierarchy', () => {
   assert.deepEqual(dashboardQueryKeys.workflows(), ['dashboard', 'workflows'])
   assert.deepEqual(dashboardQueryKeys.workflowGraph('review'), ['dashboard', 'workflows', 'review', 'graph'])
   assert.deepEqual(dashboardQueryKeys.runs(), ['dashboard', 'runs', 'list'])
+  assert.deepEqual(dashboardQueryKeys.runsInfinite(50), ['dashboard', 'runs', 'list', { limit: 50 }])
   assert.deepEqual(dashboardQueryKeys.run('run-1'), ['dashboard', 'run', 'run-1'])
   assert.deepEqual(dashboardQueryKeys.runGraph('run-1'), ['dashboard', 'run', 'run-1', 'graph'])
   assert.deepEqual(dashboardQueryKeys.runDetails('run-1'), ['dashboard', 'run', 'run-1', 'details'])
@@ -82,12 +84,46 @@ test('run list helpers dedupe active and durable runs by canonical id', () => {
   assert.equal(sameRun({ id: 'local', runId: 'remote' }, { id: 'remote' }), true)
 })
 
+test('paginated run list helpers flatten pages and dedupe durable history', () => {
+  const pages: RunsResponse[] = [
+    {
+      active: [run('run-active')],
+      durable: [run('run-active', 'completed'), run('run-2', 'completed')],
+      pagination: {
+        durableLimit: 2,
+        durableOffset: 0,
+        durableTotal: 4,
+        nextCursor: 'cursor-2',
+        hasMore: true,
+      },
+    },
+    {
+      active: [],
+      durable: [run('run-2', 'completed'), run('run-3', 'completed')],
+      pagination: {
+        durableLimit: 2,
+        durableOffset: 2,
+        durableTotal: 4,
+        nextCursor: null,
+        hasMore: false,
+      },
+    },
+  ]
+
+  const flattened = runsFromResponses(pages)
+  assert.deepEqual(flattened.runs.map((item) => item.runId), ['run-active', 'run-2', 'run-3'])
+  assert.equal(flattened.hasMore, false)
+  assert.equal(flattened.durableShownCount, 3)
+  assert.equal(flattened.durableTotal, 4)
+})
+
 test('cache helpers update run list, individual run, and run graph entries', () => {
   const queryClient = new QueryClient()
   const nextRun = run('run-1', 'completed')
+  queryClient.setQueryData(dashboardQueryKeys.runsInfinite(50), { pages: [], pageParams: [] })
   upsertRunInDashboardCache(queryClient, nextRun)
-  assert.deepEqual(queryClient.getQueryData<DashboardRun[]>(dashboardQueryKeys.runs())?.map((item) => item.status), ['completed'])
   assert.equal(queryClient.getQueryData<DashboardRun>(dashboardQueryKeys.run('run-1'))?.status, 'completed')
+  assert.equal(queryClient.getQueryState(dashboardQueryKeys.runsInfinite(50))?.isInvalidated, true)
 
   const workflow: Workflow = {
     id: 'review',
@@ -110,7 +146,7 @@ test('cache helpers update run list, individual run, and run graph entries', () 
 
 test('run list invalidation does not fuzzily match run entity entries', async () => {
   const queryClient = new QueryClient()
-  queryClient.setQueryData(dashboardQueryKeys.runs(), [run('run-1')])
+  queryClient.setQueryData(dashboardQueryKeys.runsInfinite(50), { pages: [], pageParams: [] })
   queryClient.setQueryData(dashboardQueryKeys.run('run-1'), run('run-1'))
   queryClient.setQueryData(dashboardQueryKeys.runGraph('run-1'), {
     run: run('run-1'),
@@ -133,7 +169,7 @@ test('run list invalidation does not fuzzily match run entity entries', async ()
 
   await queryClient.invalidateQueries({ queryKey: dashboardQueryKeys.runs() })
 
-  assert.equal(queryClient.getQueryState(dashboardQueryKeys.runs())?.isInvalidated, true)
+  assert.equal(queryClient.getQueryState(dashboardQueryKeys.runsInfinite(50))?.isInvalidated, true)
   assert.equal(queryClient.getQueryState(dashboardQueryKeys.run('run-1'))?.isInvalidated, false)
   assert.equal(queryClient.getQueryState(dashboardQueryKeys.runGraph('run-1'))?.isInvalidated, false)
 })

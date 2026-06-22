@@ -269,7 +269,8 @@ export default function App() {
   const workflows = workflowsQuery.data?.items || []
   const projectRoot = healthQuery.data?.projectRoot || ''
   const capabilities = healthQuery.data?.capabilities || defaultDashboardCapabilities
-  const runs = runsQuery.data || []
+  const runsList = runsQuery.data || { runs: [], hasMore: false, durableShownCount: 0, durableTotal: 0 }
+  const runs = runsList.runs
   const loadingWorkflows = workflowsQuery.isPending
   const loadingGraph = selectedRunId
     ? runGraphQuery.isFetching && !runGraphQuery.data
@@ -1086,8 +1087,13 @@ export default function App() {
                 <RecentRuns
                   runs={runs}
                   selectedRunId={selectedRunId}
+                  hasMore={runsList.hasMore}
+                  loadingMore={runsQuery.isFetchingNextPage}
+                  durableShownCount={runsList.durableShownCount}
+                  durableTotal={runsList.durableTotal}
                   onSelect={selectRun}
                   onOpenDetails={openRunDetails}
+                  onLoadMore={() => { void runsQuery.fetchNextPage() }}
                   onResume={resumeRun}
                 />
               </Box>

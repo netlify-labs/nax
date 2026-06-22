@@ -1,13 +1,21 @@
-import { useQuery, type Query } from '@tanstack/react-query'
+import { useInfiniteQuery, useQuery, type Query } from '@tanstack/react-query'
 import { getHealth, getRunDetails, getRunGraph, getWorkflowGraph, listRuns, listWorkflows } from '../api'
 import { dashboardQueryKeys } from '../query-keys'
-import { graphHasActiveRemoteRuns, runsFromResponse, upsertRunDetailsInDashboardCache, upsertRunGraphInDashboardCache } from './dashboard-cache'
-import type { DashboardRun, HealthResponse, RunDetailsResponse, RunGraphResponse, WorkflowGraphResponse, WorkflowListResponse } from '../types'
+import { graphHasActiveRemoteRuns, runsFromResponses, upsertRunDetailsInDashboardCache, upsertRunGraphInDashboardCache } from './dashboard-cache'
+import type { HealthResponse, RunDetailsResponse, RunGraphResponse, RunsListData, WorkflowGraphResponse, WorkflowListResponse } from '../types'
 
 type QueryOptions<TData> = {
   enabled?: boolean
   refetchInterval?: number | false | ((query: Query<TData, Error, TData, readonly unknown[]>) => number | false | undefined)
 }
+
+type RunsQueryOptions = {
+  enabled?: boolean
+  limit?: number
+  refetchInterval?: number | false
+}
+
+const DEFAULT_RUNS_PAGE_LIMIT = 50
 
 export function useDashboardHealthQuery(options: QueryOptions<HealthResponse> = {}) {
   return useQuery({
@@ -34,11 +42,19 @@ export function useWorkflowGraphQuery(workflowId: string, options: QueryOptions<
   })
 }
 
-export function useRunsQuery(options: QueryOptions<DashboardRun[]> = {}) {
-  return useQuery({
-    queryKey: dashboardQueryKeys.runs(),
-    queryFn: async () => runsFromResponse(await listRuns()),
-    ...options,
+export function useRunsQuery(options: RunsQueryOptions = {}) {
+  const limit = options.limit ?? DEFAULT_RUNS_PAGE_LIMIT
+  return useInfiniteQuery({
+    queryKey: dashboardQueryKeys.runsInfinite(limit),
+    queryFn: async ({ pageParam }) => listRuns({
+      limit,
+      cursor: pageParam || undefined,
+    }),
+    initialPageParam: '',
+    getNextPageParam: (lastPage) => lastPage.pagination?.nextCursor || undefined,
+    select: (data): RunsListData => runsFromResponses(data.pages),
+    enabled: options.enabled ?? true,
+    refetchInterval: options.refetchInterval,
   })
 }
 

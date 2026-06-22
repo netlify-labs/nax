@@ -1,10 +1,11 @@
-import { useEffect, useMemo, useRef } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { Box, Text } from '@mantine/core'
 import {
   Background,
   Controls,
   MarkerType,
   ReactFlow,
+  useNodesInitialized,
   useReactFlow,
   type Edge,
   type Node,
@@ -18,6 +19,8 @@ import { WorkflowNode } from './WorkflowNode'
 const nodeTypes = {
   workflowStep: WorkflowNode,
 }
+
+const WORKFLOW_NODE_MIN_GAP = 44
 
 type Props = {
   graph: WorkflowGraph | null
@@ -34,10 +37,55 @@ type FlowBodyProps = Props & {
   fitViewKey: string
 }
 
+function graphIndexForNode(node: Node): number {
+  const workflowNode = node.data as WorkflowGraphNodeData
+  return Number.isFinite(workflowNode.graphIndex) ? workflowNode.graphIndex : 0
+}
+
+function measuredHeightForNode(node: Node): number {
+  return node.measured?.height || node.height || 0
+}
+
+function layoutMeasuredNodes(nodes: Node[], measuredNodesById: Map<string, Node>): Node[] {
+  const orderedNodes = [...nodes].sort((a, b) => graphIndexForNode(a) - graphIndexForNode(b))
+  const yByNodeId = new Map<string, number>()
+  let nextY = 0
+
+  for (const node of orderedNodes) {
+    const measuredNode = measuredNodesById.get(node.id) || node
+    yByNodeId.set(node.id, nextY)
+    nextY += measuredHeightForNode(measuredNode) + WORKFLOW_NODE_MIN_GAP
+  }
+
+  let changed = false
+  const nextNodes = nodes.map((node) => {
+    const y = yByNodeId.get(node.id) ?? node.position.y
+    if (Math.abs(y - node.position.y) < 0.5) return node
+    changed = true
+    return {
+      ...node,
+      position: {
+        ...node.position,
+        y,
+      },
+    }
+  })
+
+  return changed ? nextNodes : nodes
+}
+
 function FlowBody({ graph, loading, mode, onSelectNode, onViewNodeDetails, fitViewKey }: FlowBodyProps) {
-  const { fitView } = useReactFlow()
+  const { fitView, getNodes } = useReactFlow()
+  const nodesInitialized = useNodesInitialized()
   const lastFitViewKey = useRef('')
-  const nodes = useMemo(() => (graph?.nodes || []) as Node[], [graph])
+  const graphNodes = useMemo(() => (graph?.nodes || []) as Node[], [graph])
+  const [nodes, setNodes] = useState<Node[]>(graphNodes)
+  const layoutFitViewKey = useMemo(() => {
+    const nodeKey = nodes
+      .map((node) => `${node.id}:${node.position.x},${node.position.y}`)
+      .join('|')
+    return `${fitViewKey}:${nodeKey}`
+  }, [fitViewKey, nodes])
   const edges = useMemo(() => {
     const nodeStatuses = new Map(
       nodes.map((node) => [node.id, (node.data as WorkflowGraphNodeData).status || '']),
@@ -63,13 +111,35 @@ function FlowBody({ graph, loading, mode, onSelectNode, onViewNodeDetails, fitVi
   }, [graph, nodes])
 
   useEffect(() => {
+    setNodes((currentNodes) => {
+      const currentNodesById = new Map(currentNodes.map((node) => [node.id, node]))
+      return graphNodes.map((node) => {
+        const currentNode = currentNodesById.get(node.id)
+        if (!currentNode) return node
+        return {
+          ...node,
+          position: currentNode.position,
+        }
+      })
+    })
+  }, [graphNodes])
+
+  useEffect(() => {
+    if (!nodesInitialized || nodes.length === 0) return
+    const measuredNodesById = new Map(getNodes().map((node) => [node.id, node]))
+    setNodes((currentNodes) => {
+      return layoutMeasuredNodes(currentNodes, measuredNodesById)
+    })
+  }, [getNodes, nodes, nodesInitialized])
+
+  useEffect(() => {
     if (!graph) return
-    if (lastFitViewKey.current === fitViewKey) return
-    lastFitViewKey.current = fitViewKey
+    if (lastFitViewKey.current === layoutFitViewKey) return
+    lastFitViewKey.current = layoutFitViewKey
     window.requestAnimationFrame(() => {
       fitView({ padding: 0.08, duration: 180 })
     })
-  }, [fitView, fitViewKey, graph])
+  }, [fitView, graph, layoutFitViewKey])
 
   const handleNodeClick: NodeMouseHandler = (_event, node) => {
     const workflowNode = node.data as WorkflowGraphNodeData

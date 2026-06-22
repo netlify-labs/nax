@@ -1,5 +1,5 @@
-import { Button, Group, Menu, Paper, Select } from '@mantine/core'
-import { ChevronDown, Play, Rocket, RotateCcw, Square } from 'lucide-react'
+import { Button, Group, Paper, Select } from '@mantine/core'
+import { Play, Rocket, RotateCcw, Square } from 'lucide-react'
 import type { DryRunOptions, Workflow } from '../types'
 
 type Props = {
@@ -13,6 +13,8 @@ type Props = {
   onRun: () => void
   onCancelRun: () => void
 }
+
+const SHOW_TRANSPORT_SELECT = false
 
 export function WorkflowControls({ workflow, options, running, realRunning, cancelling, onChange, onDryRun, onRun, onCancelRun }: Props) {
   const steps = (workflow?.steps || []).map((step) => ({ value: step.id, label: step.title }))
@@ -33,6 +35,7 @@ export function WorkflowControls({ workflow, options, running, realRunning, canc
   return (
     <Paper className="run-controls" component="section" aria-label="Workflow controls" radius={0} withBorder>
       <Select
+        classNames={{ root: 'run-control-select', label: 'run-control-label', wrapper: 'run-control-input' }}
         label="Run mode"
         value={startMode}
         onChange={(value) => updateStartMode(value || 'beginning')}
@@ -45,6 +48,7 @@ export function WorkflowControls({ workflow, options, running, realRunning, canc
       />
       {startMode === 'resume' ? (
         <Select
+          classNames={{ root: 'run-control-select', label: 'run-control-label', wrapper: 'run-control-input' }}
           label="Resume from"
           value={selectedStep}
           onChange={updateSelectedStep}
@@ -53,17 +57,20 @@ export function WorkflowControls({ workflow, options, running, realRunning, canc
           size="xs"
         />
       ) : null}
-      <Select
-        label="Transport"
-        value={options.transport === 'github' ? 'github-actions' : options.transport}
-        onChange={(value) => update({ transport: value || 'netlify-api' })}
-        data={[
-          { value: 'netlify-api', label: 'Local via Netlify API' },
-          { value: 'github-actions', label: 'GitHub Actions' },
-        ]}
-        allowDeselect={false}
-        size="xs"
-      />
+      {SHOW_TRANSPORT_SELECT ? (
+        <Select
+          classNames={{ root: 'run-control-select', label: 'run-control-label', wrapper: 'run-control-input' }}
+          label="Transport"
+          value={options.transport === 'github' ? 'github-actions' : options.transport}
+          onChange={(value) => update({ transport: value || 'netlify-api' })}
+          data={[
+            { value: 'netlify-api', label: 'Local via Netlify API' },
+            { value: 'github-actions', label: 'GitHub Actions' },
+          ]}
+          allowDeselect={false}
+          size="xs"
+        />
+      ) : null}
       <Group gap="xs" wrap="nowrap" className="run-actions">
         {realRunning ? (
           <Button
@@ -79,42 +86,28 @@ export function WorkflowControls({ workflow, options, running, realRunning, canc
             Cancel
           </Button>
         ) : null}
-        <Button.Group>
-          <Button
-            type="button"
-            leftSection={(running || realRunning) ? <RotateCcw size={16} /> : <Rocket size={16} />}
-            onClick={onRun}
-            disabled={!workflow || running}
-            loading={realRunning}
-            size="xs"
-            color="violet"
-          >
-            Run
-          </Button>
-          <Menu position="bottom-end" withinPortal>
-            <Menu.Target>
-              <Button
-                type="button"
-                aria-label="Run options"
-                px={8}
-                disabled={!workflow || running || realRunning}
-                size="xs"
-                color="violet"
-              >
-                <ChevronDown size={14} />
-              </Button>
-            </Menu.Target>
-            <Menu.Dropdown>
-              <Menu.Item
-                leftSection={<Play size={14} />}
-                onClick={onDryRun}
-                disabled={!workflow || running || realRunning}
-              >
-                Dry run
-              </Menu.Item>
-            </Menu.Dropdown>
-          </Menu>
-        </Button.Group>
+        <Button
+          type="button"
+          leftSection={<Play size={14} />}
+          onClick={onDryRun}
+          disabled={!workflow || running || realRunning}
+          loading={running}
+          size="xs"
+          variant="light"
+        >
+          Dry run
+        </Button>
+        <Button
+          type="button"
+          leftSection={(running || realRunning) ? <RotateCcw size={16} /> : <Rocket size={16} />}
+          onClick={onRun}
+          disabled={!workflow || running}
+          loading={realRunning}
+          size="xs"
+          color="violet"
+        >
+          Run
+        </Button>
       </Group>
     </Paper>
   )

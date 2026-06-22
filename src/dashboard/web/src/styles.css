@@ -134,16 +134,38 @@ body {
 
 .run-controls {
   display: grid;
-  grid-template-columns: minmax(170px, 0.85fr) minmax(150px, 0.85fr) minmax(220px, 1fr) auto;
-  align-items: end;
+  grid-template-columns: minmax(230px, 0.8fr) minmax(260px, 1fr) auto;
+  align-items: center;
   gap: var(--mantine-spacing-xs);
   padding: var(--mantine-spacing-xs) var(--mantine-spacing-sm);
   border-left: 0;
   border-right: 0;
 }
 
+.run-control-select {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.run-control-label {
+  margin-bottom: 0;
+  color: var(--mantine-color-dimmed);
+  font-size: var(--mantine-font-size-xs);
+  font-weight: 800;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.run-control-input {
+  min-width: 0;
+}
+
 .run-actions {
-  align-self: end;
+  grid-column: -2 / -1;
+  align-self: center;
   justify-content: flex-end;
 }
 
@@ -1489,7 +1511,7 @@ body {
 
 @media (max-width: 720px) {
   .run-controls {
-    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    grid-template-columns: minmax(0, 1fr);
   }
 
   .header-repo {
@@ -1501,7 +1523,12 @@ body {
   }
 
   .run-actions {
-    grid-column: span 2;
+    grid-column: auto;
+    width: 100%;
+  }
+
+  .run-actions .mantine-Button-root {
+    flex: 1 1 0;
   }
 
   .workflow-node {

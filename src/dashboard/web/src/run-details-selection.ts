@@ -2,7 +2,7 @@ import type { RunDetailsSection } from './types'
 
 export type RunDetailsSelector = {
   stepId: string
-  agent: string
+  agent?: string
   runnerId?: string
   sessionId?: string
 }
@@ -26,6 +26,8 @@ export function selectRunDetailsSection(
   sections: RunDetailsSection[],
   selector: RunDetailsSelector,
 ): RunDetailsSelectionResult {
+  if (!selector.agent) return { status: 'none', candidates: [] }
+
   const candidates = sections.filter((section) => (
     section.kind === 'session' &&
     section.stepId === selector.stepId &&

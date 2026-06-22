@@ -1,6 +1,6 @@
 import { memo } from 'react'
 import { Handle, Position, type NodeProps } from '@xyflow/react'
-import { Info, UserCheck } from 'lucide-react'
+import { UserCheck } from 'lucide-react'
 import { statusLabel } from '../run-format'
 import { isActiveStatus, isCompletedStatus } from '../status-model'
 import type { WorkflowGraphNodeData } from '../types'
@@ -18,11 +18,35 @@ function hasCompletedRun(node: WorkflowGraphNodeData, agent: string): boolean {
 
 function agentStatusTitle(node: WorkflowGraphNodeData, agent: string, active: boolean, status: string, hasResult: boolean): string {
   const label = titleCase(agent)
+  if (node.agentInteraction !== 'view-result') return `${active ? 'Disable' : 'Enable'} ${label} for ${node.title}`
   if (hasResult) return `View ${label} result for ${node.title}`
   if (isActiveStatus(status)) return `${label} is in progress; view available run details`
   if (status === 'abandoned') return `${label} was abandoned after cancellation; view available run details`
   if (['failed', 'cancelled'].includes(status)) return `${label} ${statusLabel(status).toLowerCase()}; view available run details`
-  return `${active ? 'Disable' : 'Enable'} ${label} for ${node.title}`
+  return `View ${label} details for ${node.title}`
+}
+
+function agentIsDone(node: WorkflowGraphNodeData, agent: string): boolean {
+  return isCompletedStatus(node.agentStatuses?.[agent] || '') || hasCompletedRun(node, agent)
+}
+
+function countStateLabel(count: number, state: string): string {
+  return `${count} ${state}`
+}
+
+function nodeProgressLabel(node: WorkflowGraphNodeData, selectedAgents: Set<string>): string {
+  const activeAgents = node.agents.filter((agent) => selectedAgents.has(agent))
+  if (activeAgents.length === 0) return ''
+  const completedCount = activeAgents.filter((agent) => agentIsDone(node, agent)).length
+  if (isActiveStatus(node.status || '')) {
+    const runningCount = activeAgents.length - completedCount
+    return [
+      completedCount > 0 ? countStateLabel(completedCount, 'done') : '',
+      runningCount > 0 ? countStateLabel(runningCount, 'running') : '',
+    ].filter(Boolean).join(', ')
+  }
+  if (isCompletedStatus(node.status || '')) return countStateLabel(completedCount, 'done')
+  return ''
 }
 
 export const WorkflowNode = memo(function WorkflowNode({ data, selected }: NodeProps) {
@@ -30,6 +54,7 @@ export const WorkflowNode = memo(function WorkflowNode({ data, selected }: NodeP
   const selectedAgents = new Set(node.selectedAgents || node.agents)
   const statusClass = node.status ? ` status-${node.status}` : ''
   const humanReview = node.action === 'human-review' || node.submit === 'human-review'
+  const progressLabel = humanReview ? '' : nodeProgressLabel(node, selectedAgents)
   return (
     <div className={`workflow-node${statusClass}${selected ? ' selected' : ''}`}>
       <Handle className="hidden-handle workflow-target-handle" type="target" position={Position.Top} />
@@ -37,23 +62,10 @@ export const WorkflowNode = memo(function WorkflowNode({ data, selected }: NodeP
         <div className="node-header-top">
           <div className="node-kicker-row">
             <span className="node-kicker">Step {node.number}</span>
-            {node.promptMarkdown ? (
-              <button
-                className="node-info-button"
-                type="button"
-                aria-label={`View ${node.title} prompt`}
-                title="View prompt"
-                onClick={(event) => {
-                  event.stopPropagation()
-                  node.onViewPrompt?.(node)
-                }}
-              >
-                <Info size={13} />
-              </button>
-            ) : null}
+            {progressLabel ? <span className="node-progress-label">- {progressLabel}</span> : null}
           </div>
-          <span className={`action-badge ${humanReview ? 'human-review' : node.submit === 'follow-up' ? 'follow-up' : 'new-run'}`}>
-            {node.submitLabel || node.submit || node.action}
+          <span className={`node-status-line ${humanReview ? 'human-review' : node.submit === 'follow-up' ? 'follow-up' : 'new-run'}`}>
+            <span className="action-badge">{node.submitLabel || node.submit || node.action}</span>
           </span>
         </div>
         <h3>{node.title}</h3>
@@ -69,7 +81,6 @@ export const WorkflowNode = memo(function WorkflowNode({ data, selected }: NodeP
           const active = selectedAgents.has(agent)
           const agentStatus = active ? node.agentStatuses?.[agent] || '' : ''
           const hasResult = hasCompletedRun(node, agent)
-          const canViewResult = active && (hasResult || Boolean(agentStatus))
           return (
             <button
               className={`agent-chip ${agent}${active ? '' : ' inactive'}${agentStatus ? ` agent-${agentStatus}` : ''}`}
@@ -79,7 +90,7 @@ export const WorkflowNode = memo(function WorkflowNode({ data, selected }: NodeP
               title={agentStatusTitle(node, agent, active, agentStatus, hasResult)}
               onClick={(event) => {
                 event.stopPropagation()
-                if (canViewResult) {
+                if (node.agentInteraction === 'view-result' && node.onViewAgentResult) {
                   node.onViewAgentResult?.(node, agent)
                   return
                 }

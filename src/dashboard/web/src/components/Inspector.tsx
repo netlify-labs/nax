@@ -1,5 +1,5 @@
-import { ActionIcon, Badge, Box, Code, Divider, Group, ScrollArea, Stack, Table, Text, ThemeIcon, Title } from '@mantine/core'
-import { GitBranch, Info, Layers, Route } from 'lucide-react'
+import { Badge, Box, Code, Divider, Group, ScrollArea, Stack, Table, Text, ThemeIcon, Title } from '@mantine/core'
+import { GitBranch, Layers, Route } from 'lucide-react'
 import { statusLabel } from '../run-format'
 import type { Workflow, WorkflowGraph, WorkflowGraphNodeData } from '../types'
 
@@ -7,7 +7,6 @@ type Props = {
   workflow: Workflow | null
   selectedNode: WorkflowGraphNodeData | null
   graph: WorkflowGraph | null
-  onViewPrompt: (node: WorkflowGraphNodeData) => void
 }
 
 function Field({ label, value }: { label: string; value: string | number }) {
@@ -19,9 +18,7 @@ function Field({ label, value }: { label: string; value: string | number }) {
   )
 }
 
-export function Inspector({ workflow, selectedNode, graph, onViewPrompt }: Props) {
-  const promptMarkdown = selectedNode?.promptMarkdown || ''
-
+export function Inspector({ workflow, selectedNode, graph }: Props) {
   return (
     <Box className="inspector" aria-label="Inspector">
       <Group className="panel-header" justify="space-between" wrap="nowrap">
@@ -36,23 +33,7 @@ export function Inspector({ workflow, selectedNode, graph, onViewPrompt }: Props
               <ThemeIcon variant="light" color="blue" size="md"><Route size={18} /></ThemeIcon>
               <Title order={3} size="md">{selectedNode.title}</Title>
             </Group>
-            <Group gap="xs" align="flex-start" wrap="nowrap">
-              {selectedNode.description ? <Text size="sm" c="dimmed">{selectedNode.description}</Text> : null}
-              {promptMarkdown ? (
-                <ActionIcon
-                  variant="subtle"
-                  color="gray"
-                  size="sm"
-                  aria-label={`View ${selectedNode.title} prompt`}
-                  title="View prompt"
-                  onClick={() => {
-                    if (selectedNode) onViewPrompt(selectedNode)
-                  }}
-                >
-                  <Info size={16} />
-                </ActionIcon>
-              ) : null}
-            </Group>
+            {selectedNode.description ? <Text size="sm" c="dimmed">{selectedNode.description}</Text> : null}
             <Table variant="vertical" layout="fixed" withRowBorders={false}>
               <Table.Tbody>
                 <Field label="Action" value={selectedNode.action} />

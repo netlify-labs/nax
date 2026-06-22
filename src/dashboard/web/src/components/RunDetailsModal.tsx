@@ -13,7 +13,7 @@ import { MarkdownRenderer } from './MarkdownRenderer'
 import { RunFollowupContent } from './RunFollowupModal'
 
 export type RunDetailsLiveContext = {
-  selector: RunDetailsSelector
+  selector: RunDetailsSelector & { agent: string }
   stepTitle: string
   status: string
   runnerId?: string
@@ -55,7 +55,7 @@ type StepItem = {
   section?: RunDetailsSection
 }
 
-type TimelineEntry = {
+export type TimelineEntry = {
   id: string
   kind: 'summary' | 'step' | 'session' | 'final'
   title: string
@@ -253,7 +253,7 @@ function stepDescription(step: StepItem, sessions: RunDetailsSection[]): string 
 }
 
 function liveEntryId(context: RunDetailsLiveContext): string {
-  return `live:${context.selector.stepId}:${context.selector.agent}`
+  return `live:${context.selector.stepId}:${context.selector.agent || ''}`
 }
 
 function agentEntryId(stepId: string, agent: string): string {
@@ -397,6 +397,11 @@ function resolveInitialTimelineId(
   liveContext?: RunDetailsLiveContext | null,
 ): { id: string; warning: string } {
   if (!selector) return { id: 'summary', warning: '' }
+  if (!selector.agent) {
+    const id = `step:${selector.stepId}`
+    if (entries.some((entry) => entry.id === id)) return { id, warning: '' }
+    return { id: 'summary', warning: 'No saved step details were found for this workflow step.' }
+  }
   if (details) {
     const result = selectRunDetailsSection(details.sections, selector)
     if (result.status === 'selected') return { id: `session:${result.section.id}`, warning: '' }
@@ -651,7 +656,8 @@ export function RunDetailsModal({
       resolvedSelectionKeyRef.current = ''
       return
     }
-    const resolutionKey = `${detailsRunId}|${selectorIdentity}`
+    const timelineEntryKey = timelineEntries.map((entry) => entry.id).join('|')
+    const resolutionKey = `${detailsRunId}|${selectorIdentity}|${timelineEntryKey}`
     const activeExists = timelineEntries.some((entry) => entry.id === activeTimelineId)
     if (resolvedSelectionKeyRef.current === resolutionKey && activeExists) return
     const resolved = resolveInitialTimelineId(details, timelineEntries, initialSelector, liveContext)
@@ -663,7 +669,7 @@ export function RunDetailsModal({
   const title = detailWorkflowName
     ? `Workflow results for "${detailWorkflowName}"`
     : liveContext
-      ? `${agentLabel(liveContext.selector.agent)} result · ${liveContext.stepTitle}`
+      ? `${agentLabel(liveContext.selector.agent || '')} result · ${liveContext.stepTitle}`
       : 'Workflow results'
   const modalTitle = detailsView === 'followup' ? 'Send to next agent' : title
 
@@ -751,11 +757,12 @@ export function RunDetailsModal({
   )
 }
 
-function RunDetailsTimeline({
+export function RunDetailsTimeline({
   activeTimelineId,
   parentTimelineEntries,
   timelineEntries,
   timelineProgressIndex,
+  timelineColor,
   onSelect,
   canRunFollowup,
   onRunFollowup,
@@ -764,6 +771,7 @@ function RunDetailsTimeline({
   parentTimelineEntries: TimelineEntry[]
   timelineEntries: TimelineEntry[]
   timelineProgressIndex: number
+  timelineColor?: string
   onSelect: (id: string) => void
   canRunFollowup: boolean
   onRunFollowup: () => void
@@ -784,7 +792,7 @@ function RunDetailsTimeline({
   return (
     <Box className="run-details-timeline" component="nav" aria-label="Workflow timeline">
       <Text className="run-details-timeline-heading" size="xs" fw={800} c="dimmed">Timeline</Text>
-      <Timeline active={timelineProgressIndex} bulletSize={18} lineWidth={2}>
+      <Timeline active={timelineProgressIndex} bulletSize={18} lineWidth={2} color={timelineColor}>
         {parentTimelineEntries.map((entry) => {
           const childEntries = entry.kind === 'step'
             ? timelineEntries.filter((child) => (
@@ -797,7 +805,7 @@ function RunDetailsTimeline({
             <Timeline.Item
               key={entry.id}
               className="run-details-timeline-item"
-              color={statusColor(entry.status)}
+              color={timelineColor || statusColor(entry.status)}
               bullet={timelineBullet(entry)}
               title={(
                 <Paper className="run-details-timeline-card" withBorder>
@@ -1012,7 +1020,7 @@ function RunDetailsContent({
   )
 }
 
-function MarkdownTableOfContents({
+export function MarkdownTableOfContents({
   entry,
   scrollRootRef,
 }: {
@@ -1375,7 +1383,7 @@ function MetadataRow({
   )
 }
 
-function ArtifactActions({
+export function ArtifactActions({
   filePath = '',
   sessionUrl,
   onCancel,

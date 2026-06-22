@@ -7,7 +7,6 @@ import {
   Box,
   Burger,
   Button,
-  Code,
   CopyButton,
   Group,
   Modal,
@@ -27,12 +26,12 @@ import { ReactFlowProvider } from '@xyflow/react'
 import { cancelWorkflowRun, getHealth, getRunGraph, getWorkflowGraph, listRuns, listWorkflows, runEventsStream, runWorkflowDryRun, startWorkflowRun, type RunEventStream } from './api'
 import { WorkflowOutputTabs } from './components/DryRunPanel'
 import { Inspector } from './components/Inspector'
-import { MarkdownRenderer } from './components/MarkdownRenderer'
 import { RecentRuns } from './components/RecentRuns'
 import { RunDetailsModal, type RunDetailsLiveContext } from './components/RunDetailsModal'
 import { WorkflowCanvas } from './components/WorkflowCanvas'
 import { WorkflowControls } from './components/WorkflowControls'
 import { WorkflowList } from './components/WorkflowList'
+import { WorkflowPromptModal } from './components/WorkflowPromptModal'
 import { initialLiveRunState, liveRunReducer, visualStatus } from './liveRunReducer'
 import { projectWorkflowGraph, workflowGraphNodeByStepId } from './run-projection'
 import { recordValue, runId } from './run-format'
@@ -81,17 +80,6 @@ function setWorkflowUrl(id: string) {
 
 function repoNameFromPath(projectRoot: string): string {
   return projectRoot.split('/').filter(Boolean).pop() || projectRoot || 'Repository'
-}
-
-function shortHomePath(value: string, projectRoot = ''): string {
-  if (!value) return ''
-  if (projectRoot.startsWith('/Users/david/dotfiles') && value.startsWith('/Users/david/dotfiles')) {
-    return `~/dotfiles${value.slice('/Users/david/dotfiles'.length)}`
-  }
-  if (projectRoot.startsWith('/Users/david') && value.startsWith('/Users/david')) {
-    return `~${value.slice('/Users/david'.length)}`
-  }
-  return value
 }
 
 function runValue(run: Record<string, unknown> | undefined, key: string): string {
@@ -289,7 +277,7 @@ export default function App() {
   const [refreshKey, setRefreshKey] = useState(0)
   const [contextModalAction, setContextModalAction] = useState<ContextModalAction>('')
   const [contextDraft, setContextDraft] = useState('')
-  const [promptNode, setPromptNode] = useState<WorkflowGraphNodeData | null>(null)
+  const [promptModalStepId, setPromptModalStepId] = useState<string | null>(null)
   const [detailsModalContext, setDetailsModalContext] = useState<DetailsModalContext | null>(null)
   const dryRunSimulationTimers = useRef<number[]>([])
   const runEventsRef = useRef<RunEventStream | null>(null)
@@ -1022,13 +1010,14 @@ export default function App() {
                   }}
                   onRun={() => openContextModal('run')}
                   onCancelRun={cancelActiveRun}
+                  onViewPrompts={() => setPromptModalStepId(selectedNode?.stepId || '')}
                 />
                 <Box className="workflow-splitter-shell">
                   <Badge className="workflow-status-badge" variant="light" color={error ? 'red' : 'blue'}>
                     {error ? 'Error' : statusText}
                   </Badge>
                   <Splitter orientation="vertical" className="workflow-splitter" lineSize={1} handleColor="blue">
-                    <Splitter.Pane defaultSize={72} min={35}>
+                    <Splitter.Pane defaultSize={95} min={35}>
                       <WorkflowCanvas
                         graph={projectedGraph}
                         loading={loadingGraph}
@@ -1040,7 +1029,7 @@ export default function App() {
                         onViewAgentResult={openAgentResult}
                       />
                     </Splitter.Pane>
-                    <Splitter.Pane defaultSize={28} min={18}>
+                    <Splitter.Pane defaultSize={5} min={5}>
                       <WorkflowOutputTabs
                         dryRun={{ result: dryRunResult, running: dryRunRunning, error: dryRunError }}
                         run={{ result: activeRunResult, running: runRunning, error: runError, target: activeRun?.target || null }}
@@ -1059,7 +1048,6 @@ export default function App() {
                   workflow={selectedWorkflow}
                   selectedNode={selectedNode}
                   graph={graph}
-                  onViewPrompt={setPromptNode}
                 />
                 <RecentRuns
                   runs={runs}
@@ -1166,25 +1154,14 @@ export default function App() {
           />
         </Stack>
       </Modal>
-      <Modal
-        opened={Boolean(promptNode)}
-        onClose={() => setPromptNode(null)}
-        title={promptNode ? `${promptNode.promptTitle || promptNode.title} prompt` : 'Prompt'}
-        size="48rem"
-        centered
-        scrollAreaComponent={ScrollArea.Autosize}
-      >
-        <Stack gap="sm">
-          {promptNode?.promptPath ? <Code block className="path-code">{shortHomePath(promptNode.promptPath, projectRoot)}</Code> : null}
-          <Box className="prompt-markdown prompt-preview-markdown">
-            {promptNode?.promptMarkdown ? (
-              <MarkdownRenderer fallback="Rendering prompt...">{promptNode.promptMarkdown}</MarkdownRenderer>
-            ) : (
-              <Text c="dimmed">No prompt markdown available.</Text>
-            )}
-          </Box>
-        </Stack>
-      </Modal>
+      <WorkflowPromptModal
+        opened={promptModalStepId !== null}
+        onClose={() => setPromptModalStepId(null)}
+        workflow={selectedWorkflow}
+        graph={graph}
+        initialStepId={promptModalStepId || ''}
+        projectRoot={projectRoot}
+      />
       <RunDetailsModal
         opened={Boolean(detailsModalContext)}
         onClose={() => setDetailsModalContext(null)}

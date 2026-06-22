@@ -163,6 +163,19 @@ body {
   min-width: 0;
 }
 
+.run-control-title {
+  min-width: 0;
+  color: var(--mantine-color-text);
+}
+
+.run-control-title-row {
+  min-width: 0;
+}
+
+.run-control-title-row .mantine-ActionIcon-root {
+  flex: 0 0 auto;
+}
+
 .run-actions {
   grid-column: -2 / -1;
   align-self: center;
@@ -558,6 +571,14 @@ body {
   height: 540px;
   user-select: none;
   pointer-events: none;
+}
+
+.workflow-prompt-markdown {
+  scroll-padding-bottom: 0;
+}
+
+.workflow-prompt-markdown::after {
+  content: none;
 }
 
 .run-details-markdown-shell {
@@ -1148,7 +1169,7 @@ body {
 
 .node-header-top {
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   justify-content: space-between;
   gap: 12px;
   min-width: 0;
@@ -1159,8 +1180,9 @@ body {
 }
 
 .node-kicker {
+  flex: 0 0 auto;
   color: var(--mantine-color-dimmed);
-  font-size: 11px;
+  font-size: 13px;
   font-weight: 700;
   text-transform: uppercase;
 }
@@ -1169,31 +1191,8 @@ body {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-}
-
-.node-info-button {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 16px;
-  height: 16px;
-  appearance: none;
-  border: 0;
-  padding: 0;
-  background: transparent;
-  color: var(--mantine-color-dimmed);
-  cursor: pointer;
-  line-height: 0;
-}
-
-.node-info-button:hover {
-  color: var(--mantine-primary-color-4);
-}
-
-.node-info-button:focus-visible {
-  border-radius: 999px;
-  outline: 2px solid var(--mantine-primary-color-5);
-  outline-offset: 2px;
+  min-width: 0;
+  padding: 2px 0;
 }
 
 .node-header h3 {
@@ -1213,19 +1212,38 @@ body {
   white-space: nowrap;
 }
 
-.action-badge {
+.node-status-line {
   flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+  max-width: 58%;
   padding: 2px 0;
   color: var(--mantine-color-text);
   font-size: 13px;
   font-weight: 700;
+  white-space: nowrap;
 }
 
-.action-badge.follow-up {
+.action-badge,
+.node-progress-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.node-progress-label {
+  color: var(--mantine-color-dimmed);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.node-status-line.follow-up {
   color: var(--mantine-color-text);
 }
 
-.action-badge.human-review {
+.node-status-line.human-review {
   color: light-dark(var(--mantine-color-yellow-8), var(--mantine-color-yellow-2));
 }
 

@@ -1,5 +1,5 @@
-import { Button, Group, Paper, Select } from '@mantine/core'
-import { Play, Rocket, RotateCcw, Square } from 'lucide-react'
+import { ActionIcon, Button, Group, Paper, Select, Text, Tooltip } from '@mantine/core'
+import { Info, Play, Rocket, RotateCcw, Square } from 'lucide-react'
 import type { DryRunOptions, Workflow } from '../types'
 
 type Props = {
@@ -12,11 +12,13 @@ type Props = {
   onDryRun: () => void
   onRun: () => void
   onCancelRun: () => void
+  onViewPrompts: () => void
 }
 
+const SHOW_START_CONTROLS = false
 const SHOW_TRANSPORT_SELECT = false
 
-export function WorkflowControls({ workflow, options, running, realRunning, cancelling, onChange, onDryRun, onRun, onCancelRun }: Props) {
+export function WorkflowControls({ workflow, options, running, realRunning, cancelling, onChange, onDryRun, onRun, onCancelRun, onViewPrompts }: Props) {
   const steps = (workflow?.steps || []).map((step) => ({ value: step.id, label: step.title }))
   const startMode = options.fromStep ? 'resume' : 'beginning'
   const selectedStep = options.fromStep || null
@@ -34,19 +36,39 @@ export function WorkflowControls({ workflow, options, running, realRunning, canc
 
   return (
     <Paper className="run-controls" component="section" aria-label="Workflow controls" radius={0} withBorder>
-      <Select
-        classNames={{ root: 'run-control-select', label: 'run-control-label', wrapper: 'run-control-input' }}
-        label="Run mode"
-        value={startMode}
-        onChange={(value) => updateStartMode(value || 'beginning')}
-        data={[
-          { value: 'beginning', label: 'Start from beginning' },
-          { value: 'resume', label: 'Choose step to start/resume from' },
-        ]}
-        allowDeselect={false}
-        size="xs"
-      />
-      {startMode === 'resume' ? (
+      <Group className="run-control-title-row" gap={6} wrap="nowrap">
+        <Text className="run-control-title" size="sm" fw={800} truncate>
+          {workflow?.title || 'No workflow selected'}
+        </Text>
+        {workflow ? (
+          <Tooltip label="View workflow prompts">
+            <ActionIcon
+              aria-label={`View ${workflow.title} prompts`}
+              color="gray"
+              onClick={onViewPrompts}
+              size="sm"
+              variant="subtle"
+            >
+              <Info size={16} />
+            </ActionIcon>
+          </Tooltip>
+        ) : null}
+      </Group>
+      {SHOW_START_CONTROLS ? (
+        <Select
+          classNames={{ root: 'run-control-select', label: 'run-control-label', wrapper: 'run-control-input' }}
+          label="Run mode"
+          value={startMode}
+          onChange={(value) => updateStartMode(value || 'beginning')}
+          data={[
+            { value: 'beginning', label: 'Start from beginning' },
+            { value: 'resume', label: 'Choose step to start/resume from' },
+          ]}
+          allowDeselect={false}
+          size="xs"
+        />
+      ) : null}
+      {SHOW_START_CONTROLS && startMode === 'resume' ? (
         <Select
           classNames={{ root: 'run-control-select', label: 'run-control-label', wrapper: 'run-control-input' }}
           label="Resume from"

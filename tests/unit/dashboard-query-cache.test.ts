@@ -71,9 +71,10 @@ test('dashboard query keys keep stable hierarchy', () => {
   assert.deepEqual(dashboardQueryKeys.health(), ['dashboard', 'health'])
   assert.deepEqual(dashboardQueryKeys.workflows(), ['dashboard', 'workflows'])
   assert.deepEqual(dashboardQueryKeys.workflowGraph('review'), ['dashboard', 'workflows', 'review', 'graph'])
-  assert.deepEqual(dashboardQueryKeys.runs(), ['dashboard', 'runs'])
-  assert.deepEqual(dashboardQueryKeys.runGraph('run-1'), ['dashboard', 'runs', 'run-1', 'graph'])
-  assert.deepEqual(dashboardQueryKeys.runDetails('run-1'), ['dashboard', 'runs', 'run-1', 'details'])
+  assert.deepEqual(dashboardQueryKeys.runs(), ['dashboard', 'runs', 'list'])
+  assert.deepEqual(dashboardQueryKeys.run('run-1'), ['dashboard', 'run', 'run-1'])
+  assert.deepEqual(dashboardQueryKeys.runGraph('run-1'), ['dashboard', 'run', 'run-1', 'graph'])
+  assert.deepEqual(dashboardQueryKeys.runDetails('run-1'), ['dashboard', 'run', 'run-1', 'details'])
 })
 
 test('dashboard route parser separates workflow configuration and run inspection destinations', () => {
@@ -135,6 +136,36 @@ test('cache helpers update run list, individual run, and run graph entries', () 
   const response: RunGraphResponse = { run: nextRun, workflow, graph: graphWithRunnerStatus('completed') }
   upsertRunGraphInDashboardCache(queryClient, response)
   assert.equal(queryClient.getQueryData<RunGraphResponse>(dashboardQueryKeys.runGraph('run-1'))?.run.status, 'completed')
+})
+
+test('run list invalidation does not fuzzily match run entity entries', async () => {
+  const queryClient = new QueryClient()
+  queryClient.setQueryData(dashboardQueryKeys.runs(), [run('run-1')])
+  queryClient.setQueryData(dashboardQueryKeys.run('run-1'), run('run-1'))
+  queryClient.setQueryData(dashboardQueryKeys.runGraph('run-1'), {
+    run: run('run-1'),
+    workflow: {
+      id: 'review',
+      title: 'Review',
+      description: '',
+      source: 'test',
+      sourceLabel: 'test',
+      sourceDir: '',
+      sourcePriority: null,
+      dir: '',
+      file: '',
+      defaults: {},
+      options: {},
+      steps: [],
+    },
+    graph: graphWithRunnerStatus('running'),
+  } satisfies RunGraphResponse)
+
+  await queryClient.invalidateQueries({ queryKey: dashboardQueryKeys.runs() })
+
+  assert.equal(queryClient.getQueryState(dashboardQueryKeys.runs())?.isInvalidated, true)
+  assert.equal(queryClient.getQueryState(dashboardQueryKeys.run('run-1'))?.isInvalidated, false)
+  assert.equal(queryClient.getQueryState(dashboardQueryKeys.runGraph('run-1'))?.isInvalidated, false)
 })
 
 test('active remote graph detection only tracks active runs with remote identifiers', () => {

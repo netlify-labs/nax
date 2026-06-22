@@ -4,6 +4,26 @@ type DashboardWindow = Window & {
   NAX_DASHBOARD_API_BASE?: string
 }
 
+type DashboardApiErrorPayload = {
+  statusCode?: number
+  code?: string
+  message?: string
+}
+
+export class DashboardApiError extends Error {
+  responseStatus: number
+  statusCode: number
+  code: string
+
+  constructor(message: string, options: { responseStatus: number; statusCode?: number; code?: string }) {
+    super(message)
+    this.name = 'DashboardApiError'
+    this.responseStatus = options.responseStatus
+    this.statusCode = options.statusCode || options.responseStatus
+    this.code = options.code || 'request_error'
+  }
+}
+
 function trimTrailingSlash(value: string): string {
   return value.replace(/\/+$/, '')
 }
@@ -48,7 +68,20 @@ async function bootstrapSession(): Promise<void> {
   }).catch(() => null)
 }
 
+function dashboardApiErrorPayload(payload: unknown): DashboardApiErrorPayload {
+  if (!payload || typeof payload !== 'object') return {}
+  const error = (payload as { error?: unknown }).error
+  if (!error || typeof error !== 'object') return {}
+  const record = error as Record<string, unknown>
+  return {
+    statusCode: typeof record.statusCode === 'number' ? record.statusCode : undefined,
+    code: typeof record.code === 'string' ? record.code : undefined,
+    message: typeof record.message === 'string' ? record.message : undefined,
+  }
+}
+
 async function fetchJson<T>(path: string, init: RequestInit = {}, retryOnUnauthorized = true): Promise<T> {
+  const explicitSessionToken = sessionToken()
   const headers = new Headers(init.headers)
   if (!headers.has('accept')) headers.set('accept', 'application/json')
   for (const [key, value] of Object.entries(authHeaders())) {
@@ -64,8 +97,18 @@ async function fetchJson<T>(path: string, init: RequestInit = {}, retryOnUnautho
     return fetchJson<T>(path, init, false)
   }
   if (!response.ok) {
-    const message = payload?.error?.message || `Request failed with ${response.status}`
-    throw new Error(message)
+    const error = dashboardApiErrorPayload(payload)
+    const expiredTokenMessage = response.status === 401 && explicitSessionToken
+      ? 'Dashboard token expired or invalid. Reopen the dashboard from the CLI.'
+      : ''
+    throw new DashboardApiError(
+      expiredTokenMessage || error.message || `Request failed with ${response.status}`,
+      {
+        responseStatus: response.status,
+        statusCode: error.statusCode,
+        code: error.code,
+      },
+    )
   }
   stripSessionTokenFromUrl()
   return payload as T

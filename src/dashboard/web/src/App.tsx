@@ -43,7 +43,7 @@ import {
   routeWorkflowId,
   routeWorkflowStepId,
 } from './dashboard-routes'
-import { initialLiveRunState, liveRunReducer, visualStatus } from './liveRunReducer'
+import { appendBoundedOutput, initialLiveRunState, liveRunReducer, visualStatus } from './liveRunReducer'
 import { dashboardQueryKeys } from './query-keys'
 import { invalidateDashboardLists, invalidateRunViews, sameRun, upsertRunInDashboardCache } from './queries/dashboard-cache'
 import { useCancelWorkflowRunMutation, useDryRunWorkflowMutation, useStartWorkflowRunMutation } from './queries/dashboard-mutations'
@@ -636,7 +636,7 @@ export default function App() {
         if (Number.isFinite(cursor) && cursor > eventCursor) eventCursor = cursor
         dispatchLiveRun({ type: 'event', event: data })
         if (typeof data.text === 'string' && (data.type === 'stdout' || data.type === 'stderr')) {
-          setRunOutput((value) => `${value}${data.text}`)
+          setRunOutput((value) => appendBoundedOutput(value, data.text || ''))
         }
         if (data.type === 'workflow_started' && data.runId) {
           navigateRun(data.runId, true)

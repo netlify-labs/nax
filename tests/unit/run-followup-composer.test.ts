@@ -22,6 +22,7 @@ function detailsFixture(): RunDetails {
     summaryMarkdown: '# Summary',
     finalMarkdown: '# Codex result',
     finalTitle: 'Codex result',
+    workflowSteps: [],
     sections: [],
     followupTargets: [
       {

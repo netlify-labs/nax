@@ -15,7 +15,8 @@
   },
   "include": [
     "src/**/*.js",
-    "tests/**/*.js"
+    "tests/**/*.js",
+    "tests/**/*.ts"
   ],
   "exclude": [
     "src/dashboard/web/dist",

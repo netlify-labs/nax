@@ -11,6 +11,21 @@ const {
   targetBranch,
 } = require('../../src/target')
 
+/** @type {Set<string>} */
+const tempRepos = new Set()
+
+test.afterEach(() => {
+  for (const repo of tempRepos) {
+    fs.rmSync(repo, { recursive: true, force: true })
+    tempRepos.delete(repo)
+  }
+})
+
+/**
+ * @param {string} cwd
+ * @param {string[]} args
+ * @returns {string}
+ */
 function git(cwd, args) {
   const result = spawnSync('git', args, { cwd, encoding: 'utf8' })
   if (result.status !== 0) {
@@ -19,15 +34,34 @@ function git(cwd, args) {
   return result.stdout.trim()
 }
 
+/**
+ * @param {string} cwd
+ * @returns {string}
+ */
+function createInitialCommit(cwd) {
+  const emptyTree = git(cwd, ['hash-object', '-t', 'tree', '/dev/null'])
+  const commit = git(cwd, ['commit-tree', emptyTree, '-m', 'initial'])
+  git(cwd, ['update-ref', 'refs/heads/main', commit])
+  return commit
+}
+
+/**
+ * @returns {string}
+ */
 function makeRepo() {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'nax-target-'))
+  tempRepos.add(tmp)
   git(tmp, ['init', '-b', 'main'])
   git(tmp, ['config', 'user.email', 'test@example.com'])
   git(tmp, ['config', 'user.name', 'Test User'])
-  git(tmp, ['commit', '--allow-empty', '-m', 'initial'])
+  createInitialCommit(tmp)
   return tmp
 }
 
+/**
+ * @param {Record<string, string>} branches
+ * @returns {(input: { repoRoot?: string, branch?: string }) => { sha: string, remote: string, branch: string, ref: string }}
+ */
 function remoteResolverFor(branches) {
   return ({ branch }) => {
     const sha = branches[branch]

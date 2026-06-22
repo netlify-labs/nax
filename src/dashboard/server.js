@@ -2095,7 +2095,21 @@ function createRequestHandler(options = {}) {
           }
           const staticFile = staticFileForPath(distDir, pathname)
           if (staticFile) {
-            const body = fs.readFileSync(staticFile)
+            let body
+            try {
+              body = fs.readFileSync(staticFile)
+            } catch (error) {
+              const code = error && typeof error === 'object' && 'code' in error ? String(error.code) : ''
+              if (code === 'ENOENT') {
+                notFound(res, 'Static asset not found.')
+                return
+              }
+              if (code === 'EACCES' || code === 'EPERM') {
+                jsonResponse(res, 403, errorPayload(403, 'forbidden', 'Static asset is not readable.'))
+                return
+              }
+              throw error
+            }
             res.writeHead(200, {
               ...securityHeaders(),
               ...sessionBootstrapHeadersForRequest(req, requestUrl, token),

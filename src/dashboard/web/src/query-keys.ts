@@ -3,8 +3,8 @@ export const dashboardQueryKeys = {
   health: () => [...dashboardQueryKeys.all, 'health'] as const,
   workflows: () => [...dashboardQueryKeys.all, 'workflows'] as const,
   workflowGraph: (workflowId: string) => [...dashboardQueryKeys.workflows(), workflowId, 'graph'] as const,
-  runs: () => [...dashboardQueryKeys.all, 'runs'] as const,
-  run: (runId: string) => [...dashboardQueryKeys.runs(), runId] as const,
+  runs: () => [...dashboardQueryKeys.all, 'runs', 'list'] as const,
+  run: (runId: string) => [...dashboardQueryKeys.all, 'run', runId] as const,
   runGraph: (runId: string) => [...dashboardQueryKeys.run(runId), 'graph'] as const,
   runDetails: (runId: string) => [...dashboardQueryKeys.run(runId), 'details'] as const,
 }

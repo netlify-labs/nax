@@ -1,6 +1,8 @@
 import type { RunnerEvent, DashboardRun } from './types'
 import { statusKey } from './status-model'
 
+export const MAX_LIVE_RUN_OUTPUT_CHARS = 100_000
+
 export type LiveVisualStatus =
   | 'running'
   | 'completed'
@@ -63,6 +65,11 @@ export function visualStatus(status = ''): LiveVisualStatus {
   return statusKey(status) as LiveVisualStatus
 }
 
+export function appendBoundedOutput(current: string, text: string, maxChars = MAX_LIVE_RUN_OUTPUT_CHARS): string {
+  const next = `${current}${text}`
+  return next.length > maxChars ? next.slice(-maxChars) : next
+}
+
 function applyEvent(state: LiveRunState, event: RunnerEvent): LiveRunState {
   const key = eventDedupeKey(event)
   if (key && state.seen[key]) return state
@@ -76,7 +83,7 @@ function applyEvent(state: LiveRunState, event: RunnerEvent): LiveRunState {
   if (event.type === 'stdout' || event.type === 'stderr') {
     return {
       ...withRawEvents,
-      output: `${withRawEvents.output}${typeof event.text === 'string' ? event.text : ''}`,
+      output: appendBoundedOutput(withRawEvents.output, typeof event.text === 'string' ? event.text : ''),
     }
   }
 

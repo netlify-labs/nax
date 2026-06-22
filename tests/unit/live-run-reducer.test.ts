@@ -1,7 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 
-import { initialLiveRunState, liveRunReducer, visualStatus } from '../../src/dashboard/web/src/liveRunReducer'
+import { MAX_LIVE_RUN_OUTPUT_CHARS, appendBoundedOutput, initialLiveRunState, liveRunReducer, visualStatus } from '../../src/dashboard/web/src/liveRunReducer'
 
 test('live run reducer maps ordered workflow, step, agent, and output events', () => {
   let state = initialLiveRunState({ id: 'tmp-run', flowId: 'review', status: 'running' })
@@ -22,6 +22,15 @@ test('live run reducer dedupes replayed structured events by eventId', () => {
   state = liveRunReducer(state, { type: 'event', event })
   state = liveRunReducer(state, { type: 'event', event: { ...event, status: 'failed' } })
   assert.equal(state.agentStatuses.review.codex, 'completed')
+})
+
+test('live run reducer bounds retained output', () => {
+  const oversized = 'x'.repeat(MAX_LIVE_RUN_OUTPUT_CHARS + 10)
+  let state = initialLiveRunState()
+  state = liveRunReducer(state, { type: 'event', event: { type: 'stdout', id: 1, text: oversized } })
+
+  assert.equal(state.output.length, MAX_LIVE_RUN_OUTPUT_CHARS)
+  assert.equal(appendBoundedOutput('abc', 'def', 5), 'bcdef')
 })
 
 test('live run reducer ignores older durable replay statuses after newer live status', () => {

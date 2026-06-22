@@ -54,7 +54,8 @@ function parseCssColor(color) {
  */
 async function computedBackground(locator) {
   const color = await locator.evaluate((element) => {
-    const view = element.ownerDocument.defaultView
+    const target = /** @type {{ ownerDocument: { defaultView: { getComputedStyle: (element: unknown) => { backgroundColor: string } } | null } }} */ (element)
+    const view = target.ownerDocument.defaultView
     return view ? view.getComputedStyle(element).backgroundColor : ''
   })
   return parseCssColor(String(color))
@@ -75,7 +76,8 @@ function expectVisibleTeal(color) {
  */
 async function computedTextColor(locator) {
   const color = await locator.evaluate((element) => {
-    const view = element.ownerDocument.defaultView
+    const target = /** @type {{ ownerDocument: { defaultView: { getComputedStyle: (element: unknown) => { color: string } } | null } }} */ (element)
+    const view = target.ownerDocument.defaultView
     return view ? view.getComputedStyle(element).color : ''
   })
   return parseCssColor(String(color))

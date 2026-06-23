@@ -58,11 +58,13 @@ const {
 } = require('../../src/workflows/engine/resume')
 const {
   archiveEligibleCompletedLocalRuns,
+  completeLocalStep,
   formatSubmittedLocalRunBoxes,
   futureFollowUpReferencesStep,
   localAgentRunUrl,
   shouldArchiveCompletedStep,
 } = require('../../src/workflows/engine/local-executor')
+const { WAIT_FOR_AGENT_RESULTS } = require('../../src/workflows/catalog/flows')
 const { buildAndMaybeFallbackPlan } = require('../../src/workflows/engine/github-executor')
 const {
   applyContextFetchClassification,
@@ -1885,6 +1887,83 @@ test('localRetryCandidates finds failed local runs by step and agent', () => {
   assert.equal(candidates[0].step.id, 'react')
   assert.equal(candidates[0].run.runnerId, 'runner-2')
   assert.equal(candidates[0].runIndex, 0)
+})
+
+test('completeLocalStep saves workflow state as each local agent finishes', async () => {
+  const projectRoot = tmpRoot()
+  const runState = {
+    schemaVersion: 1,
+    runId: 'run-1',
+    flowId: 'review',
+    flowTitle: 'Review',
+    transport: 'netlify-api',
+    projectRoot,
+    status: 'running',
+    createdAt: '2026-06-23T00:00:00.000Z',
+    updatedAt: '2026-06-23T00:00:00.000Z',
+    dir: path.join(projectRoot, '.nax', 'workflows', 'run-1'),
+    steps: [],
+  }
+  const step = {
+    id: 'review',
+    title: 'Review',
+    waitFor: WAIT_FOR_AGENT_RESULTS,
+    agents: ['codex', 'gemini'],
+  }
+  const stepState = {
+    id: 'review',
+    title: 'Review',
+    status: 'running',
+    agents: ['codex', 'gemini'],
+    runs: [
+      { agent: 'codex', runnerId: 'runner-codex', status: 'submitted', resultText: '' },
+      { agent: 'gemini', runnerId: 'runner-gemini', status: 'submitted', resultText: '' },
+    ],
+  }
+  runState.steps.push(stepState)
+  const workflowPath = path.join(runState.dir, 'workflow.json')
+
+  await completeLocalStep({
+    runState,
+    stepState,
+    step,
+    options: { timeoutMinutes: 1 },
+    projectRoot,
+    netlify: { siteId: 'site-123', env: {} },
+    waitForAgentRuns: async ({ onTerminalRun }) => {
+      onTerminalRun({
+        agent: 'codex',
+        runnerId: 'runner-codex',
+        sessionId: 'session-codex',
+        status: 'completed',
+        resultText: 'codex done',
+      })
+      const savedAfterFirstCompletion = JSON.parse(fs.readFileSync(workflowPath, 'utf8'))
+      assert.deepEqual(
+        savedAfterFirstCompletion.steps[0].runs.map((run) => [run.agent, run.status, run.sessionId || '']),
+        [
+          ['codex', 'completed', 'session-codex'],
+          ['gemini', 'submitted', ''],
+        ],
+      )
+
+      onTerminalRun({
+        agent: 'gemini',
+        runnerId: 'runner-gemini',
+        sessionId: 'session-gemini',
+        status: 'completed',
+        resultText: 'gemini done',
+      })
+      return stepState.runs
+    },
+  })
+
+  const saved = JSON.parse(fs.readFileSync(workflowPath, 'utf8'))
+  assert.equal(saved.steps[0].status, 'completed')
+  assert.deepEqual(saved.steps[0].runs.map((run) => [run.agent, run.status]), [
+    ['codex', 'completed'],
+    ['gemini', 'completed'],
+  ])
 })
 
 test('firstRunnableStepIndex finds incomplete saved local step', () => {

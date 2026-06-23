@@ -137,6 +137,7 @@ const {
  *   netlify?: LocalNetlifyContext,
  *   netlifyFilter?: import('../../types').JsonMap | string,
  *   initialDelayMs?: number,
+ *   waitForAgentRuns?: typeof waitForLocalAgentRuns,
  * }} CompleteLocalStepInput
  *
  * Input for rebuilding a smaller prompt when retrying a local runner.
@@ -545,7 +546,7 @@ function reportTerminalLocalRun(reporter, run, projectRoot, options = {}) {
 }
 
 /** @param {CompleteLocalStepInput} param0 @returns {Promise<import('../../types').WorkflowStep>} */
-async function completeLocalStep({ runState, stepState, step, options, projectRoot, netlify, netlifyFilter, initialDelayMs, runtimeEvents }) {
+async function completeLocalStep({ runState, stepState, step, options, projectRoot, netlify, netlifyFilter, initialDelayMs, runtimeEvents, waitForAgentRuns = waitForLocalAgentRuns }) {
   const timeoutMinutes = Number.parseInt(String(options.timeoutMinutes || '25'), 10)
   const resolvedNetlifyFilter = netlifyFilter !== undefined
     ? netlifyFilter
@@ -558,7 +559,7 @@ async function completeLocalStep({ runState, stepState, step, options, projectRo
     })
     let settled = false
     try {
-      const completedRuns = await waitForLocalAgentRuns({
+      const completedRuns = await waitForAgentRuns({
         projectRoot,
         runs: stepState.runs,
         siteId: netlify.siteId,
@@ -585,6 +586,7 @@ async function completeLocalStep({ runState, stepState, step, options, projectRo
           if (index !== -1) stepState.runs[index] = classifiedRun
           const artifactResult = persistRunArtifact(runState, stepState, classifiedRun)
           emitRunArtifact(runtimeEvents, runState, stepState, classifiedRun, artifactResult)
+          saveRunState(runState)
           reportTerminalLocalRun(reporter, classifiedRun, projectRoot)
           runtimeEvents?.agentStatus(classifiedRun.status || 'completed', classifiedRun, stepState, step, {
             terminal: true,
@@ -632,6 +634,7 @@ async function completeLocalStep({ runState, stepState, step, options, projectRo
   persistStepArtifacts(runState, stepState)
   emitStepArtifacts(runtimeEvents, runState, stepState)
   runtimeEvents?.stepStatus(stepState.status, stepState, step)
+  saveRunState(runState)
   return stepState
 }
 

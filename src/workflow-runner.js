@@ -56,7 +56,7 @@ function workflowCommand(input) {
 }
 
 function loadCliRunner() {
-  const cli = require('./cli/legacy-main')
+  const cli = require('./cli/main')
   const handleRun = cli?.handleRunEngine || cli?.handleRun
   if (typeof handleRun !== 'function') {
     throw new Error('Internal workflow runner is unavailable.')
@@ -65,7 +65,7 @@ function loadCliRunner() {
 }
 
 function loadCliResumeRunner() {
-  const cli = require('./cli/legacy-main')
+  const cli = require('./cli/main')
   const resumeRun = cli?.resumeRunById
   if (typeof resumeRun !== 'function') {
     throw new Error('Internal workflow resume runner is unavailable.')

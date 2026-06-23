@@ -81,7 +81,7 @@ const {
   runnableSteps,
   withSelectedAgents,
   withSelectedStepModels,
-} = require('../../src/cli/legacy-main')
+} = require('../../src/cli/main')
 const { printSuccessBox } = require('../../src/cli/run')
 const {
   contextWithOutputBudget,

@@ -3,7 +3,7 @@ const {
   handleRetry,
   handleRun,
   handleRunEngine,
-} = require('../cli/legacy-main')
+} = require('../cli/main')
 
 module.exports = {
   handleAdHocAgentRun,

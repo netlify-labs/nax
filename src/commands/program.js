@@ -1,4 +1,4 @@
-const { buildProgram } = require('../cli/legacy-main')
+const { buildProgram } = require('../cli/main')
 
 module.exports = {
   buildProgram,

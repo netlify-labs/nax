@@ -1,7 +1,7 @@
 const {
   findRunStateForRetry,
   handleRetry,
-} = require('./legacy-main')
+} = require('./main')
 
 module.exports = {
   findRunStateForRetry,

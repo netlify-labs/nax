@@ -6,7 +6,7 @@ const {
   printFlowPlan,
   printSuccessBox,
   prepareInteractiveFlowRun,
-} = require('./legacy-main')
+} = require('./main')
 
 module.exports = {
   handleAdHocAgentRun,

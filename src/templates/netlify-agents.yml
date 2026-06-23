@@ -37,22 +37,36 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  authorize:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    outputs:
+      allowed: ${{ steps.actor.outputs.allowed }}
+    steps:
+      - id: actor
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ACTOR: ${{ github.event.sender.login || github.actor }}
+        run: |
+          case "$ACTOR" in
+            github-actions[bot]|netlify-coding[bot]|netlify[bot])
+              echo "allowed=false" >> "$GITHUB_OUTPUT"
+              exit 0
+              ;;
+          esac
+
+          permission="$(gh api "repos/${GITHUB_REPOSITORY}/collaborators/${ACTOR}/permission" --jq '.permission' 2>/dev/null || true)"
+          case "$permission" in
+            admin|maintain|write) allowed=true ;;
+            *) allowed=false ;;
+          esac
+          echo "allowed=${allowed}" >> "$GITHUB_OUTPUT"
+
   netlify-agent:
-    if: >-
-      github.event_name == 'workflow_dispatch' ||
-      (
-        github.event.sender.login != 'github-actions[bot]' &&
-        github.event.sender.login != 'netlify-coding[bot]' &&
-        github.event.sender.login != 'netlify[bot]' &&
-        contains(
-          fromJSON('["OWNER","MEMBER","COLLABORATOR"]'),
-          github.event.pull_request.author_association ||
-          github.event.issue.author_association ||
-          github.event.comment.author_association ||
-          github.event.review.author_association ||
-          ''
-        )
-      )
+    needs: authorize
+    if: needs.authorize.outputs.allowed == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 25
     permissions:

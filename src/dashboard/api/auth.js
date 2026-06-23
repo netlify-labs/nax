@@ -15,13 +15,13 @@ function timingSafeTokenEqual(provided, expected) {
 
 /**
  * @param {import('http').IncomingMessage | { headers?: Record<string, unknown> }} req
- * @param {URL} requestUrl
+ * @param {URL} [_requestUrl]
  */
-function explicitTokenFromRequest(req, requestUrl) {
+function explicitTokenFromRequest(req, _requestUrl) {
   const raw = req.headers?.['x-nax-token']
   const headerToken = Array.isArray(raw) ? raw[0] : raw
   if (headerToken) return String(headerToken)
-  return requestUrl?.searchParams?.get('token') || ''
+  return ''
 }
 
 /**
@@ -44,32 +44,39 @@ function cookieValue(req, name) {
 
 /**
  * @param {import('http').IncomingMessage | { headers?: Record<string, unknown> }} req
- * @param {URL} requestUrl
+ * @param {URL} [_requestUrl]
  */
-function tokenFromRequest(req, requestUrl) {
-  const explicitToken = explicitTokenFromRequest(req, requestUrl)
+function tokenFromRequest(req, _requestUrl) {
+  const explicitToken = explicitTokenFromRequest(req)
   if (explicitToken) return explicitToken
   return cookieValue(req, SESSION_COOKIE_NAME)
 }
 
-/** @param {string} token */
-function sessionCookieHeader(token) {
-  return `${SESSION_COOKIE_NAME}=${encodeURIComponent(String(token || ''))}; Path=/; HttpOnly; SameSite=Strict`
+/** @param {string} token @param {{ secure?: boolean }} [options] */
+function sessionCookieHeader(token, options = {}) {
+  return [
+    `${SESSION_COOKIE_NAME}=${encodeURIComponent(String(token || ''))}`,
+    'Path=/',
+    'HttpOnly',
+    'SameSite=Strict',
+    ...(options.secure ? ['Secure'] : []),
+  ].join('; ')
 }
 
-/** @param {string} token */
-function sessionBootstrapHeaders(token) {
-  return { 'set-cookie': sessionCookieHeader(token) }
+/** @param {string} token @param {{ secure?: boolean }} [options] */
+function sessionBootstrapHeaders(token, options = {}) {
+  return { 'set-cookie': sessionCookieHeader(token, options) }
 }
 
 /**
  * @param {import('http').IncomingMessage | { headers?: Record<string, unknown> }} req
  * @param {URL} requestUrl
  * @param {string} token
+ * @param {{ secure?: boolean }} [options]
  */
-function sessionBootstrapHeadersForRequest(req, requestUrl, token) {
-  const explicitToken = explicitTokenFromRequest(req, requestUrl)
-  return timingSafeTokenEqual(explicitToken, token) ? sessionBootstrapHeaders(token) : {}
+function sessionBootstrapHeadersForRequest(req, requestUrl, token, options = {}) {
+  const explicitToken = explicitTokenFromRequest(req)
+  return timingSafeTokenEqual(explicitToken, token) ? sessionBootstrapHeaders(token, options) : {}
 }
 
 module.exports = {

@@ -82,6 +82,7 @@ const DEFAULT_NOTIFY_EVENTS = [
  *   fetch?: NotificationFetch,
  *   timeoutMs?: string | number,
  *   warn?: boolean,
+ *   allowPrivateNotifyUrl?: boolean,
  * }} NotificationDispatcherOptions
  *
  * Notification dispatcher used by workflow event contexts.
@@ -192,6 +193,52 @@ function webhookBody(url, payload) {
   }
 }
 
+/** @param {unknown} value */
+function truthy(value) {
+  return value === true || value === 'true' || value === '1'
+}
+
+/** @param {string} hostname */
+function isBlockedWebhookHostname(hostname) {
+  const host = hostname.toLowerCase()
+  if (host === 'localhost' || host.endsWith('.localhost')) return true
+  if (host === '::1' || host === '[::1]') return true
+  if (/^127\./.test(host)) return true
+  if (/^10\./.test(host)) return true
+  if (/^192\.168\./.test(host)) return true
+  const match = /^(\d+)\.(\d+)\.(\d+)\.(\d+)$/.exec(host)
+  if (!match) return false
+  const first = Number.parseInt(match[1], 10)
+  const second = Number.parseInt(match[2], 10)
+  if (first === 172 && second >= 16 && second <= 31) return true
+  if (first === 169 && second === 254) return true
+  if (first === 0) return true
+  return false
+}
+
+/**
+ * @param {string} rawUrl
+ * @param {{ allowPrivate?: boolean }} [options]
+ * @returns {{ ok: boolean, url: string, reason: string }}
+ */
+function validateNotifyUrl(rawUrl, options = {}) {
+  const text = String(rawUrl || '').trim()
+  if (!text) return { ok: true, url: '', reason: '' }
+  let parsed
+  try {
+    parsed = new URL(text)
+  } catch (_error) {
+    return { ok: false, url: '', reason: 'Notification webhook URL must be a valid URL.' }
+  }
+  if (!['https:', 'http:'].includes(parsed.protocol)) {
+    return { ok: false, url: '', reason: 'Notification webhook URL must use http or https.' }
+  }
+  if (!options.allowPrivate && isBlockedWebhookHostname(parsed.hostname)) {
+    return { ok: false, url: '', reason: 'Notification webhook URL must not target localhost, loopback, private, or link-local addresses.' }
+  }
+  return { ok: true, url: parsed.toString(), reason: '' }
+}
+
 /**
  * @param {string} url
  * @param {NotificationPayload} payload
@@ -226,11 +273,6 @@ function resolveNotifyUrl(options = {}, env = process.env) {
 /** @param {NotificationDispatcherOptions} [options] @returns {NotificationDispatcher} */
 function createNotificationDispatcher(options = {}) {
   const env = options.env || process.env
-  const url = resolveNotifyUrl(options, env)
-  const enabled = Boolean(url)
-  const events = new Set(normalizeEventList(options.notifyEvents || env.NAX_NOTIFY_EVENTS))
-  const fetchImpl = options.fetch || globalThis.fetch
-  const timeoutMs = Number.parseInt(String(options.timeoutMs || env.NAX_NOTIFY_TIMEOUT_MS || '5000'), 10)
   const pending = []
   const warnings = []
 
@@ -239,6 +281,15 @@ function createNotificationDispatcher(options = {}) {
     warnings.push(message)
     if (options.warn !== false) console.warn(message)
   }
+
+  const allowPrivate = Boolean(options.allowPrivateNotifyUrl) || truthy(env.NAX_NOTIFY_ALLOW_PRIVATE)
+  const validation = validateNotifyUrl(resolveNotifyUrl(options, env), { allowPrivate })
+  if (!validation.ok) warn(`nax notification disabled: ${validation.reason}`)
+  const url = validation.url
+  const enabled = Boolean(url)
+  const events = new Set(normalizeEventList(options.notifyEvents || env.NAX_NOTIFY_EVENTS))
+  const fetchImpl = options.fetch || globalThis.fetch
+  const timeoutMs = Number.parseInt(String(options.timeoutMs || env.NAX_NOTIFY_TIMEOUT_MS || '5000'), 10)
 
   /** @param {NotificationEvent} [event] */
   function notify(event = {}) {
@@ -287,5 +338,6 @@ module.exports = {
   normalizeEventList,
   postWebhook,
   resolveNotifyUrl,
+  validateNotifyUrl,
   webhookBody,
 }

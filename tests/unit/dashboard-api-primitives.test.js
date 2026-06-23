@@ -40,17 +40,22 @@ test('dashboard API security headers include restrictive defaults', () => {
   assert.match(headers['content-security-policy'], /frame-ancestors 'none'/)
 })
 
-test('dashboard API auth helpers support header, query, and cookie tokens', () => {
+test('dashboard API auth helpers support header and cookie tokens without query-string auth', () => {
   const token = 'secret-token'
   const queryReq = { headers: {} }
   const queryUrl = new URL(`http://127.0.0.1/?token=${encodeURIComponent(token)}`)
-  assert.equal(tokenFromRequest(queryReq, queryUrl), token)
-  assert.deepEqual(sessionBootstrapHeadersForRequest(queryReq, queryUrl, token), {
-    'set-cookie': sessionCookieHeader(token),
-  })
+  assert.equal(tokenFromRequest(queryReq, queryUrl), '')
+  assert.deepEqual(sessionBootstrapHeadersForRequest(queryReq, queryUrl, token), {})
 
   const headerReq = { headers: { 'x-nax-token': token } }
   assert.equal(tokenFromRequest(headerReq, new URL('http://127.0.0.1/')), token)
+  assert.deepEqual(sessionBootstrapHeadersForRequest(headerReq, new URL('http://127.0.0.1/'), token), {
+    'set-cookie': sessionCookieHeader(token),
+  })
+  assert.deepEqual(sessionBootstrapHeadersForRequest(headerReq, new URL('https://example.netlify.app/'), token, { secure: true }), {
+    'set-cookie': sessionCookieHeader(token, { secure: true }),
+  })
+  assert.match(sessionCookieHeader(token, { secure: true }), /; Secure$/)
 
   const cookieReq = { headers: { cookie: sessionCookieHeader(token) } }
   assert.equal(tokenFromRequest(cookieReq, new URL('http://127.0.0.1/')), token)

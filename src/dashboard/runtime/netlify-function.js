@@ -26,12 +26,13 @@ const { createHostedNetlifyApiTransport } = require('../transports/netlify-api')
  *   capabilities?: Record<string, boolean | string>,
  *   netlifyApiClient?: import('../transports/netlify-api').HostedNetlifyApiClient,
  *   siteId?: string,
+ *   initialRunnerIds?: string[],
  * }} NetlifyDashboardFunctionOptions
  */
 
 /** @param {NetlifyDashboardFunctionOptions} [options] */
-function createHostedDashboardApi({ token = '', capabilities, netlifyApiClient, siteId = '' } = {}) {
-  const transport = netlifyApiClient ? createHostedNetlifyApiTransport({ client: netlifyApiClient, siteId }) : null
+function createHostedDashboardApi({ token = '', capabilities, netlifyApiClient, siteId = '', initialRunnerIds = [] } = {}) {
+  const transport = netlifyApiClient ? createHostedNetlifyApiTransport({ client: netlifyApiClient, siteId, initialRunnerIds }) : null
   const resolvedCapabilities = capabilities || hostedPlaceholderCapabilities({
     canReadRuns: Boolean(transport),
     canReadRunDetails: Boolean(transport),

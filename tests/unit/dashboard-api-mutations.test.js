@@ -27,6 +27,21 @@ test('Hono dashboard mutation routes require auth', async () => {
   assert.equal(payload.error.code, 'unauthorized')
 })
 
+test('Hono dashboard mutation routes do not accept query-string tokens', async () => {
+  const app = api({
+    startWorkflow: async () => ({ statusCode: 202, body: { ok: true } }),
+  })
+
+  const response = await app.request('/api/workflows/review/runs?token=token-1', {
+    method: 'POST',
+    body: '{}',
+  })
+  const payload = /** @type {{ error: { code: string } }} */ (await response.json())
+
+  assert.equal(response.status, 401)
+  assert.equal(payload.error.code, 'unauthorized')
+})
+
 test('Hono dashboard mutation routes report unsupported hosted capabilities', async () => {
   const app = api({}, hostedPlaceholderCapabilities())
 

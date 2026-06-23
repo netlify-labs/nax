@@ -5,6 +5,7 @@ const {
   compactPayload,
   createNotificationDispatcher,
   eventNameForRunnerEvent,
+  validateNotifyUrl,
   webhookBody,
 } = require('../../src/integrations/notifications')
 
@@ -79,4 +80,28 @@ test('notification dispatcher posts matching events and ignores unmatched events
   await dispatcher.flush()
   assert.equal(posted.length, 1)
   assert.equal(JSON.parse(posted[0].body).event, 'step.awaiting_review')
+})
+
+test('notification dispatcher rejects private webhook destinations unless explicitly allowed', async () => {
+  assert.equal(validateNotifyUrl('https://hooks.example.com/path').ok, true)
+  assert.equal(validateNotifyUrl('file:///tmp/hook').ok, false)
+  assert.equal(validateNotifyUrl('http://127.0.0.1:9999/hook').ok, false)
+  assert.equal(validateNotifyUrl('http://127.0.0.1:9999/hook', { allowPrivate: true }).ok, true)
+
+  const blocked = createNotificationDispatcher({
+    notifyUrl: 'http://127.0.0.1:9999/hook',
+    notifyEvents: 'step.completed',
+    warn: false,
+  })
+  assert.equal(blocked.enabled, false)
+  assert.match(blocked.warnings[0], /notification disabled/)
+
+  const allowed = createNotificationDispatcher({
+    notifyUrl: 'http://127.0.0.1:9999/hook',
+    notifyEvents: 'step.completed',
+    warn: false,
+    allowPrivateNotifyUrl: true,
+    fetch: async () => ({ ok: true, status: 200 }),
+  })
+  assert.equal(allowed.enabled, true)
 })

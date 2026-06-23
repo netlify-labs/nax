@@ -20,12 +20,32 @@ test('dashboard local file opener only opens paths under the project root', asyn
     projectRoot,
     openModule: (target) => openedPaths.push(target),
   })
+  const realFilePath = fs.realpathSync(filePath)
 
-  assert.equal(opened, filePath)
-  assert.deepEqual(openedPaths, [filePath])
+  assert.equal(opened, realFilePath)
+  assert.deepEqual(openedPaths, [realFilePath])
   assert.equal(isInsideDir(projectRoot, filePath), true)
   assert.equal(isInsideDir(projectRoot, path.join(projectRoot, '..', 'outside.md')), false)
   await assert.rejects(openLocalFile(path.join(projectRoot, '..', 'outside.md'), { projectRoot, openModule: () => {} }), {
+    statusCode: 403,
+    code: 'forbidden_path',
+  })
+})
+
+test('dashboard local file opener rejects symlink escapes', async () => {
+  const projectRoot = tmpRoot()
+  const outsideDir = tmpRoot()
+  const outsidePath = path.join(outsideDir, 'outside.md')
+  const symlinkPath = path.join(projectRoot, 'linked-outside.md')
+  fs.writeFileSync(outsidePath, '# Outside\n')
+  fs.symlinkSync(outsidePath, symlinkPath)
+
+  await assert.rejects(openLocalFile(symlinkPath, {
+    projectRoot,
+    openModule: () => {
+      throw new Error('openModule should not be called')
+    },
+  }), {
     statusCode: 403,
     code: 'forbidden_path',
   })

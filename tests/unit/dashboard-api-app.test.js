@@ -50,7 +50,9 @@ test('Hono dashboard API health bootstraps sessions and hides projectRoot when u
   assert.equal(unauthenticated.status, 200)
   assert.equal((await json(unauthenticated)).projectRoot, undefined)
 
-  const authenticated = await app.request('/api/health?token=token-1')
+  const authenticated = await app.request('/api/health', {
+    headers: { 'x-nax-token': 'token-1' },
+  })
   const payload = await json(authenticated)
   assert.equal(payload.projectRoot, '/repo')
   assert.match(authenticated.headers.get('set-cookie') || '', /nax_dashboard_token=token-1/)

@@ -23,6 +23,9 @@ test('Netlify dashboard function serves hosted health without leaking projectRoo
   assert.equal(payload.projectRoot, undefined)
   assert.equal(payload.capabilities.deploymentMode, 'web')
   assert.equal(payload.capabilities.canStartRuns, false)
+  assert.match(response.headers['set-cookie'] || '', /HttpOnly/)
+  assert.match(response.headers['set-cookie'] || '', /SameSite=Strict/)
+  assert.match(response.headers['set-cookie'] || '', /Secure/)
 })
 
 test('Netlify dashboard function reports local-only mutations as unsupported', async () => {

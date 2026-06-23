@@ -43,8 +43,42 @@ test('hosted Netlify API transport starts runs and deduplicates idempotent submi
   assert.equal(calls[0].source.idempotencyKey, idempotencyKey('review', body))
 })
 
+test('hosted Netlify API transport rejects unregistered runner IDs before remote calls', async () => {
+  const calls = []
+  const transport = createHostedNetlifyApiTransport({
+    client: {
+      createAgentRunner: async () => remoteRun(),
+      cancelAgentRunner: async (input) => {
+        calls.push({ name: 'cancelAgentRunner', input })
+        return remoteRun({ status: 'cancelled', state: 'cancelled' })
+      },
+      getAgentRunner: async (input) => {
+        calls.push({ name: 'getAgentRunner', input })
+        return remoteRun({ status: 'running', state: 'running' })
+      },
+    },
+  })
+
+  await assert.rejects(
+    () => transport.getRun('runner-unknown'),
+    {
+      code: 'runner_not_registered',
+      statusCode: 403,
+    },
+  )
+  await assert.rejects(
+    () => transport.cancelRun('runner-unknown'),
+    {
+      code: 'runner_not_registered',
+      statusCode: 403,
+    },
+  )
+  assert.deepEqual(calls, [])
+})
+
 test('hosted Netlify API transport validates start prompt and maps cancel responses', async () => {
   const transport = createHostedNetlifyApiTransport({
+    initialRunnerIds: ['runner-1'],
     client: {
       createAgentRunner: async () => remoteRun(),
       cancelAgentRunner: async (input) => remoteRun({ runnerId: input.runnerId || '', status: 'cancelled', state: 'cancelled' }),
@@ -111,6 +145,7 @@ test('hosted Hono mutation routes preserve Netlify API transport error codes', a
   notFound.statusCode = 404
   const handler = createNetlifyDashboardFunction({
     token: 'dashboard-token',
+    initialRunnerIds: ['missing'],
     netlifyApiClient: {
       createAgentRunner: async () => { throw authError },
       cancelAgentRunner: async () => { throw notFound },
@@ -147,6 +182,7 @@ test('hosted Netlify API transport maps polling statuses and events', async () =
   assert.equal(dashboardStatus('canceled'), 'cancelled')
 
   const transport = createHostedNetlifyApiTransport({
+    initialRunnerIds: ['runner-2'],
     client: {
       createAgentRunner: async () => remoteRun(),
       cancelAgentRunner: async () => remoteRun({ status: 'cancelled', state: 'cancelled' }),
@@ -170,6 +206,7 @@ test('hosted Netlify API transport maps polling statuses and events', async () =
 test('hosted Hono read routes poll Netlify API transport', async () => {
   const handler = createNetlifyDashboardFunction({
     token: 'dashboard-token',
+    initialRunnerIds: ['runner-3'],
     netlifyApiClient: {
       createAgentRunner: async () => remoteRun(),
       cancelAgentRunner: async () => remoteRun({ status: 'cancelled', state: 'cancelled' }),
@@ -195,6 +232,7 @@ test('hosted Netlify API transport submits remote-safe follow-ups', async () => 
   const calls = []
   const transport = createHostedNetlifyApiTransport({
     siteId: 'site-1',
+    initialRunnerIds: ['runner-source'],
     client: {
       createAgentRunner: async (input) => {
         calls.push(input)
@@ -240,6 +278,7 @@ test('hosted Netlify API transport submits remote-safe follow-ups', async () => 
 
 test('hosted Netlify API transport validates follow-up prompt and unsupported modes', async () => {
   const transport = createHostedNetlifyApiTransport({
+    initialRunnerIds: ['runner-source', 'runner-followup'],
     client: {
       createAgentRunner: async () => remoteRun(),
       cancelAgentRunner: async (input) => remoteRun({ runnerId: input.runnerId || '', status: 'cancelled', state: 'cancelled' }),
@@ -276,6 +315,7 @@ test('hosted Hono follow-up routes use Netlify API transport when configured', a
   const handler = createNetlifyDashboardFunction({
     token: 'dashboard-token',
     siteId: 'site-1',
+    initialRunnerIds: ['runner-source'],
     netlifyApiClient: {
       createAgentRunner: async (input) => {
         createCalls.push(input)
@@ -313,6 +353,7 @@ test('hosted Hono follow-up routes use Netlify API transport when configured', a
 test('hosted Netlify API transport normalizes run details and expands selected artifacts', async () => {
   const calls = []
   const transport = createHostedNetlifyApiTransport({
+    initialRunnerIds: ['runner-source'],
     client: {
       createAgentRunner: async (input) => {
         calls.push(input)
@@ -361,6 +402,7 @@ test('hosted Netlify API transport normalizes run details and expands selected a
 test('hosted Hono details, graph, and local file routes reflect hosted runtime limits', async () => {
   const handler = createNetlifyDashboardFunction({
     token: 'dashboard-token',
+    initialRunnerIds: ['runner-source'],
     netlifyApiClient: {
       createAgentRunner: async () => remoteRun(),
       cancelAgentRunner: async () => remoteRun({ status: 'cancelled', state: 'cancelled' }),

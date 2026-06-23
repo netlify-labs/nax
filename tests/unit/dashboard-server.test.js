@@ -277,7 +277,7 @@ test('dashboard server exposes health, workflow list, and graph routes', async (
     assert.equal(workflows.statusCode, 401)
     assert.equal(String(workflows.headers['set-cookie'] || ''), '')
 
-    const authenticatedHealth = await requestJson(`${base}/api/health?token=${server.token}`)
+    const authenticatedHealth = await requestJson(`${base}/api/health`, { token: server.token })
     assert.equal(authenticatedHealth.statusCode, 200)
     assert.equal(authenticatedHealth.payload.projectRoot, process.cwd())
     assert.match(String(authenticatedHealth.headers['set-cookie'] || ''), /nax_dashboard_token=/)
@@ -384,7 +384,11 @@ test('dashboard html only bootstraps auth with an explicit session token', async
     assert.doesNotMatch(html.body, new RegExp(server.token))
     assert.equal(String(html.headers['set-cookie'] || ''), '')
 
-    const authenticatedHtml = await requestText(`http://127.0.0.1:${server.port}/?token=${server.token}`)
+    const queryHtml = await requestText(`http://127.0.0.1:${server.port}/?token=${server.token}`)
+    assert.equal(queryHtml.statusCode, 200)
+    assert.equal(String(queryHtml.headers['set-cookie'] || ''), '')
+
+    const authenticatedHtml = await requestText(`http://127.0.0.1:${server.port}/`, { token: server.token })
     assert.equal(authenticatedHtml.statusCode, 200)
     assert.doesNotMatch(authenticatedHtml.body, new RegExp(server.token))
     assert.match(String(authenticatedHtml.headers['set-cookie'] || ''), /nax_dashboard_token=/)

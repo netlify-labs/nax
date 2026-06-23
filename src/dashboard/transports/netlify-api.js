@@ -10,7 +10,15 @@ const crypto = require('crypto')
  * @typedef {{
  *   client: HostedNetlifyApiClient,
  *   siteId?: string,
+ *   initialRunnerIds?: string[],
  * }} HostedNetlifyApiTransportOptions
+ *
+ * @typedef {{
+ *   runnerId: string,
+ *   siteId: string,
+ *   source: string,
+ *   registeredAt: string,
+ * }} HostedRunnerRegistryEntry
  */
 
 /** @param {unknown} value */
@@ -360,15 +368,26 @@ function transportError(code, message, statusCode = 400) {
 }
 
 /** @param {HostedNetlifyApiTransportOptions} options */
-function createHostedNetlifyApiTransport({ client, siteId = '' }) {
+function createHostedNetlifyApiTransport({ client, siteId = '', initialRunnerIds = [] }) {
   /** @type {Map<string, ReturnType<typeof hostedRunDto>>} */
   const submitted = new Map()
   /** @type {Map<string, ReturnType<typeof hostedRunDto>>} */
   const runsById = new Map()
+  /** @type {Map<string, HostedRunnerRegistryEntry>} */
+  const runnerRegistry = new Map()
   /** @type {Map<string, Record<string, unknown>>} */
   const followupsById = new Map()
   /** @type {Map<string, Map<string, Record<string, string>>>} */
   const artifactCatalogByRunId = new Map()
+
+  for (const runnerId of initialRunnerIds.map(stringValue).map((value) => value.trim()).filter(Boolean)) {
+    runnerRegistry.set(runnerId, {
+      runnerId,
+      siteId,
+      source: 'initial',
+      registeredAt: new Date().toISOString(),
+    })
+  }
 
   /**
    * @param {string} key
@@ -379,6 +398,43 @@ function createHostedNetlifyApiTransport({ client, siteId = '' }) {
     if (run.runnerId) runsById.set(run.runnerId, run)
     if (run.id) runsById.set(run.id, run)
     return run
+  }
+
+  /**
+   * @param {ReturnType<typeof hostedRunDto>} run
+   * @param {string} source
+   */
+  function registerRun(run, source) {
+    const runnerId = stringValue(run.runnerId || run.id).trim()
+    if (!runnerId) return run
+    runnerRegistry.set(runnerId, {
+      runnerId,
+      siteId,
+      source,
+      registeredAt: new Date().toISOString(),
+    })
+    return run
+  }
+
+  /** @param {string} runnerId */
+  function assertRegisteredRunner(runnerId) {
+    const id = stringValue(runnerId).trim()
+    if (!id) throw transportError('runner_validation_failed', 'Agent Runner ID is required.', 400)
+    if (!runnerRegistry.has(id)) {
+      throw transportError('runner_not_registered', 'This hosted runner is not registered with this dashboard session.', 403)
+    }
+    return id
+  }
+
+  /** @param {import('../../integrations/netlify/api-client').NormalizedAgentRunner} remote */
+  function assertRemoteRunnerScope(remote) {
+    if (!siteId) return
+    const raw = objectValue(remote.raw)
+    const rawSite = objectValue(raw.site)
+    const remoteSiteId = stringValue(raw.site_id || raw.siteId || rawSite.id || rawSite.site_id).trim()
+    if (remoteSiteId && remoteSiteId !== siteId) {
+      throw transportError('runner_scope_mismatch', 'The hosted runner belongs to a different Netlify site.', 403)
+    }
   }
 
   /**
@@ -441,6 +497,7 @@ function createHostedNetlifyApiTransport({ client, siteId = '' }) {
         ...hostedRunDto(remote),
         flowId: workflowId,
       }
+      registerRun(run, 'start')
       rememberRun(key, run)
       return {
         statusCode: 202,
@@ -454,8 +511,9 @@ function createHostedNetlifyApiTransport({ client, siteId = '' }) {
     },
     /** @param {string} runnerId */
     async cancelRun(runnerId) {
-      if (!runnerId) throw transportError('runner_validation_failed', 'Agent Runner ID is required to cancel a hosted run.', 400)
-      const remote = await client.cancelAgentRunner({ runnerId })
+      const registeredRunnerId = assertRegisteredRunner(runnerId)
+      const remote = await client.cancelAgentRunner({ runnerId: registeredRunnerId })
+      assertRemoteRunnerScope(remote)
       return {
         body: {
           run: hostedRunDto(remote),
@@ -480,23 +538,32 @@ function createHostedNetlifyApiTransport({ client, siteId = '' }) {
     },
     /** @param {string} runnerId */
     async getRun(runnerId) {
-      const remote = await client.getAgentRunner({ runnerId })
+      const registeredRunnerId = assertRegisteredRunner(runnerId)
+      const remote = await client.getAgentRunner({ runnerId: registeredRunnerId })
+      assertRemoteRunnerScope(remote)
       const run = hostedRunDto(remote)
+      registerRun(run, 'read')
       rememberRun(idempotencyKey(run.flowId || 'hosted-netlify-api', { prompt: run.id, agent: 'unknown' }), run)
       return run
     },
     /** @param {string} runnerId */
     async getRunGraph(runnerId) {
-      const remote = await client.getAgentRunner({ runnerId })
+      const registeredRunnerId = assertRegisteredRunner(runnerId)
+      const remote = await client.getAgentRunner({ runnerId: registeredRunnerId })
+      assertRemoteRunnerScope(remote)
       const graph = hostedRunGraph(remote)
+      registerRun(graph.run, 'graph')
       rememberRun(idempotencyKey('hosted-netlify-api', { prompt: graph.run.id, agent: hostedRunAgent(remote) }), graph.run)
       return graph
     },
     /** @param {string} runnerId */
     async getRunDetails(runnerId) {
-      const remote = await client.getAgentRunner({ runnerId })
+      const registeredRunnerId = assertRegisteredRunner(runnerId)
+      const remote = await client.getAgentRunner({ runnerId: registeredRunnerId })
+      assertRemoteRunnerScope(remote)
       const run = hostedRunDto(remote)
       const details = hostedRunDetails(remote)
+      registerRun(run, 'details')
       rememberRun(idempotencyKey('hosted-netlify-api', { prompt: run.id, agent: hostedRunAgent(remote) }), run)
       rememberArtifacts(runnerId, details.followupArtifacts)
       return { run, details }
@@ -505,8 +572,11 @@ function createHostedNetlifyApiTransport({ client, siteId = '' }) {
      * @param {{ runId?: string, since?: number }} [input]
      */
     async listEvents({ runId = '', since = 0 } = {}) {
-      const remote = await client.getAgentRunner({ runnerId: runId })
+      const registeredRunnerId = assertRegisteredRunner(runId)
+      const remote = await client.getAgentRunner({ runnerId: registeredRunnerId })
+      assertRemoteRunnerScope(remote)
       const run = hostedRunDto(remote)
+      registerRun(run, 'events')
       const event = {
         id: 1,
         seq: 1,
@@ -532,20 +602,20 @@ function createHostedNetlifyApiTransport({ client, siteId = '' }) {
     async submitFollowup(sourceRunId, body = {}) {
       const prompt = hostedPrompt(body)
       if (!prompt) throw transportError('missing_prompt', 'Enter follow-up instructions before submitting.', 400)
-      if (!sourceRunId) throw transportError('missing_followup_target', 'No hosted follow-up target was provided.', 400)
+      const registeredSourceRunId = assertRegisteredRunner(sourceRunId)
       const requestedMode = stringValue(body.mode || 'fresh-runner')
       if (!['fresh-runner', 'new-run', 'runner'].includes(requestedMode)) {
         throw transportError('unsupported_followup_mode', `Hosted follow-up mode "${requestedMode}" is not available through the Netlify API transport.`, 501)
       }
       const target = {
-        id: stringValue(body.targetId || objectValue(body.target).id || sourceRunId),
-        runnerId: sourceRunId,
+        id: stringValue(body.targetId || objectValue(body.target).id || registeredSourceRunId),
+        runnerId: registeredSourceRunId,
         sessionId: stringValue(objectValue(body.target).sessionId || body.sessionId),
         defaultMode: 'fresh-runner',
       }
-      const artifacts = expandArtifacts(sourceRunId, body.artifacts)
+      const artifacts = expandArtifacts(registeredSourceRunId, body.artifacts)
       const agents = hostedAgents(body)
-      const id = `hosted-followup-${sourceRunId}-${Date.now().toString(36)}`
+      const id = `hosted-followup-${registeredSourceRunId}-${Date.now().toString(36)}`
       const promptText = hostedFollowupPrompt(prompt, body, artifacts)
       const submissions = []
       const warnings = []
@@ -558,27 +628,28 @@ function createHostedNetlifyApiTransport({ client, siteId = '' }) {
           branch: stringValue(body.branch || body.targetBranch || objectValue(body.target).branch),
           source: {
             id,
-            sourceWorkflowRunId: sourceRunId,
+            sourceWorkflowRunId: registeredSourceRunId,
             sourceTargetId: target.id,
             sourceArtifactIds: artifacts.map((artifact) => artifact.id).filter(Boolean),
             source: 'nax-dashboard-hosted-followup',
           },
         })
         const dto = hostedRunDto(remote)
-        const run = rememberRun(idempotencyKey(`hosted-followup:${sourceRunId}`, { prompt: promptText, agent, branch: body.branch }), {
+        assertRemoteRunnerScope(remote)
+        const run = registerRun(rememberRun(idempotencyKey(`hosted-followup:${registeredSourceRunId}`, { prompt: promptText, agent, branch: body.branch }), {
           ...dto,
-          flowId: `hosted-followup:${sourceRunId}`,
+          flowId: `hosted-followup:${registeredSourceRunId}`,
           raw: {
             ...(dto.raw || {}),
             dashboardFollowup: {
               id,
-              sourceWorkflowRunId: sourceRunId,
+              sourceWorkflowRunId: registeredSourceRunId,
               targetId: target.id,
               artifacts,
               delivery: { type: 'hosted-api', remoteOnly: true },
             },
           },
-        })
+        }), 'followup')
         submissions.push({
           id: run.runnerId,
           mode: 'fresh-runner',
@@ -597,7 +668,7 @@ function createHostedNetlifyApiTransport({ client, siteId = '' }) {
       const response = {
         id,
         status: 'submitted',
-        sourceWorkflowRunId: sourceRunId,
+        sourceWorkflowRunId: registeredSourceRunId,
         target,
         context: {
           artifactCount: artifacts.length,
@@ -626,9 +697,12 @@ function createHostedNetlifyApiTransport({ client, siteId = '' }) {
      * @param {Record<string, unknown>} [body]
      */
     async cancelFollowup(sourceRunId, body = {}) {
+      assertRegisteredRunner(sourceRunId)
       const runnerId = stringValue(body.runnerId || body.id).trim()
-      if (!sourceRunId || !runnerId) throw transportError('missing_followup_run', 'Select a hosted follow-up runner to cancel.', 400)
-      const remote = await client.cancelAgentRunner({ runnerId })
+      if (!runnerId) throw transportError('missing_followup_run', 'Select a hosted follow-up runner to cancel.', 400)
+      const registeredRunnerId = assertRegisteredRunner(runnerId)
+      const remote = await client.cancelAgentRunner({ runnerId: registeredRunnerId })
+      assertRemoteRunnerScope(remote)
       return {
         body: {
           run: hostedRunDto(remote),

@@ -49,20 +49,21 @@ function cookieValue(headers, name) {
 
 /** @param {import('hono').Context} c */
 function tokenFromContext(c) {
-  return c.req.header('x-nax-token') || c.req.query('token') || cookieValue(c.req.raw.headers, 'nax_dashboard_token')
+  return c.req.header('x-nax-token') || cookieValue(c.req.raw.headers, 'nax_dashboard_token')
 }
 
 /** @param {import('hono').Context} c */
 function explicitTokenFromContext(c) {
-  return c.req.header('x-nax-token') || c.req.query('token') || ''
+  return c.req.header('x-nax-token') || ''
 }
 
 /**
  * @param {import('hono').Context} c
  * @param {string} token
+ * @param {{ secure?: boolean }} [options]
  */
-function sessionBootstrapHeadersFromContext(c, token) {
-  return timingSafeTokenEqual(explicitTokenFromContext(c), token) ? sessionBootstrapHeaders(token) : {}
+function sessionBootstrapHeadersFromContext(c, token, options = {}) {
+  return timingSafeTokenEqual(explicitTokenFromContext(c), token) ? sessionBootstrapHeaders(token, options) : {}
 }
 
 /**
@@ -190,6 +191,11 @@ function createDashboardApi({
   }
   const healthCapabilities = runtime.healthCapabilities || capabilities
   const deploymentMode = String(runtime.deploymentMode || capabilities.deploymentMode || 'local')
+  const sessionCookieOptions = {
+    secure: deploymentMode === 'web' || runtime.mode === 'netlify-function',
+  }
+  /** @param {import('hono').Context} c */
+  const sessionHeaders = (c) => sessionBootstrapHeadersFromContext(c, token, sessionCookieOptions)
 
   app.use('*', async (c, next) => {
     for (const [key, value] of Object.entries(securityHeaders())) c.header(key, value)
@@ -205,7 +211,7 @@ function createDashboardApi({
 
   app.get('/api/health', (c) => {
     const provided = tokenFromContext(c)
-    const headers = sessionBootstrapHeadersFromContext(c, token)
+    const headers = sessionHeaders(c)
     const health = {
       ok: true,
       tokenRequiredForMutations: true,
@@ -225,7 +231,7 @@ function createDashboardApi({
     assertHonoToken(c, token)
     requireCapability(capabilities, 'canListWorkflows')
     if (typeof workflowStore.listWorkflows !== 'function') throw requestError(501, 'hosted_storage_unavailable', 'Workflow storage is not available in this runtime.')
-    return json(c, await workflowStore.listWorkflows(), 200, sessionBootstrapHeadersFromContext(c, token))
+    return json(c, await workflowStore.listWorkflows(), 200, sessionHeaders(c))
   })
 
   app.get('/api/workflows/:id', async (c) => {
@@ -234,7 +240,7 @@ function createDashboardApi({
     if (typeof workflowStore.getWorkflow !== 'function') throw requestError(501, 'hosted_storage_unavailable', 'Workflow storage is not available in this runtime.')
     const workflow = await workflowStore.getWorkflow(c.req.param('id'))
     if (!workflow) throw requestError(404, 'not_found', `Unknown flow "${c.req.param('id')}".`)
-    return json(c, workflow, 200, sessionBootstrapHeadersFromContext(c, token))
+    return json(c, workflow, 200, sessionHeaders(c))
   })
 
   app.get('/api/workflows/:id/graph', async (c) => {
@@ -243,7 +249,7 @@ function createDashboardApi({
     if (typeof workflowStore.getWorkflowGraph !== 'function') throw requestError(501, 'hosted_storage_unavailable', 'Workflow storage is not available in this runtime.')
     const graph = await workflowStore.getWorkflowGraph(c.req.param('id'))
     if (!graph) throw requestError(404, 'not_found', `Unknown flow "${c.req.param('id')}".`)
-    return json(c, graph, 200, sessionBootstrapHeadersFromContext(c, token))
+    return json(c, graph, 200, sessionHeaders(c))
   })
 
   app.get('/api/runs', async (c) => {
@@ -258,7 +264,7 @@ function createDashboardApi({
       active: typeof liveRuns.listActiveRuns === 'function' ? liveRuns.listActiveRuns() : [],
       durable: Array.isArray(page.durable) ? page.durable : [],
       pagination: page.pagination || null,
-    }, 200, sessionBootstrapHeadersFromContext(c, token))
+    }, 200, sessionHeaders(c))
   })
 
   app.get('/api/runs/:id', async (c) => {
@@ -266,11 +272,11 @@ function createDashboardApi({
     requireCapability(capabilities, 'canReadRuns')
     const runId = c.req.param('id')
     const active = typeof liveRuns.getActiveRun === 'function' ? liveRuns.getActiveRun(runId) : null
-    if (active) return json(c, { run: active }, 200, sessionBootstrapHeadersFromContext(c, token))
+    if (active) return json(c, { run: active }, 200, sessionHeaders(c))
     if (typeof runStore.getRun !== 'function') throw requestError(501, 'hosted_storage_unavailable', 'Run storage is not available in this runtime.')
     const run = await runStore.getRun(runId)
     if (!run) throw requestError(404, 'not_found', 'Unknown dashboard run.')
-    return json(c, { run }, 200, sessionBootstrapHeadersFromContext(c, token))
+    return json(c, { run }, 200, sessionHeaders(c))
   })
 
   app.get('/api/runs/:id/graph', async (c) => {
@@ -279,7 +285,7 @@ function createDashboardApi({
     if (typeof runStore.getRunGraph !== 'function') throw requestError(501, 'hosted_storage_unavailable', 'Run storage is not available in this runtime.')
     const graph = await runStore.getRunGraph(c.req.param('id'))
     if (!graph) throw requestError(404, 'not_found', 'Unknown dashboard run.')
-    return json(c, graph, 200, sessionBootstrapHeadersFromContext(c, token))
+    return json(c, graph, 200, sessionHeaders(c))
   })
 
   app.get('/api/runs/:id/details', async (c) => {
@@ -288,7 +294,7 @@ function createDashboardApi({
     if (typeof runStore.getRunDetails !== 'function') throw requestError(501, 'hosted_storage_unavailable', 'Run storage is not available in this runtime.')
     const details = await runStore.getRunDetails(c.req.param('id'))
     if (!details) throw requestError(404, 'not_found', 'Unknown dashboard run.')
-    return json(c, details, 200, sessionBootstrapHeadersFromContext(c, token))
+    return json(c, details, 200, sessionHeaders(c))
   })
 
   app.get('/api/runs/:id/events.json', async (c) => {
@@ -297,14 +303,14 @@ function createDashboardApi({
     const runId = c.req.param('id')
     const since = Number(c.req.query('since') || 0)
     const active = typeof liveRuns.getActiveEvents === 'function' ? liveRuns.getActiveEvents(runId, since) : null
-    if (active) return json(c, active, 200, sessionBootstrapHeadersFromContext(c, token))
+    if (active) return json(c, active, 200, sessionHeaders(c))
     if (typeof eventStore.listEvents !== 'function') throw requestError(501, 'hosted_storage_unavailable', 'Event storage is not available in this runtime.')
     const replay = await eventStore.listEvents({
       runId,
       since,
     })
     if (!replay) throw requestError(404, 'not_found', 'Unknown dashboard run.')
-    return json(c, replay, 200, sessionBootstrapHeadersFromContext(c, token))
+    return json(c, replay, 200, sessionHeaders(c))
   })
 
   app.get('/api/runs/:id/events', (c) => {

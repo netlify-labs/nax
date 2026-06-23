@@ -74,7 +74,8 @@ test('ensureWorkflow creates workflow from bundled template and preserves existi
   assert.equal(result.path, workflowPath)
   const workflow = fs.readFileSync(workflowPath, 'utf8')
   assert.match(workflow, /netlify-labs\/agent-runner-action@[a-f0-9]{40}/)
-  assert.match(workflow, /author_association/)
+  assert.match(workflow, /gh api "repos\/\$\{GITHUB_REPOSITORY\}\/collaborators\/\$\{ACTOR\}\/permission"/)
+  assert.doesNotMatch(workflow, /author_association/)
   assert.equal(ensureWorkflow({ projectRoot: tmp }).status, 'exists')
 })
 

@@ -6,7 +6,7 @@ const RUNNER_NETLIFY_CLI_PATH = '/opt/buildhome/node-deps/node_modules/.bin/netl
 
 /**
  * Agent run data rendered into offloaded prompt/context snippets.
- * @typedef {import('./types').AgentRun & {
+ * @typedef {import('../../types').AgentRun & {
  *   sourceStep?: string,
  * }} PromptOffloadRun
  */

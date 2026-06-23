@@ -40,15 +40,15 @@ const {
   formatRoundResults,
   rawIssuesFromResults,
 } = require('../workflows/round-results')
-const { formatGroupHint, listRecentIssueGroups } = require('../issue-groups')
-const { parseRunnerResultMarker } = require('../comment-markers')
+const { formatGroupHint, listRecentIssueGroups } = require('../integrations/github/issue-groups')
+const { parseRunnerResultMarker } = require('../integrations/github/comment-markers')
 const {
   formatAgentRunUrl,
   formatAgentRunUrlFromAdminUrl,
   formatUsageSummary,
   normalizeGithubRunResult,
   usageSummariesForRunState,
-} = require('../agent-run-results')
+} = require('../workflows/results/agent-run-results')
 const { runGh } = require('../integrations/github/gh-cli')
 const { multiline } = require('../utils/multiline')
 const { WAIT_FOR_AGENT_RESULTS, isHumanReviewStep, listFlows, loadFlow, loadStepPrompt } = requireWithoutArgvFlag('--verbose', () => require('../workflows/catalog/flows'))
@@ -63,10 +63,10 @@ const {
   stepArtifactsDir,
   writeGithubStepSummary,
 } = require('../workflows/artifacts/workflow-artifacts')
-const { clearTrackedRunState, trackRunState } = require('../graceful-run-state')
+const { clearTrackedRunState, trackRunState } = require('../storage/local/graceful-run-state')
 const { persistAgentRunnerArtifact } = require('../workflows/artifacts/agent-runner-artifacts')
 const { persistAgentSessionArtifact } = require('../workflows/artifacts/agent-session-artifacts')
-const { listHandoffSources, readHandoffSource, relativeDisplayPath } = require('../handoff-sources')
+const { listHandoffSources, readHandoffSource, relativeDisplayPath } = require('../workflows/followups/handoff-sources')
 const { handleCi } = require('./commands/ci')
 const {
   AD_HOC_RUN_CHOICE,
@@ -107,7 +107,7 @@ const {
   installSkills,
   listBundledSkills,
   updateSkills,
-} = require('../skills')
+} = require('../integrations/skills')
 const { NETLIFY_API_TRANSPORT, detectTransports, formatTransportSetupHelp, isNetlifyApiTransport, resolveTransport } = require('../integrations/transports')
 const { readNetlifyProject } = require('../integrations/netlify/init')
 const { runWorkflow } = require('../workflows/engine/runner')
@@ -218,7 +218,7 @@ const {
   classifyContextFetch,
   compactTextByBytes,
   safePromptBytes,
-} = require('../prompt-offload')
+} = require('../workflows/prompts/offload')
 const {
   applyAgentSelection,
   assertValidAgentSelection,

@@ -4,7 +4,7 @@ const {
   buildFetchInstruction,
   safePromptBytes,
   utf8ByteLength,
-} = require('../../prompt-offload')
+} = require('../prompts/offload')
 
 class FollowupDeliveryError extends Error {
   constructor(code, message, statusCode = 400) {

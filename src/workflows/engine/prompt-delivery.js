@@ -9,7 +9,7 @@ const {
   classifyContextFetch,
   compactTextByBytes,
   safePromptBytes,
-} = require('../../prompt-offload')
+} = require('../prompts/offload')
 const { extractStructuredSection, formatRoundResults } = require('../round-results')
 const { resolveNetlifyProjectTarget } = require('../../integrations/netlify/local-runner')
 const { githubResultsToSourceRuns } = require('../../integrations/github/issue-plan')
@@ -48,7 +48,7 @@ const DEFAULT_LOCAL_SAFE_PROMPT_BYTES = 16384
  * }} PromptWorkflowStep
  *
  * Agent run shape rendered into local prompt context.
- * @typedef {import('../../prompt-offload').PromptOffloadRun & {
+ * @typedef {import('../prompts/offload').PromptOffloadRun & {
  *   transcript?: string,
  *   commandTranscript?: string,
  *   commandOutput?: string,

@@ -1,11 +1,11 @@
 const readline = require('readline')
 const { makeBox } = require('@davidwells/box-logger')
-const flavorMessages = require('../../flavor-messages.json')
+const flavorMessages = require('./flavor-messages.json')
 const {
   formatCreditsWithCost,
   formatUsageSummary,
   usageSummariesForRunState,
-} = require('../../agent-run-results')
+} = require('../results/agent-run-results')
 const { titleCase } = require('../catalog/prompts')
 
 const DEFAULT_ORCHESTRATOR = "Netlify Agent runner"

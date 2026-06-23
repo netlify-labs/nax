@@ -1,4 +1,4 @@
-const { normalizeUsage } = require('./agent-run-results')
+const { normalizeUsage } = require('../../workflows/results/agent-run-results')
 const { parseBlocks } = require('comment-block-parser')
 
 const ID_FORMAT = /^[A-Za-z0-9_-]{1,128}$/
@@ -17,7 +17,7 @@ function validateSegment(field, value) {
   }
 }
 
-/** @param {import('./types').JsonMap} param0 */
+/** @param {import('../../types').JsonMap} param0 */
 function renderPromptMarker({ promptName, model, date }) {
   validateSegment('promptName', promptName)
   validateSegment('model', model)

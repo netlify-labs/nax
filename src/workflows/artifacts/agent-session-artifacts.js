@@ -6,7 +6,7 @@ const {
   buildAgentSessionResultMarkdown,
   buildAgentSessionUsageJson,
   sessionArtifactId,
-} = require('../../agent-run-results')
+} = require('../results/agent-run-results')
 
 /**
  * Persisted Agent Runner session artifact result.

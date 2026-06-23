@@ -1,6 +1,6 @@
-const { listAgentRunnerArtifacts, persistAgentRunnerArtifact } = require('./workflows/artifacts/agent-runner-artifacts')
-const { persistAgentSessionArtifact } = require('./workflows/artifacts/agent-session-artifacts')
-const { listAgentSessions } = require('./integrations/netlify/local-runner')
+const { listAgentRunnerArtifacts, persistAgentRunnerArtifact } = require('./agent-runner-artifacts')
+const { persistAgentSessionArtifact } = require('./agent-session-artifacts')
+const { listAgentSessions } = require('../../integrations/netlify/local-runner')
 
 /**
  * Remote Agent Runner session payload fields used for local artifact sync.
@@ -25,17 +25,17 @@ const { listAgentSessions } = require('./integrations/netlify/local-runner')
  * Persist one remote Agent Runner session locally.
  * @typedef {{
  *   projectRoot: string,
- *   runner: import('./types').AgentRunner,
+ *   runner: import('../../types').AgentRunner,
  *   session: RemoteAgentSession,
- *   source?: import('./types').JsonMap,
+ *   source?: import('../../types').JsonMap,
  * }} PersistRemoteSessionInput
  *
  * Synchronize remote sessions for one local Agent Runner artifact.
  * @typedef {{
  *   projectRoot?: string,
- *   runner?: import('./types').AgentRunner,
+ *   runner?: import('../../types').AgentRunner,
  *   env?: NodeJS.ProcessEnv,
- *   runCommand?: import('./types').RunCommand,
+ *   runCommand?: import('../../types').RunCommand,
  * }} SyncAgentRunnerInput
  */
 
@@ -137,7 +137,7 @@ function syncAgentRunner({ projectRoot, runner, env, runCommand } = {}) {
   }
 }
 
-/** @param {{ projectRoot?: string, env?: NodeJS.ProcessEnv, runCommand?: import('./types').RunCommand }} param0 */
+/** @param {{ projectRoot?: string, env?: NodeJS.ProcessEnv, runCommand?: import('../../types').RunCommand }} param0 */
 function syncLastAgentRunner({ projectRoot, env, runCommand } = {}) {
   const [runner] = listAgentRunnerArtifacts(projectRoot)
   if (!runner) {

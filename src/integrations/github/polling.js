@@ -1,5 +1,5 @@
-const { bodyHasRunnerResultMarker, bodyHasRunnerStatusMarker } = require('../../comment-markers')
-const { netlifyAgentRunUrlFromBody } = require('../../agent-run-results')
+const { bodyHasRunnerResultMarker, bodyHasRunnerStatusMarker } = require('./comment-markers')
+const { netlifyAgentRunUrlFromBody } = require('../../workflows/results/agent-run-results')
 const { runGh } = require('./gh-cli')
 const { fetchRoundResults } = require('../../workflows/round-results')
 const { titleCase } = require('../../workflows/catalog/prompts')

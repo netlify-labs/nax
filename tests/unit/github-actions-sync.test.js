@@ -4,7 +4,7 @@ const fs = require('fs')
 const os = require('os')
 const path = require('path')
 
-const { readHandoffSource } = require('../../src/handoff-sources')
+const { readHandoffSource } = require('../../src/workflows/followups/handoff-sources')
 const {
   materializeNaxArtifactTree,
   parseGithubActionsRunTarget,

@@ -1,5 +1,5 @@
 const { DEFAULT_MODELS } = require('../../core/constants')
-const { formatGroupHint, listRecentIssueGroups } = require('../../issue-groups')
+const { formatGroupHint, listRecentIssueGroups } = require('../../integrations/github/issue-groups')
 const { resolveProjectRoot } = require('../../integrations/netlify/project-selection')
 const { listPrompts, resolveRepo, titleCase } = require('../../workflows/catalog/prompts')
 const { assertCrossReviewComplete, rawIssuesFromResults } = require('../../workflows/round-results')

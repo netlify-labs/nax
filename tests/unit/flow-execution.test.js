@@ -72,7 +72,7 @@ const {
   formatLocalRunResults,
   prepareLocalPromptDelivery,
 } = require('../../src/workflows/engine/prompt-delivery')
-const { usageSummariesForRunState } = require('../../src/agent-run-results')
+const { usageSummariesForRunState } = require('../../src/workflows/results/agent-run-results')
 const {
   cancelLocalWorkflowRunnersForInterrupt,
   flowAgents,

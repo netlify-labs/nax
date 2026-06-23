@@ -588,10 +588,10 @@ Each step waits for every agent before the next step starts. Round 2 reuses each
 
 ```text
 bin/nax.js          # CLI entrypoint
-src/                # init, local-runner, flows, run-state, prompts, transports, ...
-src/flows/<id>/     # bundled workflow definitions and prompts
-src/flows/<id>/flow.*   # one workflow file per built-in flow
-src/flows/<id>/prompts/ # one Markdown prompt per step
+src/                # CLI, dashboard, workflow engine, storage, integrations, contracts
+workflows/<id>/     # bundled workflow definitions and prompts
+workflows/<id>/flow.*   # one workflow file per built-in workflow
+workflows/<id>/prompts/ # one Markdown prompt per step
 .github/nax-flows/ # optional committed project-local workflows
 src/templates/      # bundled GitHub Actions workflow and skill templates
 src/dashboard/web/src/            # React dashboard source
@@ -617,7 +617,7 @@ Key modules:
 
 ## Flow Anatomy
 
-A flow is `<flow-root>/<id>/flow.*` plus a `prompts/` directory beside it. Built-in flows ship inside the package under `src/flows/`; project-local flows default to `.github/nax-flows/` and are shown before bundled flows in the picker.
+A flow is `<flow-root>/<id>/flow.*` plus a `prompts/` directory beside it. Built-in workflows ship inside the package under `workflows/`; project-local flows default to `.github/nax-flows/` and are shown before bundled workflows in the picker.
 
 Flow files can be YAML, JSON, JavaScript, TypeScript, or TOML. The examples use YAML because it is compact and easy to skim, but the filename can match your preferred format: `flow.yml`, `flow.json`, `flow.js`, `flow.ts`, or `flow.toml`. TypeScript flow files need a TypeScript runtime such as `tsx` or `ts-node` available in the project.
 
@@ -643,7 +643,7 @@ Configure one or more project flow roots with `nax.config.json` (or the same sty
 
 You can also pass `--flows-dir <path>` more than once or set `NAX_FLOWS_DIR` / `NAX_FLOWS_DIRS`. Relative paths resolve from the project root. If a project flow uses the same `id` as a bundled flow, the project flow wins.
 
-Example (`src/flows/review/flow.yml`):
+Example (`workflows/review/flow.yml`):
 
 ```yaml
 id: review

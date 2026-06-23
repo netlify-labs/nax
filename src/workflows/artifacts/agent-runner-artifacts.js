@@ -5,7 +5,7 @@ const {
   buildAgentRunnerJson,
   buildAgentRunnerMarkdown,
   buildAgentRunnerUsageJson,
-} = require('../../agent-run-results')
+} = require('../results/agent-run-results')
 const { agentSessionDir } = require('./agent-session-artifacts')
 
 /**

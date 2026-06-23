@@ -9,7 +9,7 @@ const { persistAgentSessionArtifact } = require('../../src/workflows/artifacts/a
 const {
   sessionsFromListPayload,
   syncLastAgentRunner,
-} = require('../../src/agent-runner-sync')
+} = require('../../src/workflows/artifacts/agent-runner-sync')
 
 function tmpRoot() {
   return fs.mkdtempSync(path.join(os.tmpdir(), 'nax-agent-runner-sync-'))

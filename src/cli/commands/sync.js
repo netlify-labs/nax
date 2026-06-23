@@ -1,7 +1,7 @@
 const { resolveRepo } = require('../../workflows/catalog/prompts')
-const { syncLastAgentRunner } = require('../../agent-runner-sync')
+const { syncLastAgentRunner } = require('../../workflows/artifacts/agent-runner-sync')
 const { parseGithubActionsRunTarget, syncGithubActionsRun } = require('../../integrations/github/actions-sync')
-const { relativeDisplayPath } = require('../../handoff-sources')
+const { relativeDisplayPath } = require('../../workflows/followups/handoff-sources')
 const { buildNetlifyEnv } = require('../../integrations/netlify/local-runner')
 const { resolveProjectRoot } = require('../../integrations/netlify/project-selection')
 

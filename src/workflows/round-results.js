@@ -5,7 +5,7 @@ const {
   bodyHasRunnerResultMarker,
   bodyHasRunnerStatusMarker,
   parsePromptMarker,
-} = require('../comment-markers')
+} = require('../integrations/github/comment-markers')
 
 const PROMPT_HEADER_PATTERN = /^@\S+\s+(claude|gemini|codex)\b/i
 const STRUCTURED_HEADING_PATTERN = /^##\s+2\.\s+Structured\s+(Findings|Consensus)[^\n]*$/m

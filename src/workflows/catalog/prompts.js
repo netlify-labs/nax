@@ -1,11 +1,11 @@
 const fs = require('fs')
 const path = require('path')
-const { renderPromptMarker } = require('../../comment-markers')
+const { renderPromptMarker } = require('../../integrations/github/comment-markers')
 const { DEFAULT_MODELS } = require('../../core/constants')
 const { titleCase } = require('../../core/strings/title-case')
 const { runGh } = require('../../integrations/github/gh-cli')
 
-const PROMPTS_DIR = path.join(__dirname, '..', '..', 'flows', 'review', 'prompts')
+const PROMPTS_DIR = path.join(__dirname, '..', '..', '..', 'workflows', 'review', 'prompts')
 const PROMPT_ORDER = ['review', 'cross-review', 'summarize-consensus']
 
 /**

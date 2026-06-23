@@ -9,6 +9,7 @@
   "files": [
     "bin",
     "src",
+    "workflows",
     "src/dashboard/web/dist",
     "README.md",
     "LICENSE"
@@ -25,6 +26,7 @@
     "typecheck": "tsc -p tsconfig.json",
     "dry-run": "node bin/nax.js issue review --dry --force",
     "try:multiline": "node scripts/try-multiline.js",
+    "docs:workflows": "md-magic --file workflows/README.md --config ./.github/markdown.config.js",
     "dashboard:dev": "vite --config src/dashboard/web/vite.config.mjs",
     "dashboard:dev:real": "NAX_DASHBOARD_API_URL=${NAX_DASHBOARD_API_URL:-http://127.0.0.1:53734} vite --config src/dashboard/web/vite.config.mjs",
     "dashboard:build": "vite build --config src/dashboard/web/vite.config.mjs",
@@ -87,6 +89,7 @@
     "@xyflow/react": "^12.11.0",
     "code-inspector-plugin": "^1.6.1",
     "lucide-react": "^1.21.0",
+    "markdown-magic": "^4.10.4",
     "react": "^19.2.7",
     "react-dom": "^19.2.7",
     "streamdown": "^2.5.0",

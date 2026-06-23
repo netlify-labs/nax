@@ -1,9 +1,9 @@
 const fs = require('fs')
 const path = require('path')
 
-const PACKAGE_ROOT = path.join(__dirname, '..')
+const PACKAGE_ROOT = path.join(__dirname, '..', '..')
 const PACKAGE_JSON_PATH = path.join(PACKAGE_ROOT, 'package.json')
-const BUNDLED_SKILLS_DIR = path.join(__dirname, 'templates', 'skills')
+const BUNDLED_SKILLS_DIR = path.join(__dirname, '..', 'templates', 'skills')
 const PROVIDER_DIRS = [
   '.claude',
   '.codex',
@@ -143,7 +143,7 @@ function readInstalledVersion(skillRoot) {
  * @typedef {{
  *   src?: string,
  *   dest?: string,
- *   substitutions?: import('./types').StringMap,
+ *   substitutions?: import('../types').StringMap,
  *   version?: string,
  *   dryRun?: boolean,
  * }} CopySkillDirOptions

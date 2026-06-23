@@ -39,14 +39,6 @@ const NODE_BUILTINS = new Set([
 ])
 
 const TOP_LEVEL_SRC_FILES = new Set([
-  'agent-run-results.js',
-  'agent-runner-sync.js',
-  'comment-markers.js',
-  'graceful-run-state.js',
-  'handoff-sources.js',
-  'issue-groups.js',
-  'prompt-offload.js',
-  'skills.js',
   'types.js',
 ])
 

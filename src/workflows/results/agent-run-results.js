@@ -24,7 +24,7 @@ const NETLIFY_CREDITS_PER_USD = 180
  *   attachedFileKeys?: string[],
  *   result_zip_file_name?: string,
  *   resultZipFileName?: string,
- *   usage?: import('./types').UsageSummary,
+ *   usage?: import('../../types').UsageSummary,
  *   steps_count?: number | string,
  *   credit_limit_exceeded?: boolean,
  * }} NetlifyRunPayload
@@ -199,7 +199,7 @@ function aggregateFileChanges(records = []) {
 }
 
 function addUsage(a = {}, b = {}) {
-  /** @type {import('./types').UsageSummary} */
+  /** @type {import('../../types').UsageSummary} */
   const result = { ...a }
   for (const [key, value] of Object.entries(b || {})) {
     if (typeof value === 'number' && Number.isFinite(value)) {
@@ -337,9 +337,9 @@ function netlifyAgentRunUrlFromBody(body) {
   return match ? match[0] : ''
 }
 
-/** @returns {import('./types').StringMap} */
+/** @returns {import('../../types').StringMap} */
 function normalizeLinks(links = {}) {
-  /** @type {import('./types').StringMap} */
+  /** @type {import('../../types').StringMap} */
   const out = {}
   for (const key of ['agentRunUrl', 'sessionUrl', 'deployUrl', 'prUrl', 'issueUrl', 'commentUrl']) {
     if (links[key]) out[key] = String(links[key])
@@ -531,17 +531,17 @@ function buildAgentRunnerMarkdown(input = {}) {
 
 /**
  * @param {{
- *   run?: import('./types').AgentRun,
+ *   run?: import('../../types').AgentRun,
  *   runner?: NetlifyRunPayload,
  *   session?: NetlifyRunPayload,
  *   status?: string,
  *   resultText?: string,
- *   usage?: import('./types').UsageSummary | null,
- *   fileChanges?: import('./types').FileChangesSummary | null,
- *   links?: import('./types').StringMap,
- *   rawResult?: import('./types').JsonMap | null,
+ *   usage?: import('../../types').UsageSummary | null,
+ *   fileChanges?: import('../../types').FileChangesSummary | null,
+ *   links?: import('../../types').StringMap,
+ *   rawResult?: import('../../types').JsonMap | null,
  * }} param0
- * @returns {import('./types').AgentRun}
+ * @returns {import('../../types').AgentRun}
  */
 function normalizeAgentRunResult({
   run = {},
@@ -589,11 +589,11 @@ function normalizeAgentRunResult({
 
 /**
  * @param {{
- *   run?: import('./types').AgentRun,
- *   result?: ({ issueUrl?: string, model?: string } & import('./types').JsonMap) | null,
- *   reply?: import('./types').GitHubComment | null,
+ *   run?: import('../../types').AgentRun,
+ *   result?: ({ issueUrl?: string, model?: string } & import('../../types').JsonMap) | null,
+ *   reply?: import('../../types').GitHubComment | null,
  *   status?: string,
- *   marker?: ({ runnerId?: string, sessionId?: string, usage?: import('./types').UsageSummary } & import('./types').JsonMap) | null,
+ *   marker?: ({ runnerId?: string, sessionId?: string, usage?: import('../../types').UsageSummary } & import('../../types').JsonMap) | null,
  * }} param0
  */
 function normalizeGithubRunResult({ run = {}, result = null, reply = null, status, marker = null }) {

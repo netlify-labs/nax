@@ -1,6 +1,6 @@
 const path = require('path')
-const { normalizeAgentRunResult } = require('../../agent-run-results')
-const { syncAgentRunner } = require('../../agent-runner-sync')
+const { normalizeAgentRunResult } = require('../results/agent-run-results')
+const { syncAgentRunner } = require('../artifacts/agent-runner-sync')
 const { createRunState, saveRunState } = require('../../storage/local/run-state')
 const { isCancelledRunStatus, isFailedRunStatus, isTerminalRunStatus } = require('../../core/status')
 

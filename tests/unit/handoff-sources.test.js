@@ -6,7 +6,7 @@ const path = require('path')
 
 const { persistAgentRunnerArtifact } = require('../../src/workflows/artifacts/agent-runner-artifacts')
 const { persistAgentSessionArtifact } = require('../../src/workflows/artifacts/agent-session-artifacts')
-const { listHandoffSources, readHandoffSource } = require('../../src/handoff-sources')
+const { listHandoffSources, readHandoffSource } = require('../../src/workflows/followups/handoff-sources')
 const { persistWorkflowArtifacts } = require('../../src/workflows/artifacts/workflow-artifacts')
 
 function tmpRoot() {

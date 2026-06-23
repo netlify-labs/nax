@@ -12,7 +12,7 @@ const {
   runnerNetlifyCliCommand,
   safePromptBytes,
   utf8ByteLength,
-} = require('../../src/prompt-offload')
+} = require('../../src/workflows/prompts/offload')
 
 test('compactTextByBytes respects UTF-8 byte limits', () => {
   const text = `alpha ${'x'.repeat(2000)} omega`

@@ -2,7 +2,7 @@ const fs = require('fs')
 const path = require('path')
 const { makeBox } = require('@davidwells/box-logger')
 const { loadFlow } = require('../catalog/flows')
-const { relativeDisplayPath } = require('../../handoff-sources')
+const { relativeDisplayPath } = require('../followups/handoff-sources')
 const { dismissRunState, isUnfinishedRun, listRunStates, workflowStatePath } = require('../../storage/local/run-state')
 const { artifactsRootForRunState, stepArtifactsDir } = require('../artifacts/workflow-artifacts')
 

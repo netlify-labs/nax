@@ -4,7 +4,7 @@ const configorama = require('configorama')
 const { loadPromptFile } = require('./prompts')
 const { HUMAN_REVIEW_ACTION, HUMAN_REVIEW_SUBMIT, HUMAN_REVIEW_WAIT_FOR, isHumanReviewStep } = require('../human-review')
 
-const FLOWS_DIR = path.join(__dirname, '..', '..', 'flows')
+const FLOWS_DIR = path.join(__dirname, '..', '..', '..', 'workflows')
 const DEFAULT_PROJECT_FLOWS_DIRS = ['.github/nax-flows']
 const CONFIG_FILE_EXTENSIONS = ['json', 'yml', 'yaml', 'toml', 'js', 'cjs', 'mjs', 'ts', 'mts', 'cts']
 const FLOW_FILE_EXTENSIONS = ['yml', 'yaml', 'json', 'toml', 'js', 'cjs', 'mjs', 'ts', 'mts', 'cts']

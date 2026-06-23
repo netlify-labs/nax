@@ -1,5 +1,5 @@
 const { onAnyExit, onShutdown } = require('@davidwells/graceful-exit')
-const { saveRunState } = require('./storage/local/run-state')
+const { saveRunState } = require('./run-state')
 
 let activeRunState = null
 let activeInterruptHandler = null

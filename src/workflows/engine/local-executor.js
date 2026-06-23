@@ -1,6 +1,6 @@
 const path = require('path')
 const { makeBox } = require('@davidwells/box-logger')
-const { formatAgentRunUrl, formatAgentRunUrlFromAdminUrl } = require('../../agent-run-results')
+const { formatAgentRunUrl, formatAgentRunUrlFromAdminUrl } = require('../results/agent-run-results')
 const { WAIT_FOR_AGENT_RESULTS, isHumanReviewStep, loadStepPrompt } = require('../catalog/flows')
 const { AWAITING_REVIEW, createHumanReviewStepState } = require('../human-review')
 const { readNetlifyProject } = require('../../integrations/netlify/init')
@@ -21,7 +21,7 @@ const {
 } = require('../../integrations/netlify/project-selection')
 const { titleCase, getLocalDate } = require('../catalog/prompts')
 const { saveRunState, workflowStatePath } = require('../../storage/local/run-state')
-const { clearTrackedRunState, trackRunState } = require('../../graceful-run-state')
+const { clearTrackedRunState, trackRunState } = require('../../storage/local/graceful-run-state')
 const { targetBranch } = require('../../integrations/git/target')
 const { NETLIFY_API_TRANSPORT } = require('../../integrations/transports')
 const {
@@ -138,9 +138,39 @@ const {
  *   netlifyFilter?: import('../../types').JsonMap | string,
  *   initialDelayMs?: number,
  * }} CompleteLocalStepInput
+ *
+ * Input for rebuilding a smaller prompt when retrying a local runner.
+ * @typedef {{
+ *   flow: import('../../types').WorkflowFlow,
+ *   step: import('../../types').WorkflowStep,
+ *   runState: import('../../types').WorkflowRunState,
+ *   run: import('../../types').AgentRun,
+ * }} CompactLocalPromptForRetryInput
+ *
+ * Human-review pause input.
+ * @typedef {{
+ *   runState: import('../../types').WorkflowRunState,
+ *   step: import('../../types').WorkflowStep,
+ *   runtimeEvents?: WorkflowRuntimeEvents,
+ * }} RequireHumanReviewInput
+ *
+ * Remote run progress event subset used for local status rendering.
+ * @typedef {import('../../types').JsonMap & {
+ *   terminalSuccess?: boolean,
+ *   terminalFailure?: boolean,
+ *   state?: string,
+ * }} LocalRunProgressEvent
+ *
+ * Persisted run artifact paths returned by workflow artifact writers.
+ * @typedef {{
+ *   attemptNumber?: number | null,
+ *   jsonPath?: string,
+ *   markdownPath?: string,
+ *   canonical?: import('../../types').JsonMap | null,
+ * }} PersistedRunArtifactResult
  */
 
-/** @param {LocalAgentRunUrlInput} param0 */
+/** @param {LocalAgentRunUrlInput} param0 @returns {string} */
 function localAgentRunUrl({ projectRoot, runnerId, sessionId, options = {} }) {
   if (!runnerId) return ''
   const runOptions = /** @type {LocalExecutorOptions} */ (options || {})
@@ -160,7 +190,7 @@ function localAgentRunUrl({ projectRoot, runnerId, sessionId, options = {} }) {
   return ''
 }
 
-/** @param {SubmittedLocalRunBoxesInput} param0 */
+/** @param {SubmittedLocalRunBoxesInput} param0 @returns {string} */
 function formatSubmittedLocalRunBoxes({ runs = [], prompt = {}, projectRoot, options = {} }) {
   if (runs.length === 0) return ''
   const teal = '#0d9488'
@@ -198,6 +228,7 @@ function formatSubmittedLocalRunBoxes({ runs = [], prompt = {}, projectRoot, opt
   }).join('\n')
 }
 
+/** @param {CompactLocalPromptForRetryInput} param0 @returns {string} */
 function buildCompactLocalPromptForRetry({ flow, step, runState, run }) {
   const savedCompact = String(run.compactPromptText || '').trim()
   const savedPrompt = String(run.promptText || '')
@@ -234,12 +265,18 @@ function buildCompactLocalPromptForRetry({ flow, step, runState, run }) {
   return compactLocalTextByBytes(savedPrompt, safeBytes, 'Local agent prompt')
 }
 
+/** @param {import('../../types').WorkflowStep} stepState @returns {string} */
 function localStepStatus(stepState) {
   return stepState.runs.every((run) => run.status === 'completed' || run.status === 'dry-run')
     ? 'completed'
     : 'failed'
 }
 
+/**
+ * @param {import('../../types').WorkflowRunState} runState
+ * @param {import('../../types').WorkflowStep} stepState
+ * @returns {Error & { code?: string, runId?: string, stepId?: string }}
+ */
 function humanReviewPauseError(runState, stepState) {
   const error = /** @type {Error & { code?: string, runId?: string, stepId?: string }} */ (new Error(`Workflow "${runState.flowTitle || runState.flowId}" is awaiting human review at step "${stepState.title || stepState.id}".`))
   error.code = AWAITING_REVIEW
@@ -248,6 +285,7 @@ function humanReviewPauseError(runState, stepState) {
   return error
 }
 
+/** @param {RequireHumanReviewInput} param0 @returns {never} */
 function requireHumanReview({ runState, step, runtimeEvents }) {
   const existing = (runState.steps || []).find((candidate) => candidate.id === step.id)
   const stepState = existing || createHumanReviewStepState(step)
@@ -272,6 +310,7 @@ function requireHumanReview({ runState, step, runtimeEvents }) {
   throw humanReviewPauseError(runState, stepState)
 }
 
+/** @param {LocalRunProgressEvent} [event] @returns {string} */
 function visualAgentStatusFromPoll(event = {}) {
   if (event.terminalSuccess) return 'completed'
   if (event.terminalFailure) return event.state === 'timeout' ? 'timeout' : 'failed'
@@ -280,6 +319,12 @@ function visualAgentStatusFromPoll(event = {}) {
   return 'waiting'
 }
 
+/**
+ * @param {WorkflowRuntimeEvents | undefined} runtimeEvents
+ * @param {import('../../types').WorkflowRunState} runState
+ * @param {import('../../types').WorkflowStep} stepState
+ * @returns {void}
+ */
 function emitStepArtifacts(runtimeEvents, runState, stepState) {
   if (!runtimeEvents?.enabled || !runState.dir || !stepState?.id) return
   const stepDir = stepArtifactsDir(runState, stepState)
@@ -301,6 +346,14 @@ function emitStepArtifacts(runtimeEvents, runState, stepState) {
   })
 }
 
+/**
+ * @param {WorkflowRuntimeEvents | undefined} runtimeEvents
+ * @param {import('../../types').WorkflowRunState} runState
+ * @param {import('../../types').WorkflowStep} stepState
+ * @param {import('../../types').AgentRun} run
+ * @param {PersistedRunArtifactResult | null | undefined} artifactResult
+ * @returns {void}
+ */
 function emitRunArtifact(runtimeEvents, runState, stepState, run, artifactResult) {
   if (!runtimeEvents?.enabled || !artifactResult || !runState.dir) return
   for (const [artifactType, filePath] of [
@@ -320,6 +373,11 @@ function emitRunArtifact(runtimeEvents, runState, stepState, run, artifactResult
   }
 }
 
+/**
+ * @param {WorkflowRuntimeEvents | undefined} runtimeEvents
+ * @param {import('../../types').WorkflowRunState} runState
+ * @returns {void}
+ */
 function emitWorkflowArtifacts(runtimeEvents, runState) {
   if (!runtimeEvents?.enabled || !runState.dir) return
   const artifactsDir = artifactsRootForRunState(runState)
@@ -333,7 +391,13 @@ function emitWorkflowArtifacts(runtimeEvents, runState) {
   }
 }
 
-function futureFollowUpReferencesStep(flowSteps = [], currentStepIndex, stepId) {
+/**
+ * @param {import('../../types').WorkflowStep[]} [flowSteps]
+ * @param {number} [currentStepIndex]
+ * @param {string} [stepId]
+ * @returns {boolean}
+ */
+function futureFollowUpReferencesStep(flowSteps = [], currentStepIndex = -1, stepId) {
   return flowSteps.slice(currentStepIndex + 1).some((step) => (
     step.submit === 'follow-up' &&
     Array.isArray(step.input) &&
@@ -341,7 +405,13 @@ function futureFollowUpReferencesStep(flowSteps = [], currentStepIndex, stepId) 
   ))
 }
 
-function stepIndexInFlowSteps(flowSteps = [], currentStepIndex, stepId) {
+/**
+ * @param {import('../../types').WorkflowStep[]} [flowSteps]
+ * @param {number} [currentStepIndex]
+ * @param {string} [stepId]
+ * @returns {number}
+ */
+function stepIndexInFlowSteps(flowSteps = [], currentStepIndex = -1, stepId) {
   const index = flowSteps.findIndex((step) => step.id === stepId)
   return index === -1 ? currentStepIndex : index
 }
@@ -353,6 +423,7 @@ function stepIndexInFlowSteps(flowSteps = [], currentStepIndex, stepId) {
  *   flowSteps?: import('../../types').WorkflowStep[],
  *   currentStepIndex?: number,
  * }} input
+ * @returns {boolean}
  */
 function shouldArchiveCompletedStep({ step, options = {}, flowSteps = [], currentStepIndex = -1 }) {
   if (!step) return false
@@ -364,6 +435,12 @@ function shouldArchiveCompletedStep({ step, options = {}, flowSteps = [], curren
   return index !== flowSteps.length - 1
 }
 
+/**
+ * @param {import('../../types').WorkflowRunState} runState
+ * @param {string} runnerId
+ * @param {RunnerControlResult} archiveResult
+ * @returns {import('../../types').WorkflowStep[]}
+ */
 function applyArchiveResultToRunner(runState, runnerId, archiveResult) {
   const touched = []
   const archivedAt = new Date().toISOString()
@@ -399,6 +476,7 @@ function applyArchiveResultToRunner(runState, runnerId, archiveResult) {
  *   netlify?: import('../../types').JsonMap & { env?: NodeJS.ProcessEnv },
  *   archiveRun?: (input: { projectRoot?: string, runnerId?: string, env?: NodeJS.ProcessEnv }) => RunnerControlResult,
  * }} input
+ * @returns {void}
  */
 function archiveEligibleCompletedLocalRuns({ runState, flowSteps, currentStepIndex, options = {}, projectRoot, netlify, archiveRun = archiveAgentRun }) {
   const archivedThisPass = new Set()
@@ -436,7 +514,7 @@ function archiveEligibleCompletedLocalRuns({ runState, flowSteps, currentStepInd
   }
 }
 
-/** @param {import('../../types').AgentRun} run @param {string} projectRoot @param {LocalExecutorOptions} [options] */
+/** @param {import('../../types').AgentRun} run @param {string} projectRoot @param {LocalExecutorOptions} [options] @returns {import('../../types').AgentRun} */
 function addLocalRunLinks(run, projectRoot, options = {}) {
   const runUrl = localAgentRunUrl({ projectRoot, runnerId: run.runnerId, sessionId: run.sessionId, options })
   const baseRunUrl = localAgentRunUrl({ projectRoot, runnerId: run.runnerId, options })
@@ -448,6 +526,13 @@ function addLocalRunLinks(run, projectRoot, options = {}) {
   return run
 }
 
+/**
+ * @param {import('./progress').StepProgressReporter} reporter
+ * @param {import('../../types').AgentRun} run
+ * @param {string} projectRoot
+ * @param {LocalExecutorOptions} [options]
+ * @returns {void}
+ */
 function reportTerminalLocalRun(reporter, run, projectRoot, options = {}) {
   addLocalRunLinks(run, projectRoot, options)
   reporter.updateRun({
@@ -459,7 +544,7 @@ function reportTerminalLocalRun(reporter, run, projectRoot, options = {}) {
   })
 }
 
-/** @param {CompleteLocalStepInput} param0 */
+/** @param {CompleteLocalStepInput} param0 @returns {Promise<import('../../types').WorkflowStep>} */
 async function completeLocalStep({ runState, stepState, step, options, projectRoot, netlify, netlifyFilter, initialDelayMs, runtimeEvents }) {
   const timeoutMinutes = Number.parseInt(String(options.timeoutMinutes || '25'), 10)
   const resolvedNetlifyFilter = netlifyFilter !== undefined
@@ -550,7 +635,7 @@ async function completeLocalStep({ runState, stepState, step, options, projectRo
   return stepState
 }
 
-/** @param {LocalWorkflowExecutionInput} param0 */
+/** @param {LocalWorkflowExecutionInput} param0 @returns {Promise<void>} */
 async function executeLocalFlow({ flow, steps, options, runState, projectRoot, completedStepStates = new Map(), runtimeEvents }) {
   const date = options.date || getLocalDate()
   const baseContext = contextForRunState(runState, options)
@@ -779,6 +864,7 @@ async function executeLocalFlow({ flow, steps, options, runState, projectRoot, c
  *   runState?: import('../../types').WorkflowRunState,
  *   projectRoot?: string,
  * }} param0
+ * @returns {Promise<void>}
  */
 async function resumeLocalFlow({ flow, runState, projectRoot }) {
   trackRunState(runState)

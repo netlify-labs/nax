@@ -2,7 +2,7 @@ const { execFile, spawnSync } = require('child_process')
 const fs = require('fs')
 const path = require('path')
 const { readLinkedSiteId, readNetlifyCliToken } = require('./init')
-const { normalizeAgentRunResult } = require('../../agent-run-results')
+const { normalizeAgentRunResult } = require('../../workflows/results/agent-run-results')
 
 const TERMINAL_SUCCESS_STATES = new Set(['completed', 'done'])
 const TERMINAL_FAILURE_STATES = new Set(['failed', 'cancelled', 'canceled'])

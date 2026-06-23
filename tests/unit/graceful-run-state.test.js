@@ -8,7 +8,7 @@ const {
   clearTrackedRunState,
   persistActiveRunState,
   trackRunState,
-} = require('../../src/graceful-run-state')
+} = require('../../src/storage/local/graceful-run-state')
 
 function runState(tmp, overrides = {}) {
   const runId = overrides.runId || 'run-1'

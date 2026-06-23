@@ -1,6 +1,6 @@
 const fs = require('fs')
 const path = require('path')
-const { formatFileChangesSummary, formatUsageSummary, usageSummariesForRunState } = require('../../agent-run-results')
+const { formatFileChangesSummary, formatUsageSummary, usageSummariesForRunState } = require('../results/agent-run-results')
 const { persistAgentRunnerArtifact } = require('./agent-runner-artifacts')
 const { persistAgentSessionArtifact } = require('./agent-session-artifacts')
 

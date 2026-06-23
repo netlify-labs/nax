@@ -125,7 +125,7 @@ function runWorkflowChild({ flowId, projectRoot, options = {}, eventSink = () =>
   const isoNow = deps.isoNow || (() => new Date().toISOString())
   const forceKillDelayMs = deps.forceKillDelayMs ?? 3000
   const command = workflowCommand({ flowId, projectRoot, options })
-  const args = [path.resolve(__dirname, '..', '..', '..', 'bin', 'nax.js'), ...command.slice(1)]
+  const args = [path.resolve(__dirname, '..', '..', 'cli', 'nax.js'), ...command.slice(1)]
   const startedAt = isoNow()
   const started = now()
   let stdout = ''

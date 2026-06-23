@@ -379,13 +379,13 @@ npm run dashboard:smoke
 By default, `npm run dashboard:dev` serves read-only workflow data from Vite so the UI can boot without a running backend. To iterate against the real local API runner, start the dashboard server in one terminal:
 
 ```bash
-node bin/nax.js dashboard --no-open --port 53734
+node src/cli/nax.js dashboard --no-open --port 53734
 ```
 
 For terminal-side debugging of runs started from the browser:
 
 ```bash
-node bin/nax.js dashboard --no-open --tail --port 53734
+node src/cli/nax.js dashboard --no-open --tail --port 53734
 ```
 
 Copy the `token` value from the printed URL, then start Vite in another terminal:
@@ -587,7 +587,7 @@ Each step waits for every agent before the next step starts. Round 2 reuses each
 ### Repo layout
 
 ```text
-bin/nax.js          # CLI entrypoint
+src/cli/nax.js      # CLI entrypoint
 src/                # CLI, dashboard, workflow engine, storage, integrations, contracts
 workflows/<id>/     # bundled workflow definitions and prompts
 workflows/<id>/flow.*   # one workflow file per built-in workflow

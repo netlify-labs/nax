@@ -4,10 +4,9 @@
   "description": "Run multi step Netlify agent workflows using the world's leading AI models.",
   "type": "commonjs",
   "bin": {
-    "nax": "./bin/nax.js"
+    "nax": "./src/cli/nax.js"
   },
   "files": [
-    "bin",
     "src",
     "workflows",
     "src/dashboard/web/dist",
@@ -18,13 +17,13 @@
     "node": ">=18"
   },
   "scripts": {
-    "start": "node bin/nax.js",
-    "check": "node --check bin/nax.js && find src -path src/dashboard/web/dist -prune -o -name '*.js' -print0 | xargs -0 -n 1 node --check && npm run check:import-direction && npm run check:jsdoc-types && npm run typecheck",
+    "start": "node src/cli/nax.js",
+    "check": "node --check src/cli/nax.js && find src -path src/dashboard/web/dist -prune -o -name '*.js' -print0 | xargs -0 -n 1 node --check && npm run check:import-direction && npm run check:jsdoc-types && npm run typecheck",
     "check:cli-help": "node scripts/check-cli-help.js",
     "check:import-direction": "node scripts/check-import-direction.js",
     "check:jsdoc-types": "node scripts/check-jsdoc-types.js",
     "typecheck": "tsc -p tsconfig.json",
-    "dry-run": "node bin/nax.js issue review --dry --force",
+    "dry-run": "node src/cli/nax.js issue review --dry --force",
     "try:multiline": "node scripts/try-multiline.js",
     "docs:workflows": "md-magic --file workflows/README.md --config ./.github/markdown.config.js",
     "dashboard:dev": "vite --config src/dashboard/web/vite.config.mjs",

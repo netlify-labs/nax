@@ -3,7 +3,7 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
-exec node "$ROOT/bin/nax.js" preview-spinner \
+exec node "$ROOT/src/cli/nax.js" preview-spinner \
   --label "Audit Security" \
   --agents claude,gemini,codex \
   --count 3 \

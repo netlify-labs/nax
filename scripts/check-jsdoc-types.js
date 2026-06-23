@@ -42,7 +42,7 @@ const targetPaths = process.argv.slice(2)
 const files = targetPaths.length > 0
   ? targetPaths.filter((filePath) => filePath.endsWith('.js'))
   : [
-      path.join(process.cwd(), 'bin', 'nax.js'),
+      path.join(process.cwd(), 'src', 'cli', 'nax.js'),
       ...listJavaScriptFiles(path.join(process.cwd(), 'src')),
     ]
 

@@ -5,7 +5,7 @@ const os = require('os')
 const path = require('path')
 const { spawnSync } = require('child_process')
 
-const NAX_BIN = path.join(__dirname, '..', '..', 'bin', 'nax.js')
+const NAX_BIN = path.join(__dirname, '..', '..', 'src', 'cli', 'nax.js')
 
 function tmpRoot() {
   return fs.mkdtempSync(path.join(os.tmpdir(), 'nax-config-format-'))

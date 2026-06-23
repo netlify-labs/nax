@@ -1,7 +1,7 @@
 const test = require('node:test')
 const assert = require('node:assert/strict')
 
-const { buildProgram } = require('../../bin/nax')
+const { buildProgram } = require('../../src/cli/nax')
 
 /**
  * Commander command with enough surface for help smoke checks.

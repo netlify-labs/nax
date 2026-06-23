@@ -3,7 +3,7 @@
 
 if (process.env.FORCE_COLOR) delete process.env.NO_COLOR
 
-const { _private } = require('../bin/nax')
+const { _private } = require('../src/cli/nax')
 
 const DEFAULT_WIDTH = 118
 

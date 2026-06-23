@@ -122,6 +122,11 @@ function importsPath(ref, prefixes) {
   return prefixes.some((prefix) => ref.resolvedPath === prefix || ref.resolvedPath.startsWith(`${prefix}/`))
 }
 
+/** @param {ImportReference} ref */
+function importsCliEntrypoint(ref) {
+  return ref.resolvedPath === 'src/cli/nax' || ref.resolvedPath === 'src/cli/nax.js'
+}
+
 /**
  * @param {BoundaryFinding[]} findings
  * @param {string} filePath
@@ -243,10 +248,10 @@ const findings = []
 
 for (const filePath of listSourceFiles(path.join(PROJECT_ROOT, 'src'))) {
   const source = fs.readFileSync(filePath, 'utf8')
-  if (source.includes("require('../bin/nax") || source.includes("require('../../bin/nax")) {
-    addFinding(findings, filePath, 'src-imports-bin', 'src modules must not import bin/nax.js')
-  }
   const imports = importsForSource(toProjectPath(filePath), source)
+  if (toProjectPath(filePath) !== 'src/cli/nax.js' && imports.some(importsCliEntrypoint)) {
+    addFinding(findings, filePath, 'src-imports-cli-entrypoint', 'src modules must not import the executable CLI entrypoint')
+  }
   checkDashboardApi(filePath, imports, findings)
   checkDashboardWeb(filePath, imports, findings)
   checkCore(filePath, imports, findings)

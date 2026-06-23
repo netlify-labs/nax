@@ -46,7 +46,7 @@ const targets = [
 ]
 
 for (const target of targets) {
-  const result = spawnSync(process.execPath, ['bin/nax.js', ...target.args], {
+  const result = spawnSync(process.execPath, ['src/cli/nax.js', ...target.args], {
     cwd: process.cwd(),
     encoding: 'utf8',
   })

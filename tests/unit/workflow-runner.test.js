@@ -82,7 +82,7 @@ test('runWorkflow dry-run preserves the CLI dry-run contract', async () => {
   const cliRoot = tmpRoot()
   const directRoot = tmpRoot()
   const cli = spawnSync(process.execPath, [
-    path.join(__dirname, '..', '..', 'bin', 'nax.js'),
+    path.join(__dirname, '..', '..', 'src', 'cli', 'nax.js'),
     'run',
     'review',
     '--project-root',

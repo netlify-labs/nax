@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-const main = require('../src/commands/program')
+const main = require('../src/cli/commands/program')
 
 /** @param {unknown} error */
 function formatCaughtError(error) {

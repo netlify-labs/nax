@@ -6,7 +6,7 @@ const path = require('path')
 
 const { buildRunDetails } = require('../../src/dashboard/shared/run-details')
 const { flowToGraph } = require('../../src/dashboard/shared/graph')
-const { listRunStates, workflowStatePath } = require('../../src/run-state')
+const { listRunStates, workflowStatePath } = require('../../src/storage/local/run-state')
 const {
   appendFollowupRunsToWorkflow,
   cancelFollowupRunInWorkflow,
@@ -16,7 +16,7 @@ const {
   submittedStepStatus,
   syncSubmittedFollowupRunsToWorkflow,
   uniqueAgents,
-} = require('../../src/followup-persistence')
+} = require('../../src/workflows/followups/persistence')
 
 function tmpRoot() {
   return fs.mkdtempSync(path.join(os.tmpdir(), 'nax-followup-persistence-'))

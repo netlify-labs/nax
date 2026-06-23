@@ -1,9 +1,9 @@
-const { listRunStates, listWorkflowStatePage } = require('../../run-state')
+const { listRunStates, listWorkflowStatePage } = require('../../storage/local/run-state')
 const { flowToGraph } = require('../shared/graph')
 const { buildRunDetails } = require('../shared/run-details')
 const { publicFlow, publicRunOptions, publicRunState } = require('../api/serializers')
 const { requestError } = require('../api/errors')
-const { syncSubmittedFollowupRunsToWorkflow } = require('../../followup-persistence')
+const { syncSubmittedFollowupRunsToWorkflow } = require('../../workflows/followups/persistence')
 
 const DEFAULT_RUNS_DURABLE_LIMIT = 50
 const MAX_RUNS_DURABLE_LIMIT = 200
@@ -41,7 +41,7 @@ function decodeRunsCursor(value) {
  * @typedef {{
  *   projectRoot: string,
  *   env?: NodeJS.ProcessEnv,
- *   flowStore?: { loadWorkflow?: (id: string) => Promise<object> },
+ *   flowStore?: { loadWorkflow?: (id: string) => Promise<Record<string, unknown>> },
  *   followupSyncRunCommand?: import('../../types').RunCommand,
  *   resolveRunStateId?: (id: string) => string | null | undefined,
  * }} LocalRunStoreOptions

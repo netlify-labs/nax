@@ -4,12 +4,12 @@ const os = require('node:os')
 const path = require('node:path')
 const test = require('node:test')
 
-const { loadFlow } = require('../../src/flows')
+const { loadFlow } = require('../../src/workflows/catalog/flows')
 const {
   approveHumanReviewGate,
   cancelHumanReviewGate,
   createHumanReviewStepState,
-} = require('../../src/human-review')
+} = require('../../src/workflows/human-review')
 
 function tmpdir() {
   return fs.mkdtempSync(path.join(os.tmpdir(), 'nax-human-review-test-'))

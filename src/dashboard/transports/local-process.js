@@ -1,7 +1,7 @@
 const { spawn } = require('child_process')
 const path = require('path')
 
-const { workflowCommand } = require('../../workflow-runner')
+const { workflowCommand } = require('../../workflows/engine/runner')
 const { appendBounded } = require('../runtime/live-run-registry')
 
 /**
@@ -22,7 +22,7 @@ const { appendBounded } = require('../runtime/live-run-registry')
  * @typedef {{
  *   flowId: string,
  *   projectRoot: string,
- *   options?: import('../../workflow-runner').WorkflowCommandOptions,
+ *   options?: import('../../workflows/engine/runner').WorkflowCommandOptions,
  *   eventSink?: DashboardEventSink,
  *   tailOutput?: boolean,
  *   deps?: LocalProcessWorkflowRunnerDeps,

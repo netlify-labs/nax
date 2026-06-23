@@ -4,7 +4,7 @@ const assert = require('node:assert/strict')
 const {
   FollowupDeliveryError,
   prepareFollowupContextDelivery,
-} = require('../../src/followup-delivery')
+} = require('../../src/workflows/followups/delivery')
 
 test('follow-up context delivery returns none for empty context', async () => {
   const delivery = await prepareFollowupContextDelivery({
@@ -64,9 +64,10 @@ test('follow-up context delivery fails oversized context without blob writer', a
       runId: 'run-big',
       options: { safePromptBytes: 500 },
     }),
-    /** @param {any} error */
+    /** @param {unknown} error */
     (error) => {
       assert.equal(error instanceof FollowupDeliveryError, true)
+      if (!(error instanceof FollowupDeliveryError)) return false
       assert.equal(error.code, 'context_too_large')
       assert.match(error.message, /above the safe prompt budget/)
       return true

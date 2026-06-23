@@ -1,4 +1,4 @@
-const { eventLogPathForRunState, readEventLog } = require('../../runner-event-log')
+const { eventLogPathForRunState, readEventLog } = require('../../workflows/events/runner-event-log')
 const { publicRunState } = require('../api/serializers')
 
 /**

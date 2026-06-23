@@ -17,35 +17,11 @@ const { localDashboardCapabilities } = require('./capabilities')
  * @typedef {{
  *   runtime?: DashboardApiRuntime,
  *   token?: string,
- *   workflowStore?: {
- *     listWorkflows?: () => Promise<object>,
- *     getWorkflow?: (id: string) => Promise<object | null>,
- *     getWorkflowGraph?: (id: string) => Promise<object | null>,
- *   },
- *   runStore?: {
- *     listRunsPage?: (input?: { limit?: string | null, cursor?: string | null }) => object | Promise<object>,
- *     getRun?: (id: string) => object | null | Promise<object | null>,
- *     getRunGraph?: (id: string) => Promise<object | null>,
- *     getRunDetails?: (id: string) => Promise<object | null>,
- *   },
- *   eventStore?: {
- *     listEvents?: (input?: { runId?: string, since?: number }) => object | null | Promise<object | null>,
- *   },
- *   liveRuns?: {
- *     listActiveRuns?: () => Array<object>,
- *     getActiveRun?: (id: string) => object | null,
- *     getActiveEvents?: (id: string, since?: number) => object | null,
- *   },
- *   mutations?: {
- *     openFile?: (body: Record<string, unknown>) => Promise<{ statusCode?: number, body: object } | object>,
- *     dryRunWorkflow?: (id: string, body: Record<string, unknown>) => Promise<{ statusCode?: number, body: object } | object>,
- *     startWorkflow?: (id: string, body: Record<string, unknown>) => Promise<{ statusCode?: number, body: object } | object>,
- *     cancelRun?: (id: string, body: Record<string, unknown>) => Promise<{ statusCode?: number, body: object } | object | null>,
- *     approveReview?: (id: string, body: Record<string, unknown>) => Promise<{ statusCode?: number, body: object } | object | null>,
- *     cancelReview?: (id: string, body: Record<string, unknown>) => Promise<{ statusCode?: number, body: object } | object | null>,
- *     submitFollowup?: (id: string, body: Record<string, unknown>) => Promise<{ statusCode?: number, body: object } | object | null>,
- *     cancelFollowup?: (id: string, body: Record<string, unknown>) => Promise<{ statusCode?: number, body: object } | object | null>,
- *   },
+ *   workflowStore?: import('../../storage/interfaces').WorkflowCatalog,
+ *   runStore?: import('../../storage/interfaces').RunStore,
+ *   eventStore?: import('../../storage/interfaces').EventStore,
+ *   liveRuns?: import('../../storage/interfaces').LiveRuns,
+ *   mutations?: import('../../storage/interfaces').DashboardMutations,
  * }} CreateDashboardApiOptions
  */
 
@@ -140,21 +116,29 @@ async function honoJsonBody(c) {
 
 /**
  * @param {unknown} result
- * @returns {{ statusCode: import('hono/utils/http-status').ContentfulStatusCode, body: object } | null}
+ * @returns {{ statusCode: import('hono/utils/http-status').ContentfulStatusCode, body: import('../../storage/interfaces').JsonObject } | null}
  */
 function mutationResult(result) {
   if (!result) return null
-  if (typeof result === 'object' && 'body' in result && result.body && typeof result.body === 'object') {
+  if (isJsonObject(result) && isJsonObject(result.body)) {
     const statusCode = 'statusCode' in result && typeof result.statusCode === 'number' ? result.statusCode : 200
     return {
       statusCode: contentfulStatusCode(statusCode),
-      body: /** @type {object} */ (result.body),
+      body: result.body,
     }
   }
-  if (typeof result === 'object') {
-    return { statusCode: 200, body: /** @type {object} */ (result) }
+  if (isJsonObject(result)) {
+    return { statusCode: 200, body: result }
   }
   throw requestError(500, 'invalid_service_response', 'Dashboard service returned an invalid response.')
+}
+
+/**
+ * @param {unknown} value
+ * @returns {value is import('../../storage/interfaces').JsonObject}
+ */
+function isJsonObject(value) {
+  return Boolean(value) && typeof value === 'object' && !Array.isArray(value)
 }
 
 /**

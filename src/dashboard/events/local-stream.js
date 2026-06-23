@@ -10,7 +10,7 @@ const { eventAfter, eventText } = require('../runtime/live-run-registry')
  *
  * @typedef {{
  *   getRunState: (id: string) => Record<string, unknown> | null,
- *   listEvents: (input?: { runId?: string, since?: number }) => { run: object, events: Array<Record<string, unknown>>, errors: Array<Record<string, unknown>> } | null,
+ *   listEvents: (input?: { runId?: string, since?: number }) => import('../../storage/interfaces').EventsReplay | null,
  * }} EventStreamStore
  *
  * @typedef {{
@@ -22,7 +22,7 @@ const { eventAfter, eventText } = require('../runtime/live-run-registry')
  *   ok: boolean,
  *   active?: boolean,
  *   running?: boolean,
- *   run?: object,
+ *   run?: import('../runtime/live-run-registry').LiveRun | import('../../storage/interfaces').DashboardRunPayload,
  *   events?: Array<Record<string, unknown>>,
  *   errors?: Array<Record<string, unknown>>,
  *   message?: string,
@@ -47,7 +47,7 @@ function activeEventReplay(run, since = 0) {
 
 /**
  * @param {Record<string, unknown>} durable
- * @param {{ run: object, events: Array<Record<string, unknown>>, errors: Array<Record<string, unknown>> }} replay
+ * @param {import('../../storage/interfaces').EventsReplay} replay
  * @returns {EventReplayResult}
  */
 function durableEventReplay(durable, replay) {

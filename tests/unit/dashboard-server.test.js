@@ -8,8 +8,8 @@ const path = require('path')
 
 const { _private, startDashboardServer } = require('../../src/dashboard/server')
 const { buildRunDetails } = require('../../src/dashboard/shared/run-details')
-const { appendFollowupRunsToWorkflow } = require('../../src/followup-persistence')
-const { appendEventLog } = require('../../src/runner-event-log')
+const { appendFollowupRunsToWorkflow } = require('../../src/workflows/followups/persistence')
+const { appendEventLog } = require('../../src/workflows/events/runner-event-log')
 
 /** @param {string} url @param {{ token?: string, cookie?: string, headers?: Record<string, string> }} [options] */
 function requestJson(url, { token, cookie, headers = {} } = {}) {

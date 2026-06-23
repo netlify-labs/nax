@@ -1,7 +1,7 @@
 const test = require('node:test')
 const assert = require('node:assert/strict')
 
-const { buildIssueBody, buildIssueTitle, listPromptNames, loadPrompt } = require('../../src/prompts')
+const { buildIssueBody, buildIssueTitle, listPromptNames, loadPrompt } = require('../../src/workflows/catalog/prompts')
 
 const fakePrompt = {
   name: 'summarize-consensus',

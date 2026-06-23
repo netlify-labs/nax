@@ -6,7 +6,7 @@ const {
   createNotificationDispatcher,
   eventNameForRunnerEvent,
   webhookBody,
-} = require('../../src/notifications')
+} = require('../../src/integrations/notifications')
 
 test('notification event names map durable runner events to webhook events', () => {
   assert.equal(eventNameForRunnerEvent({ type: 'workflow_completed' }), 'workflow.completed')

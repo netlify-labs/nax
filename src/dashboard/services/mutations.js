@@ -1,10 +1,10 @@
-const { normalizeAgentList } = require('../../agent-selection')
-const { buildFollowupContextPackage } = require('../../followup-context')
-const { prepareFollowupContextDelivery } = require('../../followup-delivery')
-const { buildFollowupSubmissionPlan } = require('../../followup-plan')
-const { buildFollowupPrompt, submitFollowupPlan } = require('../../handoff-runner')
-const { appendFollowupRunsToWorkflow, cancelFollowupRunInWorkflow, persistFreshPseudoWorkflow } = require('../../followup-persistence')
-const { cancelHumanReviewGate } = require('../../human-review')
+const { normalizeAgentList } = require('../../core/agents/selection')
+const { buildFollowupContextPackage } = require('../../workflows/followups/context')
+const { prepareFollowupContextDelivery } = require('../../workflows/followups/delivery')
+const { buildFollowupSubmissionPlan } = require('../../workflows/followups/plan')
+const { buildFollowupPrompt, submitFollowupPlan } = require('../../workflows/followups/runner')
+const { appendFollowupRunsToWorkflow, cancelFollowupRunInWorkflow, persistFreshPseudoWorkflow } = require('../../workflows/followups/persistence')
+const { cancelHumanReviewGate } = require('../../workflows/human-review')
 const { requestError } = require('../api/errors')
 const { buildRunDetails } = require('../shared/run-details')
 const { publicRunState } = require('../api/serializers')
@@ -40,11 +40,11 @@ function cancelReviewGate({ runState, body = {} }) {
  *   followupSiteId: string,
  *   followupSiteName: string,
  *   followupNetlifyFilter: string,
- *   followupSubmitRun?: import('../../handoff-runner').HandoffSubmitRun,
+ *   followupSubmitRun?: import('../../workflows/followups/runner').HandoffSubmitRun,
  *   writeBlob: FollowupBlobWriter | null,
  *   normalizeFollowupRequest: (body: Record<string, unknown>, details: object, durable: Record<string, unknown>) => FollowupRequest,
- *   makeBlobWriter: (input: { projectRoot: string, siteId: string, env: NodeJS.ProcessEnv, writeBlob?: FollowupBlobWriter | null, setBlobCommand?: typeof import('../../netlify/blobs').setBlob }) => FollowupBlobWriter | null,
- *   setBlobCommand?: typeof import('../../netlify/blobs').setBlob,
+ *   makeBlobWriter: (input: { projectRoot: string, siteId: string, env: NodeJS.ProcessEnv, writeBlob?: FollowupBlobWriter | null, setBlobCommand?: typeof import('../../integrations/netlify/blobs').setBlob }) => FollowupBlobWriter | null,
+ *   setBlobCommand?: typeof import('../../integrations/netlify/blobs').setBlob,
  *   linkSubmittedRun: (input: { siteName: string }) => (run?: Record<string, unknown>) => Record<string, unknown>,
  *   followupId: (sourceRunId?: string) => string,
  *   freshFollowupTitle: (sourceRun: Record<string, unknown>, target: Record<string, unknown>, freshResults: Array<Record<string, unknown>>) => string,

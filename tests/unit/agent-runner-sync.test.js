@@ -4,8 +4,8 @@ const fs = require('fs')
 const os = require('os')
 const path = require('path')
 
-const { persistAgentRunnerArtifact } = require('../../src/agent-runner-artifacts')
-const { persistAgentSessionArtifact } = require('../../src/agent-session-artifacts')
+const { persistAgentRunnerArtifact } = require('../../src/workflows/artifacts/agent-runner-artifacts')
+const { persistAgentSessionArtifact } = require('../../src/workflows/artifacts/agent-session-artifacts')
 const {
   sessionsFromListPayload,
   syncLastAgentRunner,

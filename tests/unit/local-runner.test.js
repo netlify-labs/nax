@@ -30,7 +30,7 @@ const {
   showAgentRun,
   submitLocalAgentRun,
   runAsync,
-} = require('../../src/local-runner')
+} = require('../../src/integrations/netlify/local-runner')
 
 test('latestSessionFromList accepts array and sessions wrapper responses', () => {
   assert.deepEqual(latestSessionFromList([{ id: 's1' }, { id: 's2' }]), { id: 's2' })

@@ -6,7 +6,7 @@ const {
   isGitHubAuthError,
   resetGhAuthCache,
   runGh,
-} = require('../../src/gh-cli')
+} = require('../../src/integrations/github/gh-cli')
 
 test('runGh retries transient failures with exponential backoff', () => {
   const calls = []

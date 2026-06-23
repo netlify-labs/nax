@@ -11,26 +11,26 @@ const {
   formatFlowListJson,
   workflowPickerHint,
   workflowPickerLabel,
-} = require('../../src/cli/flow-list')
+} = require('../../src/cli/display/flow-list')
 const {
   chooseNetlifyFilterOption,
   netlifyConfigChoiceHint,
   netlifyProjectChoiceLabel,
   resolveProjectRoot,
   sortNetlifyConfigChoices,
-} = require('../../src/netlify/project-selection')
+} = require('../../src/integrations/netlify/project-selection')
 const {
   enforceGithubActionPromptBudget,
   githubActionTriggerTextMetrics,
-} = require('../../src/github/prompt-budget')
+} = require('../../src/core/prompts/budget')
 const {
   applyGithubStatusCommentToRun,
   findGithubRunnerFailures,
   githubStepStatus,
   resultsScopedToGithubRuns,
   waitForGithubStep,
-} = require('../../src/github/polling')
-const { buildPlan } = require('../../src/github/issue-plan')
+} = require('../../src/integrations/github/polling')
+const { buildPlan } = require('../../src/integrations/github/issue-plan')
 const {
   AGENT_RUNNER_USE_CASES,
   agentStepCompletionSummary,
@@ -43,7 +43,7 @@ const {
   physicalRowCount,
   pickFlavor,
   shouldPollGithubRun,
-} = require('../../src/workflow/progress')
+} = require('../../src/workflows/engine/progress')
 const {
   findLatestResumableRun,
   formatDetailedRelativeTime,
@@ -55,15 +55,15 @@ const {
   resumeStepDecorations,
   savedAgentStatus,
   stepResultsSummaryPath,
-} = require('../../src/workflow/resume')
+} = require('../../src/workflows/engine/resume')
 const {
   archiveEligibleCompletedLocalRuns,
   formatSubmittedLocalRunBoxes,
   futureFollowUpReferencesStep,
   localAgentRunUrl,
   shouldArchiveCompletedStep,
-} = require('../../src/workflow/local-executor')
-const { buildAndMaybeFallbackPlan } = require('../../src/workflow/github-executor')
+} = require('../../src/workflows/engine/local-executor')
+const { buildAndMaybeFallbackPlan } = require('../../src/workflows/engine/github-executor')
 const {
   applyContextFetchClassification,
   cleanupLocalWorkflowBlobs,
@@ -71,7 +71,7 @@ const {
   formatCompactLocalRunResults,
   formatLocalRunResults,
   prepareLocalPromptDelivery,
-} = require('../../src/workflow/prompt-delivery')
+} = require('../../src/workflows/engine/prompt-delivery')
 const { usageSummariesForRunState } = require('../../src/agent-run-results')
 const {
   cancelLocalWorkflowRunnersForInterrupt,
@@ -82,13 +82,13 @@ const {
   withSelectedAgents,
   withSelectedStepModels,
 } = require('../../src/cli/main')
-const { printSuccessBox } = require('../../src/cli/run')
+const { printSuccessBox } = require('../../src/cli/commands/run')
 const {
   contextWithOutputBudget,
   firstRunnableStepIndex,
   sourceIssueNumbersForStep,
   sourceRunsForStep,
-} = require('../../src/workflow/execution-context')
+} = require('../../src/workflows/engine/execution-context')
 const {
   buildHandoffPrompt,
   copyToClipboard,
@@ -102,7 +102,7 @@ const {
   openHandoffSource,
   printPostSuccessHandoffHint,
   readHandoffSummary,
-} = require('../../src/cli/handoff')
+} = require('../../src/cli/commands/handoff')
 
 function tmpRoot() {
   return fs.mkdtempSync(path.join(os.tmpdir(), 'nax-flow-execution-'))

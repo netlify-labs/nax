@@ -3,13 +3,13 @@ const os = require('os')
 const path = require('path')
 const { spawnSync } = require('child_process')
 const { makeBox, makeHorizontalBoxes } = require('@davidwells/box-logger')
-const { buildNaxProgram } = require('../commands/nax')
+const { buildNaxProgram } = require('./commands/nax')
 const {
   actionOptions,
   collectOption,
   mergeCommandOptions,
-} = require('../commands/options')
-const { DEFAULT_MODELS } = require('../constants')
+} = require('./commands/options')
+const { DEFAULT_MODELS } = require('../core/constants')
 const {
   buildIssueBody,
   buildIssueTitle,
@@ -18,9 +18,9 @@ const {
   loadPrompt,
   resolveRepo,
   titleCase,
-} = require('../prompts')
-const { buildAutomaticContext, resolveRemoteBranchSha } = require('../review-context')
-const { legacyTargetFromRunState, resolveTarget, targetBranch, targetSummary } = require('../target')
+} = require('../workflows/catalog/prompts')
+const { buildAutomaticContext, resolveRemoteBranchSha } = require('../integrations/git/review-context')
+const { legacyTargetFromRunState, resolveTarget, targetBranch, targetSummary } = require('../integrations/git/target')
 const {
   chooseNetlifyFilterOption,
   configDirForNetlifyOptions,
@@ -32,14 +32,14 @@ const {
   netlifyProjectChoiceLabel,
   resolveProjectRoot,
   sortNetlifyConfigChoices,
-} = require('../netlify/project-selection')
+} = require('../integrations/netlify/project-selection')
 const {
   assertCrossReviewComplete,
   extractStructuredSection,
   fetchRoundResults,
   formatRoundResults,
   rawIssuesFromResults,
-} = require('../round-results')
+} = require('../workflows/round-results')
 const { formatGroupHint, listRecentIssueGroups } = require('../issue-groups')
 const { parseRunnerResultMarker } = require('../comment-markers')
 const {
@@ -49,11 +49,11 @@ const {
   normalizeGithubRunResult,
   usageSummariesForRunState,
 } = require('../agent-run-results')
-const { runGh } = require('../gh-cli')
+const { runGh } = require('../integrations/github/gh-cli')
 const { multiline } = require('../utils/multiline')
-const { WAIT_FOR_AGENT_RESULTS, isHumanReviewStep, listFlows, loadFlow, loadStepPrompt } = requireWithoutArgvFlag('--verbose', () => require('../flows'))
-const { createRunState, dismissRunState, isUnfinishedRun, listRunStates, saveRunState, workflowStatePath } = require('../run-state')
-const { AWAITING_REVIEW, approveHumanReviewGate, createHumanReviewStepState } = require('../human-review')
+const { WAIT_FOR_AGENT_RESULTS, isHumanReviewStep, listFlows, loadFlow, loadStepPrompt } = requireWithoutArgvFlag('--verbose', () => require('../workflows/catalog/flows'))
+const { createRunState, dismissRunState, isUnfinishedRun, listRunStates, saveRunState, workflowStatePath } = require('../storage/local/run-state')
+const { AWAITING_REVIEW, approveHumanReviewGate, createHumanReviewStepState } = require('../workflows/human-review')
 const {
   artifactsRootForRunState,
   persistRunArtifact,
@@ -62,12 +62,12 @@ const {
   safeArtifactName,
   stepArtifactsDir,
   writeGithubStepSummary,
-} = require('../workflow-artifacts')
+} = require('../workflows/artifacts/workflow-artifacts')
 const { clearTrackedRunState, trackRunState } = require('../graceful-run-state')
-const { persistAgentRunnerArtifact } = require('../agent-runner-artifacts')
-const { persistAgentSessionArtifact } = require('../agent-session-artifacts')
+const { persistAgentRunnerArtifact } = require('../workflows/artifacts/agent-runner-artifacts')
+const { persistAgentSessionArtifact } = require('../workflows/artifacts/agent-session-artifacts')
 const { listHandoffSources, readHandoffSource, relativeDisplayPath } = require('../handoff-sources')
-const { handleCi } = require('./ci')
+const { handleCi } = require('./commands/ci')
 const {
   AD_HOC_RUN_CHOICE,
   formatFlowList,
@@ -75,7 +75,7 @@ const {
   formatFlowListJson,
   workflowPickerHint,
   workflowPickerLabel,
-} = require('./flow-list')
+} = require('./display/flow-list')
 const {
   buildHandoffPrompt,
   copyToClipboard,
@@ -97,10 +97,10 @@ const {
   readHandoffSummary,
   readSelectedHandoffSource,
   relativeHandoffPath,
-} = require('./handoff')
-const { handleInit } = require('./init')
-const { createIssueHandlers } = require('./issue')
-const { handleSync } = require('./sync')
+} = require('./commands/handoff')
+const { handleInit } = require('./commands/init')
+const { createIssueHandlers } = require('./commands/issue')
+const { handleSync } = require('./commands/sync')
 const {
   PROVIDER_DIRS,
   checkSkills,
@@ -108,10 +108,10 @@ const {
   listBundledSkills,
   updateSkills,
 } = require('../skills')
-const { NETLIFY_API_TRANSPORT, detectTransports, formatTransportSetupHelp, isNetlifyApiTransport, resolveTransport } = require('../transports')
-const { readNetlifyProject } = require('../init')
-const { runWorkflow } = require('../workflow-runner')
-const { createWorkflowEventContext } = require('../workflow-events')
+const { NETLIFY_API_TRANSPORT, detectTransports, formatTransportSetupHelp, isNetlifyApiTransport, resolveTransport } = require('../integrations/transports')
+const { readNetlifyProject } = require('../integrations/netlify/init')
+const { runWorkflow } = require('../workflows/engine/runner')
+const { createWorkflowEventContext } = require('../workflows/events/workflow-events')
 const {
   AGENT_RUNNER_USE_CASES,
   DEFAULT_ORCHESTRATOR,
@@ -134,7 +134,7 @@ const {
   startSubmissionHeartbeat,
   submissionFailureSummary,
   visibleLength,
-} = require('../workflow/progress')
+} = require('../workflows/engine/progress')
 const {
   addLocalRunLinks,
   applyArchiveResultToRunner,
@@ -152,12 +152,12 @@ const {
   requireHumanReview,
   resumeLocalFlow,
   shouldArchiveCompletedStep,
-} = require('../workflow/local-executor')
+} = require('../workflows/engine/local-executor')
 const {
   buildAndMaybeFallbackPlan,
   executeGithubFlow,
   resumeGithubFlow,
-} = require('../workflow/github-executor')
+} = require('../workflows/engine/github-executor')
 const {
   applyContextFetchClassification,
   blobOffloadDisabled,
@@ -182,7 +182,7 @@ const {
   optionalNetlifyForBlobOffload,
   prepareLocalPromptDelivery,
   renderStructuredForLocalEssentials,
-} = require('../workflow/prompt-delivery')
+} = require('../workflows/engine/prompt-delivery')
 const {
   MUTED_COLOR,
   SUCCESS_COLOR,
@@ -201,15 +201,15 @@ const {
   savedStepStatus,
   stepResultsSummaryPath,
   workflowSummaryDisplayPath,
-} = require('../workflow/resume')
-const { setBlob, deleteBlob } = require('../netlify/blobs')
+} = require('../workflows/engine/resume')
+const { setBlob, deleteBlob } = require('../integrations/netlify/blobs')
 const {
   addRunBlobRef,
   compactBlobRefs,
   cleanupRunBlobRefs,
   sweepBlobRefs,
-} = require('../blob-ref-registry')
-const { writeLocalBlobDebugPayload } = require('../blob-debug-cache')
+} = require('../storage/local/blob-ref-registry')
+const { writeLocalBlobDebugPayload } = require('../storage/local/blob-debug-cache')
 const {
   blobRefForStep,
   buildBlobPayload,
@@ -223,7 +223,7 @@ const {
   applyAgentSelection,
   assertValidAgentSelection,
   parseStepModelsEntries,
-} = require('../agent-selection')
+} = require('../core/agents/selection')
 const {
   archiveAgentRun,
   buildNetlifyEnv,
@@ -233,7 +233,7 @@ const {
   resolveNetlifyProjectTarget,
   submitLocalAgentRun,
   waitForLocalAgentRuns,
-} = require('../local-runner')
+} = require('../integrations/netlify/local-runner')
 const {
   BODY_FALLBACK_THRESHOLD,
   GITHUB_ACTION_TRIGGER_TEXT_ENV_PREFIX,
@@ -245,7 +245,7 @@ const {
   githubActionTriggerTextMetrics,
   githubSafePromptBytes: githubSafePromptBytesWithLocalBudget,
   utf8ByteLength,
-} = require('../github/prompt-budget')
+} = require('../core/prompts/budget')
 const {
   applyGithubStatusCommentToRun,
   findGithubActionRunFailures,
@@ -256,7 +256,7 @@ const {
   githubStepStatus,
   resultsScopedToGithubRuns,
   waitForGithubStep,
-} = require('../github/polling')
+} = require('../integrations/github/polling')
 const {
   ROUND_LABEL_BY_PROMPT,
   buildCommentPlan,
@@ -282,7 +282,7 @@ const {
   resolveCommentTarget,
   shouldEmbedAllReplies,
   shouldFetchResults,
-} = require('../github/issue-plan')
+} = require('../integrations/github/issue-plan')
 
 function requireWithoutArgvFlag(flag, load) {
   if (!process.argv.includes(flag)) return load()

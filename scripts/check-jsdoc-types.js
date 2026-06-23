@@ -21,6 +21,8 @@ function listJavaScriptFiles(dir) {
   const entries = fs.readdirSync(dir, { withFileTypes: true })
   return entries.flatMap((entry) => {
     const fullPath = path.join(dir, entry.name)
+    const relativePath = path.relative(process.cwd(), fullPath).split(path.sep).join('/')
+    if (relativePath === 'src/dashboard/web/dist') return []
     if (entry.isDirectory()) return listJavaScriptFiles(fullPath)
     return entry.isFile() && entry.name.endsWith('.js') ? [fullPath] : []
   })
@@ -29,12 +31,13 @@ function listJavaScriptFiles(dir) {
 /** @type {ForbiddenPattern[]} */
 const forbiddenPatterns = [
   { name: 'any JSDoc type', pattern: /\{[^}\n]*\bany\b[^}\n]*\}/ },
-  { name: 'broad Object JSDoc type', pattern: /\{[^}\n]*\bObject\b[^}\n]*\}/ },
+  { name: 'broad object JSDoc type', pattern: /\{[^}\n]*\bobject\b[^}\n]*\}/i },
   { name: 'Record<string, any>', pattern: /Record<string,\s*any>/ },
   { name: '@ts-ignore', pattern: /@ts-ignore/ },
   { name: '@ts-expect-error', pattern: /@ts-expect-error/ },
 ]
 
+const typeInfoPattern = /@(param|returns?|typedef|type|callback|template|implements|satisfies)\b|\/\/ @ts-check/
 const targetPaths = process.argv.slice(2)
 const files = targetPaths.length > 0
   ? targetPaths.filter((filePath) => filePath.endsWith('.js'))
@@ -47,6 +50,14 @@ const offenders = []
 
 for (const filePath of files) {
   const source = fs.readFileSync(filePath, 'utf8')
+  if (!typeInfoPattern.test(source)) {
+    offenders.push({
+      filePath,
+      line: 1,
+      reason: 'missing JSDoc type information',
+      text: 'file has no @param, @returns, @typedef, @type, @callback, @template, @implements, @satisfies, or // @ts-check marker',
+    })
+  }
   const lines = source.split('\n')
   for (let index = 0; index < lines.length; index += 1) {
     const line = lines[index]

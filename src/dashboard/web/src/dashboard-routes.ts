@@ -15,10 +15,18 @@ export type DashboardRouteState =
 
 export const defaultDashboardCapabilities: DashboardCapabilities = {
   deploymentMode: 'local',
+  canListWorkflows: true,
+  canReadRuns: true,
+  canReadRunDetails: true,
+  canReadEventsJson: true,
   canStartRuns: true,
   canDryRun: true,
+  canCancelRuns: true,
+  canSubmitFollowups: true,
+  canReviewGates: true,
   canOpenLocalFiles: true,
   canStreamRunEvents: true,
+  canServeStaticAssets: true,
   requiresAuth: true,
 }
 

@@ -4,8 +4,8 @@ const fs = require('fs')
 const os = require('os')
 const path = require('path')
 
-const { createWorkflowEventContext, safeOptions } = require('../../src/workflow-events')
-const { readEventLog } = require('../../src/runner-event-log')
+const { createWorkflowEventContext, safeOptions } = require('../../src/workflows/events/workflow-events')
+const { readEventLog } = require('../../src/workflows/events/runner-event-log')
 
 function tmpDir() {
   return fs.mkdtempSync(path.join(os.tmpdir(), 'nax-workflow-events-'))

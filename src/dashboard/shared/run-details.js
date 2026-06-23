@@ -1,7 +1,7 @@
 const fs = require('fs')
 const path = require('path')
 
-const { loadStepPrompt } = require('../../flows')
+const { loadStepPrompt } = require('../../workflows/catalog/flows')
 
 /**
  * File-name predicate used while scanning artifact directories.

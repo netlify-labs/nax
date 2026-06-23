@@ -10,7 +10,7 @@ const {
   hasLocalNetlifySite,
   resolveTransport,
   formatTransportSetupHelp,
-} = require('../../src/transports')
+} = require('../../src/integrations/transports')
 
 test('hasAgentRunnerAction detects the Netlify action in workflow yaml', () => {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'nax-transport-test-'))

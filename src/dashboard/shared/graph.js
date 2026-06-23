@@ -1,4 +1,4 @@
-const { isHumanReviewStep, loadStepPrompt } = require('../../flows')
+const { isHumanReviewStep, loadStepPrompt } = require('../../workflows/catalog/flows')
 
 const WORKFLOW_NODE_LAYOUT = {
   width: 300,

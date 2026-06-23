@@ -9,7 +9,7 @@ const {
   formatWorkingTreeSummary,
   isSafeGitRefName,
   resolveRemoteBranchSha,
-} = require('../../src/review-context')
+} = require('../../src/integrations/git/review-context')
 
 test('formatWorkingTreeSummary reports clean state', () => {
   assert.equal(formatWorkingTreeSummary([]), 'clean')

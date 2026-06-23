@@ -8,7 +8,7 @@ const {
   FollowupContextError,
   buildFollowupContextPackage,
   resolveFollowupArtifacts,
-} = require('../../src/followup-context')
+} = require('../../src/workflows/followups/context')
 
 function tmpRoot() {
   return fs.mkdtempSync(path.join(os.tmpdir(), 'nax-followup-context-'))
@@ -110,9 +110,10 @@ test('follow-up artifact resolver rejects unknown artifact ids', () => {
       details: detailsForArtifacts([]),
       artifacts: [{ id: 'missing', kind: 'workflow-summary' }],
     }),
-    /** @param {any} error */
+    /** @param {unknown} error */
     (error) => {
       assert.equal(error instanceof FollowupContextError, true)
+      if (!(error instanceof FollowupContextError)) return false
       assert.equal(error.code, 'unknown_artifact')
       return true
     },
@@ -141,9 +142,10 @@ test('follow-up artifact resolver rejects paths outside .nax', () => {
       details,
       artifacts: [{ id: 'outside', kind: 'workflow-summary' }],
     }),
-    /** @param {any} error */
+    /** @param {unknown} error */
     (error) => {
       assert.equal(error instanceof FollowupContextError, true)
+      if (!(error instanceof FollowupContextError)) return false
       assert.equal(error.code, 'unsafe_artifact_path')
       return true
     },
@@ -174,9 +176,10 @@ test('follow-up artifact resolver rejects symlink escapes from .nax', () => {
       details,
       artifacts: [{ id: 'outside-link', kind: 'workflow-summary' }],
     }),
-    /** @param {any} error */
+    /** @param {unknown} error */
     (error) => {
       assert.equal(error instanceof FollowupContextError, true)
+      if (!(error instanceof FollowupContextError)) return false
       assert.equal(error.code, 'unsafe_artifact_path')
       return true
     },

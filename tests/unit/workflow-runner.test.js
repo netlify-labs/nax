@@ -5,7 +5,7 @@ const fs = require('fs')
 const os = require('os')
 const path = require('path')
 
-const { runWorkflow, workflowCommand } = require('../../src/workflow-runner')
+const { runWorkflow, workflowCommand } = require('../../src/workflows/engine/runner')
 
 function stripAnsi(text) {
   return String(text || '').replace(/\x1b\[[0-9;]*m/g, '')

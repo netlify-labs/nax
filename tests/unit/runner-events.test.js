@@ -5,11 +5,11 @@ const os = require('os')
 const path = require('path')
 const { Writable } = require('stream')
 
-const { readEventLog } = require('../../src/runner-event-log')
+const { readEventLog } = require('../../src/workflows/events/runner-event-log')
 const {
   createRunnerEventEmitter,
   sanitizeEventPayload,
-} = require('../../src/runner-events')
+} = require('../../src/workflows/events/runner-events')
 
 function tmpDir() {
   return fs.mkdtempSync(path.join(os.tmpdir(), 'nax-runner-events-'))

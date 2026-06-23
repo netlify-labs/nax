@@ -1,5 +1,5 @@
 const { buildRunDetails } = require('../shared/run-details')
-const { buildFollowupContextPackage } = require('../../followup-context')
+const { buildFollowupContextPackage } = require('../../workflows/followups/context')
 
 /**
  * @typedef {{

@@ -9,7 +9,7 @@ const {
   legacyTargetFromRunState,
   resolveTarget,
   targetBranch,
-} = require('../../src/target')
+} = require('../../src/integrations/git/target')
 
 /** @type {Set<string>} */
 const tempRepos = new Set()

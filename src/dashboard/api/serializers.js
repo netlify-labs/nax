@@ -1,8 +1,15 @@
 const path = require('path')
 
-const { isUnfinishedRun } = require('../../run-state')
-const { normalizeAgentList, normalizeStepModels } = require('../../agent-selection')
-const { isCancelledRunStatus, isFailedRunStatus } = require('../../status')
+const { normalizeAgentList, normalizeStepModels } = require('../../core/agents/selection')
+const { isUnfinishedRun } = require('../../core/runs/resumable')
+const { isCancelledRunStatus, isFailedRunStatus } = require('../../core/status')
+
+/** @typedef {import('../../contracts').DashboardRun} DashboardRun */
+
+/** @returns {DashboardRun | null} */
+function contractTypecheckProbe() {
+  return null
+}
 
 function publicFlow(flow = {}) {
   return {
@@ -92,6 +99,7 @@ function publicRunOptions(runState = {}) {
 }
 
 module.exports = {
+  contractTypecheckProbe,
   inferRunStateStatus,
   publicFlow,
   publicRunOptions,

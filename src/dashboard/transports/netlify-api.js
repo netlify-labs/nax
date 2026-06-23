@@ -2,9 +2,9 @@ const crypto = require('crypto')
 
 /**
  * @typedef {{
- *   createAgentRunner: (input: { siteId?: string, promptText?: string, agent?: string, branch?: string, source?: object }) => Promise<import('../../netlify/api-client').NormalizedAgentRunner>,
- *   cancelAgentRunner: (input: { runnerId?: string }) => Promise<import('../../netlify/api-client').NormalizedAgentRunner>,
- *   getAgentRunner: (input: { runnerId?: string }) => Promise<import('../../netlify/api-client').NormalizedAgentRunner>,
+ *   createAgentRunner: (input: { siteId?: string, promptText?: string, agent?: string, branch?: string, source?: Record<string, unknown> }) => Promise<import('../../integrations/netlify/api-client').NormalizedAgentRunner>,
+ *   cancelAgentRunner: (input: { runnerId?: string }) => Promise<import('../../integrations/netlify/api-client').NormalizedAgentRunner>,
+ *   getAgentRunner: (input: { runnerId?: string }) => Promise<import('../../integrations/netlify/api-client').NormalizedAgentRunner>,
  * }} HostedNetlifyApiClient
  *
  * @typedef {{
@@ -130,7 +130,7 @@ function hostedDetailArtifact(artifact, index, run) {
   }
 }
 
-/** @param {import('../../netlify/api-client').NormalizedAgentRunner} remote */
+/** @param {import('../../integrations/netlify/api-client').NormalizedAgentRunner} remote */
 function hostedRunMarkdown(remote) {
   const raw = objectValue(remote.raw)
   const latest = objectValue(raw.latest_session)
@@ -148,14 +148,14 @@ function hostedRunMarkdown(remote) {
   )
 }
 
-/** @param {import('../../netlify/api-client').NormalizedAgentRunner} remote */
+/** @param {import('../../integrations/netlify/api-client').NormalizedAgentRunner} remote */
 function hostedRunAgent(remote) {
   const raw = objectValue(remote.raw)
   const latest = objectValue(raw.latest_session)
   return stringValue(raw.agent || raw.model || latest.agent || latest.model || 'codex') || 'codex'
 }
 
-/** @param {import('../../netlify/api-client').NormalizedAgentRunner} remote */
+/** @param {import('../../integrations/netlify/api-client').NormalizedAgentRunner} remote */
 function hostedRunDetails(remote) {
   const run = hostedRunDto(remote)
   const agent = hostedRunAgent(remote)
@@ -216,7 +216,7 @@ function hostedRunDetails(remote) {
   }
 }
 
-/** @param {import('../../netlify/api-client').NormalizedAgentRunner} remote */
+/** @param {import('../../integrations/netlify/api-client').NormalizedAgentRunner} remote */
 function hostedRunGraph(remote) {
   const run = hostedRunDto(remote)
   const agent = hostedRunAgent(remote)
@@ -311,7 +311,7 @@ function idempotencyKey(workflowId, body) {
     .digest('hex')
 }
 
-/** @param {import('../../netlify/api-client').NormalizedAgentRunner} remote */
+/** @param {import('../../integrations/netlify/api-client').NormalizedAgentRunner} remote */
 function hostedRunDto(remote) {
   const status = dashboardStatus(remote.status || remote.state || 'submitted')
   return {
@@ -365,7 +365,7 @@ function createHostedNetlifyApiTransport({ client, siteId = '' }) {
   const submitted = new Map()
   /** @type {Map<string, ReturnType<typeof hostedRunDto>>} */
   const runsById = new Map()
-  /** @type {Map<string, object>} */
+  /** @type {Map<string, Record<string, unknown>>} */
   const followupsById = new Map()
   /** @type {Map<string, Map<string, Record<string, string>>>} */
   const artifactCatalogByRunId = new Map()

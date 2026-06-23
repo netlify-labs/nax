@@ -1,6 +1,6 @@
-const { listAgentRunnerArtifacts, persistAgentRunnerArtifact } = require('./agent-runner-artifacts')
-const { persistAgentSessionArtifact } = require('./agent-session-artifacts')
-const { listAgentSessions } = require('./local-runner')
+const { listAgentRunnerArtifacts, persistAgentRunnerArtifact } = require('./workflows/artifacts/agent-runner-artifacts')
+const { persistAgentSessionArtifact } = require('./workflows/artifacts/agent-session-artifacts')
+const { listAgentSessions } = require('./integrations/netlify/local-runner')
 
 /**
  * Remote Agent Runner session payload fields used for local artifact sync.

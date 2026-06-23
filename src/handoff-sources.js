@@ -1,9 +1,9 @@
 const fs = require('fs')
 const path = require('path')
-const { listWorkflowStates } = require('./run-state')
-const { artifactsRootForRunState, persistWorkflowArtifacts } = require('./workflow-artifacts')
-const { listAgentRunnerArtifacts } = require('./agent-runner-artifacts')
-const { listAgentSessionArtifacts } = require('./agent-session-artifacts')
+const { listWorkflowStates } = require('./storage/local/run-state')
+const { artifactsRootForRunState, persistWorkflowArtifacts } = require('./workflows/artifacts/workflow-artifacts')
+const { listAgentRunnerArtifacts } = require('./workflows/artifacts/agent-runner-artifacts')
+const { listAgentSessionArtifacts } = require('./workflows/artifacts/agent-session-artifacts')
 
 function relativeDisplayPath(projectRoot, filePath) {
   const relative = path.relative(projectRoot || process.cwd(), filePath)

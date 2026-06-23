@@ -1,3 +1,9 @@
+/** @typedef {import('../../contracts').DashboardCapabilities} DashboardCapabilities */
+
+/**
+ * @param {Partial<DashboardCapabilities>} [overrides]
+ * @returns {DashboardCapabilities}
+ */
 function localDashboardCapabilities(overrides = {}) {
   return {
     deploymentMode: 'local',
@@ -18,6 +24,10 @@ function localDashboardCapabilities(overrides = {}) {
   }
 }
 
+/**
+ * @param {Partial<DashboardCapabilities>} [overrides]
+ * @returns {DashboardCapabilities}
+ */
 function hostedPlaceholderCapabilities(overrides = {}) {
   return {
     deploymentMode: 'web',

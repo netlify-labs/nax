@@ -9,7 +9,7 @@ const {
   parseStepModelsEntries,
   selectionValidationErrors,
   stepModelsToEntries,
-} = require('../../src/agent-selection')
+} = require('../../src/core/agents/selection')
 
 test('parseStepModelsEntries parses repeatable step=model overrides', () => {
   assert.deepEqual(parseStepModelsEntries([

@@ -1,7 +1,7 @@
 const test = require('node:test')
 const assert = require('node:assert/strict')
 
-const { extractLinkedPullRequest } = require('../../src/github/issue-plan')
+const { extractLinkedPullRequest } = require('../../src/integrations/github/issue-plan')
 
 test('extractLinkedPullRequest reads structured session-data PR URLs', () => {
   const linked = extractLinkedPullRequest([

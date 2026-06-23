@@ -1,4 +1,4 @@
-const { resumeWorkflow, runWorkflow } = require('../../workflow-runner')
+const { resumeWorkflow, runWorkflow } = require('../../workflows/engine/runner')
 
 /**
  * @typedef {(event: Record<string, unknown>) => void} DashboardEventSink
@@ -32,7 +32,7 @@ function dryRunWorkflow({ flowId, projectRoot, options = {}, tailOutput = false,
   return runWorkflowCommand({
     flowId,
     projectRoot,
-    options: /** @type {import('../../workflow-runner').WorkflowCommandOptions} */ (options),
+    options: /** @type {import('../../workflows/engine/runner').WorkflowCommandOptions} */ (options),
     dryRun: true,
     passthrough: tailOutput,
   })

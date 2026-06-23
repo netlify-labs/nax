@@ -1,8 +1,8 @@
 const test = require('node:test')
 const assert = require('node:assert/strict')
 
-const { classifyNetlifyRuntime, isNetlifyAgentRunner, isTruthy } = require('../../src/netlify/runtime')
-const { handleCi } = require('../../src/cli/ci')
+const { classifyNetlifyRuntime, isNetlifyAgentRunner, isTruthy } = require('../../src/integrations/netlify/runtime')
+const { handleCi } = require('../../src/cli/commands/ci')
 
 test('classifyNetlifyRuntime detects local environments', () => {
   assert.deepEqual(classifyNetlifyRuntime({}), {

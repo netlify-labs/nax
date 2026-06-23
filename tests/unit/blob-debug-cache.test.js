@@ -4,7 +4,7 @@ const fs = require('fs')
 const os = require('os')
 const path = require('path')
 
-const { safeBlobFileName, writeLocalBlobDebugPayload, workflowBlobDebugDir } = require('../../src/blob-debug-cache')
+const { safeBlobFileName, writeLocalBlobDebugPayload, workflowBlobDebugDir } = require('../../src/storage/local/blob-debug-cache')
 
 function tmpRoot() {
   return fs.mkdtempSync(path.join(os.tmpdir(), 'nax-blob-debug-cache-'))

@@ -4,7 +4,7 @@ const fs = require('fs')
 const os = require('os')
 const path = require('path')
 
-const { DEFAULT_PROJECT_FLOWS_DIRS, FLOW_PICKER_ORDER, listFlows, loadFlow, loadStepPrompt, projectFlowDirs, validateFlowStructure } = require('../../src/flows')
+const { DEFAULT_PROJECT_FLOWS_DIRS, FLOW_PICKER_ORDER, listFlows, loadFlow, loadStepPrompt, projectFlowDirs, validateFlowStructure } = require('../../src/workflows/catalog/flows')
 
 /**
  * @typedef {Error & { code?: string, validation?: { errors: Array<{ code: string }> } }} FlowError

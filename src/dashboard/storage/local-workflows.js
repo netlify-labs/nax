@@ -1,4 +1,4 @@
-const { listFlows, loadFlow } = require('../../flows')
+const { listFlows, loadFlow } = require('../../workflows/catalog/flows')
 const { flowToGraph } = require('../shared/graph')
 const { publicFlow } = require('../api/serializers')
 

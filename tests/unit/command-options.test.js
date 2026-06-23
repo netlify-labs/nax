@@ -7,12 +7,12 @@ const {
   collectOption,
   mergeCommandOptions,
   normalizeOptionAliases,
-} = require('../../src/commands/options')
+} = require('../../src/cli/commands/options')
 
 /**
  * Captured command action inputs.
  * @typedef {{
- *   options: import('../../src/commands/options').CliOptions,
+ *   options: import('../../src/cli/commands/options').CliOptions,
  *   command: import('commander').Command,
  * }} CapturedAction
  */

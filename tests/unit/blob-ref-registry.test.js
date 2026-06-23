@@ -15,7 +15,7 @@ const {
   readBlobRefs,
   registryPath,
   sweepBlobRefs,
-} = require('../../src/blob-ref-registry')
+} = require('../../src/storage/local/blob-ref-registry')
 
 function tmpRoot() {
   return fs.mkdtempSync(path.join(os.tmpdir(), 'nax-blob-registry-'))

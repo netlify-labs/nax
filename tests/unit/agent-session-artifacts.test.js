@@ -8,7 +8,7 @@ const {
   agentSessionDir,
   listAgentSessionArtifacts,
   persistAgentSessionArtifact,
-} = require('../../src/agent-session-artifacts')
+} = require('../../src/workflows/artifacts/agent-session-artifacts')
 
 function tmpRoot() {
   return fs.mkdtempSync(path.join(os.tmpdir(), 'nax-agent-session-artifacts-'))

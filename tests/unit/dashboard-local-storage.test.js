@@ -8,7 +8,7 @@ const { createLocalArtifactStore } = require('../../src/dashboard/storage/local-
 const { createLocalEventStore } = require('../../src/dashboard/storage/local-events')
 const { createLocalRunStore, decodeRunsCursor } = require('../../src/dashboard/storage/local-runs')
 const { createLocalWorkflowStore } = require('../../src/dashboard/storage/local-workflows')
-const { appendEventLog } = require('../../src/runner-event-log')
+const { appendEventLog } = require('../../src/workflows/events/runner-event-log')
 
 function tmpRoot() {
   return fs.mkdtempSync(path.join(os.tmpdir(), 'nax-dashboard-storage-'))

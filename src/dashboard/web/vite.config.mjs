@@ -6,8 +6,9 @@ import react from '@vitejs/plugin-react'
 import { codeInspectorPlugin } from 'code-inspector-plugin'
 
 const require = createRequire(import.meta.url)
-const { listFlows, loadFlow } = require('../../flows')
-const { isUnfinishedRun, listRunStates } = require('../../run-state')
+const { listFlows, loadFlow } = require('../../workflows/catalog/flows')
+const { listRunStates } = require('../../storage/local/run-state')
+const { publicFlow, publicRunState } = require('../api/serializers')
 const { flowToGraph } = require('../shared/graph')
 const { buildRunDetails } = require('../shared/run-details')
 
@@ -38,57 +39,6 @@ function safeDecode(value) {
     return decodeURIComponent(value)
   } catch (_err) {
     return value
-  }
-}
-
-function publicFlow(flow = {}) {
-  return {
-    id: flow.id || '',
-    title: flow.title || '',
-    description: flow.description || '',
-    source: flow.source || '',
-    sourceLabel: flow.sourceLabel || '',
-    sourceDir: flow.sourceDir || '',
-    sourcePriority: flow.sourcePriority ?? null,
-    dir: flow.dir || '',
-    file: flow.file || '',
-    defaults: flow.defaults || {},
-    options: flow.options || {},
-    steps: Array.isArray(flow.steps)
-      ? flow.steps.map((step) => ({
-        id: step.id || '',
-        title: step.title || '',
-        description: step.description || '',
-        prompt: step.prompt || '',
-        type: step.type || '',
-        action: step.action || '',
-        submit: step.submit || '',
-        agents: Array.isArray(step.agents) ? step.agents : [],
-        input: Array.isArray(step.input) ? step.input : [],
-        waitFor: step.waitFor || '',
-        review: step.review || null,
-        autoArchive: step.autoArchive,
-        isArchivable: step.isArchivable,
-      }))
-      : [],
-  }
-}
-
-function publicRunState(runState = {}) {
-  const summaryPath = runState.dir ? path.join(runState.dir, 'artifacts', 'summary.md') : ''
-  return {
-    runId: runState.runId || '',
-    flowId: runState.flowId || '',
-    flowTitle: runState.flowTitle || '',
-    status: runState.status || '',
-    transport: runState.transport || '',
-    branch: runState.branch || '',
-    createdAt: runState.createdAt || '',
-    updatedAt: runState.updatedAt || '',
-    dir: runState.dir || '',
-    summaryPath,
-    resumable: isUnfinishedRun(runState),
-    steps: Array.isArray(runState.steps) ? runState.steps : [],
   }
 }
 

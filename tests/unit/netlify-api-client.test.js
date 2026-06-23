@@ -6,7 +6,7 @@ const {
   errorCodeForStatus,
   normalizeAgentRunner,
   redactToken,
-} = require('../../src/netlify/api-client')
+} = require('../../src/integrations/netlify/api-client')
 
 /** @param {Array<{ status?: number, body?: unknown, ok?: boolean }>} responses */
 function fakeFetch(responses) {

@@ -10,7 +10,7 @@ const {
   parseGithubActionsRunTarget,
   selectNaxArtifact,
   syncGithubActionsRun,
-} = require('../../src/github-actions-sync')
+} = require('../../src/integrations/github/actions-sync')
 
 function tmpRoot() {
   return fs.mkdtempSync(path.join(os.tmpdir(), 'nax-github-actions-sync-'))

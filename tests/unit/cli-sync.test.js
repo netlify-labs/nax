@@ -4,9 +4,9 @@ const fs = require('fs')
 const os = require('os')
 const path = require('path')
 
-const { persistAgentRunnerArtifact } = require('../../src/agent-runner-artifacts')
-const { persistAgentSessionArtifact } = require('../../src/agent-session-artifacts')
-const { handleSync } = require('../../src/cli/sync')
+const { persistAgentRunnerArtifact } = require('../../src/workflows/artifacts/agent-runner-artifacts')
+const { persistAgentSessionArtifact } = require('../../src/workflows/artifacts/agent-session-artifacts')
+const { handleSync } = require('../../src/cli/commands/sync')
 
 /**
  * Recorded command invocation for sync adapter tests.
@@ -57,7 +57,7 @@ function writeActionsArtifactTree(root) {
 /**
  * Creates a fake GitHub command runner that materializes a NAX artifact.
  * @param {SyncCall[]} calls
- * @returns {import('../../src/cli/sync').SyncRunCommand}
+ * @returns {import('../../src/cli/commands/sync').SyncRunCommand}
  */
 function fakeGithubRunner(calls) {
   return (command, args, options) => {

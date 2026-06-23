@@ -6,7 +6,7 @@ const {
   buildFollowupSubmissionPlan,
   defaultModelsForTarget,
   normalizeModels,
-} = require('../../src/followup-plan')
+} = require('../../src/workflows/followups/plan')
 
 const codexTarget = {
   id: 'agent-result:review:runner-1:session-1:codex',
@@ -111,9 +111,10 @@ test('follow-up plan rejects unsupported models', () => {
       target: codexTarget,
       models: ['watson'],
     }),
-    /** @param {any} error */
+    /** @param {unknown} error */
     (error) => {
       assert.equal(error instanceof FollowupPlanError, true)
+      if (!(error instanceof FollowupPlanError)) return false
       assert.equal(error.code, 'invalid_model')
       return true
     },

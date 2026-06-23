@@ -16,7 +16,7 @@ const {
   listRunStates,
   saveRunState,
   workflowStatePath,
-} = require('../../src/run-state')
+} = require('../../src/storage/local/run-state')
 
 function runState(tmp, overrides = {}) {
   const runId = overrides.runId || `run-${Math.random().toString(16).slice(2)}`

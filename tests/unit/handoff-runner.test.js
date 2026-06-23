@@ -10,7 +10,7 @@ const {
   submitFollowupPlan,
   submitFollowupSession,
   submitFreshAgentRunner,
-} = require('../../src/handoff-runner')
+} = require('../../src/workflows/followups/runner')
 
 function tmpRoot() {
   return fs.mkdtempSync(path.join(os.tmpdir(), 'nax-handoff-runner-'))

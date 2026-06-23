@@ -11,7 +11,7 @@ const {
   pickAgentReplyComments,
   rawIssuesFromResults,
   sanitizeAgentReplyBody,
-} = require('../../src/round-results')
+} = require('../../src/workflows/round-results')
 
 test('inferModelFromTitle pulls model out of standard issue titles', () => {
   assert.equal(inferModelFromTitle('2026-05-07 Claude Review'), 'claude')

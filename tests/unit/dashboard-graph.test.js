@@ -1,7 +1,7 @@
 const test = require('node:test')
 const assert = require('node:assert/strict')
 
-const { loadFlow } = require('../../src/flows')
+const { loadFlow } = require('../../src/workflows/catalog/flows')
 const { flowToGraph } = require('../../src/dashboard/shared/graph')
 
 test('flowToGraph renders review as three nodes and two input edges', async () => {

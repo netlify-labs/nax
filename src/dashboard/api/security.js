@@ -1,3 +1,4 @@
+/** @returns {Record<string, string>} */
 function securityHeaders() {
   return {
     'x-content-type-options': 'nosniff',

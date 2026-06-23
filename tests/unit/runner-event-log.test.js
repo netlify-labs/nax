@@ -9,7 +9,7 @@ const {
   eventLogPathForRunDir,
   eventLogPathForRunState,
   readEventLog,
-} = require('../../src/runner-event-log')
+} = require('../../src/workflows/events/runner-event-log')
 
 function tmpDir() {
   return fs.mkdtempSync(path.join(os.tmpdir(), 'nax-runner-event-log-'))

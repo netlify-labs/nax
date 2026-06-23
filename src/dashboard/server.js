@@ -1463,7 +1463,10 @@ function createRequestHandler(options = {}) {
             flow = durable.flow && Array.isArray(durable.flow.steps) ? durable.flow : null
           }
           jsonResponse(res, 200, {
-            run: publicRunState(durable),
+            run: {
+              ...publicRunState(durable),
+              options: publicRunOptions(durable),
+            },
             details: buildRunDetails(durable, { flow }),
           })
           return

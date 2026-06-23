@@ -152,7 +152,10 @@ function createLocalRunStore({ projectRoot, env = process.env, flowStore, follow
         flow = durable.flow && Array.isArray(durable.flow.steps) ? durable.flow : null
       }
       return {
-        run: publicRunState(durable),
+        run: {
+          ...publicRunState(durable),
+          options: publicRunOptions(durable),
+        },
         details: buildRunDetails(durable, { flow }),
       }
     },

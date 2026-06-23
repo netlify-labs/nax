@@ -7,7 +7,7 @@ import { useRunDetailsQuery } from '../queries/dashboard-queries'
 import { agentLabel, isDoneStatus, recordList, recordValue, runId, statusBadgeStyle, statusColor, statusLabel, workflowName } from '../run-format'
 import { extractMarkdownToc } from '../run-details-toc'
 import { selectRunDetailsSection, selectorKey, type RunDetailsSelector } from '../run-details-selection'
-import { displayAgentStatuses, displayStepStatus, selectedAgentsForStep } from '../run-projection'
+import { displayAgentStatuses, displayStepStatus } from '../run-projection'
 import type { RunDetailsResponse, RunDetailsSection, RunFollowupResponse, Target, DashboardRun } from '../types'
 import { isActiveStatus, statusKey } from '../status-model'
 import { AgentIcon } from './AgentIcon'
@@ -57,6 +57,30 @@ type StepItem = {
     lastEventAt: string
   }>
   section?: RunDetailsSection
+}
+
+function unknownRecord(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : null
+}
+
+function normalizedStringList(value: unknown): string[] {
+  if (!Array.isArray(value)) return []
+  return value.map(String).filter(Boolean)
+}
+
+function stepAgentOverride(run: DashboardRun | undefined, stepId: string): string[] | null {
+  const options = unknownRecord(run?.options)
+  const stepModels = unknownRecord(options?.stepModels)
+  if (!stepModels || !Object.prototype.hasOwnProperty.call(stepModels, stepId)) return null
+  return normalizedStringList(stepModels[stepId])
+}
+
+function activeStepAgents(run: DashboardRun | undefined, stepId: string, agents: string[]): string[] {
+  const options = unknownRecord(run?.options)
+  const globalModels = normalizedStringList(options?.models)
+  const override = stepAgentOverride(run, stepId) || (globalModels.length > 0 ? globalModels : null)
+  if (!override) return agents
+  return agents.filter((agent) => override.includes(agent))
 }
 
 export type TimelineEntry = {
@@ -167,9 +191,7 @@ function buildStepItems(
       const record = runRecord as Record<string, unknown>
       const agent = recordValue(record, 'agent')
       if (!agent) return
-      const links = record.links && typeof record.links === 'object'
-        ? record.links as Record<string, unknown>
-        : {}
+      const links = unknownRecord(record.links) || {}
       const url = recordValue(record, 'url') ||
         recordValue(record, 'sessionUrl') ||
         recordValue(record, 'agentRunUrl') ||
@@ -186,15 +208,19 @@ function buildStepItems(
         lastEventAt: recordValue(record, 'lastEventAt') || recordValue(record, 'updatedAt') || recordValue(record, 'createdAt'),
       }
     })
-    const agents = recordList(savedStep, 'agents')
-    for (const agent of definition?.agents || []) {
-      if (!agents.includes(agent)) agents.push(agent)
+    const savedAgents = recordList(savedStep, 'agents')
+    const declaredAgents = [...savedAgents]
+    if (savedAgents.length === 0) {
+      for (const agent of definition?.agents || []) {
+        if (!declaredAgents.includes(agent)) declaredAgents.push(agent)
+      }
     }
     runs.forEach((runRecord) => {
       if (!runRecord || typeof runRecord !== 'object') return
       const agent = recordValue(runRecord as Record<string, unknown>, 'agent')
-      if (agent && !agents.includes(agent)) agents.push(agent)
+      if (agent && !declaredAgents.includes(agent)) declaredAgents.push(agent)
     })
+    const agents = activeStepAgents(run, id, declaredAgents)
     if (liveContext?.selector.stepId === id && liveContext.selector.agent && !agents.includes(liveContext.selector.agent)) {
       agents.push(liveContext.selector.agent)
     }
@@ -206,14 +232,19 @@ function buildStepItems(
       status: stepStatus,
       agents,
       selectedAgents: agents,
-      runs: runs.filter((runRecord): runRecord is Record<string, unknown> => (
-        Boolean(runRecord) && typeof runRecord === 'object' && !Array.isArray(runRecord)
-      )),
+      runs: runs
+        .filter((runRecord): runRecord is Record<string, unknown> => (
+          Boolean(runRecord) && typeof runRecord === 'object' && !Array.isArray(runRecord)
+        ))
+        .filter((runRecord) => {
+          const agent = recordValue(runRecord, 'agent')
+          return !agent || agents.includes(agent)
+        }),
     }
     const liveAgentStatuses = liveContext?.selector.stepId === id && liveContext.selector.agent
       ? { [liveContext.selector.agent]: liveContext.status }
       : {}
-    const selectedAgents = selectedAgentsForStep(statusInput)
+    const selectedAgents = agents
     const queuedAgentStatuses: Record<string, string> = {}
     selectedAgents.forEach((agent) => {
       queuedAgentStatuses[agent] = 'queued'
@@ -233,9 +264,7 @@ function buildStepItems(
         lastEventAt: existing?.lastEventAt || '',
       }
     })
-    const source = savedStep.source && typeof savedStep.source === 'object' && !Array.isArray(savedStep.source)
-      ? savedStep.source as Record<string, unknown>
-      : {}
+    const source = unknownRecord(savedStep.source) || {}
     items.push({
       id,
       title: recordValue(savedStep, 'title') || definition?.title || section?.stepTitle || section?.title || id || `Step ${index + 1}`,
@@ -343,7 +372,9 @@ function buildTimelineEntries(
   }]
 
   steps.forEach((step, index) => {
-    const sessions = sessionSections.filter((section) => section.stepId === step.id)
+    const sessions = sessionSections.filter((section) => (
+      section.stepId === step.id && (!section.agent || step.agents.includes(section.agent))
+    ))
     const sessionByAgent = new Map(sessions.map((section) => [section.agent, section]))
     entries.push({
       id: `step:${step.id}`,

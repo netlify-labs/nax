@@ -12,7 +12,7 @@ const {
   runBlobCommand,
   sanitizeDetail,
   setBlob,
-} = require('../../src/netlify-blobs')
+} = require('../../src/netlify/blobs')
 
 test('setBlob writes payload through --input tempfile and removes it after upload', () => {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'nax-blob-test-'))

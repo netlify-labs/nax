@@ -1,5 +1,5 @@
 const { spawnSync } = require('child_process')
-const { classifyNetlifyRuntime } = require('../netlify-runtime')
+const { classifyNetlifyRuntime } = require('../netlify/runtime')
 
 /**
  * Process runner used by `nax ci`.
@@ -23,7 +23,7 @@ const { classifyNetlifyRuntime } = require('../netlify-runtime')
  *   status: number,
  *   signal?: string,
  *   command: string,
- *   runtime: import('../netlify-runtime').NetlifyRuntimeClassification,
+ *   runtime: import('../netlify/runtime').NetlifyRuntimeClassification,
  * }} CiResult
  */
 

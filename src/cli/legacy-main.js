@@ -202,7 +202,7 @@ const {
   stepResultsSummaryPath,
   workflowSummaryDisplayPath,
 } = require('../workflow/resume')
-const { setBlob, deleteBlob } = require('../netlify-blobs')
+const { setBlob, deleteBlob } = require('../netlify/blobs')
 const {
   addRunBlobRef,
   compactBlobRefs,

@@ -1,30 +1,62 @@
 const crypto = require('crypto')
-const { spawn } = require('child_process')
 const fs = require('fs')
 const http = require('http')
 const path = require('path')
 const { URL } = require('url')
 
 const { listFlows, loadFlow } = require('../flows')
-const { isUnfinishedRun, listRunStates, listWorkflowStatePage, saveRunState } = require('../run-state')
+const { listRunStates, listWorkflowStatePage, saveRunState } = require('../run-state')
 const { flowToGraph } = require('./shared/graph')
-const { resumeWorkflow, runWorkflow, workflowCommand } = require('../workflow-runner')
 const { normalizeAgentList, normalizeStepModels, selectionValidationErrors } = require('../agent-selection')
 const { buildRunDetails } = require('./shared/run-details')
 const { appendEventLog, eventLogPathForRunState, readEventLog } = require('../runner-event-log')
 const { formatAgentRunUrl } = require('../agent-run-results')
-const { buildFollowupContextPackage } = require('../followup-context')
-const { prepareFollowupContextDelivery } = require('../followup-delivery')
-const { buildFollowupSubmissionPlan } = require('../followup-plan')
-const { buildFollowupPrompt, submitFollowupPlan } = require('../handoff-runner')
-const { appendFollowupRunsToWorkflow, cancelFollowupRunInWorkflow, persistFreshPseudoWorkflow, syncSubmittedFollowupRunsToWorkflow } = require('../followup-persistence')
-const { cancelHumanReviewGate, findReviewStep } = require('../human-review')
+const { syncSubmittedFollowupRunsToWorkflow } = require('../followup-persistence')
+const { findReviewStep } = require('../human-review')
 const { archiveAgentRun, stopAgentRun } = require('../local-runner')
-const { setBlob } = require('../netlify-blobs')
+const { setBlob } = require('../netlify/blobs')
 const { readLinkedSiteId } = require('../init')
-const { isCancelledRunStatus, isFailedRunStatus, isTerminalRunStatus } = require('../status')
-
-const SESSION_COOKIE_NAME = 'nax_dashboard_token'
+const { isTerminalRunStatus } = require('../status')
+const { errorPayload, requestError } = require('./api/errors')
+const { readJsonBody } = require('./api/request')
+const { securityHeaders } = require('./api/security')
+const { publicFlow, publicRunOptions, publicRunState } = require('./api/serializers')
+const {
+  sessionBootstrapHeadersForRequest,
+  sessionCookieHeader,
+  timingSafeTokenEqual,
+  tokenFromRequest,
+} = require('./api/auth')
+const { createDashboardApi } = require('./api/app')
+const { localDashboardCapabilities } = require('./api/capabilities')
+const { createLocalWorkflowStore } = require('./storage/local-workflows')
+const { createLocalRunStore } = require('./storage/local-runs')
+const { createLocalEventStore } = require('./storage/local-events')
+const { createLocalEventStreamAdapter } = require('./events/local-stream')
+const {
+  cancelFollowup: cancelFollowupService,
+  cancelReviewGate: cancelReviewGateService,
+  cancelRun: cancelRunService,
+  submitFollowup: submitFollowupService,
+} = require('./services/mutations')
+const { dryRunWorkflow, resumeWorkflowRun } = require('./transports/local-in-process')
+const { createRunnerEventParser, runWorkflowChild } = require('./transports/local-process')
+const { openLocalFile } = require('./runtime/local-files')
+const {
+  MAX_FINISHED_RUNS,
+  MAX_LIVE_EVENTS,
+  MAX_LIVE_OUTPUT_CHARS,
+  appendBounded,
+  broadcastEvent,
+  createLocalLiveRunRegistry,
+  endClients,
+  eventAfter,
+  eventText,
+  evictFinishedRuns,
+  extractDurableRunId,
+  registerSseClient,
+  shutdownRuns,
+} = require('./runtime/live-run-registry')
 
 function jsonResponse(res, statusCode, payload, headers = {}) {
   const body = `${JSON.stringify(payload, null, 2)}\n`
@@ -47,36 +79,31 @@ function textResponse(res, statusCode, body, contentType = 'text/plain; charset=
   res.end(body)
 }
 
-function securityHeaders() {
+/** @param {NodeJS.ProcessEnv} env */
+function dashboardDeploymentMode(env) {
+  return ['local', 'desktop', 'web'].includes(String(env.NAX_DASHBOARD_DEPLOYMENT_MODE || ''))
+    ? /** @type {'local' | 'desktop' | 'web'} */ (String(env.NAX_DASHBOARD_DEPLOYMENT_MODE))
+    : 'local'
+}
+
+/** @param {NodeJS.ProcessEnv} env */
+function legacyHealthCapabilities(env) {
+  const deploymentMode = dashboardDeploymentMode(env)
   return {
-    'x-content-type-options': 'nosniff',
-    'referrer-policy': 'no-referrer',
-    'x-frame-options': 'DENY',
-    'content-security-policy': "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'",
+    deploymentMode,
+    canStartRuns: deploymentMode !== 'web' || String(env.NAX_DASHBOARD_WEB_CAN_START_RUNS || '') === '1',
+    canDryRun: deploymentMode !== 'web' || String(env.NAX_DASHBOARD_WEB_CAN_DRY_RUN || '') === '1',
+    canOpenLocalFiles: deploymentMode !== 'web',
+    canStreamRunEvents: true,
+    requiresAuth: true,
   }
 }
 
-function errorPayload(statusCode, code, message) {
-  return {
-    error: {
-      statusCode,
-      code,
-      message,
-    },
-  }
-}
-
-/**
- * @param {number} statusCode
- * @param {string} code
- * @param {string} message
- * @returns {Error & { statusCode: number, code: string }}
- */
-function requestError(statusCode, code, message) {
-  const error = /** @type {Error & { statusCode: number, code: string }} */ (new Error(message))
-  error.statusCode = statusCode
-  error.code = code
-  return error
+/** @param {NodeJS.ProcessEnv} env */
+function localServerCapabilities(env) {
+  return localDashboardCapabilities({
+    ...legacyHealthCapabilities(env),
+  })
 }
 
 const DEFAULT_RUNS_DURABLE_LIMIT = 50
@@ -143,12 +170,99 @@ function safeDecode(value) {
   }
 }
 
-// Live-run memory caps: the durable event log on disk is the source of truth for
-// full history; the in-memory window is bounded so long/verbose runs cannot grow
-// the dashboard process without limit.
-const MAX_LIVE_OUTPUT_CHARS = 512 * 1024
-const MAX_LIVE_EVENTS = 2000
-const MAX_FINISHED_RUNS = 50
+/** @param {string} pathname */
+function isReadOnlyDashboardApiPath(pathname) {
+  if (pathname === '/api/health' || pathname === '/api/workflows' || pathname === '/api/runs') return true
+  if (/^\/api\/workflows\/[^/]+(?:\/graph)?$/.test(pathname)) return true
+  return /^\/api\/runs\/[^/]+(?:\/graph|\/details|\/events\.json)?$/.test(pathname)
+}
+
+/** @param {string} pathname */
+function isMutationDashboardApiPath(pathname) {
+  if (pathname === '/api/files/open') return true
+  if (/^\/api\/workflows\/[^/]+\/(?:dry-run|runs)$/.test(pathname)) return true
+  return /^\/api\/runs\/[^/]+\/(?:cancel|review\/approve|review\/cancel|followups|followups\/cancel)$/.test(pathname)
+}
+
+/**
+ * @param {string | undefined} method
+ * @param {string} pathname
+ */
+function isHonoDashboardApiPath(method, pathname) {
+  return (method === 'GET' && isReadOnlyDashboardApiPath(pathname)) ||
+    (method === 'POST' && isMutationDashboardApiPath(pathname))
+}
+
+/** @param {http.IncomingMessage} req */
+function fetchHeadersFromIncomingMessage(req) {
+  const headers = new Headers()
+  for (const [key, value] of Object.entries(req.headers)) {
+    if (Array.isArray(value)) {
+      for (const item of value) headers.append(key, item)
+    } else if (typeof value === 'string') {
+      headers.set(key, value)
+    }
+  }
+  return headers
+}
+
+/** @param {http.IncomingMessage} req */
+function requestMayHaveBody(req) {
+  return !['GET', 'HEAD'].includes(String(req.method || 'GET').toUpperCase())
+}
+
+/** @param {http.IncomingMessage} req */
+function readIncomingMessageBody(req) {
+  return new Promise((resolve, reject) => {
+    const chunks = []
+    let length = 0
+    req.on('data', (chunk) => {
+      const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(String(chunk))
+      length += buffer.length
+      if (length > 1024 * 1024) {
+        reject(requestError(413, 'payload_too_large', 'Request body is too large.'))
+        req.destroy()
+        return
+      }
+      chunks.push(buffer)
+    })
+    req.on('end', () => resolve(Buffer.concat(chunks).toString('utf8')))
+    req.on('error', reject)
+  })
+}
+
+/**
+ * @param {Response} response
+ * @param {http.ServerResponse} res
+ */
+async function writeFetchResponse(response, res) {
+  /** @type {Record<string, string>} */
+  const headers = {}
+  response.headers.forEach((value, key) => {
+    headers[key] = value
+  })
+  const body = Buffer.from(await response.arrayBuffer())
+  headers['content-length'] = String(body.length)
+  res.writeHead(response.status, headers)
+  res.end(body)
+}
+
+/**
+ * @param {import('hono').Hono} app
+ * @param {http.IncomingMessage} req
+ * @param {http.ServerResponse} res
+ * @param {string} base
+ */
+async function handleHonoRequest(app, req, res, base) {
+  const requestUrl = new URL(req.url || '/', base)
+  const body = requestMayHaveBody(req) ? await readIncomingMessageBody(req) : undefined
+  const response = await app.request(requestUrl.toString(), {
+    method: req.method || 'GET',
+    headers: fetchHeadersFromIncomingMessage(req),
+    body,
+  })
+  await writeFetchResponse(response, res)
+}
 
 function htmlEscape(value) {
   return String(value)
@@ -159,169 +273,12 @@ function htmlEscape(value) {
     .replace(/'/g, '&#39;')
 }
 
-// Appends to a live output string while keeping only the most recent maxChars,
-// reporting how many leading characters were dropped so callers can flag truncation.
-function appendBounded(existing, addition, maxChars = MAX_LIVE_OUTPUT_CHARS) {
-  const combined = `${existing}${addition}`
-  if (combined.length <= maxChars) return { text: combined, dropped: 0 }
-  const dropped = combined.length - maxChars
-  return { text: combined.slice(dropped), dropped }
-}
-
-// Writes an event to every SSE client, dropping any client whose write throws so
-// a flaky/half-closed connection cannot surface an unhandled stream error.
-function broadcastEvent(clients, text) {
-  for (const client of clients) {
-    try {
-      client.write(text)
-    } catch (_err) {
-      clients.delete(client)
-      try { client.end() } catch (_endErr) { /* already torn down */ }
-    }
-  }
-}
-
-// Ends every SSE client and clears the set, tolerating already-closed responses.
-function endClients(clients) {
-  for (const client of clients) {
-    try { client.end() } catch (_err) { /* already torn down */ }
-  }
-  clients.clear()
-}
-
-// Registers an SSE response as a client of run, de-registering on both close and
-// error so a client that errors out can never crash the broadcast loop.
-function registerSseClient(run, req, res) {
-  run.clients.add(res)
-  const drop = () => run.clients.delete(res)
-  req.on('close', drop)
-  res.on('error', drop)
-}
-
-// Cancels every active workflow child, clears its status timer, and ends its SSE
-// clients so server shutdown leaves no child processes or open connections behind.
-function shutdownRuns(runs) {
-  for (const run of runs.values()) {
-    if (run.stepStatusTimer) {
-      clearInterval(run.stepStatusTimer)
-      run.stepStatusTimer = null
-    }
-    if (typeof run.cancel === 'function') {
-      try { run.cancel() } catch (_err) { /* child already gone */ }
-    }
-    endClients(run.clients)
-  }
-}
-
-// Evicts the oldest finished runs from the in-memory map once the finished count
-// exceeds maxFinished; durable run state on disk remains the record.
-function evictFinishedRuns(runs, maxFinished = MAX_FINISHED_RUNS) {
-  const finished = [...runs.values()].filter((run) => run.status !== 'running')
-  if (finished.length <= maxFinished) return
-  finished
-    .sort((a, b) => String(a.exitedAt || '').localeCompare(String(b.exitedAt || '')))
-    .slice(0, finished.length - maxFinished)
-    .forEach((run) => runs.delete(run.id))
-}
-
-function publicFlow(flow = {}) {
-  return {
-    id: flow.id || '',
-    title: flow.title || '',
-    description: flow.description || '',
-    source: flow.source || '',
-    sourceLabel: flow.sourceLabel || '',
-    sourceDir: flow.sourceDir || '',
-    sourcePriority: flow.sourcePriority ?? null,
-    dir: flow.dir || '',
-    file: flow.file || '',
-    defaults: flow.defaults || {},
-    options: flow.options || {},
-    steps: Array.isArray(flow.steps)
-      ? flow.steps.map((step) => ({
-        id: step.id || '',
-        title: step.title || '',
-        description: step.description || '',
-        prompt: step.prompt || '',
-        type: step.type || '',
-        action: step.action || '',
-        submit: step.submit || '',
-        agents: Array.isArray(step.agents) ? step.agents : [],
-        input: Array.isArray(step.input) ? step.input : [],
-        waitFor: step.waitFor || '',
-        review: step.review || null,
-        autoArchive: step.autoArchive,
-        isArchivable: step.isArchivable,
-      }))
-      : [],
-  }
-}
-
 function notFound(res, message = 'Not found') {
   jsonResponse(res, 404, errorPayload(404, 'not_found', message))
 }
 
 function methodNotAllowed(res, method) {
   jsonResponse(res, 405, errorPayload(405, 'method_not_allowed', `Method ${method} is not allowed for this endpoint.`))
-}
-
-function readJsonBody(req, { maxBytes = 1024 * 1024 } = {}) {
-  return new Promise((resolve, reject) => {
-    let body = ''
-    let settled = false
-    const settle = (fn, value) => {
-      if (settled) return
-      settled = true
-      fn(value)
-    }
-    req.setEncoding('utf8')
-    req.on('data', (chunk) => {
-      if (settled) return
-      body += chunk
-      if (body.length > maxBytes) {
-        // Stop reading and surface a typed error so the route catch can write a
-        // structured 413 — destroying the socket here would reset the connection
-        // before any HTTP response could be sent.
-        req.pause()
-        settle(reject, requestError(413, 'payload_too_large', 'Request body is too large.'))
-      }
-    })
-    req.on('end', () => {
-      if (!body.trim()) {
-        settle(resolve, {})
-        return
-      }
-      try {
-        settle(resolve, JSON.parse(body))
-      } catch (_err) {
-        settle(reject, requestError(400, 'invalid_json', 'Request body must be valid JSON.'))
-      }
-    })
-    req.on('error', (error) => settle(reject, error))
-  })
-}
-
-function isInsideDir(parentDir, targetPath) {
-  const relative = path.relative(parentDir, targetPath)
-  return relative === '' || (relative && !relative.startsWith('..') && !path.isAbsolute(relative))
-}
-
-async function openLocalFile(filePath, { projectRoot }) {
-  const absoluteFilePath = path.resolve(String(filePath || ''))
-  const absoluteProjectRoot = path.resolve(projectRoot)
-  if (!isInsideDir(absoluteProjectRoot, absoluteFilePath)) {
-    throw requestError(403, 'forbidden_path', 'Only paths under the current project root can be opened.')
-  }
-  if (!fs.existsSync(absoluteFilePath)) {
-    throw requestError(404, 'path_not_found', 'Path not found.')
-  }
-  const stat = fs.statSync(absoluteFilePath)
-  if (!stat.isFile() && !stat.isDirectory()) {
-    throw requestError(400, 'unsupported_path', 'Path is not a file or directory.')
-  }
-  const openFile = (await import('open')).default
-  await openFile(absoluteFilePath)
-  return absoluteFilePath
 }
 
 function defaultFollowupArtifacts(details = {}, requestedArtifacts) {
@@ -448,31 +405,6 @@ function freshFollowupTitle(sourceRun = {}, target = {}, freshResults = []) {
   return `Follow-up on ${workflowTitle}${agentText ? ` (${agentText})` : ''}`
 }
 
-function timingSafeTokenEqual(provided, expected) {
-  if (!provided || !expected) return false
-  const providedDigest = crypto.createHash('sha256').update(String(provided)).digest()
-  const expectedDigest = crypto.createHash('sha256').update(String(expected)).digest()
-  return crypto.timingSafeEqual(providedDigest, expectedDigest)
-}
-
-function explicitTokenFromRequest(req, requestUrl) {
-  const raw = req.headers['x-nax-token']
-  const headerToken = Array.isArray(raw) ? raw[0] : raw
-  if (headerToken) return headerToken
-  return requestUrl?.searchParams?.get('token') || ''
-}
-
-function tokenFromRequest(req, requestUrl) {
-  const explicitToken = explicitTokenFromRequest(req, requestUrl)
-  if (explicitToken) return explicitToken
-  return cookieValue(req, SESSION_COOKIE_NAME)
-}
-
-function sessionBootstrapHeadersForRequest(req, requestUrl, token) {
-  const explicitToken = explicitTokenFromRequest(req, requestUrl)
-  return timingSafeTokenEqual(explicitToken, token) ? sessionBootstrapHeaders(token) : {}
-}
-
 function assertToken(req, requestUrl, token) {
   const provided = tokenFromRequest(req, requestUrl)
   if (!timingSafeTokenEqual(provided, token)) {
@@ -499,28 +431,6 @@ function assertAllowedHost(req, bindHost) {
   if (!host || !allowedHostnames(bindHost).has(host)) {
     throw requestError(403, 'forbidden_host', 'The Host header is not allowed for this dashboard server.')
   }
-}
-
-function cookieValue(req, name) {
-  const header = String(req.headers.cookie || '')
-  for (const part of header.split(';')) {
-    const [rawKey, ...rawValue] = part.trim().split('=')
-    if (rawKey !== name) continue
-    try {
-      return decodeURIComponent(rawValue.join('='))
-    } catch (_err) {
-      return rawValue.join('=')
-    }
-  }
-  return ''
-}
-
-function sessionCookieHeader(token) {
-  return `${SESSION_COOKIE_NAME}=${encodeURIComponent(String(token || ''))}; Path=/; HttpOnly; SameSite=Strict`
-}
-
-function sessionBootstrapHeaders(token) {
-  return { 'set-cookie': sessionCookieHeader(token) }
 }
 
 /** @param {{ token?: string, initialWorkflow?: string }} [options] */
@@ -597,304 +507,6 @@ function normalizeDryRunOptions(raw = {}, flow = {}) {
     throw requestError(400, errors[0].code, errors[0].message)
   }
   return out
-}
-
-function runDryRunCommand({ flowId, projectRoot, options, tailOutput = false }) {
-  return runWorkflow({
-    flowId,
-    projectRoot,
-    options,
-    dryRun: true,
-    passthrough: tailOutput,
-  })
-}
-
-/**
- * @typedef {(event: Record<string, unknown>) => void} DashboardEventSink
- * @typedef {{ code?: string, message: string, line?: number, text?: string }} RunnerEventParseError
- *
- * Child-process workflow run options.
- * @typedef {{
- *   flowId: string,
- *   projectRoot: string,
- *   options?: import('../workflow-runner').WorkflowCommandOptions,
- *   eventSink?: DashboardEventSink,
- *   tailOutput?: boolean,
- * }} RunWorkflowChildInput
- */
-
-/** @param {RunWorkflowChildInput} input */
-function runWorkflowChild({ flowId, projectRoot, options = {}, eventSink = () => {}, tailOutput = false }) {
-  const command = workflowCommand({ flowId, projectRoot, options })
-  const args = [path.resolve(__dirname, '..', '..', 'bin', 'nax.js'), ...command.slice(1)]
-  const startedAt = new Date().toISOString()
-  const started = Date.now()
-  let stdout = ''
-  let stderr = ''
-  let stdoutDropped = 0
-  let stderrDropped = 0
-  let cancelRequested = false
-  let settled = false
-  let runnerTerminalStatus = ''
-  let forceKillTimer = null
-  /** @type {NodeJS.ProcessEnv} */
-  const childEnv = {
-    ...process.env,
-    FORCE_COLOR: process.env.FORCE_COLOR || '1',
-    NAX_EVENT_FD: '3',
-    NAX_EVENT_STREAM: 'jsonl',
-  }
-  delete childEnv.NO_COLOR
-
-  eventSink({ type: 'started', command, flowId })
-  const child = spawn(process.execPath, args, {
-    cwd: projectRoot,
-    env: childEnv,
-    stdio: ['ignore', 'pipe', 'pipe', 'pipe'],
-  })
-  const stdoutStream = child.stdout
-  const stderrStream = child.stderr
-  if (!stdoutStream || !stderrStream) throw new Error('Could not attach workflow runner output streams.')
-
-  stdoutStream.setEncoding('utf8')
-  stderrStream.setEncoding('utf8')
-  stdoutStream.on('data', (text) => {
-    const bounded = appendBounded(stdout, text)
-    stdout = bounded.text
-    stdoutDropped += bounded.dropped
-    if (tailOutput) process.stdout.write(text)
-    eventSink({ type: 'stdout', text })
-  })
-  stderrStream.on('data', (text) => {
-    const bounded = appendBounded(stderr, text)
-    stderr = bounded.text
-    stderrDropped += bounded.dropped
-    if (tailOutput) process.stderr.write(text)
-    eventSink({ type: 'stderr', text })
-  })
-  const eventParser = createRunnerEventParser({
-    onEvent: (event) => {
-      if (event?.type === 'workflow_awaiting_review') runnerTerminalStatus = 'awaiting_review'
-      eventSink({ type: 'runner_event', event })
-    },
-    onError: (error) => eventSink({
-      type: 'runner_event_error',
-      message: error.message,
-      line: error.line || '',
-      code: error.code || 'runner_event_error',
-      text: error.text || '',
-    }),
-  })
-  /** @type {import('node:stream').Readable | undefined} */
-  const eventStream = child.stdio?.[3] && 'setEncoding' in child.stdio[3]
-    ? /** @type {import('node:stream').Readable} */ (child.stdio[3])
-    : undefined
-  if (eventStream) {
-    eventStream.setEncoding('utf8')
-    eventStream.on('data', (chunk) => eventParser.push(chunk))
-    eventStream.on('end', () => eventParser.end())
-    eventStream.on('error', (error) => {
-      eventSink({
-        type: 'runner_event_error',
-        message: error?.message || String(error),
-        code: 'runner_event_stream_error',
-      })
-    })
-  }
-
-  const promise = new Promise((resolve) => {
-    child.on('error', (error) => {
-      if (settled) return
-      settled = true
-      if (forceKillTimer) clearTimeout(forceKillTimer)
-      const message = error?.message || String(error)
-      const bounded = appendBounded(stderr, `${message}\n`)
-      stderr = bounded.text
-      stderrDropped += bounded.dropped
-      eventSink({ type: 'stderr', text: `${message}\n` })
-      eventSink({ type: 'error', message })
-      const result = {
-        status: 'failed',
-        command,
-        startedAt,
-        exitedAt: new Date().toISOString(),
-        durationMs: Date.now() - started,
-        exitCode: 1,
-        signal: null,
-        stdout,
-        stderr,
-        stdoutDropped,
-        stderrDropped,
-      }
-      eventSink({ type: 'exited', status: result.status, exitCode: result.exitCode, signal: result.signal, durationMs: result.durationMs })
-      resolve(result)
-    })
-    child.on('close', (code, signal) => {
-      if (settled) return
-      settled = true
-      if (forceKillTimer) clearTimeout(forceKillTimer)
-      const status = code === 0 ? runnerTerminalStatus || 'completed' : cancelRequested ? 'cancelled' : 'failed'
-      const result = {
-        status,
-        command,
-        startedAt,
-        exitedAt: new Date().toISOString(),
-        durationMs: Date.now() - started,
-        exitCode: typeof code === 'number' ? code : null,
-        signal: signal || null,
-        stdout,
-        stderr,
-        stdoutDropped,
-        stderrDropped,
-      }
-      if (status === 'failed') {
-        const message = stderr.trim().split('\n').filter(Boolean).pop() || `Workflow "${flowId}" failed.`
-        eventSink({ type: 'error', message })
-      }
-      eventParser.end()
-      eventSink({ type: 'exited', status: result.status, exitCode: result.exitCode, signal: result.signal, durationMs: result.durationMs })
-      resolve(result)
-    })
-  })
-
-  return {
-    command,
-    promise,
-    cancel() {
-      if (settled || child.killed) return false
-      cancelRequested = true
-      child.kill('SIGTERM')
-      forceKillTimer = setTimeout(() => {
-        if (!settled) child.kill('SIGKILL')
-      }, 3000)
-      return true
-    },
-  }
-}
-
-/**
- * Runner event parser handlers.
- * @typedef {{
- *   onEvent?: (event: Record<string, unknown>) => void,
- *   onError?: (error: RunnerEventParseError) => void,
- * }} RunnerEventParserHandlers
- *
- * @param {RunnerEventParserHandlers} [handlers]
- */
-function createRunnerEventParser({ onEvent = () => {}, onError = () => {} } = {}) {
-  let buffer = ''
-  let lineNumber = 0
-  let ended = false
-
-  function parseLine(line) {
-    lineNumber += 1
-    if (!line.trim()) return
-    try {
-      const event = JSON.parse(line)
-      if (!event || typeof event !== 'object' || Array.isArray(event)) {
-        onError({
-          code: 'invalid_runner_event',
-          message: 'Runner event line is not a JSON object.',
-          line: lineNumber,
-          text: line,
-        })
-        return
-      }
-      if (!event.type) {
-        onError({
-          code: 'missing_runner_event_type',
-          message: 'Runner event is missing a type.',
-          line: lineNumber,
-          text: line,
-        })
-        return
-      }
-      onEvent(event)
-    } catch (error) {
-      onError({
-        code: 'parse_runner_event',
-        message: error?.message || String(error),
-        line: lineNumber,
-        text: line,
-      })
-    }
-  }
-
-  return {
-    push(chunk) {
-      if (ended) return
-      buffer += String(chunk || '')
-      let index = buffer.indexOf('\n')
-      while (index !== -1) {
-        const line = buffer.slice(0, index).replace(/\r$/, '')
-        buffer = buffer.slice(index + 1)
-        parseLine(line)
-        index = buffer.indexOf('\n')
-      }
-    },
-    end() {
-      if (ended) return
-      ended = true
-      if (!buffer) return
-      const line = buffer.replace(/\r$/, '')
-      buffer = ''
-      parseLine(line)
-    },
-  }
-}
-
-function publicRunState(runState = {}) {
-  const summaryPath = runState.dir ? path.join(runState.dir, 'artifacts', 'summary.md') : ''
-  return {
-    runId: runState.runId || '',
-    flowId: runState.flowId || '',
-    flowTitle: runState.flowTitle || '',
-    status: runState.status || inferRunStateStatus(runState),
-    transport: runState.transport || '',
-    branch: runState.branch || '',
-    target: runState.target || null,
-    createdAt: runState.createdAt || '',
-    updatedAt: runState.updatedAt || '',
-    dir: runState.dir || '',
-    summaryPath,
-    resumable: isUnfinishedRun(runState),
-    steps: Array.isArray(runState.steps) ? runState.steps : [],
-  }
-}
-
-function inferRunStateStatus(runState = {}) {
-  const steps = Array.isArray(runState.steps) ? runState.steps : []
-  if (steps.length === 0) return ''
-
-  const statuses = steps.map((step) => String(step?.status || '').toLowerCase()).filter(Boolean)
-  if (statuses.some((status) => isFailedRunStatus(status))) {
-    return 'failed'
-  }
-  if (statuses.some((status) => isCancelledRunStatus(status))) return 'cancelled'
-  if (runState?.status === 'awaiting_review' || statuses.some((status) => status === 'awaiting_review')) {
-    return 'awaiting_review'
-  }
-  if (statuses.length === steps.length && statuses.every((status) => ['complete', 'completed', 'dry-run'].includes(status))) {
-    return 'completed'
-  }
-  if (statuses.some((status) => ['running', 'submitted', 'submitting', 'pending', 'waiting', 'retrying', 'queued'].includes(status))) {
-    return 'running'
-  }
-  return statuses[statuses.length - 1] || ''
-}
-
-function publicRunOptions(runState = {}) {
-  const options = runState.options || {}
-  return {
-    branch: options.branch || runState.branch || '',
-    target: runState.target || options.target || null,
-    transport: options.transport || runState.transport || '',
-    models: normalizeAgentList(options.models),
-    stepModels: normalizeStepModels(options.stepModels),
-    context: options.context || '',
-    step: options.step || '',
-    fromStep: options.fromStep || '',
-  }
 }
 
 function stepStatusSnapshot(runState = {}) {
@@ -1123,23 +735,6 @@ function applyRemoteCancelToWorkflow(runState = {}, remoteCancel = {}, { reason 
   return runState
 }
 
-function eventText(event) {
-  return `event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`
-}
-
-function eventAfter(event, since = 0) {
-  const minimum = Number.isFinite(Number(since)) ? Number(since) : 0
-  const seq = Number(event?.seq ?? event?.id ?? 0)
-  return seq > minimum
-}
-
-function extractDurableRunId(output = '') {
-  const stateMatch = String(output).match(/(?:^|\n)State:\s+(.+?\.nax\/workflows\/([^/\n]+)\/workflow\.json)(?:\n|$)/)
-  if (stateMatch?.[2]) return stateMatch[2]
-  const runMatch = String(output).match(/(?:^|\n)Run\s+([^\s\n]+)(?:\n|$)/)
-  return runMatch?.[1] || ''
-}
-
 function contentTypeFor(filePath) {
   const extension = path.extname(filePath).toLowerCase()
   if (extension === '.html') return 'text/html; charset=utf-8'
@@ -1189,30 +784,180 @@ function createRequestHandler(options = {}) {
   const followupStopRun = options.followupStopRun || stopAgentRun
   const cancelStopRun = options.cancelStopRun || stopAgentRun
   const followupSyncRunCommand = options.followupSyncRunCommand
-  const runs = new Map()
-  const activeByWorkflow = new Map()
+  const liveRunRegistry = createLocalLiveRunRegistry()
+  const workflowStore = createLocalWorkflowStore(flowOptions)
+  const runStore = createLocalRunStore({
+    projectRoot,
+    env,
+    flowStore: workflowStore,
+    followupSyncRunCommand,
+  })
+  const eventStore = createLocalEventStore({ getRunState: runStore.getRunState })
+  const eventStream = createLocalEventStreamAdapter({
+    liveRuns: {
+      getRawRun: (id) => liveRunRegistry.getRawRun(id),
+      registerSseClient: (run, request, response) => liveRunRegistry.registerSseClient(run, request, response),
+    },
+    eventStore: {
+      getRunState: runStore.getRunState,
+      listEvents: (input) => eventStore.listEvents(input),
+    },
+  })
+  const capabilities = localServerCapabilities(env)
+  const healthCapabilities = legacyHealthCapabilities(env)
+  const readOnlyApi = createDashboardApi({
+    runtime: {
+      mode: 'local-node',
+      deploymentMode: dashboardDeploymentMode(env),
+      projectRoot,
+      capabilities,
+      healthCapabilities,
+    },
+    token,
+    workflowStore,
+    runStore,
+    eventStore,
+    liveRuns: {
+      listActiveRuns: () => liveRunRegistry.listRawRuns().map(publicRun),
+      getActiveRun: (id) => {
+        const run = liveRunRegistry.getRawRun(safeDecode(id))
+        return run ? publicRun(run) : null
+      },
+      getActiveEvents: (id, since = 0) => {
+        const run = liveRunRegistry.getRawRun(safeDecode(id))
+        if (!run) return null
+        return {
+          run: publicRun(run),
+          events: run.events.filter((candidate) => eventAfter(candidate, since)),
+          errors: [],
+        }
+      },
+    },
+    mutations: {
+      openFile: async (body) => ({
+        body: {
+          opened: true,
+          path: await openLocalFile(body.path, { projectRoot }),
+        },
+      }),
+      dryRunWorkflow: async (id, body) => {
+        const flowId = safeDecode(id)
+        const flow = await loadFlow(flowId, flowOptions)
+        const options = normalizeDryRunOptions(body, flow)
+        const result = await dryRunWorkflow({ flowId, projectRoot, options, tailOutput })
+        return {
+          statusCode: result.exitCode === 0 ? 200 : 500,
+          body: {
+            workflow: publicFlow(flow),
+            dryRun: result,
+          },
+        }
+      },
+      startWorkflow: async (id, body) => {
+        const flowId = safeDecode(id)
+        const flow = await loadFlow(flowId, flowOptions)
+        const runOptions = normalizeDryRunOptions(body, flow)
+        const run = startRun({ flowId, runOptions })
+        return {
+          statusCode: 202,
+          body: {
+            workflow: publicFlow(flow),
+            run: publicRun(run),
+          },
+        }
+      },
+      cancelRun: async (id) => {
+        const requestedRunId = safeDecode(id)
+        const run = liveRunRegistry.getRawRun(requestedRunId)
+        const durable = durableRunStateForId(run?.runId || run?.id || requestedRunId)
+        if (!run && !durable) return null
+        return {
+          body: await cancelRunService({
+            run,
+            durable,
+            projectRoot,
+            env,
+            stopWorkflowRunners,
+            stopRun: cancelStopRun,
+            applyRemoteCancelToWorkflow,
+            recordEvent,
+            recordCancelSemantics,
+            publicRun,
+          }),
+        }
+      },
+      approveReview: async (id, body) => {
+        const durable = durableRunStateForId(id)
+        if (!durable) return null
+        const gate = findReviewStep(durable, String(body.stepId || ''))
+        if (!gate) throw requestError(409, 'no_review_gate', 'No human review gate is awaiting approval for this workflow.')
+        const run = startResumeRun({ durable, stepId: gate.id || '' })
+        return {
+          statusCode: 202,
+          body: {
+            run: publicRun(run),
+            approved: true,
+            stepId: gate.id || '',
+          },
+        }
+      },
+      cancelReview: async (id, body) => {
+        const durable = durableRunStateForId(id)
+        return durable ? { body: cancelReviewGateService({ runState: durable, body }) } : null
+      },
+      submitFollowup: async (id, body) => {
+        const sourceRunId = safeDecode(id)
+        const durable = durableRunStateForId(sourceRunId)
+        if (!durable) return null
+        return {
+          statusCode: 202,
+          body: {
+            followup: await submitFollowupService({
+              projectRoot,
+              sourceRunId,
+              durable,
+              body,
+              env,
+              followupSiteId,
+              followupSiteName,
+              followupNetlifyFilter,
+              followupSubmitRun,
+              writeBlob: followupWriteBlob,
+              normalizeFollowupRequest,
+              makeBlobWriter: makeFollowupBlobWriter,
+              setBlobCommand: followupSetBlob,
+              linkSubmittedRun: linkSubmittedRunFactory,
+              followupId,
+              freshFollowupTitle,
+              submissionResponseItem,
+            }),
+          },
+        }
+      },
+      cancelFollowup: async (id, body) => {
+        const sourceRunId = safeDecode(id)
+        const durable = durableRunStateForId(sourceRunId)
+        return durable
+          ? {
+              body: await cancelFollowupService({
+                projectRoot,
+                durable,
+                body,
+                env,
+                stopRun: followupStopRun,
+              }),
+            }
+          : null
+      },
+    },
+  })
 
   function recordEvent(run, type, data = {}) {
-    run.eventSeq = (run.eventSeq || 0) + 1
-    const event = {
-      type,
-      at: new Date().toISOString(),
-      runId: run.id,
-      ...data,
-      // monotonic id/seq last so a bounded events window never reuses ids
-      id: run.eventSeq,
-      seq: run.eventSeq,
-    }
-    run.events.push(event)
-    if (run.events.length > MAX_LIVE_EVENTS) run.events.shift()
-    broadcastEvent(run.clients, eventText(event))
-    return event
+    return liveRunRegistry.recordEvent(run, type, data)
   }
 
   function recordRunnerEvent(run, event = {}) {
-    if (event.type === 'workflow_started' && event.runId) run.runId = event.runId
-    if (event.runId && !run.runId) run.runId = event.runId
-    return recordEvent(run, event.type || 'runner_event', event)
+    return liveRunRegistry.recordRunnerEvent(run, event)
   }
 
   function recordStepStatusEvents(run) {
@@ -1262,13 +1007,12 @@ function createRequestHandler(options = {}) {
   }
 
   function startRun({ flowId, runOptions }) {
-    const existingRunId = activeByWorkflow.get(flowId)
-    if (existingRunId) {
-      const existing = runs.get(existingRunId)
-      if (existing && existing.status === 'running') {
+    const existing = liveRunRegistry.activeWorkflowRun(flowId)
+    if (existing) {
+      if (existing.status === 'running') {
         throw requestError(409, 'duplicate_run', `Workflow "${flowId}" already has an active dashboard run.`)
       }
-      activeByWorkflow.delete(flowId)
+      liveRunRegistry.clearWorkflow(flowId)
     }
 
     const id = `${new Date().toISOString().replace(/[:.]/g, '-')}-${flowId}`
@@ -1277,7 +1021,7 @@ function createRequestHandler(options = {}) {
       runId: '',
       flowId,
       status: 'running',
-      command: workflowCommand({ flowId, projectRoot, options: runOptions }),
+      command: [],
       startedAt: new Date().toISOString(),
       exitedAt: '',
       durationMs: 0,
@@ -1296,8 +1040,7 @@ function createRequestHandler(options = {}) {
       stepStatuses: {},
       stepStatusTimer: null,
     }
-    runs.set(id, run)
-    activeByWorkflow.set(flowId, id)
+    liveRunRegistry.trackRun(run)
     run.stepStatusTimer = setInterval(() => {
       if (run.status === 'running') recordStepStatusEvents(run)
     }, 1000)
@@ -1354,11 +1097,11 @@ function createRequestHandler(options = {}) {
       run.cancel = null
       if (run.stepStatusTimer) clearInterval(run.stepStatusTimer)
       run.stepStatusTimer = null
-      activeByWorkflow.delete(flowId)
+      liveRunRegistry.clearWorkflow(flowId)
       recordStepStatusEvents(run)
       recordEvent(run, 'exited', { status: run.status, exitCode: run.exitCode, signal: run.signal, durationMs: run.durationMs })
       endClients(run.clients)
-      evictFinishedRuns(runs)
+      liveRunRegistry.evictFinishedRuns()
     }).catch((error) => {
       const message = error?.message || String(error)
       run.status = 'failed'
@@ -1372,25 +1115,24 @@ function createRequestHandler(options = {}) {
       run.cancel = null
       if (run.stepStatusTimer) clearInterval(run.stepStatusTimer)
       run.stepStatusTimer = null
-      activeByWorkflow.delete(flowId)
+      liveRunRegistry.clearWorkflow(flowId)
       recordStepStatusEvents(run)
       recordEvent(run, 'error', { message })
       recordEvent(run, 'exited', { status: run.status, exitCode: run.exitCode, signal: run.signal })
       endClients(run.clients)
-      evictFinishedRuns(runs)
+      liveRunRegistry.evictFinishedRuns()
     })
     return run
   }
 
   function startResumeRun({ durable, stepId = '' }) {
     const flowId = durable.flowId || ''
-    const existingRunId = activeByWorkflow.get(flowId)
-    if (existingRunId) {
-      const existing = runs.get(existingRunId)
-      if (existing && existing.status === 'running') {
+    const existing = liveRunRegistry.activeWorkflowRun(flowId)
+    if (existing) {
+      if (existing.status === 'running') {
         throw requestError(409, 'duplicate_run', `Workflow "${flowId}" already has an active dashboard run.`)
       }
-      activeByWorkflow.delete(flowId)
+      liveRunRegistry.clearWorkflow(flowId)
     }
     const id = `${new Date().toISOString().replace(/[:.]/g, '-')}-${durable.runId}-resume`
     const run = {
@@ -1417,17 +1159,16 @@ function createRequestHandler(options = {}) {
       stepStatuses: {},
       stepStatusTimer: null,
     }
-    runs.set(id, run)
-    activeByWorkflow.set(flowId, id)
+    liveRunRegistry.trackRun(run)
     run.stepStatusTimer = setInterval(() => {
       if (run.status === 'running') recordStepStatusEvents(run)
     }, 1000)
     run.stepStatusTimer.unref?.()
-    const promise = resumeWorkflow({
+    const promise = resumeWorkflowRun({
       runId: durable.runId,
       projectRoot,
-      options: { projectRoot, stepId, reviewer: 'dashboard', yes: true, force: true },
-      passthrough: tailOutput,
+      stepId,
+      tailOutput,
       eventSink: (event) => {
         if (event.type === 'stdout') {
           const bounded = appendBounded(run.stdout, event.text || '')
@@ -1457,11 +1198,11 @@ function createRequestHandler(options = {}) {
       run.cancellable = false
       if (run.stepStatusTimer) clearInterval(run.stepStatusTimer)
       run.stepStatusTimer = null
-      activeByWorkflow.delete(flowId)
+      liveRunRegistry.clearWorkflow(flowId)
       recordStepStatusEvents(run)
       recordEvent(run, 'exited', { status: run.status, exitCode: run.exitCode, signal: run.signal, durationMs: run.durationMs })
       endClients(run.clients)
-      evictFinishedRuns(runs)
+      liveRunRegistry.evictFinishedRuns()
     }).catch((error) => {
       const message = error?.message || String(error)
       run.status = 'failed'
@@ -1472,12 +1213,12 @@ function createRequestHandler(options = {}) {
       run.stderrDropped += bounded.dropped
       if (run.stepStatusTimer) clearInterval(run.stepStatusTimer)
       run.stepStatusTimer = null
-      activeByWorkflow.delete(flowId)
+      liveRunRegistry.clearWorkflow(flowId)
       recordStepStatusEvents(run)
       recordEvent(run, 'error', { message })
       recordEvent(run, 'exited', { status: run.status, exitCode: run.exitCode, signal: run.signal })
       endClients(run.clients)
-      evictFinishedRuns(runs)
+      liveRunRegistry.evictFinishedRuns()
     })
     return run
   }
@@ -1511,7 +1252,7 @@ function createRequestHandler(options = {}) {
     const states = listRunStates(projectRoot)
     const exact = states.find((state) => state.runId === decoded)
     if (exact) return exact
-    const active = runs.get(decoded)
+    const active = liveRunRegistry.getRawRun(decoded)
     if (!active) return null
     const durableRunId = active.runId || extractDurableRunId(`${active.stdout || ''}\n${active.stderr || ''}`)
     if (!durableRunId) return null
@@ -1535,7 +1276,7 @@ function createRequestHandler(options = {}) {
     // Cancels every active workflow child, ends SSE clients, and clears timers so
     // server shutdown does not leak child processes or open connections.
     shutdown() {
-      shutdownRuns(runs)
+      liveRunRegistry.shutdown()
     },
     async handle(req, res) {
       try {
@@ -1543,6 +1284,11 @@ function createRequestHandler(options = {}) {
         const base = `http://${req.headers.host || '127.0.0.1'}`
         const requestUrl = new URL(req.url || '/', base)
         const pathname = requestUrl.pathname
+
+        if (isHonoDashboardApiPath(req.method, pathname)) {
+          await handleHonoRequest(readOnlyApi, req, res, base)
+          return
+        }
 
         if (pathname === '/api/health') {
           if (req.method !== 'GET') {
@@ -1599,7 +1345,7 @@ function createRequestHandler(options = {}) {
             cursor: requestUrl.searchParams.get('cursor') || '',
           })
           jsonResponse(res, 200, {
-            active: [...runs.values()].map(publicRun),
+            active: liveRunRegistry.listRawRuns().map(publicRun),
             durable: durablePage.items.map(publicRunState),
             pagination: durablePage.pagination,
           })
@@ -1626,26 +1372,18 @@ function createRequestHandler(options = {}) {
           }
           assertToken(req, requestUrl, token)
           const runId = safeDecode(runEventsJsonMatch[1])
-          const run = runs.get(runId)
-          const durable = run ? null : durableRunStateForId(runId)
-          if (!run && !durable) {
+          const replay = eventStream.replayEvents({
+            runId,
+            since: Number(requestUrl.searchParams.get('since') || 0),
+          })
+          if (!replay.ok) {
             notFound(res, 'Unknown dashboard run.')
             return
           }
-          const since = Number(requestUrl.searchParams.get('since') || 0)
-          if (run) {
-            jsonResponse(res, 200, {
-              run: publicRun(run),
-              events: run.events.filter((candidate) => eventAfter(candidate, since)),
-              errors: [],
-            })
-            return
-          }
-          const replay = readEventLog(eventLogPathForRunState(durable), { since })
           jsonResponse(res, 200, {
-            run: publicRunState(durable),
-            events: replay.events,
-            errors: replay.errors,
+            run: replay.run,
+            events: replay.events || [],
+            errors: replay.errors || [],
           })
           return
         }
@@ -1658,40 +1396,15 @@ function createRequestHandler(options = {}) {
           }
           assertToken(req, requestUrl, token)
           const runId = safeDecode(runEventsMatch[1])
-          const run = runs.get(runId)
-          const durable = run ? null : durableRunStateForId(runId)
-          if (!run && !durable) {
+          const replay = eventStream.streamEvents({
+            req,
+            res,
+            runId,
+            since: Number(requestUrl.searchParams.get('since') || 0),
+          })
+          if (!replay.ok) {
             notFound(res, 'Unknown dashboard run.')
             return
-          }
-          const since = Number(requestUrl.searchParams.get('since') || 0)
-          res.writeHead(200, {
-            ...securityHeaders(),
-            'content-type': 'text/event-stream',
-            'cache-control': 'no-cache',
-            connection: 'keep-alive',
-          })
-          if (run) {
-            for (const event of run.events.filter((candidate) => eventAfter(candidate, since))) {
-              res.write(eventText(event))
-            }
-          } else if (durable) {
-            const replay = readEventLog(eventLogPathForRunState(durable), { since })
-            for (const event of replay.events) res.write(eventText(event))
-            for (const error of replay.errors) {
-              res.write(eventText({
-                id: 0,
-                type: 'runner_event_error',
-                at: new Date().toISOString(),
-                runId: durable.runId,
-                ...error,
-              }))
-            }
-          }
-          if (run && run.status === 'running') {
-            registerSseClient(run, req, res)
-          } else {
-            res.end()
           }
           return
         }
@@ -1767,7 +1480,7 @@ function createRequestHandler(options = {}) {
             return
           }
           const body = await readJsonBody(req)
-          const gate = findReviewStep(durable, body.stepId || '')
+          const gate = findReviewStep(durable, String(body.stepId || ''))
           if (!gate) throw requestError(409, 'no_review_gate', 'No human review gate is awaiting approval for this workflow.')
           const run = startResumeRun({ durable, stepId: gate.id || '' })
           jsonResponse(res, 202, {
@@ -1791,16 +1504,7 @@ function createRequestHandler(options = {}) {
             return
           }
           const body = await readJsonBody(req)
-          const next = cancelHumanReviewGate({
-            runState: durable,
-            stepId: body.stepId || '',
-            reviewer: 'dashboard',
-            reason: body.reason || 'cancelled by reviewer',
-          })
-          jsonResponse(res, 200, {
-            run: publicRunState(next),
-            cancelled: true,
-          })
+          jsonResponse(res, 200, cancelReviewGateService({ runState: durable, body }))
           return
         }
 
@@ -1818,137 +1522,27 @@ function createRequestHandler(options = {}) {
             return
           }
           const body = await readJsonBody(req)
-          const details = buildRunDetails(durable)
-          const normalized = normalizeFollowupRequest(body, details, durable)
-          const contextPackage = buildFollowupContextPackage({
+          const followup = await submitFollowupService({
             projectRoot,
-            details,
-            artifacts: normalized.artifacts,
+            sourceRunId,
+            durable,
+            body,
+            env,
+            followupSiteId,
+            followupSiteName,
+            followupNetlifyFilter,
+            followupSubmitRun,
+            writeBlob: followupWriteBlob,
+            normalizeFollowupRequest,
+            makeBlobWriter: makeFollowupBlobWriter,
+            setBlobCommand: followupSetBlob,
+            linkSubmittedRun: linkSubmittedRunFactory,
+            followupId,
+            freshFollowupTitle,
+            submissionResponseItem,
           })
-          const delivery = await prepareFollowupContextDelivery({
-            contextPackage,
-            runId: durable.runId || sourceRunId,
-            stepId: 'dashboard-followup',
-            options: durable.options || {},
-            writeBlob: makeFollowupBlobWriter({
-              projectRoot,
-              siteId: followupSiteId,
-              env,
-              writeBlob: followupWriteBlob,
-              setBlobCommand: followupSetBlob,
-            }),
-          })
-          const sourceArtifactIds = contextPackage.artifacts.map((artifact) => artifact.id)
-          const plan = buildFollowupSubmissionPlan({
-            requestedMode: normalized.mode,
-            target: normalized.target,
-            models: normalized.models,
-            fallbackModels: normalizeAgentList(durable.options?.models || durable.steps?.flatMap((step) => step.agents || []) || ['codex']),
-            sourceArtifactIds,
-            targetSha: normalized.targetSha,
-            targetBranch: normalized.targetBranch,
-          })
-          const promptText = buildFollowupPrompt({
-            instructions: normalized.prompt,
-            contextText: delivery.promptContext,
-          })
-          const id = followupId(durable.runId || sourceRunId)
-          const results = await submitFollowupPlan({
-            projectRoot,
-            promptText,
-            submissions: plan.submissions,
-            shared: {
-              branch: normalized.targetBranch,
-              siteId: followupSiteId,
-              netlifyFilter: followupNetlifyFilter,
-              env,
-              submitRun: followupSubmitRun,
-              linkRun: linkSubmittedRunFactory({ siteName: followupSiteName }),
-              source: {
-                id,
-                sourceWorkflowRunId: durable.runId || sourceRunId,
-                sourceTargetId: normalized.target.id,
-                sourceArtifactIds,
-              },
-              raw: {
-                dashboardFollowup: {
-                  id,
-                  sourceWorkflowRunId: durable.runId || sourceRunId,
-                  targetId: normalized.target.id,
-                  delivery: delivery.delivery,
-                },
-              },
-            },
-          })
-          const warnings = results.flatMap((result) => result.warnings || [])
-          const freshResults = results
-            .filter((result) => result.submission?.mode === 'fresh-runner')
-            .map((result) => result.run)
-          let persistedSourceWorkflow = null
-          try {
-            persistedSourceWorkflow = appendFollowupRunsToWorkflow({
-              runState: durable,
-              runs: results.map((result) => result.run),
-              promptText,
-              target: normalized.target,
-              source: {
-                id,
-                sourceWorkflowRunId: durable.runId || sourceRunId,
-                sourceTargetId: normalized.target.id,
-                sourceArtifactIds,
-                delivery: delivery.delivery,
-              },
-            })
-          } catch (error) {
-            warnings.push(error?.message || String(error))
-          }
-          let persistedWorkflow = null
-          if (freshResults.length > 0) {
-            try {
-              persistedWorkflow = persistFreshPseudoWorkflow({
-                projectRoot,
-                runs: freshResults,
-                promptText,
-                target: {
-                  sha: normalized.targetSha,
-                  branch: normalized.targetBranch,
-                  sourceType: 'dashboard-followup',
-                },
-                source: {
-                  id,
-                  sourceWorkflowRunId: durable.runId || sourceRunId,
-                  sourceTargetId: normalized.target.id,
-                  sourceArtifactIds,
-                },
-                title: freshFollowupTitle(durable, normalized.target, freshResults),
-                stepTitle: freshResults.length === 1
-                  ? `${titleCaseAgent(freshResults[0].agent)} follow-up`
-                  : 'Multi-agent follow-up',
-              })
-            } catch (error) {
-              warnings.push(error?.message || String(error))
-            }
-          }
-
           jsonResponse(res, 202, {
-            followup: {
-              id,
-              status: 'submitted',
-              sourceWorkflowRunId: durable.runId || sourceRunId,
-              target: normalized.target,
-              context: {
-                artifactCount: contextPackage.artifactCount,
-                artifacts: contextPackage.artifacts,
-                delivery: delivery.delivery,
-                bytes: delivery.bytes,
-                blobRef: delivery.blobRef || null,
-              },
-              plan,
-              submissions: results.map(submissionResponseItem),
-              sourceWorkflow: persistedSourceWorkflow ? publicRunState(persistedSourceWorkflow) : null,
-              persistedWorkflow: persistedWorkflow ? publicRunState(persistedWorkflow) : null,
-              warnings,
-            },
+            followup,
           })
           return
         }
@@ -1967,35 +1561,13 @@ function createRequestHandler(options = {}) {
             return
           }
           const body = await readJsonBody(req)
-          const runnerId = String(body.runnerId || '').trim()
-          const sessionId = String(body.sessionId || '').trim()
-          if (!runnerId && !sessionId) {
-            throw requestError(400, 'missing_followup_run', 'Select a follow-up runner or session to cancel.')
-          }
-          const warnings = []
-          const result = cancelFollowupRunInWorkflow({
-            runState: durable,
-            stepId: String(body.stepId || '').trim(),
-            runnerId,
-            sessionId,
-            agent: String(body.agent || '').trim(),
-          })
-          let remoteStopped = false
-          if (result.changed && runnerId && !result.run?.existingRunnerId) {
-            const stopped = await followupStopRun({
-              projectRoot,
-              runnerId,
-              env,
-            })
-            remoteStopped = stopped.stopped === true
-            if (!remoteStopped && stopped.error) warnings.push(stopped.error)
-          }
-          jsonResponse(res, 200, {
-            run: publicRunState(result.runState),
-            cancelled: result.changed,
-            remoteStopped,
-            warnings,
-          })
+          jsonResponse(res, 200, await cancelFollowupService({
+            projectRoot,
+            durable,
+            body,
+            env,
+            stopRun: followupStopRun,
+          }))
           return
         }
 
@@ -2007,56 +1579,24 @@ function createRequestHandler(options = {}) {
           }
           assertToken(req, requestUrl, token)
           const requestedRunId = safeDecode(runCancelMatch[1])
-          const run = runs.get(requestedRunId)
+          const run = liveRunRegistry.getRawRun(requestedRunId)
           const durable = durableRunStateForId(run?.runId || run?.id || requestedRunId)
           if (!run && !durable) {
             notFound(res, 'Unknown dashboard run.')
             return
           }
-          const remoteCancel = durable
-            ? await stopWorkflowRunners({
-                runState: durable,
-                projectRoot,
-                env,
-                stopRun: cancelStopRun,
-              })
-            : { runnerIds: [], stopped: [], warnings: [] }
-          if (durable) {
-            applyRemoteCancelToWorkflow(durable, remoteCancel, { reason: 'cancelled from dashboard' })
-          }
-          if (!run) {
-            jsonResponse(res, 200, {
-              run: publicRunState(durable),
-              cancelled: Boolean(durable?.status === 'cancelled' || remoteCancel.stopped.length > 0),
-              remoteStopped: remoteCancel.stopped.length,
-              remoteStopAttempted: remoteCancel.runnerIds.length,
-              warnings: remoteCancel.warnings,
-            })
-            return
-          }
-          if (remoteCancel.runnerIds.length > 0) {
-            recordEvent(run, 'remote_cancel_requested', {
-              runnerIds: remoteCancel.runnerIds,
-              stoppedRunnerIds: remoteCancel.stopped,
-              warnings: remoteCancel.warnings,
-            })
-          }
-          const canCancelLive = run.status === 'running' && run.cancellable
-          const localCancelled = canCancelLive && typeof run.cancel === 'function' ? run.cancel() : false
-          run.cancelRequested = localCancelled || remoteCancel.stopped.length > 0
-          run.cancellable = canCancelLive ? !localCancelled : false
-          recordEvent(run, 'cancel_requested', {
-            remoteStopped: remoteCancel.stopped.length,
-            remoteStopAttempted: remoteCancel.runnerIds.length,
-          })
-          if (localCancelled) recordCancelSemantics(run)
-          jsonResponse(res, 200, {
-            run: publicRun(run),
-            cancelled: localCancelled || Boolean(durable?.status === 'cancelled') || remoteCancel.stopped.length > 0,
-            remoteStopped: remoteCancel.stopped.length,
-            remoteStopAttempted: remoteCancel.runnerIds.length,
-            warnings: remoteCancel.warnings,
-          })
+          jsonResponse(res, 200, await cancelRunService({
+            run,
+            durable,
+            projectRoot,
+            env,
+            stopWorkflowRunners,
+            stopRun: cancelStopRun,
+            applyRemoteCancelToWorkflow,
+            recordEvent,
+            recordCancelSemantics,
+            publicRun,
+          }))
           return
         }
 
@@ -2067,7 +1607,7 @@ function createRequestHandler(options = {}) {
             return
           }
           assertToken(req, requestUrl, token)
-          const run = runs.get(safeDecode(runMatch[1]))
+          const run = liveRunRegistry.getRawRun(safeDecode(runMatch[1]))
           if (run) {
             jsonResponse(res, 200, { run: publicRun(run) })
             return
@@ -2092,7 +1632,7 @@ function createRequestHandler(options = {}) {
           const flow = await loadFlow(id, flowOptions)
           const body = await readJsonBody(req)
           const options = normalizeDryRunOptions(body, flow)
-          const result = await runDryRunCommand({ flowId: id, projectRoot, options, tailOutput })
+          const result = await dryRunWorkflow({ flowId: id, projectRoot, options, tailOutput })
           jsonResponse(res, result.exitCode === 0 ? 200 : 500, {
             workflow: publicFlow(flow),
             dryRun: result,

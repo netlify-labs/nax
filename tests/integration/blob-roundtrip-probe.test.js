@@ -3,7 +3,7 @@ const test = require('node:test')
 const assert = require('node:assert/strict')
 const path = require('path')
 
-const { deleteBlob, setBlob } = require('../../src/netlify-blobs')
+const { deleteBlob, setBlob } = require('../../src/netlify/blobs')
 const { buildNetlifyEnv, submitLocalAgentRun, waitForLocalAgentRuns } = require('../../src/local-runner')
 
 const enabled = process.env.NAX_NETLIFY_BLOB_ROUNDTRIP_E2E === '1'

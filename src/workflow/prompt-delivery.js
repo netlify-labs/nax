@@ -1,4 +1,4 @@
-const { setBlob, deleteBlob } = require('../netlify-blobs')
+const { setBlob, deleteBlob } = require('../netlify/blobs')
 const { addRunBlobRef, cleanupRunBlobRefs } = require('../blob-ref-registry')
 const { writeLocalBlobDebugPayload } = require('../blob-debug-cache')
 const {

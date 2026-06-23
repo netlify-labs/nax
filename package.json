@@ -71,6 +71,7 @@
     "commander": "^14.0.3",
     "comment-block-parser": "^1.5.4",
     "configorama": "^0.9.15",
+    "hono": "^4.12.26",
     "open": "^10.2.0"
   },
   "devDependencies": {

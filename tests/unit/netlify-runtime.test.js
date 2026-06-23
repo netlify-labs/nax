@@ -1,7 +1,7 @@
 const test = require('node:test')
 const assert = require('node:assert/strict')
 
-const { classifyNetlifyRuntime, isNetlifyAgentRunner, isTruthy } = require('../../src/netlify-runtime')
+const { classifyNetlifyRuntime, isNetlifyAgentRunner, isTruthy } = require('../../src/netlify/runtime')
 const { handleCi } = require('../../src/cli/ci')
 
 test('classifyNetlifyRuntime detects local environments', () => {

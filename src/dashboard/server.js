@@ -472,6 +472,15 @@ function normalizePort(port) {
   return parsed
 }
 
+/** @param {unknown} input @returns {string} */
+function dashboardInitialPath(input) {
+  const value = typeof input === 'string' ? input.trim() : ''
+  if (!value || value.includes('://') || value.startsWith('//') || value.includes('\\')) return '/'
+  const pathname = value.split(/[?#]/)[0] || '/'
+  if (!pathname.startsWith('/') || pathname.startsWith('/api/')) return '/'
+  return pathname.replace(/\/{2,}/g, '/')
+}
+
 function normalizeDryRunOptions(raw = {}, flow = {}) {
   const allowedTransports = new Set(['auto', 'github', 'github-actions', 'netlify-api', 'local', 'local-machine'])
   const out = {}
@@ -1768,7 +1777,8 @@ function startDashboardServer(options = {}) {
       const actualPort = typeof address === 'object' && address ? address.port : port
       const params = new URLSearchParams({ token: handler.token })
       if (options.initialWorkflow) params.set('workflow', options.initialWorkflow)
-      const url = `http://${host}:${actualPort}/?${params.toString()}`
+      const initialPath = dashboardInitialPath(options.initialPath)
+      const url = `http://${host}:${actualPort}${initialPath}?${params.toString()}`
       resolve({
         server,
         host,
@@ -1795,6 +1805,7 @@ module.exports = {
     stopWorkflowRunners,
     createRunnerEventParser,
     defaultIndexHtml,
+    dashboardInitialPath,
     endClients,
     evictFinishedRuns,
     extractDurableRunId,

@@ -330,6 +330,7 @@ function loadDashboardServer() {
  *   fromIssue?: string,
  *   fetchResults?: boolean,
  *   dryRun?: boolean,
+ *   run?: string,
  * }} AdHocRunOptions
  *
  * Input for submitting one ad-hoc Netlify agent run.
@@ -630,6 +631,8 @@ async function handleList(options = {}) {
 async function handleDashboard(flowId, options = {}) {
   const invocationDir = process.cwd()
   const projectRoot = resolveProjectRoot(options.projectRoot, { cwd: invocationDir })
+  const runId = typeof options.run === 'string' ? options.run.trim() : ''
+  if (flowId && runId) throw new Error('Pass either a dashboard workflow argument or --run, not both.')
   if (flowId) {
     await loadFlow(flowId, flowLoadOptions(options, projectRoot))
   }
@@ -642,6 +645,7 @@ async function handleDashboard(flowId, options = {}) {
     host: options.host || '127.0.0.1',
     port: options.port,
     initialWorkflow: flowId || '',
+    initialPath: runId ? `/runs/${encodeURIComponent(runId)}/details` : '',
     dev: options.dev === true,
     tail: options.tail === true,
   })

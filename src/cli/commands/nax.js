@@ -392,6 +392,7 @@ function buildNaxProgram({
     .option('--project-root <path>', 'Project root containing project workflows')
     .option('--host <host>', 'Host for the local dashboard server', '127.0.0.1')
     .option('--port <port>', 'Port for the local dashboard server; defaults to an available port')
+    .option('--run <runId>', 'Open a saved workflow run directly in the details view')
     .option('--no-open', 'Print the dashboard URL without opening a browser')
     .option('--tail', 'Stream child workflow stdout/stderr to this terminal while using the dashboard')
     .option('--dev', 'Use development-mode dashboard behavior')

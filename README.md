@@ -326,12 +326,13 @@ nax list                  List available flows
 
 ```bash
 nax dashboard review
+nax dashboard --run <workflow-run-id>
 nax dashboard --no-open
 nax dashboard --no-open --tail
 nax dashboard --project-root ../my-site --flows-dir .github/nax-flows
 ```
 
-`nax dashboard` starts a localhost workbench for browsing workflows and renders the selected flow as a React Flow graph. Browsing and graph rendering are read-only. Dry-run and run controls are explicit actions inside the workbench.
+`nax dashboard` starts a localhost workbench for browsing workflows and renders the selected flow as a React Flow graph. Pass `--run <workflow-run-id>` to open a saved workflow directly in Run details. Browsing and graph rendering are read-only. Dry-run and run controls are explicit actions inside the workbench.
 
 The workbench includes:
 
@@ -737,7 +738,7 @@ nax handoff --runner  <id> --agent codex
 nax handoff --workflow <id> --flow review     # chain a follow-up flow
 ```
 
-`nax dashboard` offers a browser-based handoff path from Run details: choose **Send to next agent** to submit a Netlify Agent Runner follow-up or a fresh seeded runner from selected artifacts. The CLI `nax handoff` command remains the terminal path for copying or chaining saved results.
+`nax dashboard --run <workflow-run-id>` opens a browser-based handoff path from Run details: choose **Send to next agent** to submit a Netlify Agent Runner follow-up or a fresh seeded runner from selected artifacts. The CLI `nax handoff` command remains the terminal path for copying or chaining saved results.
 
 ### Browsing recents
 

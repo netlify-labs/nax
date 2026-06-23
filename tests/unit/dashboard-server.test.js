@@ -356,8 +356,21 @@ test('dashboard server startup url includes a removable session token', async ()
   const server = await startDashboardServer({ projectRoot: process.cwd(), initialWorkflow: 'review' })
   try {
     const url = new URL(server.url)
+    assert.equal(url.pathname, '/')
     assert.equal(url.searchParams.get('token'), server.token)
     assert.equal(url.searchParams.get('workflow'), 'review')
+  } finally {
+    await server.close()
+  }
+})
+
+test('dashboard server startup url can deep link to run details', async () => {
+  const server = await startDashboardServer({ projectRoot: process.cwd(), initialPath: '/runs/run-1/details' })
+  try {
+    const url = new URL(server.url)
+    assert.equal(url.pathname, '/runs/run-1/details')
+    assert.equal(url.searchParams.get('token'), server.token)
+    assert.equal(url.searchParams.get('workflow'), null)
   } finally {
     await server.close()
   }

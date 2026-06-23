@@ -1204,6 +1204,7 @@ test('success handoff hint is TTY-only and points at the summary file', () => {
 
   assert.match(lines.join('\n'), /\.nax\/workflows\/newer\/artifacts\/summary\.md/)
   assert.match(lines.join('\n'), /nax handoff/)
+  assert.match(lines.join('\n'), /nax dashboard --run newer/)
 })
 
 test('copyToClipboard uses the platform clipboard command', () => {

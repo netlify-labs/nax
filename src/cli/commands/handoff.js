@@ -401,6 +401,10 @@ function printPostSuccessHandoffHint(runState, projectRoot) {
   console.log('')
   console.log('nax handoff')
   console.log('')
+  console.log('Review them in the dashboard with:')
+  console.log('')
+  console.log(`nax dashboard --run ${runState.runId}`)
+  console.log('')
 }
 
 /** @param {string} text @param {{ platform?: NodeJS.Platform, runCommand?: HandoffClipboardCommand }} [options] @returns {string} */

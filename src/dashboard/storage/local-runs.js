@@ -43,6 +43,7 @@ function decodeRunsCursor(value) {
  *   env?: NodeJS.ProcessEnv,
  *   flowStore?: { loadWorkflow?: (id: string) => Promise<object> },
  *   followupSyncRunCommand?: import('../../types').RunCommand,
+ *   resolveRunStateId?: (id: string) => string | null | undefined,
  * }} LocalRunStoreOptions
  *
  * @typedef {{
@@ -70,13 +71,18 @@ function safeDecode(value) {
 }
 
 /** @param {LocalRunStoreOptions} options */
-function createLocalRunStore({ projectRoot, env = process.env, flowStore, followupSyncRunCommand }) {
+function createLocalRunStore({ projectRoot, env = process.env, flowStore, followupSyncRunCommand, resolveRunStateId }) {
   function listStates() {
     return listRunStates(projectRoot)
   }
 
   function getRunState(id) {
-    return runStateForId(id, listStates())
+    const states = listStates()
+    const exact = runStateForId(id, states)
+    if (exact) return exact
+    const resolved = typeof resolveRunStateId === 'function' ? resolveRunStateId(id) : ''
+    if (!resolved || resolved === id) return null
+    return runStateForId(resolved, states)
   }
 
   function syncDurableFollowups(runState) {

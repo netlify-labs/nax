@@ -117,6 +117,25 @@ test('local run store returns graph and details from durable state fallback flow
   assert.ok(Array.isArray(details.details.sections))
 })
 
+test('local run store resolves active runtime ids to durable run state ids', async () => {
+  const projectRoot = tmpRoot()
+  writeRunState(projectRoot, 'run-1', { title: 'Resolved Flow' })
+  const store = createLocalRunStore({
+    projectRoot,
+    resolveRunStateId: (id) => (id === 'active-1' ? 'run-1' : ''),
+  })
+
+  const run = store.getRun('active-1')
+  assert.equal(run.runId, 'run-1')
+
+  const graph = await store.getRunGraph('active-1')
+  assert.equal(graph.run.runId, 'run-1')
+  assert.equal(graph.workflow.title, 'Resolved Flow')
+
+  const details = await store.getRunDetails('active-1')
+  assert.equal(details.run.runId, 'run-1')
+})
+
 test('local event store replays durable events with since filtering', () => {
   const projectRoot = tmpRoot()
   const dir = writeRunState(projectRoot, 'run-events')

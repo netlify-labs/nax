@@ -786,11 +786,22 @@ function createRequestHandler(options = {}) {
   const followupSyncRunCommand = options.followupSyncRunCommand
   const liveRunRegistry = createLocalLiveRunRegistry()
   const workflowStore = createLocalWorkflowStore(flowOptions)
+  /** @param {string} id */
+  function resolveActiveDurableRunId(id) {
+    const active = liveRunRegistry.getRawRun(safeDecode(id))
+    if (!active) return ''
+    const durableRunId = active.runId || extractDurableRunId(`${active.stdout || ''}\n${active.stderr || ''}`)
+    if (!durableRunId) return ''
+    active.runId = durableRunId
+    return durableRunId
+  }
+
   const runStore = createLocalRunStore({
     projectRoot,
     env,
     flowStore: workflowStore,
     followupSyncRunCommand,
+    resolveRunStateId: resolveActiveDurableRunId,
   })
   const eventStore = createLocalEventStore({ getRunState: runStore.getRunState })
   const eventStream = createLocalEventStreamAdapter({
@@ -1248,16 +1259,7 @@ function createRequestHandler(options = {}) {
   }
 
   function durableRunStateForId(id) {
-    const decoded = safeDecode(id)
-    const states = listRunStates(projectRoot)
-    const exact = states.find((state) => state.runId === decoded)
-    if (exact) return exact
-    const active = liveRunRegistry.getRawRun(decoded)
-    if (!active) return null
-    const durableRunId = active.runId || extractDurableRunId(`${active.stdout || ''}\n${active.stderr || ''}`)
-    if (!durableRunId) return null
-    active.runId = durableRunId
-    return states.find((state) => state.runId === durableRunId) || null
+    return runStore.getRunState(id)
   }
 
   function syncDurableFollowups(durable) {

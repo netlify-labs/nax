@@ -183,6 +183,6 @@ test('handleSync syncs GitHub Actions run URLs and uses the URL repo', () => {
 test('handleSync rejects unsupported targets', () => {
   assert.throws(
     () => handleSync('remote', { projectRoot: tmpRoot() }, { log() {} }),
-    /Expected `nax sync last`/,
+    /Expected `nax admin sync last`/,
   )
 })

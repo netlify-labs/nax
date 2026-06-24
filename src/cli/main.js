@@ -1033,9 +1033,26 @@ async function handleHandoff(runId, options) {
   const projectRoot = path.resolve(options.projectRoot || process.cwd())
   let handoff = readSelectedHandoffSource({ projectRoot, runId, options })
 
+  if (options.path) {
+    console.log(handoff.displayPath)
+    return
+  }
+
   if (options.copy) {
     const command = copyToClipboard(handoff.summaryText)
     console.log(`\nCopied ${handoff.displayPath} to clipboard with ${command}.`)
+    return
+  }
+
+  if (options.copyPath) {
+    const command = copyToClipboard(handoff.displayPath)
+    console.log(`\nCopied ${handoff.displayPath} path to clipboard with ${command}.`)
+    return
+  }
+
+  if (options.open) {
+    await openHandoffSource(handoff, { projectRoot })
+    console.log(`\nOpened ${handoff.displayPath}.`)
     return
   }
 
@@ -1068,7 +1085,6 @@ async function handleHandoff(runId, options) {
   if (!process.stdin.isTTY) {
     console.log(`Source: ${handoff.kind || 'workflow'}`)
     console.log(`Summary: ${handoff.displayPath}`)
-    console.log('Run `nax handoff` in a TTY to copy it or start another agent run.')
     return
   }
 
@@ -1205,7 +1221,7 @@ async function promptForAdHocAgentPrompt(initialPrompt) {
   const prompt = String(initialPrompt || '').trim()
   if (prompt) return prompt
   if (!process.stdin.isTTY) {
-    throw new Error('Netlify agent run prompt is required in non-TTY mode. Pass --prompt "..." or --context "...".')
+    throw new Error('nax run agent <type> requires prompt text in non-TTY mode. Pass a positional prompt or --prompt "...".')
   }
   const value = await multiline({
     message: 'Prompt for the Netlify agent run',
@@ -1923,7 +1939,7 @@ function cancelLocalWorkflowRunnersForInterrupt({ runState, projectRoot, options
 function handleClean(target = '', options = {}) {
   const selected = String(target || '').trim().toLowerCase()
   if (selected && selected !== 'blobs') {
-    throw new Error('Only `nax clean blobs` is implemented.')
+    throw new Error('Only `nax admin clean blobs` is implemented.')
   }
   const projectRoot = resolveProjectRoot(options.projectRoot, { cwd: process.cwd() })
   const netlify = buildNetlifyEnv({ projectRoot, env: process.env, siteId: options.netlifySiteId })
@@ -2014,7 +2030,7 @@ async function handleRetry(runId, options) {
     agent: options.agent,
   })
   if (candidates.length === 0) {
-    throw new Error(`Run ${runState.runId} has no failed Netlify API runner matching the requested filters.`)
+    throw new Error(`No retryable failed agents found for ${runState.runId}. Use nax handoff ${runState.runId} to work from completed results.`)
   }
   if (candidates.length > 1) {
     const choices = candidates.map(({ step, run }) => `${step.id}:${run.agent}`).join(', ')
@@ -2494,20 +2510,20 @@ function printSkillCheckResults(results) {
       console.log(`${relative}: not installed`)
       continue
     }
-    const suffix = result.current ? 'current' : 'stale; run `nax skills update`'
+    const suffix = result.current ? 'current' : 'stale; run `nax admin skills update`'
     console.log(`${relative}: v${result.installedVersion || '?'} package v${result.packageVersion} (${suffix})`)
   }
 }
 
 function printSkillsHelp() {
   console.log([
-    'nax skills - manage project-local agent skills',
+    'nax admin skills - manage project-local agent skills',
     '',
     'Usage:',
-    '  nax skills install [--provider=.claude] [--all-providers] [--skill=nax-workflows]',
-    '  nax skills update  [--provider=.claude] [--all-providers] [--skill=nax-workflows]',
-    '  nax skills check   [--provider=.claude] [--all-providers] [--skill=nax-workflows]',
-    '  nax skills list',
+    '  nax admin skills install [--provider=.claude] [--all-providers] [--skill=nax-workflows]',
+    '  nax admin skills update  [--provider=.claude] [--all-providers] [--skill=nax-workflows]',
+    '  nax admin skills check   [--provider=.claude] [--all-providers] [--skill=nax-workflows]',
+    '  nax admin skills list',
     '',
     `Supported providers: ${PROVIDER_DIRS.join(', ')}`,
     '',
@@ -2566,7 +2582,6 @@ function buildProgram() {
       list: handleList,
       previewBoxes: handlePreviewBoxes,
       previewSpinner: handlePreviewSpinner,
-      recent: handleRecent,
       retry: handleRetry,
       run: handleRun,
       skills: handleSkills,

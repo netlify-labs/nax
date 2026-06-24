@@ -1,0 +1,97 @@
+---
+title: Commands
+description: Public nax commands and important flags.
+---
+
+# Command reference
+
+This reference lists the public commands most users need. Hidden recovery and maintenance commands still exist for compatibility, but the compact surface below is the stable entry point for running workflows, inspecting results, and operating the dashboard.
+
+## `nax init`
+
+```sh
+nax init [OPTIONS]
+```
+
+| Flag | Purpose |
+| --- | --- |
+| `--project-root <path>` | Initialize a specific project root. |
+| `--repo <owner/name>` | GitHub repository, otherwise resolved with `gh repo view`. |
+| `--site-id <id>` | Link to an existing Netlify site id. |
+| `--site-name <name>` | Link to or create a Netlify project by name. |
+| `--create` | Create a Netlify project when none is linked. |
+| `--dry` | Preview setup without writing files or secrets. |
+| `--github-actions` / `--no-github-actions` | Enable or skip GitHub Actions transport setup. |
+
+## `nax run`
+
+```sh
+nax run [flow] [OPTIONS]
+nax run agent <claude|gemini|codex> [prompt...] [OPTIONS]
+```
+
+| Flag | Purpose |
+| --- | --- |
+| `--branch <branch-or-pr>` | Branch or PR selector such as `fix/auth` or `#123`. |
+| `--context <text>` | Additional context appended to each prompt. |
+| `--context-file <path>` | Additional context read from disk. |
+| `--models <list>` | Override agents for workflow steps. |
+| `--step <id>` | Run only one step. |
+| `--from-step <id>` | Run from a step through the end. |
+| `--transport <kind>` | `auto`, `github`, `github-actions`, or `netlify-api`. |
+| `--dry` | Preview without creating issues, jobs, or artifacts. |
+| `--force` | Skip confirmation prompts. |
+| `--retry [run-id]` | Retry one failed Netlify API agent run and continue. |
+
+## `nax handoff`
+
+```sh
+nax handoff [run-id] [OPTIONS]
+```
+
+| Flag | Purpose |
+| --- | --- |
+| `--workflow <id>` | Workflow artifact id. |
+| `--runner <id>` | Agent runner id. |
+| `--session <id>` | Agent session id. |
+| `-c, --copy` | Copy selected summary to the clipboard and exit. |
+| `--open` | Open the selected summary file. |
+| `--agent <name>` | Start a fresh handoff run with one agent. |
+| `--flow <id>` | Run a workflow using the selected summary as context. |
+
+## `nax list`
+
+```sh
+nax list --verbose
+nax list --json
+```
+
+## `nax dashboard`
+
+```sh
+nax dashboard [workflow]
+nax dashboard --run <runId>
+nax dashboard --no-open --tail
+```
+
+## `nax admin`
+
+```sh
+nax admin sync [target]
+nax admin clean blobs
+nax admin skills install
+```
+
+## `nax ci`
+
+```sh
+nax ci 'npm test && npm run build'
+```
+
+Outside Agent Runner, `nax ci` exits successfully without running the command. Inside Agent Runner it executes through the shell and exits with the command status.
+
+## See also
+
+- [Run workflows](/guides/run-workflows) for task-oriented examples.
+- [Workflow file reference](/reference/workflow-files) for `flow.*` files.
+- [Configuration reference](/reference/configuration) for environment variables.

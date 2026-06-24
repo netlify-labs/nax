@@ -39,5 +39,5 @@ flowchart TD
 ## Run
 
 ```bash
-nax do-next
+nax run do-next
 ```

@@ -19,6 +19,30 @@ const {
   setGitHubSecret,
   siteIdFromStatus,
 } = require('../../src/integrations/netlify/init')
+const { maybeInstallInitSkills } = require('../../src/cli/commands/init')
+
+/**
+ * Temporarily overrides stdin TTY detection for init prompt tests.
+ * @param {boolean | undefined} value
+ * @param {() => Promise<void>} run
+ * @returns {Promise<void>}
+ */
+async function withStdinTty(value, run) {
+  const descriptor = Object.getOwnPropertyDescriptor(process.stdin, 'isTTY')
+  Object.defineProperty(process.stdin, 'isTTY', {
+    configurable: true,
+    value,
+  })
+  try {
+    await run()
+  } finally {
+    if (descriptor) {
+      Object.defineProperty(process.stdin, 'isTTY', descriptor)
+    } else {
+      delete process.stdin.isTTY
+    }
+  }
+}
 
 test('readLinkedSiteId reads .netlify/state.json and env wins', () => {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'nax-init-test-'))
@@ -252,6 +276,62 @@ test('setGitHubSecret sets missing secrets and records them', () => {
   assert.deepEqual(calls[0].args, ['secret', 'set', 'NETLIFY_AUTH_TOKEN', '--repo', 'netlify-labs/nax'])
   assert.equal(calls[0].options.cwd, tmp)
   assert.equal(calls[0].options.input, 'token-123')
+})
+
+test('maybeInstallInitSkills installs selected providers in TTY mode', async () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'nax-init-skills-'))
+  /** @type {import('../../src/integrations/skills').SkillCommandOptions[]} */
+  const calls = []
+
+  await withStdinTty(true, async () => {
+    await maybeInstallInitSkills(tmp, {}, {
+      loadClack: async () => ({
+        confirm: async () => true,
+        multiselect: async () => ['.codex', '.gemini'],
+        isCancel: () => false,
+      }),
+      installSkills: (options) => {
+        calls.push(options)
+        return [
+          { provider: '.codex', skill: 'nax-workflows', status: 'installed', version: '1.0.0', path: path.join(tmp, '.codex', 'skills', 'nax-workflows') },
+          { provider: '.gemini', skill: 'nax-workflows', status: 'installed', version: '1.0.0', path: path.join(tmp, '.gemini', 'skills', 'nax-workflows') },
+        ]
+      },
+    })
+  })
+
+  assert.equal(calls.length, 1)
+  assert.deepEqual(calls[0], {
+    projectRoot: tmp,
+    providers: ['.codex', '.gemini'],
+    skill: 'nax-workflows',
+    dryRun: false,
+  })
+})
+
+test('maybeInstallInitSkills skips non-TTY and dry runs', async () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'nax-init-skills-'))
+  let installCount = 0
+  const dependencies = {
+    loadClack: async () => ({
+      confirm: async () => true,
+      multiselect: async () => ['.codex'],
+      isCancel: () => false,
+    }),
+    installSkills: () => {
+      installCount += 1
+      return []
+    },
+  }
+
+  await withStdinTty(false, async () => {
+    await maybeInstallInitSkills(tmp, {}, dependencies)
+  })
+  await withStdinTty(true, async () => {
+    await maybeInstallInitSkills(tmp, { dryRun: true }, dependencies)
+  })
+
+  assert.equal(installCount, 0)
 })
 
 test('ensureNaxGitignore creates gitignore with .nax entry', () => {

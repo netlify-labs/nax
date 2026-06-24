@@ -15,7 +15,7 @@ npm install -g @davidwells/netlify-agent-executor
 # Connect to your Netlify project or create and connect a new site
 nax init
 # Start using Netlify agentic workflows
-nax
+nax run
 ```
 
 ---
@@ -33,7 +33,7 @@ You want the best possible coding outcome from the world's leading agentic codin
 
 ### The Solution
 
-`nax` makes the orchestration the artifact. A workflow is a `flow.*` config file plus Markdown prompts. Use YAML if you like it, or write the flow in JSON, JavaScript, TypeScript, or TOML instead. You run `nax`, pick a flow, pick where to run it, and the steps execute in order — fanning out to multiple agents per step, blocking until every agent finishes, and feeding prior-round output into the next step.
+`nax` makes the orchestration the artifact. A workflow is a `flow.*` config file plus Markdown prompts. Use YAML if you like it, or write the flow in JSON, JavaScript, TypeScript, or TOML instead. You run `nax run`, pick a flow, pick where to run it, and the steps execute in order — fanning out to multiple agents per step, blocking until every agent finishes, and feeding prior-round output into the next step.
 
 ### Why Use `nax`?
 
@@ -60,21 +60,21 @@ The bundled `review` flow runs three rounds against the current branch:
 
 ```bash
 # Preview without creating issues, runners, or .nax files
-nax review --dry --force
+nax run review --dry --force
 
 # Run for real, choose transport interactively
-nax review
+nax run review
 
 # Run one agent without a workflow
-nax --agent gemini --prompt "Check this branch for broken links"
+nax run agent gemini "Check this branch for broken links"
 
 # Specific branch / PR, non-interactively
-nax review --branch fix/auth      --transport github-actions --force
-nax review --branch '#123'        --transport netlify-api    --force
+nax run review --branch fix/auth --transport github-actions --force
+nax run review --branch '#123'   --transport netlify-api    --force
 
 # Re-run just one step (or skip ahead)
-nax review --step cross-review
-nax review --from-step synthesize
+nax run review --step cross-review
+nax run review --from-step synthesize
 ```
 
 The `review` workflow looks like this:
@@ -158,7 +158,7 @@ This is handy for passing remote Netlify agent runner results into local Claude 
 
 ## Design Philosophy
 
-- **The flow file is the program.** Flows are not a DSL bolted onto code — they *are* the unit of execution. Anyone can read a workflow's `flow.yml` (or `flow.json`, `flow.js`, `flow.ts`, `flow.toml`) and tell you exactly what `nax review` will do.
+- **The flow file is the program.** Flows are not a DSL bolted onto code — they *are* the unit of execution. Anyone can read a workflow's `flow.yml` (or `flow.json`, `flow.js`, `flow.ts`, `flow.toml`) and tell you exactly what `nax run review` will do.
 - **Steps gate on results, not time.** A step's `waitFor: agent-results` makes the next step wait for every agent in the fan-out, not a wall-clock timeout. Long thinkers don't poison fast ones.
 - **Same flow, two transports.** A flow runs identically on `github-actions` (workflow_dispatch into `netlify-labs/agent-runner-action`) and `netlify-api` (this machine orchestrates the runner directly). You don't rewrite the flow to move it.
 - **Artifacts are first-class.** Every run, runner, and agent session writes a summary into `.nax/` with `latest` symlinks, so the next prompt or the next operator can pick up the trail.
@@ -191,8 +191,8 @@ npm install -g @davidwells/netlify-agent-executor
 Without installing globally:
 
 ```bash
-npx @davidwells/netlify-agent-executor review
-npx @davidwells/netlify-agent-executor --agent codex --prompt "Review this change"
+npx @davidwells/netlify-agent-executor run review
+npx @davidwells/netlify-agent-executor run agent codex "Review this change"
 npx @davidwells/netlify-agent-executor ci 'npm test'
 ```
 
@@ -246,9 +246,9 @@ nax list
 3. **Run a flow** (interactive picker if you omit the flow id):
 
    ```bash
-   nax              # pick single-agent run or workflow
-   nax review       # multi-agent review of current branch
-   nax --agent codex --prompt "Check the nav links"
+   nax run                                    # pick single-agent run or workflow
+   nax run review                             # multi-agent review of current branch
+   nax run agent codex "Check the nav links"
    ```
 
    The interactive picker separates built-in NAX workflows from project-local workflows:
@@ -265,7 +265,7 @@ nax list
 
    ```bash
    cd frontend
-   nax --agent gemini --prompt "Check for broken links"
+   nax run agent gemini "Check for broken links"
    ```
 
 5. **Hand off the result** to your IDE / the next session:
@@ -304,22 +304,16 @@ Run `nax list` to print the live set.
 ## Commands
 
 ```text
-nax [flow]                Pick a flow and run it (interactive if no flow given)
-nax run [flow]            Alias for the above
-nax --agent <name>        Run one Netlify agent with a custom prompt
-nax run --agent <name>    Same single-agent path, explicit subcommand form
+nax run [flow]            Start a workflow, or open the interactive picker
+nax run agent <name>      Run one Netlify agent with a custom prompt
+nax run --retry <run-id>  Retry one failed Netlify API agent run, then continue
 nax init                  Wire this repo to Netlify + GitHub Actions
 nax handoff               Copy or continue from prior workflow/session results
-nax recent                Browse recent workflow/session/runner artifacts
-nax retry [run-id]        Retry one failed Netlify API agent run, then continue
-nax sync last             Pull remote updates for the latest local Agent Runner
-nax clean blobs           Preview or delete stale prompt blob refs
 nax dashboard [flow]      Open the local workflow dashboard
-nax ci '<command>'        Run a command only inside Netlify Agent Runner
-nax skills install        Install bundled agent skills into detected harness dirs
-nax skills check          Show installed skill versions
-nax skills update         Reinstall the latest bundled skill copy
 nax list                  List available flows
+nax admin sync last       Pull remote updates for the latest local Agent Runner
+nax admin clean blobs     Preview or delete stale prompt blob refs
+nax admin skills install  Install bundled agent skills into detected harness dirs
 ```
 
 ### `nax dashboard`
@@ -427,35 +421,35 @@ nax ci 'npm test -- --runInBand'
 ### Single-agent runs
 
 ```bash
-nax --agent codex --prompt "Review this branch for regressions"
-nax run --agent gemini --prompt "Check for broken links"
-nax --agent claude --transport netlify-api
+nax run agent codex "Review this branch for regressions"
+nax run agent gemini --prompt "Check for broken links"
+nax run agent claude --transport netlify-api
 ```
 
 If you omit `--prompt` in a TTY, `nax` opens a multiline prompt. Single-agent runs still use the same transport detection, Netlify project picker, artifacts, and handoff support as workflows.
 
-### `nax sync`
+### `nax admin sync`
 
 ```bash
-nax sync last
-nax sync https://github.com/OWNER/REPO/actions/runs/123456789
-nax sync 123456789 --repo OWNER/REPO
+nax admin sync last
+nax admin sync https://github.com/OWNER/REPO/actions/runs/123456789
+nax admin sync 123456789 --repo OWNER/REPO
 ```
 
-`nax sync last` reconciles the latest local `.nax/agent-runners/<id>` artifact with remote Netlify Agent Runner sessions. Use it when a follow-up happened out of band in the Netlify UI or another process and the local `.nax` cache is missing the newer session.
+`nax admin sync last` reconciles the latest local `.nax/agent-runners/<id>` artifact with remote Netlify Agent Runner sessions. Use it when a follow-up happened out of band in the Netlify UI or another process and the local `.nax` cache is missing the newer session.
 
 The command fetches remote sessions with the Netlify CLI, writes missing or changed sessions under `.nax/agent-sessions/`, and rebuilds the runner rollup under `.nax/agent-runners/`.
 
-When the target is a GitHub Actions run URL or run ID, `nax sync` downloads the uploaded `nax-<flow>-<run_id>` artifact with `gh`, merges its workflow, runner, and session artifacts into local `.nax/`, localizes the workflow metadata for this checkout, and rebuilds the `latest` symlinks. This is the handoff path for workflows run through `.github/workflows/run-nax.yml`.
+When the target is a GitHub Actions run URL or run ID, `nax admin sync` downloads the uploaded `nax-<flow>-<run_id>` artifact with `gh`, merges its workflow, runner, and session artifacts into local `.nax/`, localizes the workflow metadata for this checkout, and rebuilds the `latest` symlinks. This is the handoff path for workflows run through `.github/workflows/run-nax.yml`.
 
-### `nax clean`
+### `nax admin clean`
 
 ```bash
-nax clean blobs
-nax clean blobs --ttl-hours 1 --force
+nax admin clean blobs
+nax admin clean blobs --ttl-hours 1 --force
 ```
 
-`nax clean blobs` sweeps stale or pending Netlify Blob prompt refs recorded in `.nax/blob-refs.jsonl`. It is a dry run by default. Add `--force` to delete eligible remote refs after interrupted runs or cleanup retries. Local debug mirrors under `.nax/workflows/<run-id>/blobs/` are workflow artifacts and are not removed by this command.
+`nax admin clean blobs` sweeps stale or pending Netlify Blob prompt refs recorded in `.nax/blob-refs.jsonl`. It is a dry run by default. Add `--force` to delete eligible remote refs after interrupted runs or cleanup retries. Local debug mirrors under `.nax/workflows/<run-id>/blobs/` are workflow artifacts and are not removed by this command.
 
 ### `nax run` flags
 
@@ -487,16 +481,16 @@ nax clean blobs --ttl-hours 1 --force
 | `--from-issues <list>` | Recovery: source issue numbers to embed for comment steps. |
 | `--filter <app>` | Explicit Netlify JavaScript workspace filter for local Agent Runner API runs. |
 
-### `nax skills`
+### `nax admin skills`
 
 ```bash
-nax skills install                       # auto-detect .claude / .codex / .cursor / .gemini / .agents
-nax skills install --provider codex      # explicit provider; repeatable
-nax skills install --all-providers       # install into every supported provider
-nax skills install --skill review        # install one named skill
-nax skills install --all-skills          # install the full bundled matrix
-nax skills check                         # compare installed versions vs. nax package version
-nax skills update                        # reinstall latest
+nax admin skills install                       # auto-detect .claude / .codex / .cursor / .gemini / .agents
+nax admin skills install --provider codex      # explicit provider; repeatable
+nax admin skills install --all-providers       # install into every supported provider
+nax admin skills install --skill review        # install one named skill
+nax admin skills install --all-skills          # install the full bundled matrix
+nax admin skills check                         # compare installed versions vs. nax package version
+nax admin skills update                        # reinstall latest
 ```
 
 ---
@@ -543,8 +537,8 @@ For Netlify Agent Runner prompt delivery (`netlify-api` plus GitHub Actions issu
 Blob refs are recorded in `.nax/blob-refs.jsonl`, and every offloaded payload is mirrored locally under `.nax/workflows/<run-id>/blobs/<blob-key>.md` with adjacent metadata JSON for debugging. Remote blobs are cleaned up at flow completion with retrying deletes, but the local debug copies stay in the workflow artifact directory. Cleanup is based on recorded blob refs, not on the selected transport, so it applies to both `netlify-api` and GitHub Actions issue/comment flows. If `nax` itself is running inside GitHub Actions, the job needs Netlify CLI plus `NETLIFY_AUTH_TOKEN`/site context. Interrupted cleanup leaves refs marked for later sweep:
 
 ```bash
-nax clean blobs          # dry-run stale/pending blob cleanup
-nax clean blobs --force  # delete stale/pending blob refs
+nax admin clean blobs          # dry-run stale/pending blob cleanup
+nax admin clean blobs --force  # delete stale/pending blob refs
 ```
 
 Relevant environment knobs:
@@ -554,7 +548,7 @@ Relevant environment knobs:
 | `NAX_SAFE_PROMPT_BYTES` | `16384` | Maximum target bytes for submitted Netlify Agent Runner prompts. |
 | `NAX_PROMPT_BLOB_DISABLE` | unset | Disable blob offload and use compact-only fallback. |
 | `NAX_BLOB_RETRY_ATTEMPTS` | `3` | Attempts for blob set/get/delete CLI operations. |
-| `NAX_BLOB_CLEANUP_TTL_HOURS` | `24` | Age after which pending registry refs are eligible for `nax clean blobs`. |
+| `NAX_BLOB_CLEANUP_TTL_HOURS` | `24` | Age after which pending registry refs are eligible for `nax admin clean blobs`. |
 | `NAX_OUTPUT_BUDGET` | unset | Set to `1`/`true` to append optional response-size guidance to chained prompts. |
 | `NAX_OUTPUT_BUDGET_BYTES` | `64000` | Target response size when output-budget guidance is enabled. |
 
@@ -740,25 +734,17 @@ nax handoff --workflow <id> --flow review     # chain a follow-up flow
 
 `nax dashboard --run <workflow-run-id>` opens a browser-based handoff path from Run details: choose **Send to next agent** to submit a Netlify Agent Runner follow-up or a fresh seeded runner from selected artifacts. The CLI `nax handoff` command remains the terminal path for copying or chaining saved results.
 
-### Browsing recents
-
-```bash
-nax recent                                   # interactive list of recent artifacts
-nax recent --type workflow --limit 10
-nax recent --run-id <id>                     # jump straight to one
-```
-
 ---
 
 ## Resume And Retry
 
-If a `netlify-api` run is interrupted (process killed, machine slept, network died) the workflow state is in `.nax/workflows/<workflow-run-id>/workflow.json`. Next time you start `nax`, it detects the unfinished workflow and offers to resume — it polls the in-flight runner sessions and continues from the first not-yet-completed step.
+If a `netlify-api` run is interrupted (process killed, machine slept, network died) the workflow state is in `.nax/workflows/<workflow-run-id>/workflow.json`. Next time you start `nax run`, it detects the unfinished workflow and offers to resume — it polls the in-flight runner sessions and continues from the first not-yet-completed step.
 
 Failed and timed-out runs are terminal; resume only polls in-flight runs. To retry a failed step:
 
 ```bash
-nax retry                            # interactive picker
-nax retry <run-id> --step cross-review --agent gemini
+nax run --retry <run-id>
+nax run review --retry <run-id> --step cross-review --agent gemini
 nax run review --step <step-id>      # re-run one step from scratch
 ```
 
@@ -776,7 +762,7 @@ nax run review --step <step-id>      # re-run one step from scratch
 | Agent run times out | Bump `--timeout-minutes`. Default `25`; long-running flows often want `45+`. |
 | `Pinned SHA not on remote` | Auto-injected context pins to a SHA. Push first, or pass `--no-auto-context`. |
 | Resume keeps offering an old run | Decline the prompt; the run state is moved out of "unfinished" once you do. |
-| A Netlify UI follow-up is missing from `.nax` | Run `nax sync last` to refresh the latest local runner from remote sessions. |
+| A Netlify UI follow-up is missing from `.nax` | Run `nax admin sync last` to refresh the latest local runner from remote sessions. |
 | `nax dashboard` shows the fallback HTML page | Build the packaged UI with `npm run dashboard:build`, or reinstall a package that includes `src/dashboard/web/dist`. |
 | `nax dashboard --port <n>` fails with address in use | Omit `--port` to let the server choose an available port, or pass a different port. |
 | Dashboard API returns `unauthorized` | Reopen the full URL printed by `nax dashboard`; mutating API calls require that session's `token` query value or `x-nax-token` header. |
@@ -796,9 +782,9 @@ nax run review --step <step-id>      # re-run one step from scratch
 - **GitHub-only.** No GitLab/Bitbucket transport.
 - **`netlify-api` transport assumes outbound network.** Your machine must reach Netlify's API.
 - **Local site slugs are best-effort.** `nax` can read exact site IDs from `.netlify/state.json`; if a multi-project repo is only linked at the root, per-project options show directories/configs instead of guessed site names.
-- **Sync starts with known local runners.** `nax sync last` refreshes the latest local runner. It does not yet discover every remote Agent Runner for a site.
+- **Sync starts with known local runners.** `nax admin sync last` refreshes the latest local runner. It does not yet discover every remote Agent Runner for a site.
 - **Three agents.** Claude, Gemini, Codex. Adding more requires extending the runner action and the flow schema.
-- **No partial-failure auto-rollback.** If one agent fails mid-step, the workflow surfaces the failure; you decide whether to `nax retry` or `--from-step`.
+- **No partial-failure auto-rollback.** If one agent fails mid-step, the workflow surfaces the failure; you decide whether to `nax run --retry` or `--from-step`.
 
 ---
 
@@ -820,7 +806,7 @@ A: Set the step's `agents:` list to one entry (e.g. `agents: [codex]`). The `syn
 A: Yes. In `nax dashboard`, open Run details and switch from **Results** to **Prompt**. Copy and open-file actions follow the active view, so copying from the Prompt tab copies prompt markdown instead of result markdown.
 
 **Q: What happens if one agent fails mid-step?**
-A: The step still completes when the other agents finish or time out. The failed agent's result is recorded as a failure; downstream steps that depend on it can still run with the surviving results. Use `nax retry` to redo just the failed one.
+A: The step still completes when the other agents finish or time out. The failed agent's result is recorded as a failure; downstream steps that depend on it can still run with the surviving results. Use `nax run --retry <run-id>` to redo just the failed one.
 
 **Q: Do flows have to be YAML?**
 A: No. YAML is the default in the bundled examples because it is diffable, reviewable, and trivially generatable, but custom flows can be JSON, JavaScript, TypeScript, or TOML too. Use whichever format your team will actually read.

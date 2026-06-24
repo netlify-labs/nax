@@ -7,7 +7,6 @@ These workflows ship with the `nax` package and are loaded from this directory b
 | --- | --- | ---: | --- | --- |
 | `review` | Review, cross-review, and synthesize findings with multiple Netlify agents. | 3 steps | claude, codex, gemini | [workflows/review/flow.yml](./review/flow.yml) |
 | `human-review-example` | Demonstrate a workflow that pauses for a human approval before continuing. | 3 steps | codex | [workflows/human-review-example/flow.yml](./human-review-example/flow.yml) |
-| `long-descriptions` | Dashboard layout stress flow with deliberately long step descriptions. | 3 steps | claude, codex, gemini | [workflows/long-descriptions/flow.yml](./long-descriptions/flow.yml) |
 | `ideas` | Generate, cross-score, react to, and synthesize competing project improvement ideas. | 4 steps | claude, codex, gemini | [workflows/ideas/flow.yml](./ideas/flow.yml) |
 | `do-next` | Ask multiple agents to recommend the next development task, then synthesize one ranked recommendation. | 2 steps | claude, codex, gemini | [workflows/do-next/flow.yml](./do-next/flow.yml) |
 | `security-audit` | Run a multi-agent security audit and synthesize a ranked vulnerability report. | 2 steps | claude, codex, gemini | [workflows/security-audit/flow.yml](./security-audit/flow.yml) |

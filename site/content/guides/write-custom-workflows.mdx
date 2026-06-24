@@ -1,0 +1,101 @@
+---
+title: Write Custom Workflows
+description: Add project-local flow files and prompts for recurring agent workflows.
+---
+
+import { Callout, Steps } from 'nextra/components'
+
+# Write custom workflows
+
+Custom workflows are the main way to make `nax` fit a team's recurring work. A workflow lives in a directory with one `flow.*` file and a `prompts/` folder. The file describes orchestration; the Markdown prompts describe the work each agent should do.
+
+<Steps>
+
+### Create the directory
+
+```sh
+mkdir -p .github/nax-flows/conversion-audit/prompts
+```
+
+### Add `flow.yml`
+
+```yaml filename=".github/nax-flows/conversion-audit/flow.yml"
+id: conversion-audit
+title: Conversion Audit
+description: Audit key conversion paths and synthesize one prioritized plan.
+
+defaults:
+  transport: auto
+  agents: [claude, gemini, codex]
+
+steps:
+  - id: audit
+    title: Audit Conversion Paths
+    prompt: prompts/1_audit.md
+    action: issue
+    submit: new-run
+    agents: [claude, gemini, codex]
+    waitFor: agent-results
+
+  - id: synthesize
+    title: Synthesize Plan
+    prompt: prompts/2_synthesize.md
+    action: issue
+    submit: new-run
+    agents: [codex]
+    input:
+      - step: audit
+        results: all
+    waitFor: agent-results
+```
+
+### Add prompts
+
+```md filename=".github/nax-flows/conversion-audit/prompts/1_audit.md"
+# Audit conversion paths
+
+Study checkout, pricing, signup, and activation. Report concrete friction with file references, user impact, and a suggested fix.
+```
+
+```md filename=".github/nax-flows/conversion-audit/prompts/2_synthesize.md"
+# Synthesize conversion plan
+
+Read the prior audit results. Deduplicate findings, reject weak claims, and produce one ranked plan with implementation locations and verification steps.
+```
+
+### Verify
+
+```sh
+nax list --verbose
+nax run conversion-audit --dry --force
+```
+
+</Steps>
+
+## Custom flow roots
+
+```json filename="nax.config.json"
+{
+  "flowsDirs": [
+    ".github/nax-flows",
+    "tools/nax/flows"
+  ]
+}
+```
+
+## Design guidance
+
+- Give each step one job.
+- Use `waitFor: agent-results` when later steps depend on all prior outputs.
+- Use `submit: follow-up` when the same agent should continue an earlier runner context.
+- Use `submit: new-run` when a step should start with a clean context plus selected inputs.
+
+<Callout type="warning">
+  JavaScript and TypeScript flow files are executable project code. Use YAML, JSON, or TOML for workflows from repositories you do not already trust.
+</Callout>
+
+## See also
+
+- [Workflow file reference](/reference/workflow-files) for every supported key.
+- [Run workflows](/guides/run-workflows) for execution flags.
+- [Architecture](/concepts/architecture) for how prompts become agent runs.

@@ -6,8 +6,8 @@ const main = require('./commands/program')
 function formatCaughtError(error) {
   if (error && typeof error === 'object') {
     const maybeError = /** @type {{ stack?: unknown, message?: unknown }} */ (error)
-    if (typeof maybeError.stack === 'string' && maybeError.stack) return maybeError.stack
     if (typeof maybeError.message === 'string' && maybeError.message) return maybeError.message
+    if (typeof maybeError.stack === 'string' && maybeError.stack) return maybeError.stack
   }
   return String(error)
 }

@@ -102,6 +102,7 @@ function writeFlow(root, flowsDir, id, fileName, source) {
 function runDryFlow(root, flowId) {
   return spawnSync(process.execPath, [
     NAX_BIN,
+    'run',
     flowId,
     '--dry',
     '--force',

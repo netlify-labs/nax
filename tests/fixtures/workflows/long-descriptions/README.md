@@ -7,5 +7,7 @@ Use it to verify that React Flow cards keep a clear vertical gap when custom nod
 ## Run
 
 ```bash
-nax dashboard long-descriptions
+npm run dashboard:dev
 ```
+
+The Vite fallback API at `http://127.0.0.1:5173/` loads this fixture flow root.

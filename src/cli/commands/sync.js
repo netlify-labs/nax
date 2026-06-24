@@ -70,7 +70,7 @@ function handleSync(target = 'last', options = {}, {
     return result
   }
   if (selected !== 'last') {
-    throw new Error('Expected `nax sync last`, a GitHub Actions run ID, or a GitHub Actions run URL.')
+    throw new Error('Expected `nax admin sync last`, a GitHub Actions run ID, or a GitHub Actions run URL.')
   }
   const netlify = buildNetlifyEnv({ projectRoot, env })
   const result = syncLastAgentRunner({

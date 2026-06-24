@@ -17,6 +17,12 @@ const ALLOWED_STEP_SUBMITS = ['new-run', 'follow-up', HUMAN_REVIEW_SUBMIT]
  * @typedef {{ stepId: string, code: string, message: string, hint: string }} FlowDiagnostic
  * @typedef {{ errors: FlowDiagnostic[], warnings: FlowDiagnostic[] }} FlowValidation
  * @typedef {{
+ *   projectRoot?: string,
+ *   flowsDir?: string | string[],
+ *   flowsDirs?: string | string[],
+ *   env?: NodeJS.ProcessEnv,
+ * }} FlowLoadOptions
+ * @typedef {{
  *   type?: string,
  *   dir?: string,
  *   configuredPath?: string,
@@ -26,7 +32,6 @@ const ALLOWED_STEP_SUBMITS = ['new-run', 'follow-up', HUMAN_REVIEW_SUBMIT]
 const FLOW_PICKER_ORDER = [
   'review',
   'human-review-example',
-  'long-descriptions',
   'ideas',
   'do-next',
   'security-audit',
@@ -420,6 +425,7 @@ function normalizeFlow(raw, { id, dir, file, source = {} }) {
   return flow
 }
 
+/** @param {string} id @param {FlowLoadOptions} [options] */
 async function loadFlow(id, options = {}) {
   const flows = await listFlows(options)
   const flow = flows.find((candidate) => candidate.id === id)
@@ -430,6 +436,7 @@ async function loadFlow(id, options = {}) {
   return flow
 }
 
+/** @param {FlowLoadOptions} [options] */
 async function listFlows(options = {}) {
   const sources = await flowSources(options)
   const flows = []

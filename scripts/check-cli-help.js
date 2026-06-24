@@ -15,33 +15,25 @@ const targets = [
   {
     args: ['--help'],
     mustContain: [
-      'Usage: nax [options] [command] [workflow]',
-      'Run multi step Netlify agent workflows',
+      'Usage: nax [command]',
+      'Run Netlify agent workflows',
     ],
   },
   {
     args: ['run', '--help'],
-    mustContain: ['Usage: nax run [options] [flow]'],
+    mustContain: ['Usage: nax run [workflow]'],
   },
   {
-    args: ['issue', '--help'],
-    mustContain: ['Usage: nax issue [options] [prompt]'],
-  },
-  {
-    args: ['comment', '--help'],
-    mustContain: ['Usage: nax comment [options] [prompt]'],
-  },
-  {
-    args: ['preview-boxes', '--help'],
-    mustContain: ['Usage: nax preview-boxes [options] [flow]'],
+    args: ['run', 'agent', '--help'],
+    mustContain: ['Usage: nax run agent [options] <type> [prompt...]'],
   },
   {
     args: ['dashboard', '--help'],
     mustContain: ['Usage: nax dashboard [options] [workflow]'],
   },
   {
-    args: ['preview-spinner', '--help'],
-    mustContain: ['Usage: nax preview-spinner [options]'],
+    args: ['handoff', '--help'],
+    mustContain: ['Usage: nax handoff [options] [run-id]'],
   },
 ]
 

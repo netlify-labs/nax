@@ -1,0 +1,89 @@
+---
+title: Workflow Files
+description: The flow file schema used by bundled and project-local workflows.
+---
+
+import { Callout, FileTree } from 'nextra/components'
+
+# Workflow file reference
+
+A workflow is a directory containing one `flow.*` file and any prompt files referenced by its steps. It is the durable program for a multi-agent run: it names the steps, which agents run each step, how results feed forward, and what `nax` must wait for before continuing.
+
+<FileTree>
+  <FileTree.Folder name=".github/nax-flows" defaultOpen>
+    <FileTree.Folder name="review-plus" defaultOpen>
+      <FileTree.File name="flow.yml" active />
+      <FileTree.Folder name="prompts">
+        <FileTree.File name="1_review.md" />
+        <FileTree.File name="2_cross-review.md" />
+        <FileTree.File name="3_synthesize.md" />
+      </FileTree.Folder>
+    </FileTree.Folder>
+  </FileTree.Folder>
+</FileTree>
+
+## Supported files
+
+`flow.yml`, `flow.yaml`, `flow.json`, `flow.toml`, `flow.js`, and `flow.ts` are supported.
+
+## Top-level keys
+
+| Key | Required | Purpose |
+| --- | --- | --- |
+| `id` | yes | Stable workflow id used by `nax run <id>`. |
+| `title` | yes | Human name shown in lists, prompts, and dashboard. |
+| `description` | recommended | One-sentence summary. |
+| `defaults` | no | Default transport, notification, and agents. |
+| `steps` | yes | Ordered workflow steps. |
+
+## Step keys
+
+| Key | Values | Purpose |
+| --- | --- | --- |
+| `action` | `issue`, `comment`, `human-review` | Submission or gate behavior. |
+| `submit` | `new-run`, `follow-up` | Start fresh or reuse prior context. |
+| `agents` | `claude`, `gemini`, `codex` | Agent fan-out targets. |
+| `input` | `[{ step, results }]` | Earlier results to include. |
+| `waitFor` | `agent-results` | Wait until every configured agent has a result. |
+
+## Example
+
+```yaml filename="workflows/review/flow.yml"
+id: review
+title: Review
+description: Review, cross-review, and synthesize findings.
+
+defaults:
+  transport: auto
+  agents: [claude, gemini, codex]
+
+steps:
+  - id: review
+    title: Review
+    prompt: prompts/1_review.md
+    action: issue
+    submit: new-run
+    agents: [claude, gemini, codex]
+    waitFor: agent-results
+
+  - id: cross-review
+    title: Cross Review
+    prompt: prompts/2_cross-review.md
+    action: comment
+    submit: follow-up
+    agents: [claude, gemini, codex]
+    input:
+      - step: review
+        results: all
+    waitFor: agent-results
+```
+
+<Callout type="warning">
+  Project-local flows with the same id as bundled flows shadow the bundled version. This is useful when intentional and confusing when accidental.
+</Callout>
+
+## See also
+
+- [Write custom workflows](/guides/write-custom-workflows) for a guided setup.
+- [Configuration reference](/reference/configuration) for flow discovery.
+- [Architecture](/concepts/architecture) for execution flow.

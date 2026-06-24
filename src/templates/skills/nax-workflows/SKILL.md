@@ -13,17 +13,18 @@ description: >-
 ## Core Commands
 
 ```bash
-nax review
-nax ideas
-nax do-next
+nax run review
+nax run ideas
+nax run do-next
 nax run <flow>
+nax run agent <claude|codex|gemini> "<prompt>"
+nax run --retry <run-id>
 nax init
 nax handoff
-nax recent
-nax sync last
-nax clean blobs
+nax admin sync last
+nax admin clean blobs
 nax dashboard
-nax skills install
+nax admin skills install
 ```
 
 Useful flags:
@@ -108,20 +109,20 @@ Completed results also persist as artifacts:
 
 Use `nax handoff` to continue from prior results interactively, or `nax handoff -c` to copy the latest useful summary.
 
-Use `nax sync last` when a Netlify UI follow-up happened outside the local process and the latest local runner is missing remote sessions.
+Use `nax admin sync last` when a Netlify UI follow-up happened outside the local process and the latest local runner is missing remote sessions.
 
 Use `nax dashboard` to inspect saved runs in a browser. Run details can switch between rendered Results and the original Prompt when the prompt file is still resolvable from the flow definition.
 
 For a terminal failed Netlify API run that needs a compact follow-up prompt, use:
 
 ```bash
-nax retry <run-id> --step <step-id> --agent <agent>
+nax run --retry <run-id> --step <step-id> --agent <agent>
 ```
 
 Example:
 
 ```bash
-nax retry 2026-05-15T01-24-10-177Z-ideas --step react --agent claude
+nax run --retry 2026-05-15T01-24-10-177Z-ideas --step react --agent claude
 ```
 
 The retry command submits a new follow-up session to the existing runner, waits for that one agent, updates run state, and continues downstream steps if the failed step becomes complete.
@@ -133,8 +134,8 @@ The retry command submits a new follow-up session to the existing runner, waits 
 Large fan-in prompts can be offloaded to temporary Netlify Blobs. `nax` records refs in `.nax/blob-refs.jsonl`, mirrors payloads under `.nax/workflows/<run-id>/blobs/`, and retries cleanup at flow completion. If cleanup is interrupted:
 
 ```bash
-nax clean blobs          # dry run
-nax clean blobs --force  # delete eligible stale/pending refs
+nax admin clean blobs          # dry run
+nax admin clean blobs --force  # delete eligible stale/pending refs
 ```
 
 Do not delete the local `.nax/workflows/<run-id>/blobs/` mirrors unless the user explicitly wants to prune workflow artifacts; they are useful for debugging prompt delivery.

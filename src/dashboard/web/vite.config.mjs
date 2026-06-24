@@ -14,7 +14,7 @@ const { buildRunDetails } = require('../shared/run-details')
 
 const webRoot = path.dirname(fileURLToPath(import.meta.url))
 const repoRoot = path.resolve(webRoot, '../../..')
-const flowOptions = { projectRoot: repoRoot }
+const flowOptions = { projectRoot: repoRoot, flowsDirs: ['tests/fixtures/workflows'] }
 
 function jsonResponse(res, statusCode, payload) {
   const body = `${JSON.stringify(payload, null, 2)}\n`

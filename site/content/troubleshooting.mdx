@@ -1,0 +1,91 @@
+---
+title: Troubleshooting
+description: Fix common setup, transport, prompt, dashboard, and artifact failures.
+---
+
+import { Callout } from 'nextra/components'
+
+# Troubleshooting
+
+Most `nax` failures come from missing CLI authentication, ambiguous project selection, prompt-size limits, or stale local state. Start with the exact command you ran, then check whether the failure happened before submission, while waiting for agents, or while reading artifacts afterward.
+
+## Required CLIs are missing
+
+```sh
+gh auth login
+netlify login
+```
+
+`nax` does not provide its own browser auth flow for those tools.
+
+## Could not resolve `NETLIFY_SITE_ID`
+
+```sh
+netlify link
+nax init --site-id <site-id>
+nax init --site-name <site-name>
+```
+
+For multi-project repositories, run from the app directory or pass the needed filter/config option.
+
+## No runnable transport detected
+
+```sh
+nax init
+nax init --no-github-actions
+nax run review --transport netlify-api
+```
+
+## Pinned SHA not on remote
+
+```sh
+git push
+nax run review --no-auto-context
+```
+
+## Agent run times out
+
+```sh
+nax run review --timeout-minutes 45
+```
+
+Long synthesis steps often need more time than first-round audit steps.
+
+## Prompt is too large
+
+```sh
+unset NAX_PROMPT_BLOB_DISABLE
+NAX_SAFE_PROMPT_BYTES=32768 nax run review
+```
+
+Use local blob mirrors under `.nax/workflows/<run-id>/blobs/` to debug what was submitted.
+
+## Resume or sync state
+
+```sh
+nax run --retry <run-id>
+nax admin sync last
+nax admin clean blobs
+```
+
+## Dashboard unauthorized
+
+Reopen the exact URL printed by `nax dashboard`. Mutating endpoints require the per-process token query value or an `x-nax-token` header.
+
+## Dashboard fallback HTML
+
+```sh
+npm run dashboard:build
+```
+
+The published package should include `src/dashboard/web/dist`; source checkouts need a local build.
+
+<Callout type="warning">
+  Remote model status is best effort. If dashboard pills stay on `submitted` or `waiting`, inspect `.nax/workflows/<run-id>/events.jsonl` for the raw event stream.
+</Callout>
+
+## See also
+
+- [Get started](/get-started) for first-run setup.
+- [Configuration reference](/reference/configuration) for environment variables.
+- [Artifacts](/concepts/artifacts) for recovery and handoff paths.

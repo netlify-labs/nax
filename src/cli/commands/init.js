@@ -4,6 +4,14 @@ const {
   findExistingAgentRunnerWorkflow,
   initSite,
 } = require('../../integrations/netlify/init')
+const { installSkills } = require('../../integrations/skills')
+
+const INIT_SKILL_PROVIDER_CHOICES = [
+  { value: '.codex', label: 'Codex' },
+  { value: '.claude', label: 'Claude' },
+  { value: '.cursor', label: 'Cursor' },
+  { value: '.gemini', label: 'Gemini' },
+]
 
 /**
  * Netlify init result rendered by the CLI.
@@ -34,12 +42,22 @@ const {
  *     message: string,
  *     initialValue?: boolean,
  *   }) => Promise<boolean | symbol>,
- *   isCancel: (value: boolean | symbol) => boolean,
+ *   multiselect?: (input: {
+ *     message: string,
+ *     options: Array<{ value: string, label: string }>,
+ *     required?: boolean,
+ *   }) => Promise<string[] | symbol>,
+ *   select?: (input: {
+ *     message: string,
+ *     options: Array<{ value: string, label: string }>,
+ *   }) => Promise<string | symbol>,
+ *   isCancel: (value: unknown) => boolean,
  * }} ClackConfirmApi
  *
  * Dependencies injected into init command handlers.
  * @typedef {{
  *   loadClack?: () => Promise<ClackConfirmApi>,
+ *   installSkills?: typeof import('../../integrations/skills').installSkills,
  * }} InitCliDependencies
  */
 
@@ -81,6 +99,62 @@ function printInitResult(result, { dryRun = false } = {}) {
     const reason = secret.reason ? `: ${secret.reason}` : ''
     console.log(`Secret: ${secret.name} (${secret.status}${reason})`)
   }
+}
+
+/**
+ * Prints skills installed from init.
+ * @param {ReturnType<typeof installSkills>} results
+ * @returns {void}
+ */
+function printInitSkillResults(results) {
+  for (const result of results) {
+    const relative = path.join(result.provider, 'skills', result.skill)
+    console.log(`Skill: ${relative} (${result.status})`)
+  }
+}
+
+/**
+ * Prompts for optional bundled skill installation after repository setup.
+ * @param {string} projectRoot
+ * @param {import('./options').CliOptions} options
+ * @param {InitCliDependencies} [dependencies]
+ * @returns {Promise<void>}
+ */
+async function maybeInstallInitSkills(projectRoot, options, {
+  loadClack = defaultLoadClack,
+  installSkills: install = installSkills,
+} = {}) {
+  if (!process.stdin.isTTY || options.dryRun === true) return
+  const clack = await loadClack()
+  let selected
+  if (typeof clack.multiselect === 'function') {
+    selected = await clack.multiselect({
+      message: 'Install nax workflow skills for local agents?',
+      options: INIT_SKILL_PROVIDER_CHOICES,
+      required: false,
+    })
+  } else if (typeof clack.select === 'function') {
+    selected = await clack.select({
+      message: 'Install nax workflow skills for local agents?',
+      options: [
+        ...INIT_SKILL_PROVIDER_CHOICES,
+        { value: 'skip', label: 'Skip' },
+      ],
+    })
+  } else {
+    return
+  }
+  if (clack.isCancel(selected)) process.exit(0)
+  const providers = Array.isArray(selected)
+    ? selected.filter((provider) => typeof provider === 'string')
+    : (typeof selected === 'string' && selected !== 'skip' ? [selected] : [])
+  if (providers.length === 0) return
+  printInitSkillResults(install({
+    projectRoot,
+    providers,
+    skill: 'nax-workflows',
+    dryRun: false,
+  }))
 }
 
 /**
@@ -128,6 +202,7 @@ async function handleInit(options, dependencies = {}) {
   const githubActions = await shouldEnableGithubActions(options, { projectRoot: site.projectRoot }, dependencies)
   if (!githubActions) {
     printInitResult(site, { dryRun: options.dryRun })
+    await maybeInstallInitSkills(site.projectRoot, options, dependencies)
     return
   }
 
@@ -141,10 +216,12 @@ async function handleInit(options, dependencies = {}) {
     skipSecrets: options.skipSecrets === true,
   })
   printInitResult(result, { dryRun: options.dryRun })
+  await maybeInstallInitSkills(result.projectRoot, options, dependencies)
 }
 
 module.exports = {
   handleInit,
+  maybeInstallInitSkills,
   printInitResult,
   shouldEnableGithubActions,
 }

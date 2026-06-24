@@ -1,0 +1,81 @@
+---
+title: Use The Dashboard
+description: Open the local dashboard, inspect runs, stream events, and submit follow-ups.
+---
+
+import { Callout, Tabs } from 'nextra/components'
+
+# Use the dashboard
+
+The dashboard is a local browser workbench for browsing workflows, previewing dry runs, starting real runs, watching structured events, and handing completed artifacts to follow-up agents. It exists because long multi-agent workflows are easier to inspect as stateful runs than as terminal output alone.
+
+## Open it
+
+<Tabs items={['Workflow', 'Saved run', 'No browser', 'Debug tail']}>
+  <Tabs.Tab>
+
+```sh
+nax dashboard review
+```
+
+  </Tabs.Tab>
+  <Tabs.Tab>
+
+```sh
+nax dashboard --run <workflow-run-id>
+```
+
+  </Tabs.Tab>
+  <Tabs.Tab>
+
+```sh
+nax dashboard --no-open
+```
+
+  </Tabs.Tab>
+  <Tabs.Tab>
+
+```sh
+nax dashboard --no-open --tail
+```
+
+  </Tabs.Tab>
+</Tabs>
+
+## Surfaces
+
+| Surface | What it does |
+| --- | --- |
+| Workflow list | Reads the same workflows as `nax list`. |
+| Graph canvas | Shows steps, agents, inputs, submit mode, and run status. |
+| Dry Run | Runs `nax run <flow> --dry --force` through the local API. |
+| Run | Starts the workflow after browser confirmation. |
+| Recent runs | Reads `.nax/workflows` and highlights resumable or completed runs. |
+| Run details | Shows results, prompt source, artifacts, copy/open actions, and follow-up controls. |
+
+## Develop the dashboard UI
+
+```sh
+node src/cli/nax.js dashboard --no-open --port 53734
+NAX_DASHBOARD_API_URL=http://127.0.0.1:53734 npm run dashboard:dev
+```
+
+Open the Vite URL with the printed token:
+
+```text
+http://127.0.0.1:5173/?token=<token>&workflow=do-next
+```
+
+<Callout type="warning">
+  Mutating dashboard endpoints require the token embedded in the opened URL or supplied as `x-nax-token`.
+</Callout>
+
+## Follow up from a run
+
+In Run details, choose **Send to next agent**. The composer requires fresh instructions, defaults to the last meaningful artifact, and lets you choose which workflow, step, runner, session, or result artifacts to include.
+
+## See also
+
+- [Run workflows](/guides/run-workflows) for command-line equivalents.
+- [Configuration reference](/reference/configuration) for dashboard environment variables.
+- [Troubleshooting](/troubleshooting) for common dashboard failures.

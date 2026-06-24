@@ -1,0 +1,49 @@
+---
+title: nax
+description: Documentation for the Netlify-Agent-eXecutor CLI.
+---
+
+import { HomeCard, HomeCards } from '@/components/home-cards'
+
+# Netlify-Agent-eXecutor (`nax`)
+
+`nax` is a command-line orchestrator for Netlify Agent Runner workflows. It runs Claude, Gemini, and Codex against the same repository task, waits for every agent in a step, feeds earlier results into later prompts, and writes durable artifacts under `.nax/` for inspection and handoff.
+
+<HomeCards>
+  <HomeCard title="Get started" href="/get-started">
+    Install the CLI, initialize a project, run a dry run, and inspect the first artifact.
+  </HomeCard>
+  <HomeCard title="Run workflows" href="/guides/run-workflows">
+    Use bundled flows, single-agent runs, branch targeting, model overrides, retries, and context files.
+  </HomeCard>
+  <HomeCard title="Write custom workflows" href="/guides/write-custom-workflows">
+    Add project-local `flow.yml` files and Markdown prompts.
+  </HomeCard>
+  <HomeCard title="Command reference" href="/reference/commands">
+    Look up the public command surface and important flags.
+  </HomeCard>
+</HomeCards>
+
+## Mental model
+
+```text
+Project repo
+  -> flow.yml + prompts
+  -> fan-out step
+  -> follow-up step
+  -> synthesis step
+  -> .nax artifacts
+       -> nax handoff
+       -> dashboard
+```
+
+The workflow file is the program. It names the steps, agents, prompts, inputs, and wait behavior. `nax` chooses a transport, submits the prompts, waits for declared results, writes state under `.nax/`, and exposes those artifacts through `nax handoff` and the dashboard.
+
+## Common paths
+
+```sh
+nax init
+nax run review --dry --force
+nax run review
+nax handoff -c
+```

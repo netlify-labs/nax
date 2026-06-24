@@ -55,7 +55,6 @@ test('listFlows discovers flow directories', async () => {
   const ids = flows.map((flow) => flow.id)
   for (const id of [
     'review',
-    'long-descriptions',
     'ideas',
     'do-next',
     'security-audit',
@@ -72,6 +71,19 @@ test('listFlows discovers flow directories', async () => {
   ]) {
     assert.ok(ids.includes(id), `expected ${id} to be discovered`)
   }
+  assert.equal(ids.includes('long-descriptions'), false)
+})
+
+test('listFlows only exposes long-descriptions from the fixture flow root', async () => {
+  const defaultFlows = await listFlows()
+  assert.equal(defaultFlows.some((flow) => flow.id === 'long-descriptions'), false)
+
+  const fixtureRoot = path.resolve(__dirname, '..', 'fixtures', 'workflows')
+  const fixtureFlows = await listFlows({ flowsDir: fixtureRoot })
+  const fixtureFlow = fixtureFlows.find((flow) => flow.id === 'long-descriptions')
+  assert.ok(fixtureFlow)
+  assert.equal(fixtureFlow.source, 'custom')
+  assert.equal(loadStepPrompt(fixtureFlow, fixtureFlow.steps[0]).name, 'collect-context')
 })
 
 test('listFlows discovers project workflows before bundled workflows', async () => {

@@ -12,3 +12,9 @@ test('Vite fallback dev API reuses dashboard serializers instead of local copies
   assert.doesNotMatch(source, /function publicFlow\(/)
   assert.doesNotMatch(source, /function publicRunState\(/)
 })
+
+test('Vite fallback dev API opts into workflow fixtures', () => {
+  const source = fs.readFileSync(viteConfigPath, 'utf8')
+
+  assert.match(source, /flowsDirs:\s*\[\s*['"]tests\/fixtures\/workflows['"]\s*\]/)
+})

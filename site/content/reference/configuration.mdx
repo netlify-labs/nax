@@ -1,0 +1,69 @@
+---
+title: Configuration
+description: Flow discovery, transport selection, prompt offload, dashboard, and state environment variables.
+---
+
+import { Callout } from 'nextra/components'
+
+# Configuration reference
+
+`nax` keeps configuration intentionally small: most behavior is declared in workflow files or selected through command flags. This page collects the remaining surfaces that affect flow discovery, transport selection, prompt delivery, dashboard development, and artifact handling.
+
+## Project workflow discovery
+
+```json filename="nax.config.json"
+{
+  "flowsDirs": [
+    ".github/nax-flows",
+    "tools/nax/flows"
+  ]
+}
+```
+
+You can also use:
+
+```sh
+nax list --flows-dir tools/nax/flows
+NAX_FLOWS_DIRS=tools/nax/flows,.github/nax-flows nax list
+```
+
+## Prompt delivery
+
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `NAX_SAFE_PROMPT_BYTES` | `16384` | Target maximum bytes for submitted prompts. |
+| `NAX_PROMPT_BLOB_DISABLE` | unset | Set to `1` or `true` to disable blob offload. |
+| `NAX_BLOB_RETRY_ATTEMPTS` | `3` | Attempts for blob set/get/delete commands. |
+| `NAX_BLOB_CLEANUP_TTL_HOURS` | `24` | Age after which stale refs are eligible for cleanup. |
+| `NAX_OUTPUT_BUDGET` | unset | Appends response-size guidance when truthy. |
+| `NAX_OUTPUT_BUDGET_BYTES` | `64000` | Target output size when guidance is enabled. |
+
+## Dashboard development
+
+| Variable | Purpose |
+| --- | --- |
+| `NAX_DASHBOARD_API_URL` | Backend origin or `/api` path used by Vite dev. |
+| `VITE_NAX_DASHBOARD_API_URL` | Vite-facing equivalent. |
+| `NAX_DASHBOARD_TOKEN` | Token injected into the Vite dev client. |
+| `NAX_DASHBOARD_DEPLOYMENT_MODE` | `local`, `desktop`, or `web` capability mode. |
+| `NAX_DASHBOARD_WEB_CAN_START_RUNS` | Allows hosted web dashboard run starts when set to `1`. |
+| `NAX_DASHBOARD_WEB_CAN_DRY_RUN` | Allows hosted web dashboard dry runs when set to `1`. |
+
+## State and debugging
+
+| Variable | Purpose |
+| --- | --- |
+| `NAX_STATE_LOCK_TIMEOUT_MS` | Timeout for workflow state lock acquisition. |
+| `NAX_STATE_LOCK_STALE_MS` | Age after which a lock is treated as stale. |
+| `NAX_DEBUG_ARTIFACTS` | Enables extra local artifact debugging output. |
+| `NAX_INCLUDE_COST` | Includes estimated USD cost beside Netlify credit usage. |
+
+<Callout type="warning">
+  Disabling blob offload is risky for synthesis-heavy workflows. If the compact prompt is still too large, submission fails before the agent starts.
+</Callout>
+
+## See also
+
+- [Workflow file reference](/reference/workflow-files) for flow schema.
+- [Use the dashboard](/guides/use-the-dashboard) for local dashboard setup.
+- [Troubleshooting](/troubleshooting) for common configuration failures.

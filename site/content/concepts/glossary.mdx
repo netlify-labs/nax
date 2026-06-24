@@ -1,0 +1,63 @@
+---
+title: Glossary
+description: Project-specific terms used by nax.
+---
+
+# Glossary
+
+This glossary defines `nax` terms as they are used in the CLI, workflow files, dashboard, and artifacts. Some terms overlap with Netlify or GitHub vocabulary, but the definitions here focus on how the `nax` codebase and user workflow use them.
+
+## Agent
+
+One supported model target: `claude`, `gemini`, or `codex`.
+
+## Agent Runner
+
+The Netlify-hosted execution environment that runs an agent against a repository and prompt.
+
+## Artifact
+
+A persisted local output under `.nax/`, such as a workflow summary, runner summary, session summary, event log, or prompt blob mirror.
+
+## Flow
+
+The workflow definition loaded from `flow.yml`, `flow.json`, `flow.toml`, `flow.js`, or `flow.ts`.
+
+## Handoff
+
+The process of selecting an existing artifact and copying, opening, or feeding it into a new agent or workflow.
+
+## Project-local workflow
+
+A workflow defined by the current project, usually under `.github/nax-flows/`.
+
+## Prompt offload
+
+The mechanism that stores oversized prompt content in Netlify Blobs and submits a smaller fetch wrapper to the runner.
+
+## Runner
+
+A Netlify Agent Runner thread. Follow-up submissions can continue an existing runner context.
+
+## Session
+
+One concrete agent result within a runner.
+
+## Step
+
+One ordered unit inside a flow. A step can submit issues, comments, follow-ups, or a human review gate.
+
+## Transport
+
+The submission path for a run. `github-actions` dispatches a hosted GitHub workflow. `netlify-api` submits directly from the local machine.
+
+## Workflow run
+
+One execution of a flow, persisted under `.nax/workflows/<workflow-run-id>/`.
+
+## See also
+
+- [Architecture](/concepts/architecture) for how these pieces fit together.
+- [Workflow file reference](/reference/workflow-files) for schema terms.
+- [Transports](/concepts/transports) for execution paths.
+- [Artifacts](/concepts/artifacts) for handoff files and saved state.

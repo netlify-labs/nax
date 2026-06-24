@@ -27,15 +27,26 @@ test('nax command help smoke covers public and hidden commands', () => {
   const program = buildProgram()
   const rootHelp = program.helpInformation()
 
-  assert.match(rootHelp, /Usage: nax \[options\] \[command\] \[workflow\]/)
-  assert.match(rootHelp, /Run multi step Netlify agent workflows/)
+  assert.match(rootHelp, /Usage: nax \[command\]/)
+  assert.match(rootHelp, /Run Netlify agent workflows/)
   assert.match(rootHelp, /run \[options\] \[flow\]/)
   assert.match(rootHelp, /dashboard \[options\] \[workflow\]/)
+  assert.match(rootHelp, /handoff \[options\] \[run-id\]/)
+  assert.match(rootHelp, /list \[options\]/)
+  assert.match(rootHelp, /init \[options\]/)
+  assert.doesNotMatch(rootHelp, /recent/)
+  assert.doesNotMatch(rootHelp, /retry \[options\]/)
+  assert.doesNotMatch(rootHelp, /sync \[options\]/)
+  assert.doesNotMatch(rootHelp, /clean \[options\]/)
+  assert.doesNotMatch(rootHelp, /skills \[options\]/)
+  assert.doesNotMatch(rootHelp, /ci \[options\]/)
+  assert.doesNotMatch(rootHelp, /--agent/)
+  assert.doesNotMatch(rootHelp, /--prompt/)
   assert.doesNotMatch(rootHelp, /visualize/i)
 
   /** @type {HelpExpectation[]} */
   const expectedCommands = [
-    ['run', /Run a Netlify Agent Runner workflow/],
+    ['run', /Start a workflow or single-agent run/],
     ['issue', /Create issues for a prompt/],
     ['comment', /Comment on existing issues with a prompt/],
     ['preview-boxes', /Preview the flow plan/],

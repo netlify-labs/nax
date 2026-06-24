@@ -15,9 +15,9 @@ Steps:
 Run examples:
 
 ```bash
-nax review
-nax review --branch '#123' --transport netlify-api --force
-nax review --step cross-review
+nax run review
+nax run review --branch '#123' --transport netlify-api --force
+nax run review --step cross-review
 ```
 
 ## `ideas`
@@ -36,9 +36,9 @@ Steps:
 Run examples:
 
 ```bash
-nax ideas
-nax ideas --transport netlify-api --timeout-minutes 45
-nax ideas --from-step react
+nax run ideas
+nax run ideas --transport netlify-api --timeout-minutes 45
+nax run ideas --from-step react
 ```
 
 ## `do-next`
@@ -55,8 +55,8 @@ Steps:
 Run examples:
 
 ```bash
-nax do-next
-nax do-next --branch '#123' --transport netlify-api --force
+nax run do-next
+nax run do-next --branch '#123' --transport netlify-api --force
 ```
 
 ## Additional Bundled Flows

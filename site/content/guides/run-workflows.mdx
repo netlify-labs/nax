@@ -1,0 +1,106 @@
+---
+title: Run Workflows
+description: Run bundled workflows, single-agent prompts, step selections, retries, and model overrides.
+---
+
+import { Callout, Tabs } from 'nextra/components'
+
+# Run workflows
+
+Use this guide after `nax` is installed and initialized. The runner is designed around repeatable, reviewable flows: each flow declares its steps, prompts, models, inputs, and wait behavior, so a multi-agent process can be rerun without copy-paste coordination.
+
+## List and pick workflows
+
+```sh
+nax list
+nax list --verbose
+nax run
+```
+
+The picker includes a single-agent option, bundled workflows, and project-local workflows.
+
+## Run common workflow shapes
+
+<Tabs items={['Bundled flow', 'Single agent', 'Specific branch', 'Partial run']}>
+  <Tabs.Tab>
+
+```sh
+nax run review
+nax run security-audit
+nax run performance-audit
+nax run documentation
+```
+
+  </Tabs.Tab>
+  <Tabs.Tab>
+
+```sh
+nax run agent codex "Review this branch for regressions"
+nax run agent gemini --prompt "Check for broken links"
+```
+
+  </Tabs.Tab>
+  <Tabs.Tab>
+
+```sh
+nax run review --branch fix/auth
+nax run review --branch '#123'
+```
+
+  </Tabs.Tab>
+  <Tabs.Tab>
+
+```sh
+nax run review --step cross-review
+nax run review --from-step synthesize
+```
+
+  </Tabs.Tab>
+</Tabs>
+
+## Choose a transport
+
+```sh
+nax run review --transport auto
+nax run review --transport github-actions
+nax run review --transport netlify-api
+```
+
+Use `github-actions` for hosted workflow-dispatch runs and team-visible logs. Use `netlify-api` for local orchestration, resume support, and dashboard event streaming.
+
+## Override models
+
+```sh
+nax run review --models claude,codex
+nax run review --step-models review=gemini,codex --step-models synthesize=codex
+```
+
+`--models` changes all runnable steps. `--step-models` changes named steps and can be repeated.
+
+## Add context
+
+```sh
+nax run review --context "Focus on the auth callback changes."
+nax run review --context-file ./agent-context.md
+```
+
+Extra context is appended to each step prompt after the workflow prompt and before fetched prior-round results.
+
+## Resume and retry
+
+```sh
+nax run --retry <run-id>
+nax run review --retry <run-id> --step cross-review
+```
+
+Interrupted `netlify-api` runs write state under `.nax/workflows/<run-id>/workflow.json`. Starting `nax run` again offers to resume unfinished work.
+
+<Callout type="warning">
+  Use `--step` carefully when the step expects prior inputs. If you need earlier results, prefer `--from-step` or run the full flow.
+</Callout>
+
+## See also
+
+- [Command reference](/reference/commands) for the full public command surface.
+- [Workflow file reference](/reference/workflow-files) for step schema.
+- [Transports](/concepts/transports) for transport trade-offs.

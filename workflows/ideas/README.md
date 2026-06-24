@@ -57,5 +57,5 @@ flowchart TD
 ## Run
 
 ```bash
-nax ideas
+nax run ideas
 ```

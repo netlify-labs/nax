@@ -1,0 +1,75 @@
+.nax-home-cards {
+  display: grid;
+  gap: 1rem;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  margin-top: 1.25rem;
+}
+
+.nax-navbar-tools {
+  align-items: center;
+  display: flex;
+  gap: 0.75rem;
+}
+
+.nax-home-card {
+  background: rgb(249 250 251);
+  border: 1px solid rgb(229 231 235);
+  border-radius: 0.5rem;
+  box-shadow: 0 1px 2px rgb(15 23 42 / 0.04);
+  color: inherit;
+  display: flex;
+  flex-direction: column;
+  gap: 1.25rem;
+  justify-content: space-between;
+  min-height: 7.25rem;
+  padding: 1rem 1.25rem;
+  text-decoration: none;
+  transition:
+    background 150ms ease,
+    border-color 150ms ease,
+    box-shadow 150ms ease;
+}
+
+.nax-home-card:hover {
+  background: rgb(255 255 255);
+  border-color: rgb(209 213 219);
+  box-shadow: 0 8px 24px rgb(15 23 42 / 0.08);
+}
+
+.nax-home-card-copy {
+  color: rgb(71 85 105);
+  line-height: 1.6;
+}
+
+.nax-home-card-title {
+  align-items: center;
+  color: rgb(31 41 55);
+  display: inline-flex;
+  font-weight: 600;
+  gap: 0.5rem;
+}
+
+.dark .nax-home-card {
+  background: rgb(23 23 23);
+  border-color: rgb(64 64 64);
+  box-shadow: none;
+}
+
+.dark .nax-home-card:hover {
+  background: rgb(38 38 38);
+  border-color: rgb(82 82 82);
+}
+
+.dark .nax-home-card-copy {
+  color: rgb(209 213 219);
+}
+
+.dark .nax-home-card-title {
+  color: rgb(245 245 245);
+}
+
+@media (max-width: 768px) {
+  .nax-home-cards {
+    grid-template-columns: 1fr;
+  }
+}

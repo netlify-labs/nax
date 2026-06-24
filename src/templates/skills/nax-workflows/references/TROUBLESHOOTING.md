@@ -50,7 +50,7 @@ Run details can render saved workflow, step, runner, session, and result artifac
 
 If a Prompt tab is missing, verify the flow definition and prompt path still exist locally. Synced remote artifacts can show results even when the original project-local prompt file is no longer present.
 
-From a completed run, **Send to next agent** opens the follow-up composer. Browser follow-ups currently use the Netlify API transport. If a follow-up was submitted from the Netlify UI or another process, use `nax sync last` to pull the latest remote sessions into local `.nax` artifacts.
+From a completed run, **Send to next agent** opens the follow-up composer. Browser follow-ups currently use the Netlify API transport. If a follow-up was submitted from the Netlify UI or another process, use `nax admin sync last` to pull the latest remote sessions into local `.nax` artifacts.
 
 ## Resume
 
@@ -63,7 +63,7 @@ Resume is for unfinished Netlify API work. Terminal failed runs need a rerun or 
 Use retry when exactly one Netlify API agent failed and the rest of the step is usable:
 
 ```bash
-nax retry <run-id> --step <step-id> --agent <agent>
+nax run --retry <run-id> --step <step-id> --agent <agent>
 ```
 
 This is useful for oversized follow-up prompts or transient terminal failures after a step has partially completed.
@@ -85,8 +85,8 @@ It mirrors each payload locally under:
 Remote cleanup runs at flow completion. If the process was interrupted, preview or force stale cleanup with:
 
 ```bash
-nax clean blobs
-nax clean blobs --force
+nax admin clean blobs
+nax admin clean blobs --force
 ```
 
 ## Argument List Too Long

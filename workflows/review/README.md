@@ -48,5 +48,5 @@ flowchart TD
 ## Run
 
 ```bash
-nax review
+nax run review
 ```

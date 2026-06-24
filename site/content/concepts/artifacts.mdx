@@ -1,0 +1,82 @@
+---
+title: Artifacts
+description: Understand the .nax artifact tree, handoff paths, and prompt blob mirrors.
+---
+
+import { Callout, FileTree } from 'nextra/components'
+
+# Artifacts
+
+Every `nax` run writes a durable local record under `.nax/`. The artifact tree is the handoff surface between workflow steps, the dashboard, follow-up prompts, and later debugging sessions.
+
+## Artifact layout
+
+<FileTree>
+  <FileTree.Folder name=".nax" defaultOpen>
+    <FileTree.Folder name="workflows" defaultOpen>
+      <FileTree.Folder name="<workflow-run-id>" defaultOpen>
+        <FileTree.File name="workflow.json" />
+        <FileTree.File name="events.jsonl" />
+        <FileTree.Folder name="artifacts">
+          <FileTree.File name="summary.md" active />
+        </FileTree.Folder>
+        <FileTree.Folder name="blobs">
+          <FileTree.File name="<blob-key>.md" />
+          <FileTree.File name="<blob-key>.json" />
+        </FileTree.Folder>
+      </FileTree.Folder>
+    </FileTree.Folder>
+    <FileTree.Folder name="agent-runners">
+      <FileTree.File name="<runner-id>/summary.md" />
+    </FileTree.Folder>
+    <FileTree.Folder name="agent-sessions">
+      <FileTree.File name="<session-id>/summary.md" />
+    </FileTree.Folder>
+    <FileTree.File name="blob-refs.jsonl" />
+  </FileTree.Folder>
+</FileTree>
+
+`latest` symlinks are created when the filesystem supports them. The most common handoff file is:
+
+```text
+.nax/workflows/latest/artifacts/summary.md
+```
+
+## Handoff paths
+
+```sh
+nax handoff
+nax handoff -c
+nax handoff --session <id> --copy
+nax handoff --workflow <id> --flow review
+nax handoff --runner <id> --agent codex
+```
+
+The dashboard exposes the same idea through Run details and **Send to next agent**.
+
+<Callout type="warning">
+  Do not delete `.nax` before handing off results. It is the durable local record for workflow summaries, runner summaries, session summaries, event streams, and prompt blob mirrors.
+</Callout>
+
+## Prompt blob artifacts
+
+When prompts are too large for the safe submission budget, `nax` mirrors offloaded payloads locally under `.nax/workflows/<run-id>/blobs/` and tracks remote refs in `.nax/blob-refs.jsonl`.
+
+Clean stale refs with:
+
+```sh
+nax admin clean blobs
+nax admin clean blobs --force
+```
+
+## Common mistakes
+
+- Treating `.nax` as disposable cache before the run has been handed off.
+- Looking only at terminal output after a failed synthesis. The saved summaries and prompt blobs often contain the full fan-in context.
+- Assuming prompt blob cleanup deletes local debug mirrors. Remote blobs are cleaned up, but local copies stay available for inspection.
+
+## See also
+
+- [Transports](/concepts/transports) for how runs are submitted.
+- [Run workflows](/guides/run-workflows) for the commands that produce workflow artifacts.
+- [Troubleshooting](/troubleshooting) for recovery commands.

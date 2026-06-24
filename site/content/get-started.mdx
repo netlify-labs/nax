@@ -1,0 +1,102 @@
+---
+title: Get Started
+description: Install nax, initialize a repository, run a dry run, and inspect the first artifact.
+---
+
+import { Callout, Steps } from 'nextra/components'
+
+# Get started
+
+This tutorial takes a new checkout from install to a working `nax` dry run. It assumes you already have a GitHub repository and a Netlify project, because `nax` submits real repository work to Netlify Agent Runner rather than simulating agents locally.
+
+<Callout type="info">
+  **Prerequisites:** Node 20+, authenticated `netlify-cli`, and a Git repository connected to a Netlify project.
+</Callout>
+
+<Steps>
+
+### Install `nax`
+
+```sh npm2yarn
+npm install -g @davidwells/netlify-agent-executor
+```
+
+Verify the command:
+
+```sh
+nax --help
+nax list
+```
+
+### Initialize the project
+
+```sh
+nax init
+```
+
+To preview setup before writing files or secrets:
+
+```sh
+nax init --dry
+```
+
+To use only local Netlify API orchestration:
+
+```sh
+nax init --no-github-actions
+```
+
+### Preview a workflow
+
+```sh
+nax run review --dry --force
+```
+
+The dry run loads the flow, resolves prompts, and prints the plan without creating GitHub issues, Agent Runner jobs, or `.nax` artifacts.
+
+### Run for real
+
+```sh
+nax run review
+```
+
+Force local Netlify API orchestration when you want resume support and dashboard event streaming:
+
+```sh
+nax run review --transport netlify-api
+```
+
+### Inspect the result
+
+```sh
+nax handoff -c
+nax dashboard review
+```
+
+</Steps>
+
+## Artifact checkpoint
+
+Completed workflows write summaries under:
+
+```text
+.nax/workflows/<workflow-run-id>/artifacts/summary.md
+.nax/agent-runners/<runner-id>/summary.md
+.nax/agent-sessions/<session-id>/summary.md
+```
+
+## Common mistakes
+
+<Callout type="warning">
+  A dry run intentionally does not create `.nax` artifacts. Use it to verify the plan, then run the workflow without `--dry` when you want results.
+</Callout>
+
+- Running before `gh` or `netlify` are authenticated.
+- Running against a branch whose pinned SHA has not been pushed.
+- Rebuilding the dashboard with an older Node version.
+
+## Next steps
+
+- [Run workflows](/guides/run-workflows) for branch targeting, model overrides, retries, and single-agent runs.
+- [Write custom workflows](/guides/write-custom-workflows) for project-local flows.
+- [Transports](/concepts/transports) for choosing the right execution path.

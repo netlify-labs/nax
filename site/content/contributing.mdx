@@ -1,0 +1,59 @@
+---
+title: Contributing
+description: Set up, test, and change nax itself.
+---
+
+import { Callout, FileTree } from 'nextra/components'
+
+# Contributing
+
+This contributor guide is for people changing `nax` itself. The project is a CommonJS Node CLI with JSDoc-typed JavaScript, a TypeScript/React dashboard, bundled workflow definitions, and a broad test suite around flow loading, transports, artifacts, and dashboard behavior.
+
+## Setup
+
+```sh
+git clone https://github.com/netlify-labs/nax.git
+cd nax
+npm install
+npm link
+```
+
+## Repository layout
+
+<FileTree>
+  <FileTree.Folder name="src" defaultOpen>
+    <FileTree.Folder name="cli" />
+    <FileTree.Folder name="workflows" />
+    <FileTree.Folder name="integrations" />
+    <FileTree.Folder name="dashboard" />
+    <FileTree.Folder name="templates" />
+  </FileTree.Folder>
+  <FileTree.Folder name="workflows" />
+  <FileTree.Folder name="tests" />
+  <FileTree.Folder name="docs" />
+</FileTree>
+
+## Required checks
+
+```sh
+npm run check
+npm test
+npm run dashboard:build
+```
+
+<Callout type="important">
+  Run `npm run dashboard:build` after every UI change.
+</Callout>
+
+## Code conventions
+
+- All JavaScript must be typed with JSDoc annotations.
+- Do not introduce `any` types. Use precise object shapes, callbacks, `unknown`, or explicit type imports.
+- Keep CLI parsing thin and behavior in command handlers, workflow modules, integrations, or dashboard services.
+- Keep bundled workflows readable. Prompt Markdown is part of the product surface.
+
+## See also
+
+- [Architecture](/concepts/architecture) for the main module boundaries.
+- [Workflow file reference](/reference/workflow-files) for flow schema behavior.
+- [Use the dashboard](/guides/use-the-dashboard) for dashboard development.

@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { Alert, Box, Group, Modal, Paper, ScrollArea, Stack, Text, Title } from '@mantine/core'
 import { MarkdownRenderer } from './MarkdownRenderer'
-import { ArtifactActions, MarkdownTableOfContents, RunDetailsTimeline, type TimelineEntry } from './RunDetailsModal'
+import { ArtifactActions, MarkdownTableOfContents, RunDetailsTimeline, useResetMarkdownScroll, type TimelineEntry } from './RunDetailsModal'
 import type { Workflow, WorkflowGraph, WorkflowGraphNodeData, WorkflowStep } from '../types'
 
 type Props = {
@@ -218,9 +218,13 @@ export function WorkflowPromptModal({ opened, onClose, workflow, graph, initialS
     setActiveTimelineId(entries.some((entry) => entry.id === preferredTimelineId) ? preferredTimelineId : entries[0]?.id || '')
   }, [entries, opened, preferredTimelineId])
 
-  const selectTimelineEntry = (entryId: string) => {
+  useResetMarkdownScroll(markdownScrollRef, activeEntry?.id || '', opened)
+
+  const selectTimelineEntry = (entry: TimelineEntry) => {
+    const entryId = entry.id
     setActiveTimelineId(entryId)
-    const stepId = entryId.replace(/^prompt-step:/, '')
+    const promptEntry = entries.find((candidate) => candidate.id === entryId)
+    const stepId = promptEntry?.metadata.stepId || entryId.replace(/^prompt-step:/, '')
     if (stepId && stepId !== activeEntry?.metadata.stepId) onStepSelect?.(stepId)
   }
 
@@ -228,7 +232,7 @@ export function WorkflowPromptModal({ opened, onClose, workflow, graph, initialS
     <Modal
       opened={opened}
       onClose={onClose}
-      title={workflow ? `"${workflow.title}" prompt sequence` : 'Workflow prompt sequence'}
+      title={workflow ? `"${workflow.title}" workflow details` : 'Workflow details'}
       size="90rem"
       centered
       classNames={{ content: 'run-details-modal-content', body: 'run-details-modal-body' }}
@@ -246,6 +250,7 @@ export function WorkflowPromptModal({ opened, onClose, workflow, graph, initialS
             timelineEntries={entries}
             timelineProgressIndex={Math.max(activeIndex, entries.length - 1)}
             timelineColor="gray"
+            heading="Workflow prompts"
             onSelect={selectTimelineEntry}
             canRunFollowup={false}
             onRunFollowup={() => undefined}

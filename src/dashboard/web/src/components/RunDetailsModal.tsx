@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type RefObject } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type RefObject } from 'react'
 import { ActionIcon, Alert, Anchor, Badge, Box, Button, Code, Group, Menu, Modal, Paper, ScrollArea, Stack, Text, Timeline, Title, Tooltip, UnstyledButton } from '@mantine/core'
 import { Ban, Check, ChevronsDownUp, ChevronsUpDown, ChevronDown, ChevronRight, ExternalLink, FileText, Files, Play } from 'lucide-react'
 import { openLocalFile } from '../api'
@@ -99,6 +99,17 @@ export type TimelineEntry = {
   stepNumber?: number
   section?: RunDetailsSection
   liveContext?: RunDetailsLiveContext
+}
+
+export function useResetMarkdownScroll(
+  scrollRootRef: RefObject<HTMLDivElement | null> | undefined,
+  resetKey: string,
+  enabled = true,
+) {
+  useLayoutEffect(() => {
+    if (!enabled) return
+    scrollRootRef?.current?.scrollTo({ top: 0, left: 0 })
+  }, [enabled, resetKey, scrollRootRef])
 }
 
 function targetLabel(target?: Target | null): string {
@@ -826,6 +837,7 @@ export function RunDetailsTimeline({
   timelineEntries,
   timelineProgressIndex,
   timelineColor,
+  heading = 'Timeline',
   onSelect,
   canRunFollowup,
   onRunFollowup,
@@ -835,6 +847,7 @@ export function RunDetailsTimeline({
   timelineEntries: TimelineEntry[]
   timelineProgressIndex: number
   timelineColor?: string
+  heading?: string
   onSelect: (entry: TimelineEntry) => void
   canRunFollowup: boolean
   onRunFollowup: () => void
@@ -854,7 +867,7 @@ export function RunDetailsTimeline({
 
   return (
     <Box className="run-details-timeline" component="nav" aria-label="Workflow timeline">
-      <Text className="run-details-timeline-heading" size="xs" fw={800} c="dimmed">Timeline</Text>
+      <Text className="run-details-timeline-heading" size="xs" fw={800} c="dimmed">{heading}</Text>
       <Timeline active={timelineProgressIndex} bulletSize={18} lineWidth={2} color={timelineColor}>
         {parentTimelineEntries.map((entry) => {
           const childEntries = entry.kind === 'step'
@@ -993,6 +1006,7 @@ function RunDetailsContent({
   const actionSessionUrl = showingPrompt ? '' : entry.section?.links.sessionUrl || entry.section?.links.agentRunUrl
   const canCancel = !showingPrompt && Boolean(detailsRunId && cancelTargetForEntry(entry))
   const canReview = !showingPrompt && entry.kind === 'step' && entry.status === 'awaiting_review'
+  useResetMarkdownScroll(scrollRootRef, `${entry.id}:${showingPrompt ? 'prompt' : 'results'}`)
   const runReviewAction = async (action: 'approve' | 'cancel') => {
     setReviewAction(action)
     try {

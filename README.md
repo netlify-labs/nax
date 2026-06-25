@@ -6,6 +6,9 @@
 
 </div>
 
+> [!NOTE]
+> This project is in early alpha and subject to change.
+
 ## Quickstart
 
 `nax` uses the [netlify-cli](https://cli.netlify.com/) and [GitHub CLI](https://cli.github.com/). Make sure you have those on your machine for `nax` to operate.

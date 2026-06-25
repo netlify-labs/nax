@@ -5,7 +5,7 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>nax — wild multi-agent workflows</title>
+<title>nax · multi-agent workflows</title>
 <style>
   :root {
     --bg: #0c1110;
@@ -147,8 +147,8 @@
     <span class="kicker"><span class="dot"></span> nax · netlify agent executor</span>
     <h1>The world's leading AI coding tools,<br><b>working together</b> to produce the <b>best results.</b></h1>
     <p class="lede">
-      <b>Claude, Gemini, and Codex</b> are each elite on their own. <code>nax</code> lets all three work together through Netlify Agent Runners —
-      running in parallel, then cross-reviewing, scoring, and synthesizing each other's work — so the output is better than any single model could produce alone.
+      <b>Claude, Gemini, and Codex</b> are each elite on their own. <code>nax</code> lets all three work together through Netlify Agent Runners.
+      They run in parallel, then cross-review, score, and synthesize each other's work, so the output is better than any single model could produce alone.
       You do the obvious first step; the harnesses go wild on what comes next.
     </p>
   </header>
@@ -170,8 +170,8 @@
   </section>
 
   <div class="section-head">
-    <h2>Here are some practical examples</h2>
-    <p class="lede">Eleven workflows you could run today — each starts with a task you'd do anyway, then puts the three harnesses to work.</p>
+    <h2>Practical examples</h2>
+    <p class="lede">Eleven workflows you could run today. Each starts with a task you'd do anyway, then puts the three harnesses to work.</p>
   </div>
 
   <section class="grid" id="grid"></section>
@@ -207,7 +207,7 @@ const SHAPE_LEGEND = [
 /* ---- the 11 workflows ---- */
 const FLOWS = [
   { n: 1, title: 'Docs Site → Council of Enhancements', tag: 'Council',
-    wow: 'I built the obvious thing; three models told me what’s next — and filed the tickets.',
+    wow: 'I built the obvious thing; three models told me what’s next and filed the tickets.',
     stages: [
       { kind: 'task', label: 'Scaffold docs site', sub: '1 agent' },
       { kind: 'fanout', label: 'Propose next 5 features', agents: ['claude','gemini','codex'] },
@@ -224,7 +224,7 @@ const FLOWS = [
       { kind: 'output', label: 'Post back to PR' },
     ] },
   { n: 3, title: 'README → Bake-off', tag: 'Bake-off',
-    wow: 'Three competing drafts, side by side, you pick the winner — then it gets polished.',
+    wow: 'Three competing drafts, side by side; you pick the winner, then it gets polished.',
     stages: [
       { kind: 'task', label: '"We need a real README"' },
       { kind: 'fanout', label: 'Write 3 competing READMEs', agents: ['claude','gemini','codex'] },
@@ -249,7 +249,7 @@ const FLOWS = [
       { kind: 'output', label: 'Comment triage verdict' },
     ] },
   { n: 6, title: '"Migrate to X" → Relay Assembly Line', tag: 'Relay',
-    wow: 'Each model does the part it’s best at, in sequence — passing its own context forward.',
+    wow: 'Each model does the part it’s best at, in sequence, passing its own context forward.',
     stages: [
       { kind: 'task', label: 'Bump a major dependency' },
       { kind: 'agent', label: 'Claude: mechanical migration', agents: ['claude'] },
@@ -265,7 +265,7 @@ const FLOWS = [
       { kind: 'gate', label: 'Human picks the direction' },
     ] },
   { n: 8, title: 'Codebase Onboarding → Three Lenses', tag: 'Council',
-    wow: 'Parallelism as coverage, not just speed — each agent forced through a different lens.',
+    wow: 'Each agent works a different lens, turning raw parallelism into real coverage.',
     stages: [
       { kind: 'task', label: '"Explain this repo"' },
       { kind: 'fanout', label: 'Data-flow / failure-modes / extension-points', agents: ['claude','gemini','codex'] },

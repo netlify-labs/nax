@@ -38,6 +38,7 @@ jobs:
     permissions:
       contents: read
       pull-requests: read
+      issues: write
     env:
       NETLIFY_AUTH_TOKEN: ${{ secrets.NETLIFY_AUTH_TOKEN }}
       NETLIFY_SITE_ID: ${{ secrets.NETLIFY_SITE_ID }}
@@ -83,7 +84,7 @@ jobs:
 
       - run: npm ci
       - run: npm install -g netlify-cli
-      - run: node bin/nax.js run "$NAX_FLOW" --transport netlify-api --repo "$GITHUB_REPOSITORY" --branch "$BRANCH" --force --timeout-minutes 60
+      - run: node src/cli/nax.js run "$NAX_FLOW" --transport netlify-api --repo "$GITHUB_REPOSITORY" --branch "$BRANCH" --force --timeout-minutes 60
       - name: Inspect nax run artifacts
         if: always()
         run: |
@@ -130,3 +131,84 @@ jobs:
           if-no-files-found: ignore
           include-hidden-files: true
           retention-days: 30
+      - name: Publish nax results to GitHub
+        if: always()
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          NAX_JOB_STATUS: ${{ job.status }}
+          PULL_REQUEST_NUMBER: ${{ github.event.pull_request.number || '' }}
+        run: |
+          set -euo pipefail
+
+          flow="${NAX_FLOW:-${{ steps.resolve-flow.outputs.flow }}}"
+          if [ -z "$flow" ]; then
+            flow="unknown"
+          fi
+
+          run_url="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+          artifact_name="nax-${flow}-${GITHUB_RUN_ID}"
+          latest_summary="$(find .nax -path '*/summary.md' -type f -print 2>/dev/null | sort | tail -n 1 || true)"
+
+          {
+            echo "NAX ${flow} completed with status: ${NAX_JOB_STATUS}"
+            echo ""
+            echo "- Repository: ${GITHUB_REPOSITORY}"
+            echo "- Branch: ${BRANCH}"
+            echo "- Workflow run: ${run_url}"
+            echo "- Artifact: ${artifact_name}"
+            echo ""
+
+            echo "## Final results"
+            echo ""
+            if [ -n "$latest_summary" ] && [ -f "$latest_summary" ]; then
+              sed -n '1,500p' "$latest_summary"
+            else
+              echo "No NAX summary.md file was found. Review the workflow run logs and uploaded artifacts for diagnostics."
+            fi
+          } > /tmp/nax-results-body.md
+
+          node <<'EOF'
+          const fs = require('fs')
+          const maxBodyLength = 60000
+          const path = '/tmp/nax-results-body.md'
+          let body = fs.readFileSync(path, 'utf8')
+
+          if (body.length > maxBodyLength) {
+            body = `${body.slice(0, maxBodyLength)}\n\n_Output truncated. See the workflow artifact for the complete NAX results._\n`
+          }
+
+          fs.writeFileSync(path, body)
+          EOF
+
+          if [ -n "$PULL_REQUEST_NUMBER" ]; then
+            payload="$(jq -n --rawfile body /tmp/nax-results-body.md '{ body: $body }')"
+            curl --fail-with-body \
+              -X POST \
+              -H "Authorization: Bearer ${GITHUB_TOKEN}" \
+              -H "Accept: application/vnd.github+json" \
+              -H "X-GitHub-Api-Version: 2022-11-28" \
+              "https://api.github.com/repos/${GITHUB_REPOSITORY}/issues/${PULL_REQUEST_NUMBER}/comments" \
+              -o /tmp/nax-comment-response.json \
+              -d "$payload"
+
+            comment_url="$(jq -r '.html_url // empty' /tmp/nax-comment-response.json)"
+            if [ -n "$comment_url" ]; then
+              echo "Created NAX results PR comment: $comment_url"
+            fi
+          else
+            title="NAX ${flow} results: ${BRANCH} (${GITHUB_RUN_ID})"
+            payload="$(jq -n --arg title "$title" --rawfile body /tmp/nax-results-body.md '{ title: $title, body: $body }')"
+            curl --fail-with-body \
+              -X POST \
+              -H "Authorization: Bearer ${GITHUB_TOKEN}" \
+              -H "Accept: application/vnd.github+json" \
+              -H "X-GitHub-Api-Version: 2022-11-28" \
+              "https://api.github.com/repos/${GITHUB_REPOSITORY}/issues" \
+              -o /tmp/nax-issue-response.json \
+              -d "$payload"
+
+            issue_url="$(jq -r '.html_url // empty' /tmp/nax-issue-response.json)"
+            if [ -n "$issue_url" ]; then
+              echo "Created NAX results issue: $issue_url"
+            fi
+          fi

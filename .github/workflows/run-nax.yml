@@ -61,11 +61,13 @@ jobs:
           fi
 
           matched_flow_file=""
-          for extension in yml yaml json toml js cjs mjs ts mts cts; do
-            if [ -f "flows/$flow/flow.$extension" ]; then
-              matched_flow_file="flows/$flow/flow.$extension"
-              break
-            fi
+          for root in .github/nax-flows workflows flows; do
+            for extension in yml yaml json toml js cjs mjs ts mts cts; do
+              if [ -f "$root/$flow/flow.$extension" ]; then
+                matched_flow_file="$root/$flow/flow.$extension"
+                break 2
+              fi
+            done
           done
 
           if [ -z "$matched_flow_file" ]; then
@@ -148,6 +150,10 @@ jobs:
           run_url="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
           artifact_name="nax-${flow}-${GITHUB_RUN_ID}"
           latest_summary="$(find .nax -path '*/summary.md' -type f -print 2>/dev/null | sort | tail -n 1 || true)"
+          if [ -z "$latest_summary" ] || [ ! -f "$latest_summary" ]; then
+            echo "No NAX summary.md file was found; skipping GitHub results publication."
+            exit 0
+          fi
 
           {
             echo "NAX ${flow} completed with status: ${NAX_JOB_STATUS}"
@@ -160,11 +166,7 @@ jobs:
 
             echo "## Final results"
             echo ""
-            if [ -n "$latest_summary" ] && [ -f "$latest_summary" ]; then
-              sed -n '1,500p' "$latest_summary"
-            else
-              echo "No NAX summary.md file was found. Review the workflow run logs and uploaded artifacts for diagnostics."
-            fi
+            sed -n '1,500p' "$latest_summary"
           } > /tmp/nax-results-body.md
 
           node <<'EOF'

@@ -1,0 +1,357 @@
+<!doctype html>
+<!-- NACS workflow showcase: data-driven gallery of multi-agent pipeline diagrams.
+     Each workflow renders as a horizontal node-pipeline built from 7 reusable shapes. -->
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>nax — wild multi-agent workflows</title>
+<style>
+  :root {
+    --bg: #0c1110;
+    --panel: #121a18;
+    --panel-2: #16201d;
+    --line: #25322e;
+    --ink: #e8f0ed;
+    --muted: #8aa39b;
+    --teal: #00c7b7;
+    --teal-dim: #0a4f49;
+    --claude: #d97757;
+    --gemini: #4796e3;
+    --codex: #10a37f;
+    --human: #e0b341;
+    --radius: 14px;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; }
+  body {
+    background:
+      radial-gradient(1100px 600px at 80% -10%, #0c2421 0%, transparent 60%),
+      radial-gradient(900px 500px at -10% 10%, #161405 0%, transparent 55%),
+      var(--bg);
+    color: var(--ink);
+    font: 15px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, Roboto, sans-serif;
+    -webkit-font-smoothing: antialiased;
+    padding: 0 0 80px;
+  }
+  .wrap { max-width: 1180px; margin: 0 auto; padding: 0 28px; }
+
+  header.hero { padding: 56px 0 24px; }
+  .kicker {
+    display: inline-flex; align-items: center; gap: 8px;
+    font-size: 12px; letter-spacing: .16em; text-transform: uppercase;
+    color: var(--teal); border: 1px solid var(--teal-dim);
+    background: rgba(0,199,183,.06); padding: 5px 11px; border-radius: 999px;
+  }
+  .kicker .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--teal); box-shadow: 0 0 10px var(--teal); animation: pulse 2s infinite; }
+  h1 { font-size: 38px; line-height: 1.1; margin: 18px 0 10px; letter-spacing: -.02em; }
+  h1 b { color: var(--teal); }
+  .lede { color: var(--muted); max-width: 760px; font-size: 16px; }
+  .lede code { color: var(--ink); background: var(--panel-2); padding: 1px 6px; border-radius: 6px; border: 1px solid var(--line); }
+
+  /* ---- legend ---- */
+  .legend { display: grid; grid-template-columns: repeat(2, 1fr); gap: 28px; margin: 32px 0 8px; }
+  .legend-col h3 { margin: 0 0 12px; font-size: 12px; letter-spacing: .14em; text-transform: uppercase; color: var(--muted); }
+  .agents { display: flex; gap: 10px; flex-wrap: wrap; }
+  .shapes { display: flex; gap: 10px; flex-wrap: wrap; }
+  .shape-chip {
+    display: inline-flex; align-items: center; gap: 7px;
+    background: var(--panel); border: 1px solid var(--line); border-radius: 999px;
+    padding: 6px 11px 6px 7px; font-size: 12.5px; color: var(--muted);
+  }
+  .shape-chip svg { display: block; }
+
+  /* ---- workflow cards ---- */
+  .grid { display: grid; gap: 18px; margin-top: 30px; }
+  .card {
+    background: linear-gradient(180deg, var(--panel) 0%, #0f1716 100%);
+    border: 1px solid var(--line); border-radius: var(--radius);
+    padding: 20px 22px 24px; position: relative; overflow: hidden;
+  }
+  .card::before {
+    content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 3px;
+    background: linear-gradient(180deg, var(--teal), transparent);
+    opacity: .8;
+  }
+  .card-head { display: flex; align-items: baseline; gap: 12px; margin-bottom: 16px; flex-wrap: wrap; }
+  .num { font-size: 12px; color: var(--teal); border: 1px solid var(--teal-dim); border-radius: 6px; padding: 1px 7px; font-variant-numeric: tabular-nums; }
+  .card-title { font-size: 17px; font-weight: 650; letter-spacing: -.01em; }
+  .card-tag { font-size: 11px; letter-spacing: .12em; text-transform: uppercase; color: var(--muted); border: 1px solid var(--line); border-radius: 999px; padding: 3px 9px; }
+  .card-wow { margin: 14px 0 0; color: var(--muted); font-size: 13.5px; }
+  .card-wow b { color: var(--ink); font-weight: 600; }
+
+  /* ---- pipeline ---- */
+  .pipe { display: flex; align-items: stretch; gap: 0; overflow-x: auto; padding-bottom: 6px; }
+  .pipe::-webkit-scrollbar { height: 6px; }
+  .pipe::-webkit-scrollbar-thumb { background: var(--line); border-radius: 3px; }
+
+  .stage {
+    flex: 0 0 auto; min-width: 132px; max-width: 210px;
+    background: var(--panel-2); border: 1px solid var(--line); border-radius: 11px;
+    padding: 11px 12px; display: flex; flex-direction: column; gap: 8px;
+  }
+  .stage-top { display: flex; align-items: center; gap: 7px; }
+  .stage-ico { flex: 0 0 auto; }
+  .stage-kind { font-size: 10px; letter-spacing: .12em; text-transform: uppercase; color: var(--muted); }
+  .stage-label { font-size: 13px; line-height: 1.35; font-weight: 550; }
+  .stage-sub { font-size: 11.5px; color: var(--muted); }
+
+  .stage.trigger { border-color: #3a3320; background: #1a1708; }
+  .stage.trigger .stage-kind { color: var(--human); }
+  .stage.gate { border-color: #4a4120; background: #1c1808; }
+  .stage.gate .stage-kind { color: var(--human); }
+  .stage.synth { border-color: var(--teal-dim); background: #0a1a18; }
+  .stage.synth .stage-kind { color: var(--teal); }
+  .stage.output { border-style: dashed; }
+
+  /* agent chips inside fan-out */
+  .chips { display: flex; flex-direction: column; gap: 5px; }
+  .chip { display: flex; align-items: center; gap: 7px; font-size: 11.5px; padding: 3px 6px; border-radius: 7px; background: rgba(255,255,255,.03); border: 1px solid var(--line); }
+  .chip .d { width: 8px; height: 8px; border-radius: 50%; flex: 0 0 auto; }
+  .chip.claude .d { background: var(--claude); box-shadow: 0 0 8px var(--claude); }
+  .chip.gemini .d { background: var(--gemini); box-shadow: 0 0 8px var(--gemini); }
+  .chip.codex  .d { background: var(--codex);  box-shadow: 0 0 8px var(--codex); }
+  .chip.claude { animation: chipglow 3s infinite; }
+  .chip.gemini { animation: chipglow 3s infinite .4s; }
+  .chip.codex  { animation: chipglow 3s infinite .8s; }
+
+  /* connectors */
+  .conn { flex: 0 0 38px; display: flex; align-items: center; justify-content: center; }
+  .conn svg { overflow: visible; }
+  .chev { stroke: var(--teal); stroke-width: 2; fill: none; opacity: .25; }
+  .chev.c1 { animation: flow 1.6s infinite; }
+  .chev.c2 { animation: flow 1.6s infinite .2s; }
+  .chev.c3 { animation: flow 1.6s infinite .4s; }
+  .conn.loop svg path { stroke: var(--human); stroke-width: 2; fill: none; stroke-dasharray: 4 4; animation: dash 1s linear infinite; }
+
+  .flywheel { animation: spin 8s linear infinite; transform-origin: center; }
+
+  @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.35} }
+  @keyframes flow { 0%{opacity:.15} 50%{opacity:1} 100%{opacity:.15} }
+  @keyframes dash { to { stroke-dashoffset: -16; } }
+  @keyframes chipglow { 0%,100%{ border-color: var(--line) } 50%{ border-color: #36514a } }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  @media (prefers-reduced-motion: reduce) { * { animation: none !important; } }
+
+  footer { margin-top: 40px; color: var(--muted); font-size: 13px; border-top: 1px solid var(--line); padding-top: 20px; }
+  footer b { color: var(--ink); }
+  @media (max-width: 720px) { .legend { grid-template-columns: 1fr; } h1 { font-size: 30px; } }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header class="hero">
+    <span class="kicker"><span class="dot"></span> nax · netlify agent executor</span>
+    <h1>Do the obvious thing.<br>Then let <b>three models</b> go wild on it.</h1>
+    <p class="lede">
+      Every workflow starts with something you'd do anyway — scaffold a docs site, open a PR, write a README.
+      Then <code>nax</code> fans the next step out to <b>Claude, Gemini, and Codex</b> running in parallel on Netlify Agent Runner,
+      gates until all three finish, cross-reviews, synthesizes, and (optionally) pauses for you. The wild part isn't the models — it's the <b>shape</b>.
+    </p>
+  </header>
+
+  <section class="legend">
+    <div class="legend-col">
+      <h3>The three agents</h3>
+      <div class="agents">
+        <span class="chip claude"><span class="d"></span> Claude</span>
+        <span class="chip gemini"><span class="d"></span> Gemini</span>
+        <span class="chip codex"><span class="d"></span> Codex</span>
+      </div>
+      <p class="lede" style="font-size:12.5px;margin-top:12px;">Fixed trio. They run remotely, in parallel, on the same prompt.</p>
+    </div>
+    <div class="legend-col">
+      <h3>Seven reusable shapes</h3>
+      <div class="shapes" id="shapeLegend"></div>
+    </div>
+  </section>
+
+  <section class="grid" id="grid"></section>
+
+  <footer>
+    <b>Honest footnotes for the demo:</b> the trio is fixed (Claude/Gemini/Codex) — nax doesn't swap arbitrary models.
+    Agents run on Netlify Agent Runner, not local API calls. Triggers are CLI + GitHub events; the nightly workflow (#11)
+    composes nax with GitHub's own <code>schedule:</code> cron since nax has no built-in scheduler. Everything else maps 1:1 to real
+    primitives: <code>agents</code> fan-out, <code>waitFor: agent-results</code> gating, <code>submit: follow-up</code> context reuse,
+    <code>input</code> fan-in, and the <code>human-review</code> gate.
+  </footer>
+
+</div>
+
+<script>
+/* ---- shape vocabulary (icons drawn as tiny inline SVG) ---- */
+const ICONS = {
+  task:        '<svg width="16" height="16" viewBox="0 0 16 16"><rect x="2" y="2" width="12" height="12" rx="3" fill="none" stroke="#8aa39b" stroke-width="1.5"/></svg>',
+  trigger:     '<svg width="16" height="16" viewBox="0 0 16 16"><path d="M8 1 L3 9 H7 L6 15 L13 6 H9 Z" fill="#e0b341"/></svg>',
+  fanout:      '<svg width="16" height="16" viewBox="0 0 16 16"><path d="M3 8 H6 M6 8 L11 3 M6 8 L11 8 M6 8 L11 13" stroke="#00c7b7" stroke-width="1.5" fill="none"/><circle cx="11" cy="3" r="1.6" fill="#d97757"/><circle cx="11.5" cy="8" r="1.6" fill="#4796e3"/><circle cx="11" cy="13" r="1.6" fill="#10a37f"/></svg>',
+  crossreview: '<svg width="16" height="16" viewBox="0 0 16 16"><path d="M3 3 L13 13 M13 3 L3 13" stroke="#00c7b7" stroke-width="1.5"/></svg>',
+  jury:        '<svg width="16" height="16" viewBox="0 0 16 16"><path d="M8 2 V13 M3 13 H13 M4 6 L2 10 H6 Z M12 6 L10 10 H14 Z" stroke="#e0b341" stroke-width="1.2" fill="none"/></svg>',
+  gate:        '<svg width="16" height="16" viewBox="0 0 16 16"><circle cx="8" cy="5" r="2.4" fill="#e0b341"/><path d="M3 14 C3 10 13 10 13 14" stroke="#e0b341" stroke-width="1.5" fill="none"/></svg>',
+  synth:       '<svg width="16" height="16" viewBox="0 0 16 16"><path d="M11 3 L5 13 M5 3 L11 8 M5 8 L11 13" stroke="#00c7b7" stroke-width="1.5" fill="none"/><circle cx="11.5" cy="8" r="1.8" fill="#00c7b7"/></svg>',
+  agent:       '<svg width="16" height="16" viewBox="0 0 16 16"><rect x="3" y="4" width="10" height="8" rx="2" fill="none" stroke="#8aa39b" stroke-width="1.5"/><circle cx="6" cy="8" r="1" fill="#8aa39b"/><circle cx="10" cy="8" r="1" fill="#8aa39b"/></svg>',
+  output:      '<svg width="16" height="16" viewBox="0 0 16 16"><path d="M8 11 V2 M5 5 L8 2 L11 5 M3 11 V14 H13 V11" stroke="#8aa39b" stroke-width="1.5" fill="none"/></svg>',
+  loop:        '<svg width="16" height="16" viewBox="0 0 16 16"><g class="flywheel"><path d="M13 8 A5 5 0 1 1 8 3" stroke="#e0b341" stroke-width="1.6" fill="none"/><path d="M8 1 L8 5 L11 3 Z" fill="#e0b341"/></g></svg>',
+};
+const AGENT_LABEL = { claude: 'Claude', gemini: 'Gemini', codex: 'Codex' };
+
+const SHAPE_LEGEND = [
+  ['fanout', 'Council — fan-out → synthesize'],
+  ['crossreview', 'Peer Review — critique each other'],
+  ['agent', 'Relay — assembly line'],
+  ['gate', 'Bake-off — compete → human picks'],
+  ['jury', 'Jury — score 0–1000'],
+  ['trigger', 'Trigger — GitHub / cron'],
+  ['loop', 'Flywheel — iterate & resynthesize'],
+];
+
+/* ---- the 11 workflows ---- */
+const FLOWS = [
+  { n: 1, title: 'Docs Site → Council of Enhancements', tag: 'Council',
+    wow: 'I built the obvious thing; three models told me what’s next — and filed the tickets.',
+    stages: [
+      { kind: 'task', label: 'Scaffold docs site', sub: '1 agent' },
+      { kind: 'fanout', label: 'Propose next 5 features', agents: ['claude','gemini','codex'] },
+      { kind: 'synth', label: 'Rank into a roadmap', sub: 'codex' },
+      { kind: 'output', label: 'Open GitHub issues' },
+    ] },
+  { n: 2, title: 'PR Opened → Peer Review → Consensus', tag: 'Peer Review',
+    wow: 'Zero-touch: the PR reviews itself with three frontier models that argue before commenting.',
+    stages: [
+      { kind: 'trigger', label: 'PR opened', sub: 'github event' },
+      { kind: 'fanout', label: 'Review the diff', agents: ['claude','gemini','codex'] },
+      { kind: 'crossreview', label: 'Cross-review the reviews', sub: 'kill false positives' },
+      { kind: 'synth', label: 'One consensus comment' },
+      { kind: 'output', label: 'Post back to PR' },
+    ] },
+  { n: 3, title: 'README → Bake-off', tag: 'Bake-off',
+    wow: 'Three competing drafts, side by side, you pick the winner — then it gets polished.',
+    stages: [
+      { kind: 'task', label: '"We need a real README"' },
+      { kind: 'fanout', label: 'Write 3 competing READMEs', agents: ['claude','gemini','codex'] },
+      { kind: 'gate', label: 'Human picks the winner' },
+      { kind: 'synth', label: 'Polish pass on winner' },
+    ] },
+  { n: 4, title: 'New Feature → Arena (Builder vs Breaker vs Judge)', tag: 'Arena',
+    wow: 'Adversarial self-hardening: one builds, one attacks, one referees which bugs are real.',
+    stages: [
+      { kind: 'task', label: 'Implement feature X' },
+      { kind: 'agent', label: 'Claude builds it', agents: ['claude'] },
+      { kind: 'agent', label: 'Gemini red-teams + breaking tests', agents: ['gemini'] },
+      { kind: 'agent', label: 'Codex referees real bugs', agents: ['codex'] },
+      { kind: 'loop', label: 'Loop until clean' },
+    ] },
+  { n: 5, title: 'Bug Issue → Triage Jury', tag: 'Jury',
+    wow: 'New issue gets scored on severity / effort / blast-radius and ranked into your backlog automatically.',
+    stages: [
+      { kind: 'trigger', label: 'Issue opened', sub: 'github event' },
+      { kind: 'jury', label: 'Score 0–1000 on a rubric', agents: ['claude','gemini','codex'] },
+      { kind: 'synth', label: 'Rank the backlog' },
+      { kind: 'output', label: 'Comment triage verdict' },
+    ] },
+  { n: 6, title: '"Migrate to X" → Relay Assembly Line', tag: 'Relay',
+    wow: 'Each model does the part it’s best at, in sequence — passing its own context forward.',
+    stages: [
+      { kind: 'task', label: 'Bump a major dependency' },
+      { kind: 'agent', label: 'Claude: mechanical migration', agents: ['claude'] },
+      { kind: 'agent', label: 'Gemini: fix type/test fallout', agents: ['gemini'] },
+      { kind: 'agent', label: 'Codex: changelog + upgrade guide', agents: ['codex'] },
+    ] },
+  { n: 7, title: 'Landing Page → Council → Bake-off', tag: 'Council + Bake-off',
+    wow: 'Two shapes snap together like Lego: brainstorm three directions, build all three, you choose.',
+    stages: [
+      { kind: 'task', label: 'Build a marketing page' },
+      { kind: 'fanout', label: 'Brainstorm 3 directions', agents: ['claude','gemini','codex'] },
+      { kind: 'fanout', label: 'Build all 3 in parallel', agents: ['claude','gemini','codex'] },
+      { kind: 'gate', label: 'Human picks the direction' },
+    ] },
+  { n: 8, title: 'Codebase Onboarding → Three Lenses', tag: 'Council',
+    wow: 'Parallelism as coverage, not just speed — each agent forced through a different lens.',
+    stages: [
+      { kind: 'task', label: '"Explain this repo"' },
+      { kind: 'fanout', label: 'Data-flow / failure-modes / extension-points', agents: ['claude','gemini','codex'] },
+      { kind: 'synth', label: 'One onboarding guide' },
+    ] },
+  { n: 9, title: 'Idea Flywheel', tag: 'Flywheel',
+    wow: 'The hero loop: ideate → cross-score → defend → synthesize. The bundled "ideas" flow.',
+    stages: [
+      { kind: 'fanout', label: 'Ideate', agents: ['claude','gemini','codex'] },
+      { kind: 'jury', label: 'Cross-score on rubric' },
+      { kind: 'crossreview', label: 'React / defend' },
+      { kind: 'synth', label: 'Synthesize' },
+      { kind: 'loop', label: 'Feed back in' },
+    ] },
+  { n: 10, title: 'Security Audit → Fix-it Gate', tag: 'Council + Gate',
+    wow: 'Three auditors find vulns, dedup, then you approve before a single fix is written.',
+    stages: [
+      { kind: 'task', label: 'Audit the codebase' },
+      { kind: 'fanout', label: 'Find vulnerabilities', agents: ['claude','gemini','codex'] },
+      { kind: 'synth', label: 'Dedup + synthesize' },
+      { kind: 'gate', label: 'Approve fixes?' },
+      { kind: 'output', label: 'Implement approved only' },
+    ] },
+  { n: 11, title: 'Nightly Repo Health → Issue Filer', tag: 'Trigger + Council',
+    wow: 'Compose nax with GitHub cron: wake up to a prioritized backlog of perf / a11y / SEO issues.',
+    stages: [
+      { kind: 'trigger', label: 'GitHub cron (schedule:)', sub: 'external scheduler' },
+      { kind: 'fanout', label: 'Audit perf + a11y + SEO', agents: ['claude','gemini','codex'] },
+      { kind: 'synth', label: 'Prioritize findings' },
+      { kind: 'output', label: 'File issues' },
+    ] },
+];
+
+/* ---- renderers ---- */
+function connector(loop) {
+  if (loop) {
+    return '<div class="conn loop"><svg width="38" height="40" viewBox="0 0 38 40">'
+      + '<path d="M4 8 H30 M30 8 V32 H4" /></svg></div>';
+  }
+  const chev = i => `<polyline class="chev c${i}" points="${i*7},6 ${i*7+6},13 ${i*7},20" />`;
+  return `<div class="conn"><svg width="38" height="26" viewBox="0 0 38 26">${chev(1)}${chev(2)}${chev(3)}</svg></div>`;
+}
+
+function stageHTML(s) {
+  const kindLabel = { task:'task', trigger:'trigger', fanout:'fan-out', crossreview:'cross-review',
+    jury:'jury · 0–1000', gate:'human gate', synth:'synthesize', agent:'agent', output:'output', loop:'loop' }[s.kind] || s.kind;
+  const ico = ICONS[s.kind] || ICONS.task;
+  let body = '';
+  if (s.agents && (s.kind === 'fanout' || s.kind === 'jury')) {
+    body = '<div class="chips">' + s.agents.map(a =>
+      `<span class="chip ${a}"><span class="d"></span> ${AGENT_LABEL[a]}</span>`).join('') + '</div>';
+  } else if (s.agents && s.kind === 'agent') {
+    const a = s.agents[0];
+    body = `<span class="chip ${a}" style="align-self:flex-start"><span class="d"></span> ${AGENT_LABEL[a]}</span>`;
+  } else if (s.sub) {
+    body = `<div class="stage-sub">${s.sub}</div>`;
+  }
+  return `<div class="stage ${s.kind}">
+    <div class="stage-top"><span class="stage-ico">${ico}</span><span class="stage-kind">${kindLabel}</span></div>
+    <div class="stage-label">${s.label}</div>
+    ${body}
+  </div>`;
+}
+
+function flowHTML(f) {
+  const stages = f.stages.map(stageHTML);
+  let pipe = '';
+  stages.forEach((st, i) => {
+    pipe += st;
+    if (i < stages.length - 1) pipe += connector(f.stages[i+1].kind === 'loop');
+  });
+  return `<article class="card">
+    <div class="card-head">
+      <span class="num">${String(f.n).padStart(2,'0')}</span>
+      <span class="card-title">${f.title}</span>
+      <span class="card-tag">${f.tag}</span>
+    </div>
+    <div class="pipe">${pipe}</div>
+    <p class="card-wow"><b>Wow:</b> ${f.wow}</p>
+  </article>`;
+}
+
+document.getElementById('grid').innerHTML = FLOWS.map(flowHTML).join('');
+document.getElementById('shapeLegend').innerHTML = SHAPE_LEGEND.map(([k, label]) =>
+  `<span class="shape-chip">${ICONS[k]} ${label}</span>`).join('');
+</script>
+</body>
+</html>

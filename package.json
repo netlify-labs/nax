@@ -4,7 +4,7 @@
   "description": "Run multi step Netlify agent workflows using the world's leading AI models.",
   "type": "commonjs",
   "bin": {
-    "nax": "./src/cli/nax.js"
+    "nax": "src/cli/nax.js"
   },
   "files": [
     "src",

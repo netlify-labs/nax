@@ -169,14 +169,6 @@
 
   <section class="grid" id="grid"></section>
 
-  <footer>
-    <b>Honest footnotes for the demo:</b> the trio is fixed (Claude/Gemini/Codex) — nax doesn't swap arbitrary models.
-    Agents run on Netlify Agent Runner, not local API calls. Triggers are CLI + GitHub events; the nightly workflow (#11)
-    composes nax with GitHub's own <code>schedule:</code> cron since nax has no built-in scheduler. Everything else maps 1:1 to real
-    primitives: <code>agents</code> fan-out, <code>waitFor: agent-results</code> gating, <code>submit: follow-up</code> context reuse,
-    <code>input</code> fan-in, and the <code>human-review</code> gate.
-  </footer>
-
 </div>
 
 <script>

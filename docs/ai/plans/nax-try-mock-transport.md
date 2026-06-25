@@ -17,7 +17,7 @@ Two payoffs from one feature:
 
 1. **Onboarding.** Today the first-run cliff is brutal: `gh auth login` +
    `netlify login` + `nax init` + repo secrets + a linked Netlify site before a
-   user sees *anything* happen. `npx @davidwells/netlify-agent-executor try`
+   user sees *anything* happen. `npx netlify-agent-executor try`
    should render the whole experience — fan-out, step gating, artifacts under
    `.nax/`, the dashboard graph going green — in ~10 seconds with none of that.
    That is the difference between a star and a bounce.
@@ -32,7 +32,7 @@ Two payoffs from one feature:
 ### What "done" looks like (user's eye view)
 
 ```bash
-npx @davidwells/netlify-agent-executor try
+npx netlify-agent-executor try
 # 🧪  MOCK MODE — no real agents, no credits, no network.
 # pick a flow → watch review → cross-review → synthesize run green
 # artifacts written to .nax/  (browse with `nax recent`, open in `nax dashboard`)

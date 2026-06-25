@@ -14,7 +14,7 @@
 `nax` uses the [netlify-cli](https://cli.netlify.com/) and [GitHub CLI](https://cli.github.com/). Make sure you have those on your machine for `nax` to operate.
 
 ```bash
-npm install -g @davidwells/netlify-agent-executor
+npm install -g netlify-agent-executor
 # Connect to your Netlify project or create and connect a new site
 nax init
 # Start using Netlify agentic workflows
@@ -188,15 +188,15 @@ This is handy for passing remote Netlify agent runner results into local Claude 
 From npm:
 
 ```bash
-npm install -g @davidwells/netlify-agent-executor
+npm install -g netlify-agent-executor
 ```
 
 Without installing globally:
 
 ```bash
-npx @davidwells/netlify-agent-executor run review
-npx @davidwells/netlify-agent-executor run agent codex "Review this change"
-npx @davidwells/netlify-agent-executor ci 'npm test'
+npx netlify-agent-executor run review
+npx netlify-agent-executor run agent codex "Review this change"
+npx netlify-agent-executor ci 'npm test'
 ```
 
 Or from source:
@@ -818,7 +818,7 @@ A: No. YAML is the default in the bundled examples because it is diffable, revie
 A: Yes — pass `--transport netlify-api` (or skip the workflow file in `nax init --no-github-actions`). The trade-off is that your machine has to stay alive for the duration of the run (or you'll hit the resume path).
 
 **Q: Can I use it from `npx`?**
-A: Yes. Use `npx @davidwells/netlify-agent-executor ...`. For shell commands, quote the command passed to `nax ci`, e.g. `npx @davidwells/netlify-agent-executor ci 'npm test'`.
+A: Yes. Use `npx netlify-agent-executor ...`. For shell commands, quote the command passed to `nax ci`, e.g. `npx netlify-agent-executor ci 'npm test'`.
 
 **Q: Why does the Netlify project picker show directories instead of site names?**
 A: Site IDs are only local when that directory has `.netlify/state.json` or `NETLIFY_SITE_ID` is set. `nax` avoids guessing remote site slugs from config paths; if it cannot prove the site ID, it shows the directory/config.

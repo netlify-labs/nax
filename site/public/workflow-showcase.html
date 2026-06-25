@@ -62,7 +62,9 @@
   .shape-chip svg { display: block; }
 
   /* ---- workflow cards ---- */
-  .grid { display: grid; gap: 40px; margin-top: 36px; }
+  .section-head { margin: 52px 0 4px; padding-top: 36px; border-top: 1px solid var(--line); }
+  .section-head h2 { font-size: 24px; letter-spacing: -.01em; margin: 0 0 8px; }
+  .grid { display: grid; gap: 40px; margin-top: 28px; }
   .card {
     background: linear-gradient(180deg, var(--panel) 0%, #0f1716 100%);
     border: 1px solid var(--line); border-radius: var(--radius);
@@ -143,11 +145,11 @@
 
   <header class="hero">
     <span class="kicker"><span class="dot"></span> nax · netlify agent executor</span>
-    <h1>Do the obvious thing.<br>Then let <b>three models</b> go wild on it.</h1>
+    <h1>The world's best coding harnesses,<br><b>working together</b> on the same problem.</h1>
     <p class="lede">
-      Every workflow starts with something you'd do anyway — scaffold a docs site, open a PR, write a README.
-      Then <code>nax</code> fans the next step out to <b>Claude, Gemini, and Codex</b> running in parallel on Netlify Agent Runner,
-      gates until all three finish, cross-reviews, synthesizes, and (optionally) pauses for you. The wild part isn't the models — it's the <b>shape</b>.
+      <b>Claude, Gemini, and Codex</b> are each elite on their own. <code>nax</code> runs all three in parallel on Netlify Agent Runner,
+      then has them cross-review, score, and synthesize each other's work — so the output is better than any single model could produce alone.
+      You do the obvious first step; the harnesses go wild on what comes next.
     </p>
   </header>
 
@@ -166,6 +168,11 @@
       <div class="shapes" id="shapeLegend"></div>
     </div>
   </section>
+
+  <div class="section-head">
+    <h2>Here are some practical examples</h2>
+    <p class="lede">Eleven workflows you could run today — each starts with a task you'd do anyway, then puts the three harnesses to work.</p>
+  </div>
 
   <section class="grid" id="grid"></section>
 

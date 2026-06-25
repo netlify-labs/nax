@@ -9,7 +9,7 @@ import { extractMarkdownToc } from '../run-details-toc'
 import { selectRunDetailsSection, selectorKey, type RunDetailsSelector } from '../run-details-selection'
 import { displayAgentStatuses, displayStepStatus } from '../run-projection'
 import type { RunDetailsResponse, RunDetailsSection, RunFollowupResponse, Target, DashboardRun } from '../types'
-import { isActiveStatus, statusKey } from '../status-model'
+import { isActiveStatus, isTerminalStatus, statusKey } from '../status-model'
 import { AgentIcon } from './AgentIcon'
 import { MarkdownRenderer } from './MarkdownRenderer'
 import { RunFollowupContent } from './RunFollowupModal'
@@ -81,6 +81,40 @@ function activeStepAgents(run: DashboardRun | undefined, stepId: string, agents:
   const override = stepAgentOverride(run, stepId) || (globalModels.length > 0 ? globalModels : null)
   if (!override) return agents
   return agents.filter((agent) => override.includes(agent))
+}
+
+function isStoppedWorkflowStatus(status: string): boolean {
+  return ['cancelled', 'failed', 'interrupted'].includes(statusKey(status))
+}
+
+function shouldCancelStoppedWorkflowStatus(status: string): boolean {
+  const normalized = statusKey(status)
+  return !isTerminalStatus(normalized) && normalized !== 'completed' && normalized !== 'dry-run'
+}
+
+function normalizeStoppedWorkflowSteps(run: DashboardRun | undefined, items: StepItem[]): StepItem[] {
+  if (!isStoppedWorkflowStatus(run?.status || '')) return items
+  let reachedIncompleteStep = false
+  return items.map((item) => {
+    const stepStatus = statusKey(item.status)
+    if (!['completed', 'dry-run'].includes(stepStatus)) reachedIncompleteStep = true
+    if (!reachedIncompleteStep) return item
+
+    const agentRuns = Object.fromEntries(
+      Object.entries(item.agentRuns).map(([agent, runInfo]) => [
+        agent,
+        {
+          ...runInfo,
+          status: shouldCancelStoppedWorkflowStatus(runInfo.status) ? 'cancelled' : runInfo.status,
+        },
+      ]),
+    )
+    return {
+      ...item,
+      status: shouldCancelStoppedWorkflowStatus(item.status) ? 'cancelled' : item.status,
+      agentRuns,
+    }
+  })
 }
 
 export type TimelineEntry = {
@@ -318,7 +352,7 @@ function buildStepItems(
     })
   })
 
-  return items
+  return normalizeStoppedWorkflowSteps(run, items)
 }
 
 function stepDescription(step: StepItem, sessions: RunDetailsSection[]): string {
@@ -661,6 +695,7 @@ export function RunDetailsModal({
 
   const selectTimelineEntry = useCallback((entry: TimelineEntry) => {
     setActiveTimelineId(entry.id)
+    setSelectionWarning('')
     onTimelineEntrySelect?.(entry)
   }, [onTimelineEntrySelect])
 
@@ -718,12 +753,18 @@ export function RunDetailsModal({
     }
     const activeExists = timelineEntries.some((entry) => entry.id === activeTimelineId)
     const selectorKeyForRun = `${detailsRunId}|${selectorIdentity}`
-    if (appliedSelectorKeyRef.current === selectorKeyForRun && activeExists) return
     const resolved = resolveInitialTimelineId(details, timelineEntries, initialSelector, liveContext)
+    const shouldRetryWarningFallback = Boolean(
+      selectionWarning &&
+      !resolved.warning &&
+      activeTimelineId === 'summary' &&
+      resolved.id !== activeTimelineId,
+    )
+    if (appliedSelectorKeyRef.current === selectorKeyForRun && activeExists && !shouldRetryWarningFallback) return
     appliedSelectorKeyRef.current = selectorKeyForRun
     setActiveTimelineId((current) => current === resolved.id ? current : resolved.id)
     setSelectionWarning((current) => current === resolved.warning ? current : resolved.warning)
-  }, [activeTimelineId, details, detailsRunId, initialSelector, liveContext, opened, selectorIdentity, timelineEntries])
+  }, [activeTimelineId, details, detailsRunId, initialSelector, liveContext, opened, selectionWarning, selectorIdentity, timelineEntries])
 
   const title = detailWorkflowName
     ? `Workflow results for "${detailWorkflowName}"`

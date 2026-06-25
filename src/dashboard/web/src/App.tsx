@@ -905,6 +905,13 @@ export default function App() {
       url: liveAgentUrl(event) || savedRunUrl(savedRun),
     }
   }, [detailsModalContext, liveRunState.rawEvents, projectedGraph])
+  const runDetailsInitialSelector = detailsModalLiveContext?.selector || detailsModalContext?.selector
+  const lastRunDetailsModalPropsRef = useRef<{
+    runId: string
+    initialSelector?: RunDetailsSelector
+    liveContext?: RunDetailsLiveContext | null
+    liveRevision: string
+  }>({ runId: '', liveRevision: '' })
   const selectCanvasNode = useCallback((node: WorkflowGraphNodeData | null) => {
     if (workflowCanvasMode !== 'configure') return
     if (!selectedWorkflowId) return
@@ -935,6 +942,15 @@ export default function App() {
   }, [navigateRun, selectedRunId])
   const runDetailsModalOpened = routeState.kind === 'run-details' || Boolean(detailsModalContext)
   const runDetailsModalRunId = detailsModalContext?.runId || (routeState.kind === 'run-details' ? selectedRunId : '')
+  if (runDetailsModalRunId) {
+    lastRunDetailsModalPropsRef.current = {
+      runId: runDetailsModalRunId,
+      initialSelector: runDetailsInitialSelector,
+      liveContext: detailsModalLiveContext,
+      liveRevision: detailsLiveRevision,
+    }
+  }
+  const renderedRunDetailsModalProps = lastRunDetailsModalPropsRef.current
   const selectRunDetailsTimelineEntry = useCallback((entry: TimelineEntry) => {
     if (!runDetailsModalRunId) return
     if (entry.kind === 'session') {
@@ -1208,10 +1224,10 @@ export default function App() {
         opened={runDetailsModalOpened}
         onClose={closeRunDetails}
         canOpenLocalFiles={capabilities.canOpenLocalFiles}
-        runId={runDetailsModalRunId}
-        initialSelector={detailsModalLiveContext?.selector || detailsModalContext?.selector}
-        liveContext={detailsModalLiveContext}
-        liveRevision={detailsLiveRevision}
+        runId={runDetailsModalRunId || renderedRunDetailsModalProps.runId}
+        initialSelector={runDetailsInitialSelector || renderedRunDetailsModalProps.initialSelector}
+        liveContext={detailsModalLiveContext || renderedRunDetailsModalProps.liveContext}
+        liveRevision={detailsLiveRevision || renderedRunDetailsModalProps.liveRevision}
         missingRunMessage="Load a saved workflow run before opening agent results."
         onFollowupSubmitted={handleFollowupSubmitted}
         onRunUpdated={handleRunUpdated}

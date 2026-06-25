@@ -1,5 +1,5 @@
-import { ActionIcon, Badge, Box, Button, Group, Paper, ScrollArea, Stack, Text, Title, Tooltip, UnstyledButton } from '@mantine/core'
-import { GitBranch, History, RotateCcw } from 'lucide-react'
+import { ActionIcon, Badge, Box, Button, Group, Paper, ScrollArea, Stack, Text, Title, Tooltip } from '@mantine/core'
+import { History, Info, RotateCcw } from 'lucide-react'
 import { runId, statusBadgeStyle, statusColor, statusLabel } from '../run-format'
 import { statusKey } from '../status-model'
 import type { DashboardRun } from '../types'
@@ -46,32 +46,38 @@ export function RecentRuns({
                 withBorder
                 p="xs"
                 radius="sm"
+                role="button"
+                tabIndex={0}
+                onClick={() => onSelect(run)}
+                onKeyDown={(event) => {
+                  if (event.key !== 'Enter' && event.key !== ' ') return
+                  event.preventDefault()
+                  onSelect(run)
+                }}
               >
                 <Box className="run-item-main">
                   <Group className="run-item-title-row" gap={6} justify="space-between" wrap="nowrap">
-                    <UnstyledButton
-                      className="run-item-details-button"
-                      onClick={() => onOpenDetails(run)}
-                    >
+                    <Box className="run-item-details-button">
                       <Group gap={6} wrap="nowrap">
                         <History size={14} />
                         <Text fw={700} size="sm" truncate>{run.flowTitle || run.flowId || runId(run)}</Text>
                       </Group>
-                    </UnstyledButton>
+                    </Box>
                     <Group gap={4} wrap="nowrap">
-                      <Tooltip label="Load run graph">
+                      <Tooltip label="View run details">
                         <ActionIcon
                           type="button"
-                          variant={selectedRunId === runId(run) ? 'filled' : 'subtle'}
-                          color="teal"
+                          variant="subtle"
+                          color="gray"
                           size="xs"
-                          aria-label="Load run graph"
+                          aria-label="View run details"
                           onClick={(event) => {
                             event.stopPropagation()
-                            onSelect(run)
+                            onOpenDetails(run)
                           }}
+                          onKeyDown={(event) => event.stopPropagation()}
                         >
-                          <GitBranch size={13} />
+                          <Info size={13} />
                         </ActionIcon>
                       </Tooltip>
                       {run.resumable ? (
@@ -86,6 +92,7 @@ export function RecentRuns({
                               event.stopPropagation()
                               onResume(run)
                             }}
+                            onKeyDown={(event) => event.stopPropagation()}
                           >
                             <RotateCcw size={13} />
                           </ActionIcon>
@@ -93,10 +100,7 @@ export function RecentRuns({
                       ) : null}
                     </Group>
                   </Group>
-                  <UnstyledButton
-                    className="run-item-details-button"
-                    onClick={() => onOpenDetails(run)}
-                  >
+                  <Box className="run-item-details-button">
                     <Badge
                       className={`run-status ${statusKey(run.status || '')}`}
                       variant="light"
@@ -107,7 +111,7 @@ export function RecentRuns({
                       {statusLabel(run.status || 'unknown')}
                     </Badge>
                     <Text size="xs" c="dimmed" truncate>{runId(run)}</Text>
-                  </UnstyledButton>
+                  </Box>
                 </Box>
               </Paper>
             ))}

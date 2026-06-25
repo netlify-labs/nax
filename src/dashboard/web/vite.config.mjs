@@ -7,10 +7,11 @@ import { codeInspectorPlugin } from 'code-inspector-plugin'
 
 const require = createRequire(import.meta.url)
 const { listFlows, loadFlow } = require('../../workflows/catalog/flows')
-const { listRunStates } = require('../../storage/local/run-state')
-const { publicFlow, publicRunState } = require('../api/serializers')
+const { publicFlow } = require('../api/serializers')
 const { flowToGraph } = require('../shared/graph')
-const { buildRunDetails } = require('../shared/run-details')
+const { createLocalEventStreamAdapter } = require('../events/local-stream')
+const { createLocalEventStore } = require('../storage/local-events')
+const { createLocalRunStore } = require('../storage/local-runs')
 
 const webRoot = path.dirname(fileURLToPath(import.meta.url))
 const repoRoot = path.resolve(webRoot, '../../..')
@@ -50,6 +51,20 @@ function devApiPlugin() {
   return {
     name: 'nax-dev-api',
     configureServer(server) {
+      const runStore = createLocalRunStore({
+        projectRoot: repoRoot,
+        flowStore: {
+          loadWorkflow: (id) => loadFlow(id, flowOptions),
+        },
+      })
+      const eventStream = createLocalEventStreamAdapter({
+        liveRuns: {
+          getRawRun: () => null,
+          registerSseClient: () => {},
+        },
+        eventStore: createLocalEventStore({ getRunState: runStore.getRunState }),
+      })
+
       server.middlewares.use(async (req, res, next) => {
         const requestUrl = new URL(req.url || '/', 'http://127.0.0.1')
         const pathname = requestUrl.pathname
@@ -100,10 +115,73 @@ function devApiPlugin() {
               methodNotAllowed(res, req.method || 'UNKNOWN')
               return
             }
+            const page = runStore.listRunsPage({
+              limit: requestUrl.searchParams.get('limit') || '',
+              cursor: requestUrl.searchParams.get('cursor') || '',
+            })
             jsonResponse(res, 200, {
               active: [],
-              durable: listRunStates(repoRoot).map(publicRunState),
+              durable: page.durable,
+              pagination: page.pagination,
             })
+            return
+          }
+
+          const runMatch = pathname.match(/^\/api\/runs\/([^/]+)$/)
+          if (runMatch) {
+            if (req.method !== 'GET') {
+              methodNotAllowed(res, req.method || 'UNKNOWN')
+              return
+            }
+            const run = runStore.getRun(safeDecode(runMatch[1]))
+            if (!run) {
+              jsonResponse(res, 404, errorPayload(404, 'not_found', 'Unknown dashboard run.'))
+              return
+            }
+            jsonResponse(res, 200, { run })
+            return
+          }
+
+          const runEventsJsonMatch = pathname.match(/^\/api\/runs\/([^/]+)\/events\.json$/)
+          if (runEventsJsonMatch) {
+            if (req.method !== 'GET') {
+              methodNotAllowed(res, req.method || 'UNKNOWN')
+              return
+            }
+            const runId = safeDecode(runEventsJsonMatch[1])
+            const replay = eventStream.replayEvents({
+              runId,
+              since: Number(requestUrl.searchParams.get('since') || 0),
+            })
+            if (!replay.ok) {
+              jsonResponse(res, 404, errorPayload(404, 'not_found', 'Unknown dashboard run.'))
+              return
+            }
+            jsonResponse(res, 200, {
+              run: replay.run,
+              events: replay.events || [],
+              errors: replay.errors || [],
+            })
+            return
+          }
+
+          const runEventsMatch = pathname.match(/^\/api\/runs\/([^/]+)\/events$/)
+          if (runEventsMatch) {
+            if (req.method !== 'GET') {
+              methodNotAllowed(res, req.method || 'UNKNOWN')
+              return
+            }
+            const runId = safeDecode(runEventsMatch[1])
+            const replay = eventStream.streamEvents({
+              req,
+              res,
+              runId,
+              since: Number(requestUrl.searchParams.get('since') || 0),
+            })
+            if (!replay.ok) {
+              jsonResponse(res, 404, errorPayload(404, 'not_found', 'Unknown dashboard run.'))
+              return
+            }
             return
           }
 
@@ -114,19 +192,12 @@ function devApiPlugin() {
               return
             }
             const runId = safeDecode(runGraphMatch[1])
-            const runState = listRunStates(repoRoot).find((state) => state.runId === runId)
-            if (!runState) {
+            const graph = await runStore.getRunGraph(runId)
+            if (!graph) {
               jsonResponse(res, 404, errorPayload(404, 'not_found', 'Unknown dashboard run.'))
               return
             }
-            const flow = runState.flow && Array.isArray(runState.flow.steps)
-              ? runState.flow
-              : await loadFlow(runState.flowId, flowOptions)
-            jsonResponse(res, 200, {
-              run: publicRunState(runState),
-              workflow: publicFlow(flow),
-              graph: flowToGraph({ flow, runState }),
-            })
+            jsonResponse(res, 200, graph)
             return
           }
 
@@ -137,15 +208,12 @@ function devApiPlugin() {
               return
             }
             const runId = safeDecode(runDetailsMatch[1])
-            const runState = listRunStates(repoRoot).find((state) => state.runId === runId)
-            if (!runState) {
+            const details = await runStore.getRunDetails(runId)
+            if (!details) {
               jsonResponse(res, 404, errorPayload(404, 'not_found', 'Unknown dashboard run.'))
               return
             }
-            jsonResponse(res, 200, {
-              run: publicRunState(runState),
-              details: buildRunDetails(runState),
-            })
+            jsonResponse(res, 200, details)
             return
           }
 

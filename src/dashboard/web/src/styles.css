@@ -1117,6 +1117,14 @@ body {
 
 .run-item {
   border-color: var(--mantine-color-default-border);
+  cursor: pointer;
+  transition: border-color 120ms ease, box-shadow 120ms ease, background-color 120ms ease;
+}
+
+.run-item:hover,
+.run-item:focus-visible {
+  background: color-mix(in srgb, var(--mantine-primary-color-6), transparent 94%);
+  border-color: var(--mantine-primary-color-5);
 }
 
 .run-item.selected {

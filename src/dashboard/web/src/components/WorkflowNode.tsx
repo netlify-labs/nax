@@ -30,7 +30,8 @@ function agentIsDone(node: WorkflowGraphNodeData, agent: string): boolean {
   return isCompletedStatus(node.agentStatuses?.[agent] || '') || hasCompletedRun(node, agent)
 }
 
-function countStateLabel(count: number, state: string): string {
+function countStateLabel(count: number, state: string, total?: number): string {
+  if (state === 'completed' && total !== undefined && count === total) return 'completed'
   return `${count} ${state}`
 }
 
@@ -42,11 +43,11 @@ function nodeProgressLabel(node: WorkflowGraphNodeData, selectedAgents: Set<stri
   if (isActiveStatus(node.status || '')) {
     const runningCount = activeAgents.length - completedCount
     return [
-      completedCount > 0 ? countStateLabel(completedCount, 'done') : '',
+      completedCount > 0 ? countStateLabel(completedCount, 'completed', activeAgents.length) : '',
       runningCount > 0 ? countStateLabel(runningCount, 'running') : '',
     ].filter(Boolean).join(', ')
   }
-  if (isCompletedStatus(node.status || '')) return countStateLabel(completedCount, 'done')
+  if (isCompletedStatus(node.status || '')) return countStateLabel(completedCount, 'completed', activeAgents.length)
   return ''
 }
 

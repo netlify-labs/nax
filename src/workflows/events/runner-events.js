@@ -51,7 +51,7 @@ const { appendEventLog } = require('./runner-event-log')
  *   emit: (type: string, payload?: import('../../types').JsonMap) => import('../../types').JsonMap,
  *   emitAsync: (type: string, payload?: import('../../types').JsonMap) => Promise<import('../../types').JsonMap>,
  *   setContext: (context?: RunnerEventContext) => void,
- *   close: () => void,
+ *   close: () => Promise<void>,
  * }} RunnerEventEmitter
  *
  * @typedef {Record<string, unknown> | unknown[]} SeenEventObject
@@ -150,7 +150,7 @@ function normalizeRunnerEvent(base = {}, type, payload = {}, seq, now = new Date
 function createFdStream(fd) {
   const numericFd = Number(fd)
   if (!Number.isInteger(numericFd) || numericFd < 0) return null
-  return fs.createWriteStream(null, { fd: numericFd, autoClose: false })
+  return fs.createWriteStream(null, { fd: numericFd, autoClose: true })
 }
 
 /**
@@ -179,6 +179,8 @@ function createRunnerEventEmitter(options = {}) {
   const stream = options.stream || (options.fd || env.NAX_EVENT_FD ? createFdStream(options.fd || env.NAX_EVENT_FD) : null)
   const now = options.now || (() => new Date())
   const onError = typeof options.onError === 'function' ? options.onError : () => {}
+  /** @type {Promise<void> | null} */
+  let closePromise = null
   function isEnabled() {
     return Boolean(stream || logPath)
   }
@@ -228,7 +230,23 @@ function createRunnerEventEmitter(options = {}) {
       if (context.logPath !== undefined) logPath = context.logPath || ''
     },
     close() {
-      if (stream && stream !== options.stream && typeof stream.end === 'function') stream.end()
+      if (!stream || stream === options.stream || typeof stream.end !== 'function') return Promise.resolve()
+      if (closePromise) return closePromise
+      closePromise = new Promise((resolve) => {
+        let settled = false
+        const done = () => {
+          if (settled) return
+          settled = true
+          resolve()
+        }
+        stream.once('close', done)
+        stream.once('error', (error) => {
+          onError(error)
+          done()
+        })
+        stream.end()
+      })
+      return closePromise
     },
   }
 }

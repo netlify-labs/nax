@@ -98,24 +98,23 @@ export type StartRunResponse = {
 }
 
 export type RunsPagination = {
-  durableLimit: number
-  durableOffset: number
-  durableTotal: number
+  limit: number
+  offset: number
+  total: number
   nextCursor: string | null
   hasMore: boolean
 }
 
 export type RunsResponse = {
-  active: DashboardRun[]
-  durable: DashboardRun[]
+  runs: DashboardRun[]
   pagination?: RunsPagination
 }
 
 export type RunsListData = {
   runs: DashboardRun[]
   hasMore: boolean
-  durableShownCount: number
-  durableTotal: number
+  shownCount: number
+  totalCount: number
 }
 
 export type RunGraphResponse = {

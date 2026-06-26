@@ -64,6 +64,46 @@ function writeRunState(projectRoot, runId, { flowId = 'review', title = runId, u
   return dir
 }
 
+function writeActiveFollowupRunState(projectRoot, runId = 'followup-run') {
+  const dir = path.join(projectRoot, '.nax', 'workflows', runId)
+  fs.mkdirSync(path.join(dir, 'artifacts'), { recursive: true })
+  fs.writeFileSync(path.join(dir, 'workflow.json'), JSON.stringify({
+    schemaVersion: 1,
+    runId,
+    flowId: 'review',
+    flowTitle: 'Review',
+    status: 'completed',
+    branch: 'main',
+    createdAt: '2026-06-22T00:00:00.000Z',
+    updatedAt: '2026-06-22T00:00:00.000Z',
+    dir,
+    flow: {
+      id: 'review',
+      title: 'Review',
+      steps: [{ id: 'one', title: 'One', agents: ['codex'] }],
+    },
+    steps: [
+      {
+        id: 'one',
+        title: 'One',
+        status: 'completed',
+        agents: ['codex'],
+        runs: [{ agent: 'codex', status: 'completed' }],
+      },
+      {
+        id: 'dashboard-followup-1',
+        title: 'Follow-up 1: One (codex)',
+        status: 'submitted',
+        agents: ['codex'],
+        source: { type: 'dashboard-followup', id: 'followup-1' },
+        runs: [{ agent: 'codex', status: 'submitted', runnerId: 'runner-1', sessionId: 'session-1' }],
+      },
+    ],
+  }, null, 2))
+  fs.writeFileSync(path.join(dir, 'artifacts', 'summary.md'), '# Follow-up\n')
+  return dir
+}
+
 test('local workflow store lists workflows and builds graph responses', async () => {
   const projectRoot = tmpRoot()
   writeProjectFlow(projectRoot, 'review')
@@ -92,12 +132,12 @@ test('local run store pages durable runs before parsing workflow JSON', () => {
 
   const store = createLocalRunStore({ projectRoot })
   const page = store.listRunsPage({ limit: 1 })
-  assert.deepEqual(page.durable.map((run) => run.runId), ['newest'])
-  assert.equal(page.pagination.durableTotal, 3)
+  assert.deepEqual(page.runs.map((run) => run.runId), ['newest'])
+  assert.equal(page.pagination.total, 3)
   assert.equal(page.pagination.hasMore, true)
 
   const second = store.listRunsPage({ limit: 1, cursor: page.pagination.nextCursor })
-  assert.deepEqual(second.durable.map((run) => run.runId), ['middle'])
+  assert.deepEqual(second.runs.map((run) => run.runId), ['middle'])
 })
 
 test('local run store returns graph and details from durable state fallback flow', async () => {
@@ -134,6 +174,59 @@ test('local run store resolves active runtime ids to durable run state ids', asy
 
   const details = await store.getRunDetails('active-1')
   assert.equal(details.run.runId, 'run-1')
+})
+
+test('local run store refreshes contradictory detail state through bounded follow-up sync', () => {
+  const projectRoot = tmpRoot()
+  writeActiveFollowupRunState(projectRoot)
+  let calls = 0
+  const store = createLocalRunStore({
+    projectRoot,
+    followupSyncRunner: () => {
+      calls += 1
+      return {
+        sessions: [{
+          sessionId: 'session-1',
+          runnerId: 'runner-1',
+          agent: 'codex',
+          status: 'completed',
+          resultText: 'Remote result.',
+          updatedAt: '2026-06-22T00:01:00.000Z',
+        }],
+      }
+    },
+  })
+
+  const run = store.getRun('followup-run')
+
+  assert.equal(calls, 1)
+  assert.equal(run.status, 'completed')
+  assert.equal(run.steps[1].status, 'completed')
+  assert.equal(run.steps[1].runs[0].status, 'completed')
+})
+
+test('local run store keeps list pagination disk-only and cooldowns refresh attempts', () => {
+  const projectRoot = tmpRoot()
+  writeActiveFollowupRunState(projectRoot)
+  let calls = 0
+  const store = createLocalRunStore({
+    projectRoot,
+    refreshCooldownMs: 60000,
+    followupSyncRunner: () => {
+      calls += 1
+      return { sessions: [] }
+    },
+  })
+
+  const page = store.listRunsPage({ limit: 10 })
+  assert.equal(page.runs[0].runId, 'followup-run')
+  assert.equal(calls, 0)
+
+  const state = store.getRunState('followup-run')
+  store.refreshRunStateIfNeeded(state, { view: 'detail', now: new Date('2026-06-22T00:02:00.000Z') })
+  store.refreshRunStateIfNeeded(state, { view: 'detail', now: new Date('2026-06-22T00:02:10.000Z') })
+
+  assert.equal(calls, 1)
 })
 
 test('local event store replays durable events with since filtering', () => {

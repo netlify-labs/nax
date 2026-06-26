@@ -1203,6 +1203,7 @@ body {
 }
 
 .workflow-node.status-running,
+.workflow-node.status-booting,
 .workflow-node.status-submitted,
 .workflow-node.status-waiting,
 .workflow-node.status-retrying,
@@ -1348,6 +1349,7 @@ body {
 }
 
 .agent-chip.agent-running,
+.agent-chip.agent-booting,
 .agent-chip.agent-submitted,
 .agent-chip.agent-waiting,
 .agent-chip.agent-retrying,
@@ -1398,6 +1400,7 @@ body {
 }
 
 .agent-chip.agent-running:hover,
+.agent-chip.agent-booting:hover,
 .agent-chip.agent-submitted:hover,
 .agent-chip.agent-waiting:hover,
 .agent-chip.agent-retrying:hover,

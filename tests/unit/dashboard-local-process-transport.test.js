@@ -3,7 +3,7 @@ const { EventEmitter } = require('events')
 const { PassThrough } = require('stream')
 const test = require('node:test')
 
-const { runWorkflowChild } = require('../../src/dashboard/transports/local-process')
+const { runWorkflowChild, signalWorkflowChild } = require('../../src/dashboard/transports/local-process')
 
 class FakeChild extends EventEmitter {
   constructor() {
@@ -88,6 +88,7 @@ test('local process transport launches nax child with event fd and captures succ
 
   assert.equal(fakeSpawn.calls[0].command, '/usr/bin/node')
   assert.equal(fakeSpawn.calls[0].options.cwd, '/tmp/project')
+  assert.equal(fakeSpawn.calls[0].options.detached, process.platform !== 'win32')
   const childEnv = /** @type {NodeJS.ProcessEnv} */ (fakeSpawn.calls[0].options.env)
   assert.equal(childEnv.NO_COLOR, undefined)
   assert.equal(childEnv.NAX_EVENT_FD, '3')
@@ -181,4 +182,44 @@ test('local process transport cancellation sends SIGTERM then SIGKILL fallback',
   const result = await run.promise
   assert.equal(result.status, 'cancelled')
   assert.equal(run.cancel(), false)
+})
+
+test('local process transport can disable detached mode for constrained test runtimes', async () => {
+  const child = new FakeChild()
+  const fakeSpawn = fakeSpawnFor(child)
+  const run = runWorkflowChild({
+    flowId: 'review',
+    projectRoot: '/tmp/project',
+    deps: {
+      spawn: fakeSpawn.spawn,
+      env: {},
+      detached: false,
+    },
+  })
+
+  child.emit('close', 0, null)
+  await run.promise
+
+  assert.equal(fakeSpawn.calls[0].options.detached, false)
+})
+
+test('signalWorkflowChild targets a POSIX process group before child fallback', () => {
+  const calls = []
+  const originalKill = process.kill
+  process.kill = /** @type {typeof process.kill} */ ((pid, signal) => {
+    calls.push({ pid: Number(pid), signal: String(signal) })
+    return true
+  })
+  try {
+    const child = new FakeChild()
+    const processChild = /** @type {import('child_process').ChildProcess} */ (/** @type {unknown} */ ({
+      pid: 4321,
+      kill: (signal) => child.kill(String(signal)),
+    }))
+    assert.equal(signalWorkflowChild(processChild, 'SIGTERM', true), true)
+    assert.deepEqual(calls, [{ pid: -4321, signal: 'SIGTERM' }])
+    assert.deepEqual(child.signals, [])
+  } finally {
+    process.kill = originalKill
+  }
 })

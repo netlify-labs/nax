@@ -16,7 +16,7 @@ const STATUS_ALIASES: Record<string, string> = {
 }
 
 const COMPLETED_STATUSES = new Set(['completed', 'dry-run'])
-const ACTIVE_STATUSES = new Set(['running'])
+const ACTIVE_STATUSES = new Set(['running', 'booting'])
 const FAILED_STATUSES = new Set(['failed'])
 const CANCELLED_STATUSES = new Set(['cancelled', 'abandoned', 'dismissed'])
 const WARNING_STATUSES = new Set(['awaiting_review', 'interrupted'])
@@ -56,6 +56,7 @@ export function isTerminalStatus(status: string): boolean {
 export function statusLabel(status: string): string {
   const key = statusKey(status)
   if (key === 'unknown') return 'Unknown'
+  if (key === 'booting') return 'Booting up'
   if (key === 'running') return 'In progress'
   if (key === 'dry-run') return 'Dry run'
   return titleCaseStatus(key)

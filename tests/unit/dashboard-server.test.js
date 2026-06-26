@@ -209,6 +209,64 @@ test('dashboard extracts durable workflow run id from runner output', () => {
   assert.equal(_private.extractDurableRunId(output), '2026-06-19T04-40-05-602Z-do-next')
 })
 
+test('dashboard matches active live runs to nearby durable workflow state', () => {
+  const durableRunId = '2026-06-25T20-00-46-405Z-local-smoke-test'
+  const matched = _private.durableRunIdFromActiveRunStates([
+    {
+      runId: '2026-06-25T19-57-00-000Z-local-smoke-test',
+      flowId: 'local-smoke-test',
+      createdAt: '2026-06-25T19:57:00.000Z',
+    },
+    {
+      runId: durableRunId,
+      flowId: 'local-smoke-test',
+      createdAt: '2026-06-25T20:00:46.405Z',
+    },
+    {
+      runId: '2026-06-25T20-00-48-000Z-review',
+      flowId: 'review',
+      createdAt: '2026-06-25T20:00:48.000Z',
+    },
+  ], {
+    id: '2026-06-25T20-00-39-770Z-local-smoke-test',
+    flowId: 'local-smoke-test',
+    startedAt: '2026-06-25T20:00:39.770Z',
+  })
+
+  assert.equal(matched, durableRunId)
+})
+
+test('dashboard projected workflow activity combines live and durable state', () => {
+  const live = { id: 'run-1', runId: 'run-1', flowId: 'review', status: 'running' }
+  assert.deepEqual(_private.projectedWorkflowActivity({
+    flowId: 'review',
+    liveRun: live,
+    durableStates: [],
+  }), { active: true, staleLive: false, source: 'live' })
+
+  assert.deepEqual(_private.projectedWorkflowActivity({
+    flowId: 'review',
+    liveRun: null,
+    durableStates: [{
+      runId: 'run-2',
+      flowId: 'review',
+      status: 'completed',
+      steps: [{ id: 'one', status: 'running', runs: [{ agent: 'codex', status: 'submitted' }] }],
+    }],
+  }), { active: true, staleLive: false, source: 'durable', runId: 'run-2' })
+
+  assert.deepEqual(_private.projectedWorkflowActivity({
+    flowId: 'review',
+    liveRun: live,
+    durableStates: [{
+      runId: 'run-1',
+      flowId: 'review',
+      status: 'completed',
+      steps: [{ id: 'one', status: 'completed', runs: [{ agent: 'codex', status: 'completed' }] }],
+    }],
+  }), { active: false, staleLive: true, source: 'live' })
+})
+
 test('dashboard builds compact step status snapshots from workflow state', () => {
   const snapshot = _private.stepStatusSnapshot({
     steps: [
@@ -549,7 +607,56 @@ test('dashboard tail streams dry-run output to the server console', async () => 
 
 test('dashboard real-run endpoint starts a tracked process and replays events', async () => {
   const projectRoot = tmpRoot()
-  const server = await startDashboardServer({ projectRoot })
+  const durableRunId = '2026-06-25T20-12-41-929Z-review'
+  /** @type {Array<() => void>} */
+  const cancelCallbacks = []
+  const server = await startDashboardServer({
+    projectRoot,
+    runWorkflowChild: ({ flowId, eventSink }) => {
+      /** @type {(result: Record<string, unknown>) => void} */
+      let resolveRun = () => {}
+      const promise = new Promise((resolve) => {
+        resolveRun = resolve
+      })
+      eventSink({
+        type: 'started',
+        command: ['nax', 'run', flowId],
+      })
+      setTimeout(() => {
+        eventSink({
+          type: 'runner_event',
+          event: {
+            type: 'workflow_started',
+            runId: durableRunId,
+            flowId,
+            status: 'running',
+          },
+        })
+      }, 5)
+      cancelCallbacks.push(() => resolveRun({
+        status: 'cancelled',
+        command: ['nax', 'run', flowId],
+        startedAt: '2026-06-25T20:12:34.601Z',
+        exitedAt: '2026-06-25T20:12:35.000Z',
+        durationMs: 399,
+        exitCode: null,
+        signal: 'SIGTERM',
+        stdout: `Run ${durableRunId}\n`,
+        stderr: '',
+        stdoutDropped: 0,
+        stderrDropped: 0,
+      }))
+      return {
+        command: ['nax', 'run', flowId],
+        cancel: () => {
+          const callback = cancelCallbacks.shift()
+          if (callback) callback()
+          return true
+        },
+        promise,
+      }
+    },
+  })
   try {
     const base = `http://127.0.0.1:${server.port}`
     const unauthorized = await postJson(`${base}/api/workflows/review/runs`, '', {
@@ -565,7 +672,9 @@ test('dashboard real-run endpoint starts a tracked process and replays events', 
     assert.equal(started.statusCode, 202)
     assert.equal(started.payload.workflow.id, 'review')
     assert.equal(started.payload.run.status, 'running')
-    assert.ok(started.payload.run.id)
+    assert.equal(started.payload.run.id, durableRunId)
+    assert.equal(started.payload.run.id, started.payload.run.runId)
+    assert.doesNotMatch(started.payload.run.id, /^pending-/)
     assert.equal(started.payload.run.command[0], 'nax')
     assert.notEqual(started.payload.run.command[0], process.execPath)
 
@@ -574,13 +683,79 @@ test('dashboard real-run endpoint starts a tracked process and replays events', 
     assert.equal(detail.statusCode, 200)
     assert.ok(['running', 'failed', 'completed', 'cancelled'].includes(detail.payload.run.status))
 
-    const events = await requestText(`${base}/api/runs/${encodeURIComponent(started.payload.run.id)}/events`, { token: server.token })
+    const events = await requestJson(`${base}/api/runs/${encodeURIComponent(started.payload.run.id)}/events.json`, { token: server.token })
     assert.equal(events.statusCode, 200)
-    assert.match(events.body, /event: started/)
+    assert.equal(events.payload.events[0].type, 'started')
 
     const cancel = await postJson(`${base}/api/runs/${encodeURIComponent(started.payload.run.id)}/cancel`, server.token, {})
     assert.equal(cancel.statusCode, 200)
     assert.equal(typeof cancel.payload.cancelled, 'boolean')
+  } finally {
+    await server.close()
+  }
+})
+
+test('dashboard real-run endpoint does not expose pending run ids while waiting for durable state', async () => {
+  const projectRoot = tmpRoot()
+  /** @type {Array<() => void>} */
+  const cancelCallbacks = []
+  /** @type {() => void} */
+  let resolveChildStarted = () => {}
+  const childStarted = new Promise((resolve) => {
+    resolveChildStarted = () => resolve(undefined)
+  })
+  const server = await startDashboardServer({
+    projectRoot,
+    runWorkflowChild: ({ flowId, eventSink }) => {
+      /** @type {(result: Record<string, unknown>) => void} */
+      let resolveRun = () => {}
+      const promise = new Promise((resolve) => {
+        resolveRun = resolve
+      })
+      eventSink({
+        type: 'started',
+        command: ['nax', 'run', flowId],
+      })
+      resolveChildStarted()
+      cancelCallbacks.push(() => resolveRun({
+        status: 'cancelled',
+        command: ['nax', 'run', flowId],
+        startedAt: '2026-06-25T20:12:34.601Z',
+        exitedAt: '2026-06-25T20:12:35.000Z',
+        durationMs: 399,
+        exitCode: null,
+        signal: 'SIGTERM',
+        stdout: '',
+        stderr: '',
+        stdoutDropped: 0,
+        stderrDropped: 0,
+      }))
+      return {
+        command: ['nax', 'run', flowId],
+        cancel: () => {
+          const callback = cancelCallbacks.shift()
+          if (callback) callback()
+          return true
+        },
+        promise,
+      }
+    },
+  })
+  try {
+    const base = `http://127.0.0.1:${server.port}`
+    const pendingStart = postJson(`${base}/api/workflows/review/runs`, server.token, {
+      transport: 'auto',
+      branch: 'master',
+      models: ['codex'],
+    })
+    await childStarted
+    const runs = await requestJson(`${base}/api/runs?limit=50`, { token: server.token })
+    assert.equal(runs.statusCode, 200)
+    assert.deepEqual(runs.payload.runs, [])
+    const callback = cancelCallbacks.shift()
+    if (callback) callback()
+    const started = await pendingStart
+    assert.equal(started.statusCode, 500)
   } finally {
     await server.close()
   }
@@ -793,11 +968,13 @@ test('dashboard runs API reads durable workflow state from .nax', async () => {
     const base = `http://127.0.0.1:${server.port}`
     const runs = await requestJson(`${base}/api/runs`, { token: server.token })
     assert.equal(runs.statusCode, 200)
-    assert.equal(runs.payload.durable.some((run) => run.runId === runId), true)
-    assert.equal(runs.payload.durable.find((run) => run.runId === runId)?.target.branch, 'main')
-    assert.equal(runs.payload.pagination.durableLimit, 50)
-    assert.equal(runs.payload.pagination.durableOffset, 0)
-    assert.equal(runs.payload.pagination.durableTotal, 1)
+    assert.equal(runs.payload.durable, undefined)
+    assert.equal(runs.payload.active, undefined)
+    assert.equal(runs.payload.runs.some((run) => run.runId === runId), true)
+    assert.equal(runs.payload.runs.find((run) => run.runId === runId)?.target.branch, 'main')
+    assert.equal(runs.payload.pagination.limit, 50)
+    assert.equal(runs.payload.pagination.offset, 0)
+    assert.equal(runs.payload.pagination.total, 1)
     assert.equal(runs.payload.pagination.hasMore, false)
 
     const detail = await requestJson(`${base}/api/runs/${runId}`, { token: server.token })
@@ -879,22 +1056,22 @@ test('dashboard runs API paginates durable workflow state with opaque cursors', 
     const base = `http://127.0.0.1:${server.port}`
     const first = await requestJson(`${base}/api/runs?limit=1`, { token: server.token })
     assert.equal(first.statusCode, 200)
-    assert.deepEqual(first.payload.durable.map((run) => run.runId), ['newest-run'])
-    assert.equal(first.payload.pagination.durableLimit, 1)
-    assert.equal(first.payload.pagination.durableOffset, 0)
-    assert.equal(first.payload.pagination.durableTotal, 3)
+    assert.deepEqual(first.payload.runs.map((run) => run.runId), ['newest-run'])
+    assert.equal(first.payload.pagination.limit, 1)
+    assert.equal(first.payload.pagination.offset, 0)
+    assert.equal(first.payload.pagination.total, 3)
     assert.equal(first.payload.pagination.hasMore, true)
     assert.equal(typeof first.payload.pagination.nextCursor, 'string')
 
     const second = await requestJson(`${base}/api/runs?limit=1&cursor=${encodeURIComponent(first.payload.pagination.nextCursor)}`, { token: server.token })
     assert.equal(second.statusCode, 200)
-    assert.deepEqual(second.payload.durable.map((run) => run.runId), ['middle-run'])
-    assert.equal(second.payload.pagination.durableOffset, 1)
+    assert.deepEqual(second.payload.runs.map((run) => run.runId), ['middle-run'])
+    assert.equal(second.payload.pagination.offset, 1)
     assert.equal(second.payload.pagination.hasMore, true)
 
     const clamped = await requestJson(`${base}/api/runs?limit=999`, { token: server.token })
     assert.equal(clamped.statusCode, 200)
-    assert.equal(clamped.payload.pagination.durableLimit, 200)
+    assert.equal(clamped.payload.pagination.limit, 200)
     assert.equal(clamped.payload.pagination.hasMore, false)
 
     const invalid = await requestJson(`${base}/api/runs?cursor=not-a-cursor`, { token: server.token })
@@ -1005,8 +1182,8 @@ test('dashboard follow-up endpoint submits matching runner and fresh additional 
     assert.equal(response.payload.followup.submissions[1].mode, 'fresh-runner')
     assert.equal(response.payload.followup.submissions[1].runnerId, 'runner-gemini')
     assert.equal(response.payload.followup.sourceWorkflow.runId, runId)
-    assert.equal(response.payload.followup.sourceWorkflow.status, 'submitted')
-    assert.equal(response.payload.followup.persistedWorkflow.status, 'submitted')
+    assert.equal(response.payload.followup.sourceWorkflow.status, 'running')
+    assert.equal(response.payload.followup.persistedWorkflow.status, 'running')
     assert.equal(response.payload.followup.persistedWorkflow.flowTitle, 'Follow-up on Review (Gemini)')
 
     assert.equal(submissions.length, 2)
@@ -1017,7 +1194,7 @@ test('dashboard follow-up endpoint submits matching runner and fresh additional 
     assert.match(submissions[0].promptText, /# Prior Results Context/)
 
     const runs = await requestJson(`${base}/api/runs`, { token: server.token })
-    assert.equal(runs.payload.durable.some((run) => run.flowTitle === 'Follow-up on Review (Gemini)'), true)
+    assert.equal(runs.payload.runs.some((run) => run.flowTitle === 'Follow-up on Review (Gemini)'), true)
     const graph = await requestJson(`${base}/api/runs/${runId}/graph`, { token: server.token })
     const followupNode = graph.payload.graph.nodes.find((node) => node.id.startsWith('dashboard-followup-'))
     assert.ok(followupNode)

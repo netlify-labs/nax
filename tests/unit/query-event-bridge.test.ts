@@ -67,7 +67,7 @@ function runDetails(run: DashboardRun): RunDetailsResponse {
   }
 }
 
-test('query event bridge patches cached runs from workflow lifecycle events', () => {
+test('query event bridge invalidates instead of patching cached run status from lifecycle events', () => {
   const queryClient = new QueryClient()
   queryClient.setQueryData(dashboardQueryKeys.runsInfinite(50), { pages: [], pageParams: [] })
   queryClient.setQueryData(dashboardQueryKeys.run('run-1'), dashboardRun('run-1'))
@@ -83,10 +83,9 @@ test('query event bridge patches cached runs from workflow lifecycle events', ()
   }, 'fallback-run')
 
   const started = queryClient.getQueryData<DashboardRun>(dashboardQueryKeys.run('run-1'))
-  assert.equal(started?.status, 'running')
-  assert.equal(started?.flowTitle, 'Review')
-  assert.deepEqual(started?.command, ['nax', 'workflow', 'run'])
-  assert.equal(started?.startedAt, '2026-06-22T00:00:00.000Z')
+  assert.equal(started?.status, 'pending')
+  assert.equal(started?.flowTitle, undefined)
+  assert.equal(started?.startedAt, undefined)
   assert.equal(queryClient.getQueryState(dashboardQueryKeys.runsInfinite(50))?.isInvalidated, true)
 
   applyRunnerEventToDashboardCache(queryClient, {
@@ -97,8 +96,8 @@ test('query event bridge patches cached runs from workflow lifecycle events', ()
   }, 'fallback-run')
 
   const failed = queryClient.getQueryData<DashboardRun>(dashboardQueryKeys.run('run-1'))
-  assert.equal(failed?.status, 'failed')
-  assert.equal(failed?.updatedAt, '2026-06-22T00:01:00.000Z')
+  assert.equal(failed?.status, 'pending')
+  assert.equal(failed?.updatedAt, undefined)
 
   applyRunnerEventToDashboardCache(queryClient, {
     type: 'exited',
@@ -110,31 +109,36 @@ test('query event bridge patches cached runs from workflow lifecycle events', ()
   }, 'fallback-run')
 
   const exited = queryClient.getQueryData<DashboardRun>(dashboardQueryKeys.run('run-1'))
-  assert.equal(exited?.status, 'completed')
-  assert.equal(exited?.exitCode, 0)
-  assert.equal(exited?.exitedAt, '2026-06-22T00:02:00.000Z')
+  assert.equal(exited?.status, 'pending')
+  assert.equal(exited?.exitCode, undefined)
+  assert.equal(exited?.exitedAt, undefined)
 })
 
 test('query event bridge skips missing cached runs but invalidates known run views', () => {
   const queryClient = new QueryClient()
   const run = dashboardRun('run-1', 'running')
+  const pendingRun = dashboardRun('pending-run', 'running')
   queryClient.setQueryData(dashboardQueryKeys.runsInfinite(50), { pages: [], pageParams: [] })
   queryClient.setQueryData(dashboardQueryKeys.run('run-1'), run)
+  queryClient.setQueryData(dashboardQueryKeys.run('pending-run'), pendingRun)
   queryClient.setQueryData(dashboardQueryKeys.runGraph('run-1'), {
     run,
     workflow: workflow(),
     graph: graph(),
   } satisfies RunGraphResponse)
   queryClient.setQueryData(dashboardQueryKeys.runDetails('run-1'), runDetails(run))
+  queryClient.setQueryData(dashboardQueryKeys.runDetails('pending-run'), runDetails(pendingRun))
 
   applyRunnerEventToDashboardCache(queryClient, { type: 'artifact_written', runId: 'missing-run' }, 'fallback-run')
 
   assert.equal(queryClient.getQueryData<DashboardRun>(dashboardQueryKeys.run('missing-run')), undefined)
 
-  applyRunnerEventToDashboardCache(queryClient, { type: 'artifact_written', runId: 'run-1' }, 'fallback-run')
+  applyRunnerEventToDashboardCache(queryClient, { type: 'artifact_written', runId: 'run-1' }, 'pending-run')
 
   assert.equal(queryClient.getQueryState(dashboardQueryKeys.runsInfinite(50))?.isInvalidated, true)
   assert.equal(queryClient.getQueryState(dashboardQueryKeys.run('run-1'))?.isInvalidated, true)
   assert.equal(queryClient.getQueryState(dashboardQueryKeys.runGraph('run-1'))?.isInvalidated, true)
   assert.equal(queryClient.getQueryState(dashboardQueryKeys.runDetails('run-1'))?.isInvalidated, true)
+  assert.equal(queryClient.getQueryState(dashboardQueryKeys.run('pending-run'))?.isInvalidated, true)
+  assert.equal(queryClient.getQueryState(dashboardQueryKeys.runDetails('pending-run'))?.isInvalidated, true)
 })

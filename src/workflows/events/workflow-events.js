@@ -235,7 +235,7 @@ function createWorkflowEventContext(options = {}) {
     artifactWritten,
     close: async () => {
       await notifications.flush()
-      emitter.close()
+      await emitter.close()
     },
   }
 }

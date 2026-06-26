@@ -135,6 +135,80 @@ function mutationResult(result) {
 }
 
 /**
+ * @param {import('../../storage/interfaces').DashboardRunPayload | null | undefined} active
+ * @param {import('../../storage/interfaces').WorkflowGraphPayloadResponse | null | undefined} workflowGraph
+ * @returns {import('../../storage/interfaces').RunGraphPayload | null}
+ */
+function activeRunGraph(active, workflowGraph) {
+  if (!active || !workflowGraph?.workflow || !workflowGraph?.graph) return null
+  return {
+    run: active,
+    workflow: workflowGraph.workflow,
+    graph: workflowGraph.graph,
+  }
+}
+
+/** @param {Record<string, unknown>} run */
+function runIdentity(run) {
+  return String(run.runId || run.id || '').trim()
+}
+
+/** @param {Record<string, unknown> | null | undefined} pagination */
+function runsPageOffset(pagination) {
+  return Number(pagination?.offset ?? pagination?.durableOffset ?? 0) || 0
+}
+
+/**
+ * @param {{
+ *   durableRuns?: Array<Record<string, unknown>>,
+ *   liveRuns?: Array<Record<string, unknown>>,
+ *   pagination?: Record<string, unknown> | null,
+ *   getDurableRun?: (id: string) => Promise<Record<string, unknown> | null | undefined>,
+ * }} input
+ * @returns {Promise<Array<Record<string, unknown>>>}
+ */
+async function overlayLiveOnlyRuns({ durableRuns = [], liveRuns = [], pagination = null, getDurableRun }) {
+  const seen = new Set()
+  const runs = []
+  for (const run of durableRuns) {
+    const id = runIdentity(run)
+    if (!id || seen.has(id)) continue
+    seen.add(id)
+    runs.push(run)
+  }
+  if (runsPageOffset(pagination) !== 0) return runs
+  for (const run of liveRuns) {
+    const id = runIdentity(run)
+    if (!id || seen.has(id)) continue
+    const durable = typeof getDurableRun === 'function' ? await getDurableRun(id) : null
+    if (durable) continue
+    seen.add(id)
+    runs.push(run)
+  }
+  return runs
+}
+
+/**
+ * @param {{
+ *   runId: string,
+ *   active?: Record<string, unknown> | null,
+ *   load: (id: string) => unknown | Promise<unknown>,
+ * }} input
+ * @returns {Promise<unknown>}
+ */
+async function loadDurableRunResource({ runId, active = null, load }) {
+  const candidates = [runId, String(active?.runId || '')].filter(Boolean)
+  const seen = new Set()
+  for (const id of candidates) {
+    if (seen.has(id)) continue
+    seen.add(id)
+    const value = await load(id)
+    if (value) return value
+  }
+  return null
+}
+
+/**
  * @param {unknown} value
  * @returns {value is import('../../storage/interfaces').JsonObject}
  */
@@ -260,9 +334,19 @@ function createDashboardApi({
       limit: c.req.query('limit') || '',
       cursor: c.req.query('cursor') || '',
     })
+    const durableRuns = Array.isArray(page.runs) ? page.runs : []
+    const liveOnlyRuns = typeof liveRuns.listActiveRuns === 'function' ? liveRuns.listActiveRuns() : []
+    const runs = await overlayLiveOnlyRuns({
+      durableRuns,
+      liveRuns: liveOnlyRuns,
+      pagination: page.pagination || null,
+      getDurableRun: async (id) => {
+        if (typeof runStore.getRun !== 'function') return null
+        return runStore.getRun(id)
+      },
+    })
     return json(c, {
-      active: typeof liveRuns.listActiveRuns === 'function' ? liveRuns.listActiveRuns() : [],
-      durable: Array.isArray(page.durable) ? page.durable : [],
+      runs,
       pagination: page.pagination || null,
     }, 200, sessionHeaders(c))
   })
@@ -272,19 +356,36 @@ function createDashboardApi({
     requireCapability(capabilities, 'canReadRuns')
     const runId = c.req.param('id')
     const active = typeof liveRuns.getActiveRun === 'function' ? liveRuns.getActiveRun(runId) : null
-    if (active) return json(c, { run: active }, 200, sessionHeaders(c))
     if (typeof runStore.getRun !== 'function') throw requestError(501, 'hosted_storage_unavailable', 'Run storage is not available in this runtime.')
-    const run = await runStore.getRun(runId)
-    if (!run) throw requestError(404, 'not_found', 'Unknown dashboard run.')
-    return json(c, { run }, 200, sessionHeaders(c))
+    const run = await loadDurableRunResource({
+      runId,
+      active,
+      load: (id) => runStore.getRun(id),
+    })
+    if (run) return json(c, { run }, 200, sessionHeaders(c))
+    if (active) return json(c, { run: active }, 200, sessionHeaders(c))
+    throw requestError(404, 'not_found', 'Unknown dashboard run.')
   })
 
   app.get('/api/runs/:id/graph', async (c) => {
     assertHonoToken(c, token)
     requireCapability(capabilities, 'canReadRuns')
     if (typeof runStore.getRunGraph !== 'function') throw requestError(501, 'hosted_storage_unavailable', 'Run storage is not available in this runtime.')
-    const graph = await runStore.getRunGraph(c.req.param('id'))
-    if (!graph) throw requestError(404, 'not_found', 'Unknown dashboard run.')
+    const runId = c.req.param('id')
+    const active = typeof liveRuns.getActiveRun === 'function' ? liveRuns.getActiveRun(runId) : null
+    const graph = await loadDurableRunResource({
+      runId,
+      active,
+      load: (id) => runStore.getRunGraph(id),
+    })
+    if (!graph) {
+      const flowId = active?.flowId || ''
+      const fallback = flowId && typeof workflowStore.getWorkflowGraph === 'function'
+        ? activeRunGraph(active, await workflowStore.getWorkflowGraph(flowId))
+        : null
+      if (fallback) return json(c, fallback, 200, sessionHeaders(c))
+      throw requestError(404, 'not_found', 'Unknown dashboard run.')
+    }
     return json(c, graph, 200, sessionHeaders(c))
   })
 
@@ -292,7 +393,13 @@ function createDashboardApi({
     assertHonoToken(c, token)
     requireCapability(capabilities, 'canReadRunDetails')
     if (typeof runStore.getRunDetails !== 'function') throw requestError(501, 'hosted_storage_unavailable', 'Run storage is not available in this runtime.')
-    const details = await runStore.getRunDetails(c.req.param('id'))
+    const runId = c.req.param('id')
+    const active = typeof liveRuns.getActiveRun === 'function' ? liveRuns.getActiveRun(runId) : null
+    const details = await loadDurableRunResource({
+      runId,
+      active,
+      load: (id) => runStore.getRunDetails(id),
+    })
     if (!details) throw requestError(404, 'not_found', 'Unknown dashboard run.')
     return json(c, details, 200, sessionHeaders(c))
   })
@@ -394,5 +501,7 @@ function createDashboardApi({
 }
 
 module.exports = {
+  loadDurableRunResource,
+  overlayLiveOnlyRuns,
   createDashboardApi,
 }

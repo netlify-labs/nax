@@ -11,7 +11,7 @@ const {
 } = require('../../src/dashboard/api/auth')
 const { readJsonBody } = require('../../src/dashboard/api/request')
 const { securityHeaders } = require('../../src/dashboard/api/security')
-const { inferRunStateStatus, publicFlow, publicRunOptions, publicRunState } = require('../../src/dashboard/api/serializers')
+const { inferRunStateStatus, projectRunSnapshot, publicFlow, publicRunOptions, publicRunState } = require('../../src/dashboard/api/serializers')
 
 function requestWithBody(body) {
   const req = /** @type {Readable & { headers: Record<string, string> }} */ (Readable.from([body]))
@@ -128,4 +128,43 @@ test('dashboard API serializers keep public workflow and run shapes', () => {
     step: '',
     fromStep: '',
   })
+})
+
+test('dashboard run projection upgrades stale non-terminal workflow status from steps', () => {
+  const snapshot = projectRunSnapshot({
+    runId: 'run-1',
+    flowId: 'review',
+    status: 'running',
+    steps: [
+      { id: 'one', status: 'completed', runs: [{ agent: 'codex', status: 'completed' }] },
+      { id: 'two', status: 'complete', runs: [{ agent: 'gemini', status: 'complete' }] },
+    ],
+  })
+
+  assert.equal(snapshot.status, 'completed')
+  assert.equal(snapshot.steps[1].status, 'completed')
+  assert.equal(snapshot.steps[1].runs[0].status, 'completed')
+  assert.equal(snapshot.diagnostics.some((diagnostic) => diagnostic.code === 'workflow_status_conflict'), true)
+})
+
+test('dashboard run projection treats active remote agent runs as conflicting authority', () => {
+  const snapshot = projectRunSnapshot({
+    runId: 'run-1',
+    flowId: 'review',
+    status: 'completed',
+    steps: [{
+      id: 'review',
+      status: 'completed',
+      runs: [{ agent: 'codex', runnerId: 'runner-1', status: 'submitted' }],
+    }],
+  }, { cancellable: true })
+
+  assert.equal(snapshot.status, 'running')
+  assert.equal(snapshot.cancellable, true)
+  assert.equal(snapshot.steps[0].status, 'running')
+  assert.equal(snapshot.steps[0].runs[0].status, 'running')
+  assert.deepEqual(snapshot.diagnostics.map((diagnostic) => diagnostic.code), [
+    'step_status_conflict',
+    'workflow_status_conflict',
+  ])
 })

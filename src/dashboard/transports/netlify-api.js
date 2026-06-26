@@ -526,11 +526,11 @@ function createHostedNetlifyApiTransport({ client, siteId = '', initialRunnerIds
     },
     async listRunsPage() {
       return {
-        durable: [...runsById.values()],
+        runs: [...runsById.values()],
         pagination: {
-          durableLimit: runsById.size,
-          durableOffset: 0,
-          durableTotal: runsById.size,
+          limit: runsById.size,
+          offset: 0,
+          total: runsById.size,
           nextCursor: null,
           hasMore: false,
         },

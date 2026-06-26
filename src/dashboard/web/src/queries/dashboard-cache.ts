@@ -8,9 +8,9 @@ export function runIdentifier(run: Partial<DashboardRun>): string {
   return runId(run)
 }
 
-export function mergeRunLists(active: DashboardRun[], durable: DashboardRun[]): DashboardRun[] {
+export function dedupeRunList(runs: DashboardRun[]): DashboardRun[] {
   const seen = new Set<string>()
-  return [...active, ...durable].filter((run) => {
+  return runs.filter((run) => {
     const id = runIdentifier(run)
     if (!id || seen.has(id)) return false
     seen.add(id)
@@ -19,23 +19,22 @@ export function mergeRunLists(active: DashboardRun[], durable: DashboardRun[]): 
 }
 
 export function runsFromResponse(response: RunsResponse): DashboardRun[] {
-  return mergeRunLists(response.active, response.durable)
+  return dedupeRunList(response.runs || [])
 }
 
 export function runsFromResponses(responses: RunsResponse[]): RunsListData {
-  const first = responses[0] || { active: [], durable: [] }
-  const durable = responses.flatMap((response) => response.durable || [])
-  const durableIds = new Set<string>()
-  for (const run of durable) {
+  const allRuns = responses.flatMap((response) => response.runs || [])
+  const runIds = new Set<string>()
+  for (const run of allRuns) {
     const id = runIdentifier(run)
-    if (id) durableIds.add(id)
+    if (id) runIds.add(id)
   }
   const last = responses[responses.length - 1]
   return {
-    runs: mergeRunLists(first.active || [], durable),
+    runs: dedupeRunList(allRuns),
     hasMore: Boolean(last?.pagination?.hasMore),
-    durableShownCount: durableIds.size,
-    durableTotal: first.pagination?.durableTotal ?? durableIds.size,
+    shownCount: runIds.size,
+    totalCount: responses[0]?.pagination?.total ?? runIds.size,
   }
 }
 

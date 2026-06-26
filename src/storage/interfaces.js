@@ -45,9 +45,9 @@
  * }} RunsPageInput
  *
  * @typedef {{
- *   durableLimit?: number,
- *   durableOffset?: number,
- *   durableTotal?: number,
+ *   limit?: number,
+ *   offset?: number,
+ *   total?: number,
  *   nextCursor?: string | null,
  *   hasMore?: boolean,
  * }} RunsPaginationPayload
@@ -82,8 +82,7 @@
  * }} DashboardRunPayload
  *
  * @typedef {{
- *   active?: DashboardRunPayload[],
- *   durable?: DashboardRunPayload[],
+ *   runs?: DashboardRunPayload[],
  *   pagination?: RunsPaginationPayload,
  * }} RunsPagePayload
  *

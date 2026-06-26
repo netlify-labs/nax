@@ -1,12 +1,13 @@
 const { listRunStates, listWorkflowStatePage } = require('../../storage/local/run-state')
 const { flowToGraph } = require('../shared/graph')
 const { buildRunDetails } = require('../shared/run-details')
-const { publicFlow, publicRunOptions, publicRunState } = require('../api/serializers')
+const { isActiveProjectedStatus, projectRunSnapshot, publicFlow, publicRunOptions, publicRunState } = require('../api/serializers')
 const { requestError } = require('../api/errors')
-const { syncSubmittedFollowupRunsToWorkflow } = require('../../workflows/followups/persistence')
+const { isActiveFollowupStatus, syncSubmittedFollowupRunsToWorkflow } = require('../../workflows/followups/persistence')
 
 const DEFAULT_RUNS_DURABLE_LIMIT = 50
 const MAX_RUNS_DURABLE_LIMIT = 200
+const DEFAULT_REFRESH_COOLDOWN_MS = 15000
 
 /**
  * @param {string | number | null | undefined} value
@@ -43,6 +44,8 @@ function decodeRunsCursor(value) {
  *   env?: NodeJS.ProcessEnv,
  *   flowStore?: { loadWorkflow?: (id: string) => Promise<Record<string, unknown>> },
  *   followupSyncRunCommand?: import('../../types').RunCommand,
+ *   followupSyncRunner?: (input: { projectRoot?: string, runner?: import('../../types').AgentRunner, env?: NodeJS.ProcessEnv, runCommand?: import('../../types').RunCommand }) => { sessions?: import('../../types').AgentSession[] },
+ *   refreshCooldownMs?: number,
  *   resolveRunStateId?: (id: string) => string | null | undefined,
  * }} LocalRunStoreOptions
  *
@@ -50,6 +53,12 @@ function decodeRunsCursor(value) {
  *   limit?: string | number | null,
  *   cursor?: string | null,
  * }} LocalRunsPageInput
+ *
+ * @typedef {{
+ *   force?: boolean,
+ *   view?: 'list' | 'detail' | 'graph' | 'details' | string,
+ *   now?: Date,
+ * }} RefreshRunStateContext
  */
 
 /**
@@ -70,8 +79,35 @@ function safeDecode(value) {
   }
 }
 
+/** @param {string | null | undefined} value */
+function timestampMs(value) {
+  const ms = Date.parse(String(value || ''))
+  return Number.isFinite(ms) ? ms : 0
+}
+
+/** @param {Record<string, unknown>} runState */
+function hasRefreshableFollowupRuns(runState) {
+  const steps = Array.isArray(runState.steps) ? runState.steps : []
+  return steps.some((step) => {
+    if (step?.source?.type !== 'dashboard-followup') return false
+    const runs = Array.isArray(step.runs) ? step.runs : []
+    return runs.some((run) => isActiveFollowupStatus(run?.status) && Boolean(run?.runnerId))
+  })
+}
+
 /** @param {LocalRunStoreOptions} options */
-function createLocalRunStore({ projectRoot, env = process.env, flowStore, followupSyncRunCommand, resolveRunStateId }) {
+function createLocalRunStore({
+  projectRoot,
+  env = process.env,
+  flowStore,
+  followupSyncRunCommand,
+  followupSyncRunner,
+  refreshCooldownMs = DEFAULT_REFRESH_COOLDOWN_MS,
+  resolveRunStateId,
+}) {
+  /** @type {Map<string, number>} */
+  const refreshAttemptedAt = new Map()
+
   function listStates() {
     return listRunStates(projectRoot)
   }
@@ -85,13 +121,30 @@ function createLocalRunStore({ projectRoot, env = process.env, flowStore, follow
     return runStateForId(resolved, states)
   }
 
-  function syncDurableFollowups(runState) {
+  /** @param {Record<string, unknown> | null} runState @param {RefreshRunStateContext} [context] */
+  function refreshRunStateIfNeeded(runState, context = {}) {
     if (!runState) return runState
+    const snapshot = projectRunSnapshot(runState)
+    const runId = String(runState.runId || '')
+    const nowMs = context.now instanceof Date ? context.now.getTime() : Date.now()
+    const lastAttemptMs = refreshAttemptedAt.get(runId) || 0
+    const detailView = context.view === 'detail' || context.view === 'graph' || context.view === 'details'
+    const hasRefreshCandidates = hasRefreshableFollowupRuns(runState)
+    const staleMs = nowMs - timestampMs(String(runState.updatedAt || runState.createdAt || ''))
+    const shouldConsiderRefresh = context.force === true ||
+      (detailView && snapshot.diagnostics.length > 0) ||
+      (detailView && hasRefreshCandidates && isActiveProjectedStatus(snapshot.status)) ||
+      (detailView && hasRefreshCandidates && staleMs > refreshCooldownMs)
+    if (!shouldConsiderRefresh) return runState
+    if (!context.force && lastAttemptMs > 0 && nowMs - lastAttemptMs < refreshCooldownMs) return runState
+    if (!hasRefreshCandidates) return runState
+    refreshAttemptedAt.set(runId, nowMs)
     const synced = syncSubmittedFollowupRunsToWorkflow({
       runState,
       projectRoot,
       env,
       runCommand: followupSyncRunCommand,
+      syncRunner: followupSyncRunner,
     })
     return synced.runState || runState
   }
@@ -107,11 +160,11 @@ function createLocalRunStore({ projectRoot, env = process.env, flowStore, follow
       const nextOffset = page.offset + page.limit
       const hasMore = nextOffset < page.total
       return {
-        durable: page.items.map(publicRunState),
+        runs: page.items.map(publicRunState),
         pagination: {
-          durableLimit: page.limit,
-          durableOffset: page.offset,
-          durableTotal: page.total,
+          limit: page.limit,
+          offset: page.offset,
+          total: page.total,
           nextCursor: hasMore ? encodeRunsCursor({ offset: nextOffset }) : null,
           hasMore,
         },
@@ -119,11 +172,12 @@ function createLocalRunStore({ projectRoot, env = process.env, flowStore, follow
     },
     getRunState,
     getRun(id) {
-      const runState = getRunState(id)
+      const runState = refreshRunStateIfNeeded(getRunState(id), { view: 'detail' })
       return runState ? publicRunState(runState) : null
     },
+    refreshRunStateIfNeeded,
     async getRunGraph(id) {
-      const durable = syncDurableFollowups(getRunState(id))
+      const durable = refreshRunStateIfNeeded(getRunState(id), { view: 'graph' })
       if (!durable) return null
       let flow = null
       try {
@@ -143,7 +197,7 @@ function createLocalRunStore({ projectRoot, env = process.env, flowStore, follow
       }
     },
     async getRunDetails(id) {
-      const durable = syncDurableFollowups(getRunState(id))
+      const durable = refreshRunStateIfNeeded(getRunState(id), { view: 'details' })
       if (!durable) return null
       let flow = null
       try {
@@ -164,6 +218,7 @@ function createLocalRunStore({ projectRoot, env = process.env, flowStore, follow
 
 module.exports = {
   DEFAULT_RUNS_DURABLE_LIMIT,
+  DEFAULT_REFRESH_COOLDOWN_MS,
   MAX_RUNS_DURABLE_LIMIT,
   createLocalRunStore,
   decodeRunsCursor,

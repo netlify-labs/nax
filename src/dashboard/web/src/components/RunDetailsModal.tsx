@@ -549,6 +549,11 @@ function cancelTargetForEntry(entry: TimelineEntry): { stepId?: string; agent?: 
   return { stepId, agent, runnerId, sessionId }
 }
 
+function shouldPollRunDetails(response: RunDetailsResponse, entries: TimelineEntry[]): boolean {
+  if (!isTerminalStatus(response.run.status || '')) return true
+  return entries.some((entry) => !isTerminalStatus(entry.status || ''))
+}
+
 function isSuccessfulWorkflowStatus(status: string): boolean {
   return ['complete', 'completed'].includes(status.toLowerCase())
 }
@@ -607,10 +612,10 @@ export function RunDetailsModal({
     refetchInterval: (query) => {
       if (!opened || !detailsRunId || detailsView !== 'results') return false
       const response = query.state.data
-      if (!response) return false
+      if (!response) return 2500
       const queryStepItems = buildStepItems(response.details, response.run, liveContext)
       const queryEntries = buildTimelineEntries(response.details, response.run, queryStepItems, liveContext)
-      return queryEntries.some((entry) => cancelTargetForEntry(entry)) ? 7000 : false
+      return shouldPollRunDetails(response, queryEntries) ? 2500 : false
     },
   })
   const detailsResponse = detailsQuery.data || null

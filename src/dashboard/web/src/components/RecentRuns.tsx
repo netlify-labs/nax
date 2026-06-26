@@ -9,8 +9,8 @@ type Props = {
   selectedRunId: string
   hasMore: boolean
   loadingMore: boolean
-  durableShownCount: number
-  durableTotal: number
+  shownCount: number
+  totalCount: number
   onSelect: (run: DashboardRun) => void
   onOpenDetails: (run: DashboardRun) => void
   onLoadMore: () => void
@@ -22,14 +22,14 @@ export function RecentRuns({
   selectedRunId,
   hasMore,
   loadingMore,
-  durableShownCount,
-  durableTotal,
+  shownCount,
+  totalCount,
   onSelect,
   onOpenDetails,
   onLoadMore,
   onResume,
 }: Props) {
-  const showCount = durableTotal > 0
+  const showCount = totalCount > 0
   return (
     <Box className="recent-runs" component="section" aria-label="Recent runs">
         <Group className="panel-header" justify="space-between" wrap="nowrap">
@@ -117,7 +117,7 @@ export function RecentRuns({
             ))}
             {showCount ? (
               <Text size="xs" c="dimmed" ta="center">
-                Showing {Math.min(durableShownCount, durableTotal)} of {durableTotal} saved runs
+                Showing {Math.min(shownCount, totalCount)} of {totalCount} saved runs
               </Text>
             ) : null}
             {hasMore ? (

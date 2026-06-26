@@ -1,8 +1,7 @@
 const path = require('path')
 
 const { normalizeAgentList, normalizeStepModels } = require('../../core/agents/selection')
-const { isUnfinishedRun } = require('../../core/runs/resumable')
-const { isCancelledRunStatus, isFailedRunStatus } = require('../../core/status')
+const { isActiveProjectedStatus, projectRunSnapshot } = require('./run-state-projection')
 
 /** @typedef {import('../../contracts').DashboardRun} DashboardRun */
 
@@ -45,42 +44,29 @@ function publicFlow(flow = {}) {
 }
 
 function inferRunStateStatus(runState = {}) {
-  const steps = Array.isArray(runState.steps) ? runState.steps : []
-  if (steps.length === 0) return ''
-
-  const statuses = steps.map((step) => String(step?.status || '').toLowerCase()).filter(Boolean)
-  if (statuses.some((status) => isFailedRunStatus(status))) {
-    return 'failed'
-  }
-  if (statuses.some((status) => isCancelledRunStatus(status))) return 'cancelled'
-  if (runState?.status === 'awaiting_review' || statuses.some((status) => status === 'awaiting_review')) {
-    return 'awaiting_review'
-  }
-  if (statuses.length === steps.length && statuses.every((status) => ['complete', 'completed', 'dry-run'].includes(status))) {
-    return 'completed'
-  }
-  if (statuses.some((status) => ['running', 'submitted', 'submitting', 'pending', 'waiting', 'retrying', 'queued'].includes(status))) {
-    return 'running'
-  }
-  return statuses[statuses.length - 1] || ''
+  const snapshot = projectRunSnapshot({ ...runState, status: '' })
+  return snapshot.status === 'unknown' ? '' : snapshot.status
 }
 
 function publicRunState(runState = {}) {
-  const summaryPath = runState.dir ? path.join(runState.dir, 'artifacts', 'summary.md') : ''
+  const snapshot = projectRunSnapshot(runState)
+  const summaryPath = snapshot.dir ? path.join(snapshot.dir, 'artifacts', 'summary.md') : ''
   return {
-    runId: runState.runId || '',
-    flowId: runState.flowId || '',
-    flowTitle: runState.flowTitle || '',
-    status: runState.status || inferRunStateStatus(runState),
-    transport: runState.transport || '',
-    branch: runState.branch || '',
-    target: runState.target || null,
-    createdAt: runState.createdAt || '',
-    updatedAt: runState.updatedAt || '',
-    dir: runState.dir || '',
+    runId: snapshot.runId,
+    flowId: snapshot.flowId,
+    flowTitle: snapshot.flowTitle,
+    status: snapshot.status,
+    transport: snapshot.transport,
+    branch: snapshot.branch,
+    target: snapshot.target,
+    createdAt: snapshot.createdAt,
+    updatedAt: snapshot.updatedAt,
+    dir: snapshot.dir,
     summaryPath,
-    resumable: isUnfinishedRun(runState),
-    steps: Array.isArray(runState.steps) ? runState.steps : [],
+    resumable: snapshot.resumable,
+    cancellable: snapshot.cancellable,
+    steps: snapshot.steps,
+    diagnostics: snapshot.diagnostics,
   }
 }
 
@@ -101,6 +87,8 @@ function publicRunOptions(runState = {}) {
 module.exports = {
   contractTypecheckProbe,
   inferRunStateStatus,
+  isActiveProjectedStatus,
+  projectRunSnapshot,
   publicFlow,
   publicRunOptions,
   publicRunState,

@@ -120,8 +120,7 @@ function devApiPlugin() {
               cursor: requestUrl.searchParams.get('cursor') || '',
             })
             jsonResponse(res, 200, {
-              active: [],
-              durable: page.durable,
+              runs: page.runs,
               pagination: page.pagination,
             })
             return

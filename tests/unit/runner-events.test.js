@@ -87,6 +87,23 @@ test('runner event emitter context can be set after durable run creation', () =>
   assert.equal(event.eventId, 'durable-run:1')
 })
 
+test('runner event emitter closes owned event fd streams', async () => {
+  const filePath = path.join(tmpDir(), 'events-fd.jsonl')
+  const fd = fs.openSync(filePath, 'w')
+  const emitter = createRunnerEventEmitter({
+    fd,
+    env: {},
+    now: () => new Date('2026-06-19T00:00:00.000Z'),
+  })
+
+  emitter.emit('workflow_started', { runId: 'run-1', flowId: 'review' })
+  await emitter.close()
+
+  assert.throws(() => fs.writeSync(fd, 'after-close\n'), /EBADF|bad file descriptor/i)
+  const lines = fs.readFileSync(filePath, 'utf8').trim().split('\n')
+  assert.equal(JSON.parse(lines[0]).type, 'workflow_started')
+})
+
 test('runner event payload sanitization redacts secrets and omits large prompt text', () => {
   const payload = sanitizeEventPayload({
     token: 'super-secret',

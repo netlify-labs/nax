@@ -17,6 +17,7 @@ const { appendBounded } = require('../runtime/live-run-registry')
  *   now?: () => number,
  *   isoNow?: () => string,
  *   forceKillDelayMs?: number,
+ *   detached?: boolean,
  * }} LocalProcessWorkflowRunnerDeps
  *
  * @typedef {{
@@ -114,6 +115,24 @@ function createRunnerEventParser({ onEvent = () => {}, onError = () => {} } = {}
   }
 }
 
+/**
+ * @param {import('child_process').ChildProcess} child
+ * @param {NodeJS.Signals} signal
+ * @param {boolean} detached
+ * @returns {boolean}
+ */
+function signalWorkflowChild(child, signal, detached) {
+  if (detached && process.platform !== 'win32' && typeof child.pid === 'number' && child.pid > 0) {
+    try {
+      process.kill(-child.pid, signal)
+      return true
+    } catch (_err) {
+      // The process may have already exited or may not own a process group in tests.
+    }
+  }
+  return typeof child.kill === 'function' ? child.kill(signal) : false
+}
+
 /** @param {RunWorkflowChildInput} input */
 function runWorkflowChild({ flowId, projectRoot, options = {}, eventSink = () => {}, tailOutput = false, deps = {} }) {
   const spawnCommand = deps.spawn || spawn
@@ -124,6 +143,7 @@ function runWorkflowChild({ flowId, projectRoot, options = {}, eventSink = () =>
   const now = deps.now || Date.now
   const isoNow = deps.isoNow || (() => new Date().toISOString())
   const forceKillDelayMs = deps.forceKillDelayMs ?? 3000
+  const detached = deps.detached ?? process.platform !== 'win32'
   const command = workflowCommand({ flowId, projectRoot, options })
   const args = [path.resolve(__dirname, '..', '..', 'cli', 'nax.js'), ...command.slice(1)]
   const startedAt = isoNow()
@@ -150,6 +170,7 @@ function runWorkflowChild({ flowId, projectRoot, options = {}, eventSink = () =>
   const child = spawnCommand(execPath, args, {
     cwd: projectRoot,
     env: childEnv,
+    detached,
     stdio: ['ignore', 'pipe', 'pipe', 'pipe'],
   })
   const stdoutStream = child.stdout
@@ -193,6 +214,7 @@ function runWorkflowChild({ flowId, projectRoot, options = {}, eventSink = () =>
     eventStream.setEncoding('utf8')
     eventStream.on('data', (chunk) => eventParser.push(chunk))
     eventStream.on('end', () => eventParser.end())
+    eventStream.on('close', () => eventParser.end())
     eventStream.on('error', (error) => {
       eventSink({
         type: 'runner_event_error',
@@ -263,9 +285,9 @@ function runWorkflowChild({ flowId, projectRoot, options = {}, eventSink = () =>
     cancel() {
       if (settled || child.killed) return false
       cancelRequested = true
-      child.kill('SIGTERM')
+      signalWorkflowChild(child, 'SIGTERM', detached)
       forceKillTimer = setTimeout(() => {
-        if (!settled) child.kill('SIGKILL')
+        if (!settled) signalWorkflowChild(child, 'SIGKILL', detached)
       }, forceKillDelayMs)
       return true
     },
@@ -275,4 +297,5 @@ function runWorkflowChild({ flowId, projectRoot, options = {}, eventSink = () =>
 module.exports = {
   createRunnerEventParser,
   runWorkflowChild,
+  signalWorkflowChild,
 }

@@ -57,13 +57,16 @@ function trackRunState(runState, { onInterrupt } = {}) {
   return runState
 }
 
-/** @param {Record<string, unknown> | null | undefined} runState @param {{ completed?: boolean }} [options] */
-function clearTrackedRunState(runState, { completed = false } = {}) {
+/** @param {Record<string, unknown>} runState @param {{ now?: Date }} [options] */
+function markRunCompleted(runState, { now = new Date() } = {}) {
+  runState.status = 'completed'
+  runState.completedAt = now.toISOString()
+  return saveRunState(runState)
+}
+
+/** @param {Record<string, unknown> | null | undefined} runState */
+function clearTrackedRunState(runState) {
   if (runState && activeRunState !== runState) return
-  if (completed && activeRunState) {
-    activeRunState.status = 'completed'
-    saveRunState(activeRunState)
-  }
   activeRunState = null
   activeInterruptHandler = null
 }
@@ -71,6 +74,7 @@ function clearTrackedRunState(runState, { completed = false } = {}) {
 module.exports = {
   clearTrackedRunState,
   installGracefulRunStateHandlers,
+  markRunCompleted,
   persistActiveRunState,
   trackRunState,
 }

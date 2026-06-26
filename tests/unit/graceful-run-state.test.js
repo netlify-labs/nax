@@ -6,6 +6,7 @@ const path = require('path')
 
 const {
   clearTrackedRunState,
+  markRunCompleted,
   persistActiveRunState,
   trackRunState,
 } = require('../../src/storage/local/graceful-run-state')
@@ -49,18 +50,30 @@ test('persistActiveRunState marks an active run interrupted and preserves step s
   assert.equal(saved.steps[0].runs[0].status, 'submitted')
 })
 
-test('clearTrackedRunState can mark a completed run complete', () => {
+test('markRunCompleted persists completed status before cleanup', () => {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'nax-graceful-state-complete-test-'))
   const state = runState(tmp, {
     steps: [{ id: 'ideate', status: 'completed', runs: [{ runnerId: 'runner-1', status: 'completed', resultText: 'done' }] }],
   })
 
   trackRunState(state)
-  clearTrackedRunState(state, { completed: true })
+  markRunCompleted(state, { now: new Date('2026-05-12T02:00:00.000Z') })
+  clearTrackedRunState(state)
 
   const saved = readSaved(state)
   assert.equal(saved.status, 'completed')
+  assert.equal(saved.completedAt, '2026-05-12T02:00:00.000Z')
   assert.equal(saved.interruptedAt, undefined)
+})
+
+test('clearTrackedRunState only clears tracking and does not write completion', () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'nax-graceful-state-clear-test-'))
+  const state = runState(tmp)
+
+  trackRunState(state)
+  clearTrackedRunState(state)
+
+  assert.equal(fs.existsSync(path.join(state.dir, 'workflow.json')), false)
 })
 
 test('persistActiveRunState records stack and warns when interrupt cleanup throws', () => {

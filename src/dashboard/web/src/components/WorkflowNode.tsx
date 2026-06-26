@@ -35,6 +35,7 @@ function countStateLabel(count: number, state: string): string {
 }
 
 function nodeProgressLabel(node: WorkflowGraphNodeData, selectedAgents: Set<string>): string {
+  if (node.status === 'booting') return 'Booting up'
   const activeAgents = node.agents.filter((agent) => selectedAgents.has(agent))
   if (activeAgents.length === 0) return ''
   const completedCount = activeAgents.filter((agent) => agentIsDone(node, agent)).length

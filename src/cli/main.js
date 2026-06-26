@@ -63,7 +63,7 @@ const {
   stepArtifactsDir,
   writeGithubStepSummary,
 } = require('../workflows/artifacts/workflow-artifacts')
-const { clearTrackedRunState, trackRunState } = require('../storage/local/graceful-run-state')
+const { clearTrackedRunState, markRunCompleted, trackRunState } = require('../storage/local/graceful-run-state')
 const { persistAgentRunnerArtifact } = require('../workflows/artifacts/agent-runner-artifacts')
 const { persistAgentSessionArtifact } = require('../workflows/artifacts/agent-session-artifacts')
 const { listHandoffSources, readHandoffSource, relativeDisplayPath } = require('../workflows/followups/handoff-sources')
@@ -2165,7 +2165,8 @@ async function handleRetry(runId, options) {
     projectRoot,
     completedStepStates,
   })
-  clearTrackedRunState(runState, { completed: true })
+  markRunCompleted(runState)
+  clearTrackedRunState(runState)
   printSuccessBox({ flow, runState, transport: NETLIFY_API_TRANSPORT, projectRoot })
 }
 
@@ -2432,7 +2433,8 @@ async function handleRunEngine(flowId, options) {
       reason: 'completed workflow',
     })
 
-    clearTrackedRunState(runState, { completed: true })
+    markRunCompleted(runState)
+    clearTrackedRunState(runState)
     persistWorkflowArtifacts(runState, { summaryOnly: true })
     emitWorkflowArtifacts(runtimeEvents, runState)
     writeGithubStepSummary(runState)

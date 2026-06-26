@@ -129,6 +129,34 @@ test('live run registry tracks duplicate workflow reservations and shutdown clea
   assert.equal(client.ended, true)
 })
 
+test('live run registry finalizes live sidecar from terminal runner events', () => {
+  const registry = createLocalLiveRunRegistry()
+  const run = registry.trackRun(liveRun({
+    id: 'active',
+    flowId: 'review',
+    cancel: () => true,
+    stepStatusTimer: setInterval(() => {}, 1000),
+  }))
+  run.stepStatusTimer.unref?.()
+
+  registry.recordRunnerEvent(run, {
+    type: 'workflow_completed',
+    runId: 'durable-1',
+    status: 'completed',
+    durationMs: 1200,
+    exitCode: 0,
+    at: '2026-06-22T00:01:00.000Z',
+  })
+
+  assert.equal(run.status, 'completed')
+  assert.equal(run.runId, 'durable-1')
+  assert.equal(run.cancellable, false)
+  assert.equal(run.cancel, null)
+  assert.equal(run.stepStatusTimer, null)
+  assert.equal(registry.activeWorkflowRun('review'), null)
+  assert.equal(run.events.at(-1).type, 'workflow_completed')
+})
+
 test('live run registry drops broken SSE clients and unregisters on close', () => {
   const run = liveRun()
   const goodClient = { text: '', write(text) { this.text += text }, end() {} }

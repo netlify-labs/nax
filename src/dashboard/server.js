@@ -11,7 +11,6 @@ const { normalizeAgentList, normalizeStepModels, selectionValidationErrors } = r
 const { buildRunDetails } = require('./shared/run-details')
 const { appendEventLog, eventLogPathForRunState, readEventLog } = require('../workflows/events/runner-event-log')
 const { formatAgentRunUrl } = require('../workflows/results/agent-run-results')
-const { syncSubmittedFollowupRunsToWorkflow } = require('../workflows/followups/persistence')
 const { findReviewStep } = require('../workflows/human-review')
 const { archiveAgentRun, stopAgentRun } = require('../integrations/netlify/local-runner')
 const { setBlob } = require('../integrations/netlify/blobs')
@@ -20,7 +19,7 @@ const { isTerminalRunStatus } = require('../core/status')
 const { errorPayload, requestError } = require('./api/errors')
 const { readJsonBody } = require('./api/request')
 const { securityHeaders } = require('./api/security')
-const { publicFlow, publicRunOptions, publicRunState } = require('./api/serializers')
+const { isActiveProjectedStatus, projectRunSnapshot, publicFlow, publicRunOptions, publicRunState } = require('./api/serializers')
 const {
   sessionBootstrapHeadersForRequest,
   sessionCookieHeader,
@@ -108,6 +107,9 @@ function localServerCapabilities(env) {
 
 const DEFAULT_RUNS_DURABLE_LIMIT = 50
 const MAX_RUNS_DURABLE_LIMIT = 200
+const ACTIVE_DURABLE_MATCH_WINDOW_MS = 5 * 60 * 1000
+const ACTIVE_DURABLE_MATCH_SKEW_MS = 10 * 1000
+const RUN_STARTUP_DURABLE_ID_TIMEOUT_MS = 30000
 
 /**
  * @param {string | null | undefined} value
@@ -153,13 +155,75 @@ function paginatedDurableRuns(projectRoot, { limit: limitValue, cursor: cursorVa
   return {
     items: page.items,
     pagination: {
-      durableLimit: page.limit,
-      durableOffset: page.offset,
-      durableTotal: page.total,
+      limit: page.limit,
+      offset: page.offset,
+      total: page.total,
       nextCursor: hasMore ? encodeRunsCursor({ offset: nextOffset }) : null,
       hasMore,
     },
   }
+}
+
+/** @param {Record<string, unknown>} run */
+function runIdentity(run) {
+  return String(run.runId || run.id || '').trim()
+}
+
+/**
+ * @param {{
+ *   durableRuns?: Array<Record<string, unknown>>,
+ *   liveRuns?: Array<Record<string, unknown>>,
+ *   pagination?: Record<string, unknown> | null,
+ *   hasDurableRun?: (id: string) => boolean,
+ * }} input
+ */
+function overlayLiveOnlyRuns({ durableRuns = [], liveRuns = [], pagination = null, hasDurableRun }) {
+  const seen = new Set()
+  const runs = []
+  for (const run of durableRuns) {
+    const id = runIdentity(run)
+    if (!id || seen.has(id)) continue
+    seen.add(id)
+    runs.push(run)
+  }
+  if ((Number(pagination?.offset ?? pagination?.durableOffset ?? 0) || 0) !== 0) return runs
+  for (const run of liveRuns) {
+    const id = runIdentity(run)
+    if (!id || seen.has(id)) continue
+    if (typeof hasDurableRun === 'function' && hasDurableRun(id)) continue
+    seen.add(id)
+    runs.push(run)
+  }
+  return runs
+}
+
+/**
+ * @param {{
+ *   flowId: string,
+ *   liveRun?: Record<string, unknown> | null,
+ *   durableStates?: Array<Record<string, unknown>>,
+ * }} input
+ */
+function projectedWorkflowActivity({ flowId, liveRun = null, durableStates = [] }) {
+  const normalizedFlowId = String(flowId || '').trim()
+  if (!normalizedFlowId) return { active: false, staleLive: false, source: '' }
+  const matchingStates = durableStates.filter((state) => String(state?.flowId || '') === normalizedFlowId)
+  const liveDurableId = String(liveRun?.runId || liveRun?.id || '').trim()
+  const liveDurable = liveDurableId
+    ? matchingStates.find((state) => String(state?.runId || '') === liveDurableId) || null
+    : null
+  if (liveRun) {
+    if (liveDurable && !isActiveProjectedStatus(projectRunSnapshot(liveDurable).status)) {
+      return { active: false, staleLive: true, source: 'live' }
+    }
+    if (isActiveProjectedStatus(liveRun.status || 'running')) {
+      return { active: true, staleLive: false, source: 'live' }
+    }
+  }
+  const activeDurable = matchingStates.find((state) => isActiveProjectedStatus(projectRunSnapshot(state).status))
+  return activeDurable
+    ? { active: true, staleLive: false, source: 'durable', runId: String(activeDurable.runId || '') }
+    : { active: false, staleLive: false, source: '' }
 }
 
 function safeDecode(value) {
@@ -168,6 +232,54 @@ function safeDecode(value) {
   } catch (_err) {
     return value
   }
+}
+
+/** @param {string | null | undefined} value */
+function timestampMs(value) {
+  const ms = Date.parse(String(value || ''))
+  return Number.isFinite(ms) ? ms : null
+}
+
+/** @param {string | null | undefined} id */
+function runIdTimestampMs(id) {
+  const match = String(id || '').match(/^(\d{4}-\d{2}-\d{2}T\d{2})-(\d{2})-(\d{2})-(\d{3})Z(?:-|$)/)
+  if (!match) return null
+  return timestampMs(`${match[1]}:${match[2]}:${match[3]}.${match[4]}Z`)
+}
+
+/**
+ * @param {Array<Record<string, unknown>>} states
+ * @param {{ id?: string, runId?: string, flowId?: string, startedAt?: string }} active
+ */
+function durableRunIdFromActiveRunStates(states, active = {}) {
+  const flowId = String(active.flowId || '').trim()
+  if (!flowId) return ''
+  const startedAtMs = timestampMs(active.startedAt) ?? runIdTimestampMs(active.id)
+  if (startedAtMs == null) return ''
+  const lowerBound = startedAtMs - ACTIVE_DURABLE_MATCH_SKEW_MS
+  const upperBound = startedAtMs + ACTIVE_DURABLE_MATCH_WINDOW_MS
+  return states
+    .map((state) => {
+      const runId = String(state?.runId || '').trim()
+      const createdAtMs = timestampMs(/** @type {string | undefined} */ (state?.createdAt)) ?? runIdTimestampMs(runId)
+      return {
+        runId,
+        flowId: String(state?.flowId || '').trim(),
+        createdAtMs,
+      }
+    })
+    .filter((state) => {
+      if (!state.runId || state.runId === active.id || state.runId === active.runId) return false
+      if (state.flowId !== flowId || state.createdAtMs == null) return false
+      return state.createdAtMs >= lowerBound && state.createdAtMs <= upperBound
+    })
+    .sort((left, right) => {
+      const leftAfterStart = left.createdAtMs >= startedAtMs ? 0 : 1
+      const rightAfterStart = right.createdAtMs >= startedAtMs ? 0 : 1
+      return leftAfterStart - rightAfterStart ||
+        Math.abs(left.createdAtMs - startedAtMs) - Math.abs(right.createdAtMs - startedAtMs) ||
+        left.runId.localeCompare(right.runId)
+    })[0]?.runId || ''
 }
 
 /** @param {string} pathname */
@@ -519,7 +631,7 @@ function normalizeDryRunOptions(raw = {}, flow = {}) {
 }
 
 function stepStatusSnapshot(runState = {}) {
-  return (Array.isArray(runState.steps) ? runState.steps : [])
+  return projectRunSnapshot(runState).steps
     .map((step) => ({
       stepId: step.id || '',
       title: step.title || step.id || '',
@@ -793,16 +905,23 @@ function createRequestHandler(options = {}) {
   const followupStopRun = options.followupStopRun || stopAgentRun
   const cancelStopRun = options.cancelStopRun || stopAgentRun
   const followupSyncRunCommand = options.followupSyncRunCommand
+  const workflowChildRunner = options.runWorkflowChild || runWorkflowChild
   const liveRunRegistry = createLocalLiveRunRegistry()
   const workflowStore = createLocalWorkflowStore(flowOptions)
   /** @param {string} id */
   function resolveActiveDurableRunId(id) {
     const active = liveRunRegistry.getRawRun(safeDecode(id))
     if (!active) return ''
-    const durableRunId = active.runId || extractDurableRunId(`${active.stdout || ''}\n${active.stderr || ''}`)
+    let durableRunId = active.runId || extractDurableRunId(`${active.stdout || ''}\n${active.stderr || ''}`)
+    if (!durableRunId) {
+      try {
+        durableRunId = durableRunIdFromActiveRunStates(listRunStates(projectRoot), active)
+      } catch (_err) {
+        durableRunId = ''
+      }
+    }
     if (!durableRunId) return ''
-    active.runId = durableRunId
-    return durableRunId
+    return bindLiveRunToDurableId(active, durableRunId)
   }
 
   const runStore = createLocalRunStore({
@@ -837,8 +956,8 @@ function createRequestHandler(options = {}) {
     workflowStore,
     runStore,
     eventStore,
-    liveRuns: {
-      listActiveRuns: () => liveRunRegistry.listRawRuns().map(publicRun),
+      liveRuns: {
+      listActiveRuns: () => listPublicActiveRuns(),
       getActiveRun: (id) => {
         const run = liveRunRegistry.getRawRun(safeDecode(id))
         return run ? publicRun(run) : null
@@ -878,6 +997,7 @@ function createRequestHandler(options = {}) {
         const flow = await loadFlow(flowId, flowOptions)
         const runOptions = normalizeDryRunOptions(body, flow)
         const run = startRun({ flowId, runOptions })
+        await run.startedPromise
         return {
           statusCode: 202,
           body: {
@@ -985,9 +1105,10 @@ function createRequestHandler(options = {}) {
     if (!durable) return
     run.stepStatuses ||= {}
     for (const step of stepStatusSnapshot(durable)) {
-      const previous = run.stepStatuses[step.stepId]
+      const stepId = String(step.stepId || '')
+      const previous = run.stepStatuses[stepId]
       if (previous === step.status) continue
-      run.stepStatuses[step.stepId] = step.status
+      run.stepStatuses[stepId] = step.status
       recordEvent(run, 'step_status', step)
     }
   }
@@ -1026,16 +1147,49 @@ function createRequestHandler(options = {}) {
     }
   }
 
+  function bindLiveRunToDurableId(run, durableRunId) {
+    const nextId = String(durableRunId || '').trim()
+    if (!nextId) return ''
+    const previousId = run.id
+    run.runId = nextId
+    if (previousId !== nextId) {
+      liveRunRegistry.runs.delete(previousId)
+      run.id = nextId
+      liveRunRegistry.runs.set(nextId, run)
+      liveRunRegistry.activeByWorkflow.set(run.flowId, nextId)
+      for (const event of run.events) {
+        if (event.runId === previousId) event.runId = nextId
+      }
+    }
+    return nextId
+  }
+
   function startRun({ flowId, runOptions }) {
     const existing = liveRunRegistry.activeWorkflowRun(flowId)
-    if (existing) {
-      if (existing.status === 'running') {
-        throw requestError(409, 'duplicate_run', `Workflow "${flowId}" already has an active dashboard run.`)
-      }
+    const activity = projectedWorkflowActivity({
+      flowId,
+      liveRun: existing,
+      durableStates: listRunStates(projectRoot),
+    })
+    if (activity.staleLive) {
       liveRunRegistry.clearWorkflow(flowId)
     }
+    if (activity.active) {
+      throw requestError(409, 'duplicate_run', `Workflow "${flowId}" already has an active dashboard run.`)
+    }
 
-    const id = `${new Date().toISOString().replace(/[:.]/g, '-')}-${flowId}`
+    const id = `pending-${new Date().toISOString().replace(/[:.]/g, '-')}-${flowId}`
+    /** @type {(run: Record<string, unknown>) => void} */
+    let resolveStarted = () => {}
+    /** @type {(error: Error) => void} */
+    let rejectStarted = () => {}
+    let startupSettled = false
+    /** @type {NodeJS.Timeout | null} */
+    let startupTimer = null
+    const startedPromise = new Promise((resolve, reject) => {
+      resolveStarted = resolve
+      rejectStarted = reject
+    })
     const run = {
       id,
       runId: '',
@@ -1059,13 +1213,34 @@ function createRequestHandler(options = {}) {
       cancel: null,
       stepStatuses: {},
       stepStatusTimer: null,
+      startedPromise,
     }
+    const settleStarted = (durableRunId) => {
+      if (startupSettled) return
+      const nextId = bindLiveRunToDurableId(run, durableRunId)
+      if (!nextId) return
+      startupSettled = true
+      if (startupTimer) clearTimeout(startupTimer)
+      startupTimer = null
+      resolveStarted(run)
+    }
+    const failStarted = (error) => {
+      if (startupSettled) return
+      startupSettled = true
+      if (startupTimer) clearTimeout(startupTimer)
+      startupTimer = null
+      rejectStarted(error)
+    }
+    startupTimer = setTimeout(() => {
+      failStarted(new Error(`Workflow "${flowId}" did not report a durable run id within ${RUN_STARTUP_DURABLE_ID_TIMEOUT_MS / 1000}s.`))
+    }, RUN_STARTUP_DURABLE_ID_TIMEOUT_MS)
+    startupTimer.unref?.()
     liveRunRegistry.trackRun(run)
     run.stepStatusTimer = setInterval(() => {
       if (run.status === 'running') recordStepStatusEvents(run)
     }, 1000)
     run.stepStatusTimer.unref?.()
-    const childRun = runWorkflowChild({
+    const childRun = workflowChildRunner({
       flowId,
       projectRoot,
       options: runOptions,
@@ -1075,7 +1250,7 @@ function createRequestHandler(options = {}) {
           const bounded = appendBounded(run.stdout, event.text || '')
           run.stdout = bounded.text
           run.stdoutDropped += bounded.dropped
-          if (!run.runId) run.runId = extractDurableRunId(run.stdout)
+          if (!run.runId) settleStarted(extractDurableRunId(run.stdout))
           if (run.runId) recordStepStatusEvents(run)
         }
         if (event.type === 'stderr') {
@@ -1088,7 +1263,11 @@ function createRequestHandler(options = {}) {
         else if (event.type === 'stderr') recordEvent(run, 'stderr', { text: event.text || '' })
         else if (event.type === 'error') recordEvent(run, 'error', { message: event.message || '' })
         else if (event.type === 'runner_event') {
-          recordRunnerEvent(run, event.event || {})
+          const runnerEvent = event.event && typeof event.event === 'object' && !Array.isArray(event.event)
+            ? /** @type {Record<string, unknown>} */ (event.event)
+            : {}
+          if (runnerEvent.runId) settleStarted(String(runnerEvent.runId))
+          recordRunnerEvent(run, runnerEvent)
           if (run.runId) recordStepStatusEvents(run)
         } else if (event.type === 'runner_event_error') {
           recordEvent(run, 'runner_event_error', {
@@ -1112,7 +1291,8 @@ function createRequestHandler(options = {}) {
       run.stderr = result.stderr
       run.stdoutDropped = result.stdoutDropped || 0
       run.stderrDropped = result.stderrDropped || 0
-      run.runId = run.runId || extractDurableRunId(`${result.stdout || ''}\n${result.stderr || ''}`)
+      settleStarted(run.runId || extractDurableRunId(`${result.stdout || ''}\n${result.stderr || ''}`))
+      if (!run.runId) failStarted(new Error(`Workflow "${flowId}" exited before reporting a durable run id.`))
       run.cancellable = false
       run.cancel = null
       if (run.stepStatusTimer) clearInterval(run.stepStatusTimer)
@@ -1130,7 +1310,8 @@ function createRequestHandler(options = {}) {
       const bounded = appendBounded(run.stderr, `${message}\n`)
       run.stderr = bounded.text
       run.stderrDropped += bounded.dropped
-      run.runId = run.runId || extractDurableRunId(`${run.stdout || ''}\n${run.stderr || ''}`)
+      settleStarted(run.runId || extractDurableRunId(`${run.stdout || ''}\n${run.stderr || ''}`))
+      if (!run.runId) failStarted(error instanceof Error ? error : new Error(message))
       run.cancellable = false
       run.cancel = null
       if (run.stepStatusTimer) clearInterval(run.stepStatusTimer)
@@ -1148,11 +1329,16 @@ function createRequestHandler(options = {}) {
   function startResumeRun({ durable, stepId = '' }) {
     const flowId = durable.flowId || ''
     const existing = liveRunRegistry.activeWorkflowRun(flowId)
-    if (existing) {
-      if (existing.status === 'running') {
-        throw requestError(409, 'duplicate_run', `Workflow "${flowId}" already has an active dashboard run.`)
-      }
+    const activity = projectedWorkflowActivity({
+      flowId,
+      liveRun: existing,
+      durableStates: listRunStates(projectRoot),
+    })
+    if (activity.staleLive) {
       liveRunRegistry.clearWorkflow(flowId)
+    }
+    if (activity.active) {
+      throw requestError(409, 'duplicate_run', `Workflow "${flowId}" already has an active dashboard run.`)
     }
     const id = `${new Date().toISOString().replace(/[:.]/g, '-')}-${durable.runId}-resume`
     const run = {
@@ -1244,13 +1430,24 @@ function createRequestHandler(options = {}) {
   }
 
   function publicRun(run) {
-    const durableRunId = run.runId || extractDurableRunId(`${run.stdout || ''}\n${run.stderr || ''}`)
-    if (durableRunId && !run.runId) run.runId = durableRunId
+    const durableRunId = resolveActiveDurableRunId(run.id) || run.runId || extractDurableRunId(`${run.stdout || ''}\n${run.stderr || ''}`)
+    if (durableRunId) bindLiveRunToDurableId(run, durableRunId)
+    const durable = durableRunId ? durableRunStateForId(durableRunId) : null
+    const status = String(durable?.status || run.status || '')
+    const durableFlow = durable?.flow && typeof durable.flow === 'object' && !Array.isArray(durable.flow)
+      ? /** @type {Record<string, unknown>} */ (durable.flow)
+      : null
+    const flowTitle = typeof durable?.flowTitle === 'string'
+      ? durable.flowTitle
+      : typeof durableFlow?.title === 'string'
+        ? durableFlow.title
+        : ''
     return {
       id: run.id,
       runId: durableRunId || '',
       flowId: run.flowId,
-      status: run.status,
+      flowTitle,
+      status,
       command: run.command,
       startedAt: run.startedAt,
       exitedAt: run.exitedAt,
@@ -1263,23 +1460,43 @@ function createRequestHandler(options = {}) {
       stderrDropped: run.stderrDropped || 0,
       truncated: (run.stdoutDropped || 0) > 0 || (run.stderrDropped || 0) > 0,
       eventCount: run.events.length,
-      cancellable: run.cancellable === true,
+      cancellable: run.cancellable === true && !isTerminalRunStatus(status),
     }
+  }
+
+  function listPublicActiveRuns() {
+    return liveRunRegistry
+      .listRawRuns()
+      .map(publicRun)
+      .filter((run) => !String(run.id || '').startsWith('pending-'))
   }
 
   function durableRunStateForId(id) {
     return runStore.getRunState(id)
   }
 
-  function syncDurableFollowups(durable) {
+  /** @param {string} id @param {string} view */
+  function durableRunStateForRequest(id, view) {
+    const requestedId = safeDecode(id)
+    const active = liveRunRegistry.getRawRun(requestedId)
+    const candidates = [requestedId, String(active?.runId || '')].filter(Boolean)
+    const seen = new Set()
+    for (const candidate of candidates) {
+      if (seen.has(candidate)) continue
+      seen.add(candidate)
+      const durable = refreshDurableRunState(durableRunStateForId(candidate), view)
+      if (durable) return durable
+    }
+    return null
+  }
+
+  /** @param {Record<string, unknown> | null} durable @param {string} view */
+  function refreshDurableRunState(durable, view) {
     if (!durable) return durable
-    const synced = syncSubmittedFollowupRunsToWorkflow({
-      runState: durable,
-      projectRoot,
-      env,
-      runCommand: followupSyncRunCommand,
-    })
-    return synced.runState || durable
+    if (typeof runStore.refreshRunStateIfNeeded === 'function') {
+      return runStore.refreshRunStateIfNeeded(durable, { view })
+    }
+    return durable
   }
 
   return {
@@ -1355,9 +1572,14 @@ function createRequestHandler(options = {}) {
             limit: requestUrl.searchParams.get('limit') || '',
             cursor: requestUrl.searchParams.get('cursor') || '',
           })
+          const durableRuns = durablePage.items.map(publicRunState)
           jsonResponse(res, 200, {
-            active: liveRunRegistry.listRawRuns().map(publicRun),
-            durable: durablePage.items.map(publicRunState),
+            runs: overlayLiveOnlyRuns({
+              durableRuns,
+              liveRuns: listPublicActiveRuns(),
+              pagination: durablePage.pagination,
+              hasDurableRun: (id) => Boolean(durableRunStateForId(id)),
+            }),
             pagination: durablePage.pagination,
           })
           return
@@ -1427,7 +1649,7 @@ function createRequestHandler(options = {}) {
             return
           }
           assertToken(req, requestUrl, token)
-          const durable = syncDurableFollowups(durableRunStateForId(runGraphMatch[1]))
+          const durable = durableRunStateForRequest(runGraphMatch[1], 'graph')
           if (!durable) {
             notFound(res, 'Unknown dashboard run.')
             return
@@ -1460,7 +1682,7 @@ function createRequestHandler(options = {}) {
             return
           }
           assertToken(req, requestUrl, token)
-          const durable = syncDurableFollowups(durableRunStateForId(runDetailsMatch[1]))
+          const durable = durableRunStateForRequest(runDetailsMatch[1], 'details')
           if (!durable) {
             notFound(res, 'Unknown dashboard run.')
             return
@@ -1621,17 +1843,18 @@ function createRequestHandler(options = {}) {
             return
           }
           assertToken(req, requestUrl, token)
-          const run = liveRunRegistry.getRawRun(safeDecode(runMatch[1]))
+          const requestedRunId = safeDecode(runMatch[1])
+          const durable = durableRunStateForRequest(requestedRunId, 'detail')
+          if (durable) {
+            jsonResponse(res, 200, { run: publicRunState(durable) })
+            return
+          }
+          const run = liveRunRegistry.getRawRun(requestedRunId)
           if (run) {
             jsonResponse(res, 200, { run: publicRun(run) })
             return
           }
-          const durable = durableRunStateForId(runMatch[1])
-          if (!durable) {
-            notFound(res, 'Unknown dashboard run.')
-            return
-          }
-          jsonResponse(res, 200, { run: publicRunState(durable) })
+          notFound(res, 'Unknown dashboard run.')
           return
         }
 
@@ -1809,7 +2032,9 @@ module.exports = {
     endClients,
     evictFinishedRuns,
     extractDurableRunId,
+    durableRunIdFromActiveRunStates,
     htmlEscape,
+    projectedWorkflowActivity,
     readJsonBody,
     securityHeaders,
     sessionCookieHeader,

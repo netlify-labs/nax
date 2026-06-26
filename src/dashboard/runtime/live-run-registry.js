@@ -4,6 +4,7 @@
 const MAX_LIVE_OUTPUT_CHARS = 512 * 1024
 const MAX_LIVE_EVENTS = 2000
 const MAX_FINISHED_RUNS = 50
+const TERMINAL_RUNNER_EVENT_TYPES = new Set(['workflow_completed', 'workflow_failed', 'workflow_cancelled', 'exited'])
 
 /**
  * @typedef {{
@@ -221,7 +222,22 @@ function createLocalLiveRunRegistry({ maxFinished = MAX_FINISHED_RUNS } = {}) {
     recordRunnerEvent(run, event = {}) {
       if (event.type === 'workflow_started' && event.runId) run.runId = String(event.runId)
       if (event.runId && !run.runId) run.runId = String(event.runId)
-      return this.recordEvent(run, String(event.type || 'runner_event'), event)
+      const recorded = this.recordEvent(run, String(event.type || 'runner_event'), event)
+      if (TERMINAL_RUNNER_EVENT_TYPES.has(String(event.type || ''))) {
+        run.status = typeof event.status === 'string' && event.status ? event.status : run.status
+        run.exitedAt = typeof event.at === 'string' && event.at ? event.at : run.exitedAt
+        run.durationMs = typeof event.durationMs === 'number' ? event.durationMs : run.durationMs
+        run.exitCode = typeof event.exitCode === 'number' ? event.exitCode : run.exitCode
+        run.signal = typeof event.signal === 'string' ? event.signal : run.signal
+        run.cancellable = false
+        run.cancel = null
+        if (run.stepStatusTimer) {
+          clearInterval(run.stepStatusTimer)
+          run.stepStatusTimer = null
+        }
+        activeByWorkflow.delete(run.flowId)
+      }
+      return recorded
     },
     /** @param {LiveRun} run @param {string} text */
     appendStdout(run, text) {
@@ -258,6 +274,7 @@ module.exports = {
   MAX_FINISHED_RUNS,
   MAX_LIVE_EVENTS,
   MAX_LIVE_OUTPUT_CHARS,
+  TERMINAL_RUNNER_EVENT_TYPES,
   appendBounded,
   broadcastEvent,
   createLocalLiveRunRegistry,

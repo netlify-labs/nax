@@ -1,7 +1,7 @@
 const test = require('node:test')
 const assert = require('node:assert/strict')
 
-const { createDashboardApi } = require('../../src/dashboard/api/app')
+const { createDashboardApi, overlayLiveOnlyRuns } = require('../../src/dashboard/api/app')
 const { hostedPlaceholderCapabilities, localDashboardCapabilities } = require('../../src/dashboard/api/capabilities')
 
 async function json(response) {
@@ -24,8 +24,8 @@ function fakeApi(overrides = {}) {
     },
     runStore: {
       listRunsPage: () => ({
-        durable: [{ runId: 'run-1', flowId: 'review' }],
-        pagination: { durableLimit: 50, durableOffset: 0, durableTotal: 1, nextCursor: null, hasMore: false },
+        runs: [{ runId: 'run-1', flowId: 'review' }],
+        pagination: { limit: 50, offset: 0, total: 1, nextCursor: null, hasMore: false },
       }),
       getRun: (id) => (id === 'run-1' ? { runId: id, flowId: 'review' } : null),
       getRunGraph: async (id) => (id === 'run-1' ? { run: { runId: id }, workflow: { id: 'review' }, graph: { nodes: [], edges: [] } } : null),
@@ -78,8 +78,9 @@ test('Hono dashboard API serves read-only workflow, run, and event routes', asyn
   assert.deepEqual((await json(await app.request('/api/workflows/review/graph', { headers }))).graph, { nodes: [], edges: [] })
 
   const runs = await json(await app.request('/api/runs?limit=50', { headers }))
-  assert.equal(runs.active[0].id, 'active-1')
-  assert.equal(runs.durable[0].runId, 'run-1')
+  assert.equal(runs.active, undefined)
+  assert.equal(runs.durable, undefined)
+  assert.deepEqual(runs.runs.map((run) => run.runId || run.id), ['run-1', 'active-1'])
   assert.equal(runs.pagination.hasMore, false)
 
   assert.equal((await json(await app.request('/api/runs/active-1', { headers }))).run.id, 'active-1')
@@ -87,6 +88,119 @@ test('Hono dashboard API serves read-only workflow, run, and event routes', asyn
   assert.deepEqual((await json(await app.request('/api/runs/run-1/graph', { headers }))).graph, { nodes: [], edges: [] })
   assert.deepEqual((await json(await app.request('/api/runs/run-1/details', { headers }))).details, { sections: [] })
   assert.equal((await json(await app.request('/api/runs/run-1/events.json?since=1', { headers }))).events[0].type, 'stdout')
+})
+
+test('Hono dashboard run overlay only includes live-only rows on first page', async () => {
+  const firstPage = await overlayLiveOnlyRuns({
+    durableRuns: [{ runId: 'run-1' }],
+    liveRuns: [{ id: 'active-1' }, { id: 'off-page-1' }],
+    pagination: { offset: 0 },
+    getDurableRun: async (id) => (id === 'off-page-1' ? { runId: id } : null),
+  })
+  assert.deepEqual(firstPage.map((run) => run.runId || run.id), ['run-1', 'active-1'])
+
+  const secondPage = await overlayLiveOnlyRuns({
+    durableRuns: [{ runId: 'run-2' }],
+    liveRuns: [{ id: 'active-1' }],
+    pagination: { offset: 1 },
+    getDurableRun: async () => null,
+  })
+  assert.deepEqual(secondPage.map((run) => run.runId || run.id), ['run-2'])
+})
+
+test('Hono dashboard API returns workflow graph for active runs before durable state exists', async () => {
+  const app = fakeApi({
+    runStore: {
+      getRunGraph: async () => null,
+    },
+    liveRuns: {
+      getActiveRun: (id) => (id === 'active-1' ? { id, flowId: 'review', status: 'running' } : null),
+    },
+    workflowStore: {
+      getWorkflowGraph: async (id) => (id === 'review'
+        ? {
+            workflow: { id: 'review', title: 'Review' },
+            graph: { nodes: [{ id: 'node:review' }], edges: [] },
+          }
+        : null),
+    },
+  })
+
+  const response = await app.request('/api/runs/active-1/graph', { headers: { 'x-nax-token': 'token-1' } })
+  assert.equal(response.status, 200)
+  const payload = await json(response)
+  assert.equal(payload.run.id, 'active-1')
+  assert.equal(payload.workflow.id, 'review')
+  assert.deepEqual(payload.graph.nodes, [{ id: 'node:review' }])
+})
+
+test('Hono dashboard API resolves active live run graph through durable run id when available', async () => {
+  const app = fakeApi({
+    runStore: {
+      getRunGraph: async (id) => (id === 'durable-1'
+        ? {
+            run: { runId: 'durable-1', flowId: 'review', status: 'running' },
+            workflow: { id: 'review', title: 'Review' },
+            graph: { nodes: [{ id: 'node:review', data: { status: 'running' } }], edges: [] },
+          }
+        : null),
+    },
+    liveRuns: {
+      getActiveRun: (id) => (id === 'active-1' ? { id, runId: 'durable-1', flowId: 'review', status: 'running' } : null),
+    },
+  })
+
+  const response = await app.request('/api/runs/active-1/graph', { headers: { 'x-nax-token': 'token-1' } })
+  assert.equal(response.status, 200)
+  const payload = await json(response)
+  assert.equal(payload.run.runId, 'durable-1')
+  assert.equal(payload.graph.nodes[0].data.status, 'running')
+})
+
+test('Hono dashboard API prefers durable run status for reconciled active runs', async () => {
+  const app = fakeApi({
+    runStore: {
+      getRun: (id) => (id === 'durable-1'
+        ? { runId: 'durable-1', flowId: 'review', status: 'completed' }
+        : null),
+    },
+    liveRuns: {
+      getActiveRun: (id) => (id === 'active-1' ? { id, runId: 'durable-1', flowId: 'review', status: 'running' } : null),
+    },
+  })
+
+  const response = await app.request('/api/runs/active-1', { headers: { 'x-nax-token': 'token-1' } })
+  assert.equal(response.status, 200)
+  const payload = await json(response)
+  assert.equal(payload.run.runId, 'durable-1')
+  assert.equal(payload.run.status, 'completed')
+})
+
+test('Hono dashboard API prefers durable state when active id already equals durable id', async () => {
+  const app = fakeApi({
+    runStore: {
+      getRun: (id) => (id === 'durable-1'
+        ? { runId: 'durable-1', flowId: 'review', status: 'completed' }
+        : null),
+      getRunGraph: async (id) => (id === 'durable-1'
+        ? { run: { runId: 'durable-1', status: 'completed' }, workflow: { id: 'review' }, graph: { nodes: [{ id: 'review', data: { status: 'completed' } }], edges: [] } }
+        : null),
+      getRunDetails: async (id) => (id === 'durable-1'
+        ? { run: { runId: 'durable-1', status: 'completed' }, details: { sections: [{ id: 'done' }] } }
+        : null),
+    },
+    liveRuns: {
+      getActiveRun: (id) => (id === 'durable-1' ? { id, runId: id, flowId: 'review', status: 'running' } : null),
+    },
+  })
+  const headers = { 'x-nax-token': 'token-1' }
+
+  const detail = await json(await app.request('/api/runs/durable-1', { headers }))
+  assert.equal(detail.run.status, 'completed')
+  const graph = await json(await app.request('/api/runs/durable-1/graph', { headers }))
+  assert.equal(graph.run.status, 'completed')
+  const details = await json(await app.request('/api/runs/durable-1/details', { headers }))
+  assert.equal(details.run.status, 'completed')
 })
 
 test('Hono dashboard API returns structured not found errors', async () => {

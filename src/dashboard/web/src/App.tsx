@@ -53,7 +53,7 @@ import { dashboardRouteSpec } from './route-spec'
 import { projectWorkflowGraph, workflowGraphNodeByStepId } from './run-projection'
 import { recordValue } from './run-format'
 import type { RunDetailsSelector } from './run-details-selection'
-import { isTerminalStatus, statusKey } from './status-model'
+import { isActiveStatus, isTerminalStatus, statusKey } from './status-model'
 import type { DryRunOptions, DryRunResult, RunFollowupResponse, RunnerEvent, DashboardRun, Workflow, WorkflowGraph, WorkflowGraphNodeData } from './types'
 
 type ContextModalAction = '' | 'dry-run' | 'run'
@@ -236,6 +236,7 @@ export default function App() {
   const [cancelRunning, setCancelRunning] = useState(false)
   const [runError, setRunError] = useState('')
   const [liveRunState, dispatchLiveRun] = useReducer(liveRunReducer, initialLiveRunState())
+  const [lastWorkflowGraph, setLastWorkflowGraph] = useState<WorkflowGraph | null>(null)
   const liveStepStatuses = liveRunState.stepStatuses
   const liveAgentStatuses = liveRunState.agentStatuses
   const setLiveStepStatuses = useCallback((update: Record<string, string> | ((value: Record<string, string>) => Record<string, string>)) => {
@@ -269,19 +270,27 @@ export default function App() {
   const workflows = workflowsQuery.data?.items || []
   const projectRoot = healthQuery.data?.projectRoot || ''
   const capabilities = healthQuery.data?.capabilities || defaultDashboardCapabilities
-  const runsList = runsQuery.data || { runs: [], hasMore: false, durableShownCount: 0, durableTotal: 0 }
+  const runsList = runsQuery.data || { runs: [], hasMore: false, shownCount: 0, totalCount: 0 }
   const runs = runsList.runs
+  const visibleRunActive = runs.some((run) => isActiveStatus(run.status || ''))
   const loadingWorkflows = workflowsQuery.isPending
+  const handoffWorkflowId = activeRun?.flowId || liveRunState.run?.flowId || ''
+  const selectedWorkflowId = routedWorkflowId || runGraphQuery.data?.workflow.id || handoffWorkflowId
+  const handoffWorkflowGraph = selectedRunId &&
+    !runGraphQuery.data &&
+    handoffWorkflowId &&
+    lastWorkflowGraph?.metadata.flowId === handoffWorkflowId
+    ? lastWorkflowGraph
+    : null
   const loadingGraph = selectedRunId
-    ? runGraphQuery.isFetching && !runGraphQuery.data
+    ? runGraphQuery.isFetching && !runGraphQuery.data && !handoffWorkflowGraph
     : workflowGraphQuery.isFetching && !workflowGraphQuery.data
-  const selectedWorkflowId = routedWorkflowId || runGraphQuery.data?.workflow.id || ''
   const selectedWorkflow = useMemo(
     () => runGraphQuery.data?.workflow || workflows.find((workflow) => workflow.id === selectedWorkflowId) || null,
     [runGraphQuery.data?.workflow, workflows, selectedWorkflowId],
   )
   const graph = selectedRunId
-    ? runGraphQuery.data?.graph || null
+    ? runGraphQuery.data?.graph || handoffWorkflowGraph
     : workflowGraphQuery.data?.graph || null
 
   // Toggle the output pane between minimized and ~35% expanded
@@ -496,6 +505,7 @@ export default function App() {
 
   useEffect(() => {
     if (!workflowGraphQuery.data || selectedRunId) return
+    setLastWorkflowGraph(workflowGraphQuery.data.graph)
     setError('')
   }, [selectedRunId, workflowGraphQuery.data])
 
@@ -508,6 +518,27 @@ export default function App() {
     if (!runGraphQuery.data || !selectedRunId) return
     const response = runGraphQuery.data
     const runOptions = response.run.options || {}
+    if (isTerminalStatus(response.run.status || '')) {
+      setActiveRun((value) => value && sameRun(value, response.run) ? { ...value, ...response.run } : response.run)
+      dispatchLiveRun({
+        type: 'event',
+        event: {
+          type: 'exited',
+          runId: response.run.runId || response.run.id || selectedRunId,
+          flowId: response.run.flowId,
+          status: response.run.status,
+          exitCode: response.run.exitCode,
+          signal: response.run.signal,
+          durationMs: response.run.durationMs,
+          at: response.run.exitedAt || response.run.updatedAt || new Date().toISOString(),
+        },
+      })
+      setLiveStepStatuses({})
+      setLiveAgentStatuses({})
+      setRunRunning(false)
+      setCancelRunning(false)
+      closeRunEvents()
+    }
     setDryRunOptions((options) => ({
       ...options,
       branch: typeof runOptions.branch === 'string' ? runOptions.branch : response.run.branch || options.branch,
@@ -519,7 +550,7 @@ export default function App() {
       stepModels: stepModelsFromRunGraph(response.graph),
     }))
     setError('')
-  }, [runGraphQuery.data, selectedRunId])
+  }, [closeRunEvents, runGraphQuery.data, selectedRunId, setLiveAgentStatuses, setLiveStepStatuses])
 
   useEffect(() => {
     if (!runGraphQuery.error || !selectedRunId) return
@@ -535,6 +566,14 @@ export default function App() {
     setCancelRunning(false)
     closeRunEvents()
   }, [activeRun, closeRunEvents, runRunning, runs])
+
+  useEffect(() => {
+    if (!runRunning && !visibleRunActive) return undefined
+    const interval = window.setInterval(() => {
+      void queryClient.invalidateQueries({ queryKey: dashboardQueryKeys.runs() })
+    }, 2500)
+    return () => window.clearInterval(interval)
+  }, [queryClient, runRunning, visibleRunActive])
 
   const toggleStepAgent = useCallback((stepId: string, agent: string, allAgents: string[]) => {
     setDryRunOptions((options) => {
@@ -806,17 +845,54 @@ export default function App() {
     ? 'Loading workflows'
     : loadingGraph
       ? 'Loading graph'
+      : runRunning && !activeRun && !selectedRunId && selectedWorkflow
+        ? 'Booting up...'
       : selectedWorkflow
         ? `${selectedWorkflow.title} · ${selectedWorkflow.steps.length} steps`
         : 'No workflow selected'
   const workflowCanvasMode = selectedRunId || activeRun ? 'inspect' : 'configure'
   const repoName = repoNameFromPath(projectRoot)
+  const startupNode = useMemo(() => {
+    if (!runRunning || !graph) return null
+    if (activeRun && runGraphQuery.data) return null
+    if (!activeRun && selectedRunId) return null
+    const graphNodes = graph.nodes || []
+    const requestedStepId = dryRunOptions.step || dryRunOptions.fromStep || ''
+    const node = requestedStepId
+      ? graphNodes.find((node) => node.data.stepId === requestedStepId)?.data || graphNodes[0]?.data || null
+      : graphNodes[0]?.data || null
+    if (!node) return null
+    return {
+      node,
+      status: activeRun ? statusKey(activeRun.status || 'running') : 'booting',
+    }
+  }, [activeRun, dryRunOptions.fromStep, dryRunOptions.step, graph, runGraphQuery.data, runRunning, selectedRunId])
+  const projectedStepStatuses = useMemo(() => {
+    if (!startupNode?.node.stepId) return liveStepStatuses
+    return {
+      ...liveStepStatuses,
+      [startupNode.node.stepId]: startupNode.status,
+    }
+  }, [liveStepStatuses, startupNode])
+  const projectedAgentStatuses = useMemo(() => {
+    if (!startupNode?.node.stepId) return liveAgentStatuses
+    const selectedAgents = Object.prototype.hasOwnProperty.call(dryRunOptions.stepModels, startupNode.node.stepId)
+      ? dryRunOptions.stepModels[startupNode.node.stepId]
+      : startupNode.node.selectedAgents || startupNode.node.agents
+    return {
+      ...liveAgentStatuses,
+      [startupNode.node.stepId]: {
+        ...(liveAgentStatuses[startupNode.node.stepId] || {}),
+        ...Object.fromEntries(selectedAgents.map((agent) => [agent, startupNode.status])),
+      },
+    }
+  }, [dryRunOptions.stepModels, liveAgentStatuses, startupNode])
   const projectedGraph = useMemo(() => projectWorkflowGraph({
     graph,
     stepModels: dryRunOptions.stepModels,
-    stepStatuses: liveStepStatuses,
-    stepAgentStatuses: liveAgentStatuses,
-  }), [dryRunOptions.stepModels, graph, liveAgentStatuses, liveStepStatuses])
+    stepStatuses: projectedStepStatuses,
+    stepAgentStatuses: projectedAgentStatuses,
+  }), [dryRunOptions.stepModels, graph, projectedAgentStatuses, projectedStepStatuses])
   const selectedWorkflowStepId = routeWorkflowStepId(routeState)
   const selectedNode = useMemo(
     () => workflowGraphNodeByStepId(projectedGraph, selectedWorkflowStepId),
@@ -1105,8 +1181,8 @@ export default function App() {
                   selectedRunId={selectedRunId}
                   hasMore={runsList.hasMore}
                   loadingMore={runsQuery.isFetchingNextPage}
-                  durableShownCount={runsList.durableShownCount}
-                  durableTotal={runsList.durableTotal}
+                  shownCount={runsList.shownCount}
+                  totalCount={runsList.totalCount}
                   onSelect={selectRun}
                   onOpenDetails={openRunDetails}
                   onLoadMore={() => { void runsQuery.fetchNextPage() }}

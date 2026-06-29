@@ -1,4 +1,5 @@
 const path = require('path')
+const fs = require('fs')
 const { spawnSync } = require('child_process')
 const {
   detectJavascriptWorkspace,
@@ -105,14 +106,44 @@ function gitRepositoryRoot(cwd = process.cwd()) {
 }
 
 /**
- * Resolves the project root from an explicit option, git root, or cwd.
+ * Returns true when a directory looks like a Netlify site root.
+ * @param {string} dir
+ * @returns {boolean}
+ */
+function hasNetlifyProjectMarker(dir) {
+  return fs.existsSync(path.join(dir, 'netlify.toml')) ||
+    fs.existsSync(path.join(dir, '.netlify', 'state.json'))
+}
+
+/**
+ * Finds the nearest Netlify site root at or above the current directory.
+ * @param {string} [cwd]
+ * @param {{ stopDir?: string }} [options]
+ * @returns {string}
+ */
+function nearestNetlifyProjectRoot(cwd = process.cwd(), { stopDir = '' } = {}) {
+  let current = path.resolve(cwd)
+  const stop = stopDir ? path.resolve(stopDir) : ''
+
+  while (true) {
+    if (hasNetlifyProjectMarker(current)) return current
+    if (current === stop) return ''
+    const parent = path.dirname(current)
+    if (parent === current) return ''
+    current = parent
+  }
+}
+
+/**
+ * Resolves the project root from an explicit option, nearest Netlify site root, git root, or cwd.
  * @param {string | null | undefined} optionRoot
  * @param {{ cwd?: string }} [context]
  * @returns {string}
  */
 function resolveProjectRoot(optionRoot, { cwd = process.cwd() } = {}) {
   if (optionRoot) return path.resolve(optionRoot)
-  return gitRepositoryRoot(cwd) || path.resolve(cwd)
+  const gitRoot = gitRepositoryRoot(cwd)
+  return nearestNetlifyProjectRoot(cwd, { stopDir: gitRoot }) || gitRoot || path.resolve(cwd)
 }
 
 /**
@@ -348,6 +379,7 @@ module.exports = {
   maybeReportNetlifyConfig,
   maybeReportNetlifyFilter,
   maybeReportNetlifySite,
+  nearestNetlifyProjectRoot,
   netlifyConfigChoiceHint,
   netlifyConfigDistance,
   netlifyOptionsFromTarget,

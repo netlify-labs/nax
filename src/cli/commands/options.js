@@ -18,6 +18,8 @@
  *   provider?: string[],
  *   quiet?: boolean,
  *   repo?: string,
+ *   runner?: string,
+ *   session?: string,
  *   siteId?: string,
  *   siteName?: string,
  *   skill?: string[],
@@ -25,6 +27,7 @@
  *   step?: string,
  *   transport?: string,
  *   where?: string,
+ *   workflow?: string,
  *   yes?: boolean,
  * }} CliOptions
  *

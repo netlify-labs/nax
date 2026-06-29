@@ -78,6 +78,7 @@ const { usageSummariesForRunState } = require('../../src/workflows/results/agent
 const {
   cancelLocalWorkflowRunnersForInterrupt,
   flowAgents,
+  handleHandoff,
   isAdHocRunTarget,
   orderSingleRunTransports,
   runnableSteps,
@@ -1798,6 +1799,41 @@ test('resolveProjectRoot finds the git root when invoked from a subdirectory', (
 
   assert.equal(resolveProjectRoot('', { cwd: childDir }), fs.realpathSync(projectRoot))
   assert.equal(resolveProjectRoot(childDir, { cwd: projectRoot }), childDir)
+})
+
+test('resolveProjectRoot prefers the nearest nested Netlify site root', () => {
+  const projectRoot = tmpRoot()
+  const siteDir = path.join(projectRoot, 'site')
+  const childDir = path.join(siteDir, 'src')
+  fs.mkdirSync(childDir, { recursive: true })
+  fs.writeFileSync(path.join(siteDir, 'netlify.toml'), '[build]\n')
+  spawnSync('git', ['init', '-q'], { cwd: projectRoot })
+
+  assert.equal(resolveProjectRoot('', { cwd: childDir }), siteDir)
+})
+
+test('handleHandoff falls back to parent .nax artifacts from a nested site', async () => {
+  const projectRoot = tmpRoot()
+  const siteDir = path.join(projectRoot, 'site')
+  fs.mkdirSync(siteDir, { recursive: true })
+  fs.writeFileSync(path.join(siteDir, 'netlify.toml'), '[build]\n')
+  spawnSync('git', ['init', '-q'], { cwd: projectRoot })
+  writeRunState(projectRoot, 'workflow-1')
+  readHandoffSummary({ projectRoot, runId: 'workflow-1' })
+
+  const previousCwd = process.cwd()
+  const previousLog = console.log
+  const lines = []
+  console.log = (line = '') => lines.push(String(line))
+  try {
+    process.chdir(siteDir)
+    await handleHandoff('', { path: true })
+  } finally {
+    process.chdir(previousCwd)
+    console.log = previousLog
+  }
+
+  assert.deepEqual(lines, ['.nax/workflows/workflow-1/artifacts/summary.md'])
 })
 
 test('netlifyConfigChoiceHint explains non-workspace configs without asking for filters', () => {

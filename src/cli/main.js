@@ -690,10 +690,69 @@ function isAdHocRunTarget(value) {
     normalized === 'agent-run'
 }
 
+/**
+ * Finds the nearest ancestor that already contains nax artifacts.
+ * @param {string} [cwd]
+ * @param {string} [excludeRoot]
+ * @returns {string}
+ */
+function nearestParentNaxRoot(cwd = process.cwd(), excludeRoot = '') {
+  let current = path.resolve(cwd)
+  const excluded = excludeRoot ? path.resolve(excludeRoot) : ''
+
+  while (true) {
+    if (current !== excluded && fs.existsSync(path.join(current, '.nax'))) return current
+    const parent = path.dirname(current)
+    if (parent === current) return ''
+    current = parent
+  }
+}
+
+/**
+ * Reads a handoff source from the site-local root, falling back to an older parent .nax.
+ * @param {string} runId
+ * @param {import('./commands/options').CliOptions} options
+ * @param {{ cwd?: string }} [context]
+ * @returns {{ projectRoot: string, handoff: ReturnType<typeof readSelectedHandoffSource> }}
+ */
+function readSelectedHandoffWithFallback(runId, options = {}, { cwd = process.cwd() } = {}) {
+  const primaryRoot = resolveProjectRoot(options.projectRoot, { cwd })
+  try {
+    return {
+      projectRoot: primaryRoot,
+      handoff: readSelectedHandoffSource({ projectRoot: primaryRoot, runId, options }),
+    }
+  } catch (error) {
+    if (options.projectRoot) throw error
+    const fallbackRoot = nearestParentNaxRoot(cwd, primaryRoot)
+    if (!fallbackRoot) throw error
+    try {
+      return {
+        projectRoot: fallbackRoot,
+        handoff: readSelectedHandoffSource({ projectRoot: fallbackRoot, runId, options }),
+      }
+    } catch (_fallbackError) {
+      throw error
+    }
+  }
+}
+
 async function handleRecent(options) {
-  const projectRoot = options.projectRoot || process.cwd()
+  const primaryRoot = resolveProjectRoot(options.projectRoot, { cwd: process.cwd() })
   const requestedType = options.type || 'all'
-  const sources = listHandoffSources(projectRoot)
+  let projectRoot = primaryRoot
+  let sources = listHandoffSources(projectRoot)
+  if (!options.projectRoot && sources.length === 0) {
+    const fallbackRoot = nearestParentNaxRoot(process.cwd(), primaryRoot)
+    if (fallbackRoot) {
+      const fallbackSources = listHandoffSources(fallbackRoot)
+      if (fallbackSources.length > 0) {
+        projectRoot = fallbackRoot
+        sources = fallbackSources
+      }
+    }
+  }
+  sources = sources
     .filter((source) => requestedType === 'all' || source.kind === requestedType)
   if (sources.length === 0) {
     console.log(`No completed nax artifacts found under ${path.join(projectRoot, '.nax')}.`)
@@ -1039,8 +1098,9 @@ async function runSingleGithubAgent({ projectRoot, agent, promptText, source, op
 }
 
 async function handleHandoff(runId, options) {
-  const projectRoot = path.resolve(options.projectRoot || process.cwd())
-  let handoff = readSelectedHandoffSource({ projectRoot, runId, options })
+  const selected = readSelectedHandoffWithFallback(runId, options, { cwd: process.cwd() })
+  const projectRoot = selected.projectRoot
+  let handoff = selected.handoff
 
   if (options.path) {
     console.log(handoff.displayPath)
@@ -2662,6 +2722,7 @@ module.exports = {
   inferModelFromIssueTitle,
   findRunStateForRetry,
   handleAdHocAgentRun,
+  handleHandoff,
   handleRetry,
   handleRun,
   handleRunEngine,

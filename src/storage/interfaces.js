@@ -216,6 +216,7 @@
  *   cancelRun?: (id: string, body: JsonObject) => Promise<DashboardMutationResult>,
  *   approveReview?: (id: string, body: JsonObject) => Promise<DashboardMutationResult>,
  *   cancelReview?: (id: string, body: JsonObject) => Promise<DashboardMutationResult>,
+ *   retryAgentRun?: (id: string, body: JsonObject) => Promise<DashboardMutationResult>,
  *   submitFollowup?: (id: string, body: JsonObject) => Promise<DashboardMutationResult>,
  *   cancelFollowup?: (id: string, body: JsonObject) => Promise<DashboardMutationResult>,
  * }} DashboardMutations

@@ -25,6 +25,7 @@ const {
   chooseNetlifyFilterOption,
   configDirForNetlifyOptions,
   formatNetlifyConfigAmbiguity,
+  maybeReportNetlifyConfig,
   maybeReportNetlifyFilter,
   maybeReportNetlifySite,
   netlifyConfigChoiceHint,
@@ -380,6 +381,12 @@ function loadDashboardServer() {
  *   transport?: string,
  *   projectRoot?: string,
  * }} PrintSuccessBoxInput
+ *
+ * Detail moved below a success box when it is too wide for the terminal.
+ * @typedef {{
+ *   label: string,
+ *   value: string,
+ * }} SuccessBoxAttachment
  *
  * Minimal runtime event callbacks used by workflow execution.
  * @typedef {import('../types').JsonMap & {
@@ -802,7 +809,9 @@ async function runSingleNetlifyAgent({
   }
 
   if (typeof beforeSubmit === 'function') beforeSubmit()
-  maybeReportNetlifySite(netlifyOptionsFromTarget(options, netlify))
+  const resolvedNetlifyOptions = netlifyOptionsFromTarget(options, netlify)
+  maybeReportNetlifySite(resolvedNetlifyOptions)
+  maybeReportNetlifyConfig(resolvedNetlifyOptions)
   maybeReportNetlifyFilter(netlifyFilter)
   console.log(`\nStarting ${titleCase(agent)} ${startLabel || runTitle.toLowerCase()}...`)
   const startedAt = Date.now()
@@ -1433,22 +1442,27 @@ function printSuccessBox({ flow, runState, transport, projectRoot }) {
   const green = '#22c55e'
   const final = finalRunForRunState(runState)
   if (!final) return
+  const terminalWidth = process.stdout.columns || 100
+  const outerMax = successBoxOuterMaxWidth(terminalWidth)
+  const contentWidth = Math.max(20, outerMax - 6)
   const lines = [`Workflow "${flow.title}" complete.`, `Final step: ${final.step.title}`]
+  /** @type {SuccessBoxAttachment[]} */
+  const attachments = []
   const usage = usageSummariesForRunState(runState)
   if (isNetlifyApiTransport(transport)) {
     const url = final.run.links?.sessionUrl ||
       final.run.links?.agentRunUrl ||
       localAgentRunUrl({ projectRoot, runnerId: final.run.runnerId, sessionId: final.run.sessionId })
     if (url) {
-      lines.push('Final agent run:', url)
+      addSuccessBoxDetail(lines, attachments, 'Final agent run', url, contentWidth)
     } else if (final.run.runnerId) {
       lines.push(`Final agent runner ID: ${final.run.runnerId}`)
     }
-    if (final.run.deployUrl) lines.push('Deploy:', final.run.deployUrl)
-    if (final.run.prUrl) lines.push('PR:', final.run.prUrl)
+    addSuccessBoxDetail(lines, attachments, 'Deploy', final.run.deployUrl, contentWidth)
+    addSuccessBoxDetail(lines, attachments, 'PR', final.run.prUrl, contentWidth)
   } else {
     const url = final.run.commentUrl || final.run.issueUrl
-    if (url) lines.push('Final result:', url)
+    addSuccessBoxDetail(lines, attachments, 'Final result', url, contentWidth)
   }
   if (usage.totalSummary) {
     lines.push(`Total usage: ${usage.totalSummary}`)
@@ -1457,10 +1471,8 @@ function printSuccessBox({ flow, runState, transport, projectRoot }) {
     }
   }
   const artifactsRoot = artifactsRootForRunState(runState)
-  if (artifactsRoot) lines.push('Artifacts:', artifactsRoot)
-  const terminalWidth = process.stdout.columns || 100
-  const outerMax = Math.max(60, Math.floor(terminalWidth * OUTER_TERMINAL_RATIO))
-  const wrapped = wrapBoxLines(lines, outerMax - 6)
+  addSuccessBoxDetail(lines, attachments, 'Artifacts', artifactsRoot, contentWidth)
+  const wrapped = wrapBoxLines(lines, contentWidth)
   const longest = Math.max(...wrapped.split('\n').map((l) => l.length))
   const width = process.stdout.isTTY ? Math.min(longest + 6, outerMax) : longest + 6
   console.log('')
@@ -1471,6 +1483,10 @@ function printSuccessBox({ flow, runState, transport, projectRoot }) {
     borderColor: green,
     width,
   }))
+  if (attachments.length > 0) {
+    console.log('')
+    console.log(formatSuccessBoxAttachments(attachments))
+  }
   console.log('')
 }
 
@@ -1816,6 +1832,36 @@ function wrapBoxLines(lines, width) {
   return lines.map((line) => (isUrlLine(line) ? line : wordWrap(line, width))).join('\n')
 }
 
+/** @param {number} terminalWidth */
+function successBoxOuterMaxWidth(terminalWidth) {
+  if (!process.stdout.isTTY) return Math.max(60, Math.floor(terminalWidth * OUTER_TERMINAL_RATIO))
+  const proportional = Math.floor(terminalWidth * OUTER_TERMINAL_RATIO)
+  return Math.max(24, Math.min(terminalWidth, Math.max(40, proportional)))
+}
+
+/**
+ * @param {string[]} lines
+ * @param {SuccessBoxAttachment[]} attachments
+ * @param {string} label
+ * @param {unknown} value
+ * @param {number} contentWidth
+ */
+function addSuccessBoxDetail(lines, attachments, label, value, contentWidth) {
+  if (!value) return
+  const detail = String(value)
+  if (detail.length > contentWidth) {
+    lines.push(`${label}: see below`)
+    attachments.push({ label, value: detail })
+    return
+  }
+  lines.push(`${label}:`, detail)
+}
+
+/** @param {SuccessBoxAttachment[]} attachments */
+function formatSuccessBoxAttachments(attachments) {
+  return attachments.map(({ label, value }) => `${label}:\n${value}`).join('\n\n')
+}
+
 function finalRunForRunState(runState) {
   const completed = (runState.steps || []).filter((s) => s.status === 'completed' || s.status === 'dry-run')
   if (completed.length === 0) return null
@@ -2076,6 +2122,7 @@ async function handleRetry(runId, options) {
   console.log(`Runner: ${run.runnerId}`)
   console.log(`Prompt: ${String(run.promptText || '').length} -> ${compactPromptText.length} chars`)
   maybeReportNetlifySite(resolvedRetryOptions)
+  maybeReportNetlifyConfig(resolvedRetryOptions)
   maybeReportNetlifyFilter(netlifyFilter)
 
   const retryRun = {

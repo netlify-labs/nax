@@ -5,6 +5,39 @@ const { spawnSync } = require('child_process')
 
 const DEFAULT_BLOB_RETRY_ATTEMPTS = 3
 const DEFAULT_BLOB_RETRY_DELAY_MS = 750
+const BLOB_CLIENT_MODULE = require.resolve('@netlify/blobs')
+const BLOB_CLIENT_SCRIPT = `
+const fs = require('fs')
+const blobs = require(process.env.NAX_BLOBS_CLIENT_MODULE)
+
+async function main() {
+  const [operation, storeName, blobKey, filePath] = process.argv.slice(1)
+  const siteID = process.env.NETLIFY_SITE_ID
+  const token = process.env.NETLIFY_AUTH_TOKEN
+  const store = blobs.getStore({ name: storeName, siteID, token })
+  if (operation === 'set') {
+    await store.set(blobKey, fs.readFileSync(filePath, 'utf8'))
+    process.stdout.write('ok')
+    return
+  }
+  if (operation === 'get') {
+    const value = await store.get(blobKey)
+    if (value) process.stdout.write(String(value))
+    return
+  }
+  if (operation === 'delete') {
+    await store.delete(blobKey)
+    process.stdout.write('ok')
+    return
+  }
+  throw new Error('Unsupported blob operation: ' + operation)
+}
+
+main().catch((error) => {
+  process.stderr.write(error && error.stack ? error.stack : String(error))
+  process.exitCode = 1
+})
+`
 
 /**
  * Synchronous process runner compatible with child_process.spawnSync.
@@ -89,15 +122,52 @@ function isRetryableBlobResult(result = {}) {
  * @param {string | undefined} store
  * @param {string | undefined} key
  * @param {Partial<import('../../types').CommandResult>} result
+ * @param {{ cwd?: string, siteId?: string, cliPath?: string }} [context]
  */
-function blobError(operation, store, key, result) {
+function blobError(operation, store, key, result, context = {}) {
   const detail = resultDetail(result)
-  const message = `Netlify blob ${operation} failed for ${store}/${key}${detail ? `: ${detail}` : ''}`
+  const hint = blobFailureHint({ operation, store, key, result, ...context })
+  const message = [
+    `Netlify blob ${operation} failed for ${store}/${key}${detail ? `: ${detail}` : ''}`,
+    hint,
+  ].filter(Boolean).join('\n\n')
   /** @type {Error & { result?: Partial<import('../../types').CommandResult>, retryable?: boolean }} */
   const error = new Error(message)
   error.result = result
   error.retryable = isRetryableBlobResult(result)
   return error
+}
+
+/**
+ * @param {{
+ *   operation?: string,
+ *   store?: string,
+ *   key?: string,
+ *   result?: Partial<import('../../types').CommandResult>,
+ *   cwd?: string,
+ *   siteId?: string,
+ *   cliPath?: string,
+ * }} input
+ * @returns {string}
+ */
+function blobFailureHint({ result = {}, cwd, siteId, cliPath } = {}) {
+  const detail = resultDetail(result)
+  const commandIsNetlifyCli = !cliPath || /(?:^|[/\\])netlify(?:\.cmd)?$/i.test(String(cliPath))
+  const lines = []
+  if (/Detected unsettled top-level await|netlify-cli[/\\]bin[/\\]run\.js|await main\(\)/i.test(detail) && commandIsNetlifyCli) {
+    lines.push(
+      'Netlify CLI crashed before it returned a blob result. This is usually a local Netlify CLI and Node runtime problem, not an Agent Runner result.',
+      'Verify the selected Netlify site from the site directory and update or downgrade the local CLI/runtime if this command prints the same warning.',
+    )
+  } else if (/unauthori[sz]ed|forbidden|auth|token/i.test(detail)) {
+    lines.push('Netlify rejected the blob command. Check that you are logged in or that NETLIFY_AUTH_TOKEN can access the selected site.')
+  } else if (/siteID|site id|site_id|MissingBlobsEnvironmentError/i.test(detail)) {
+    lines.push('Netlify Blob access is missing a site id. Link the nested site or pass --site-id explicitly.')
+  }
+  if (cwd) lines.push(`Check: cd ${cwd} && netlify status`)
+  if (siteId) lines.push(`Selected site id: ${siteId}`)
+  lines.push('For nested sites, run nax with --netlify-config <path-to-netlify.toml> or start it from the linked site directory.')
+  return lines.length > 1 ? lines.join('\n') : ''
 }
 
 /** @param {string | number | undefined} value */
@@ -145,7 +215,7 @@ function runBlobCommand({
   jitter = Math.random,
   onRetry = () => {},
   runCommand = spawnSync,
-  cliPath = 'netlify',
+  cliPath = process.execPath,
 } = {}) {
   const totalAttempts = retryAttempts(attempts)
   let last = null
@@ -169,11 +239,11 @@ function runBlobCommand({
       nextAttempt: attempt + 1,
       attempts: totalAttempts,
       delayMs: nextDelayMs,
-      error: blobError(operation, store, key, result),
+      error: blobError(operation, store, key, result, { cwd, cliPath, siteId: env?.NETLIFY_SITE_ID }),
     })
     if (nextDelayMs > 0) sleep(nextDelayMs)
   }
-  throw blobError(operation, store, key, last || {})
+  throw blobError(operation, store, key, last || {}, { cwd, cliPath, siteId: env?.NETLIFY_SITE_ID })
 }
 
 /** @param {{ env?: NodeJS.ProcessEnv, siteId?: string }} param0 */
@@ -189,6 +259,7 @@ function withAuthEnv({ env = process.env, siteId, token } = {}) {
   return {
     ...blobEnv({ env, siteId }),
     ...(token ? { NETLIFY_AUTH_TOKEN: token } : {}),
+    NAX_BLOBS_CLIENT_MODULE: BLOB_CLIENT_MODULE,
   }
 }
 
@@ -226,7 +297,7 @@ function setBlob({
 } = {}) {
   const temp = writeTempBlobInput(value, tmpDir)
   try {
-    const args = ['blobs:set', store, key, '--input', temp.filePath, '--force']
+    const args = ['-e', BLOB_CLIENT_SCRIPT, 'set', store, key, temp.filePath]
     return runBlobCommand({
       operation: 'set',
       args,
@@ -265,7 +336,7 @@ function getBlob({
 } = {}) {
   // Used by the credentialed roundtrip probe and debugging paths. Hosted agent
   // prompts still fetch with the runner-local CLI command embedded in the prompt.
-  const args = ['blobs:get', store, key]
+  const args = ['-e', BLOB_CLIENT_SCRIPT, 'get', store, key]
   const result = runBlobCommand({
     operation: 'get',
     args,
@@ -301,7 +372,7 @@ function deleteBlob({
   onRetry,
   allowFailure = false,
 } = {}) {
-  const args = ['blobs:delete', store, key, '--force']
+  const args = ['-e', BLOB_CLIENT_SCRIPT, 'delete', store, key]
   try {
     return runBlobCommand({
       operation: 'delete',
@@ -341,4 +412,5 @@ module.exports = {
   runBlobCommand,
   sanitizeDetail,
   setBlob,
+  blobFailureHint,
 }

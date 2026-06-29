@@ -1274,6 +1274,55 @@ test('waitForLocalAgentRuns returns completed runs after polling terminal state'
   assert.equal(terminalRuns[0].sessionId, 'session-1')
 })
 
+test('waitForLocalAgentRuns waits for dashboard retry replacement from refreshed state', async () => {
+  let oldCodexCompleted = false
+  const shownRunners = []
+  const initialRuns = [
+    { agent: 'claude', runnerId: 'runner-claude', status: 'submitted', resultText: '' },
+    { agent: 'codex', runnerId: 'runner-old', status: 'submitted', resultText: '' },
+  ]
+  const result = await waitForLocalAgentRuns({
+    projectRoot: '/tmp/project',
+    siteId: 'site-123',
+    env: {},
+    timeoutMinutes: 1,
+    initialDelayMs: 0,
+    pollIntervalMs: 1,
+    runs: initialRuns,
+    refreshRuns() {
+      if (!oldCodexCompleted) return initialRuns
+      return [
+        { agent: 'claude', runnerId: 'runner-claude', status: 'submitted', resultText: '' },
+        { agent: 'codex', runnerId: 'runner-new', status: 'submitted', resultText: '', raw: { dashboardRetry: { previous: { runnerId: 'runner-old' } } } },
+      ]
+    },
+    runCommand(_command, args) {
+      if (args[0] === 'agents:show') {
+        const runnerId = args[1]
+        shownRunners.push(runnerId)
+        return {
+          status: 0,
+          stdout: JSON.stringify({ id: runnerId, state: runnerId === 'runner-claude' && shownRunners.filter((id) => id === 'runner-claude').length === 1 ? 'running' : 'completed' }),
+          stderr: '',
+        }
+      }
+      const serializedArgs = args.join(' ')
+      const runnerId = serializedArgs.includes('runner-old') ? 'runner-old' : serializedArgs.includes('runner-new') ? 'runner-new' : 'runner-claude'
+      if (runnerId === 'runner-old') oldCodexCompleted = true
+      return {
+        status: 0,
+        stdout: JSON.stringify({ sessions: [{ id: `session-${runnerId}`, result: `result-${runnerId}` }] }),
+        stderr: '',
+      }
+    },
+  })
+
+  assert.equal(result.length, 2)
+  assert.equal(result[1].runnerId, 'runner-new')
+  assert.equal(result[1].resultText, 'result-runner-new')
+  assert.equal(shownRunners.includes('runner-new'), true)
+})
+
 test('waitForLocalAgentRuns fails completed parent runners with errored latest sessions', async () => {
   const result = await waitForLocalAgentRuns({
     projectRoot: '/tmp/project',

@@ -239,6 +239,7 @@ const NETLIFY_CONFIG_SCAN_SKIP_DIRS = new Set([
  *   pollIntervalMs?: number,
  *   onProgress?: (event: LocalRunProgressEvent) => void,
  *   onTerminalRun?: (run: import('../../types').AgentRun) => void,
+ *   refreshRuns?: () => import('../../types').AgentRun[],
  *   runCommand?: SyncRunCommand,
  * }} WaitForLocalAgentRunsOptions
  *
@@ -1229,13 +1230,44 @@ async function waitForLocalAgentRuns({
   pollIntervalMs = 15000,
   onProgress = () => {},
   onTerminalRun = () => {},
+  refreshRuns = () => [],
   runCommand = run,
 } = {}) {
   const deadline = Date.now() + timeoutMinutes * 60 * 1000
-  const pending = new Map(runs.map((item) => [item.runnerId, item]))
+  let trackedRuns = Array.isArray(runs) ? runs : []
+  const pending = new Map(trackedRuns.map((item) => [item.runnerId, item]))
   const completed = new Map()
-  const capacityRetryCounts = new Map(runs.map((item) => [item.runnerId, Number(item.autoRetryCount || 0)]))
-  const promptShrinkRetryCounts = new Map(runs.map((item) => [item.runnerId, Number(item.promptShrinkRetryCount || 0)]))
+  const capacityRetryCounts = new Map(trackedRuns.map((item) => [item.runnerId, Number(item.autoRetryCount || 0)]))
+  const promptShrinkRetryCounts = new Map(trackedRuns.map((item) => [item.runnerId, Number(item.promptShrinkRetryCount || 0)]))
+  const isTerminalStoredStatus = (status) => {
+    const normalized = String(status || '').trim().toLowerCase()
+    return TERMINAL_SUCCESS_STATES.has(normalized) || TERMINAL_FAILURE_STATES.has(normalized) || normalized === 'timeout'
+  }
+  const syncRefreshedRuns = () => {
+    const refreshed = typeof refreshRuns === 'function' ? refreshRuns() : []
+    if (!Array.isArray(refreshed) || refreshed.length === 0) return
+    const previousByAgent = new Map(trackedRuns.filter((item) => item?.agent).map((item) => [item.agent, item]))
+    for (const refreshedRun of refreshed) {
+      const runnerId = String(refreshedRun?.runnerId || '').trim()
+      const agent = String(refreshedRun?.agent || '').trim()
+      if (!runnerId || !agent) continue
+      const previous = previousByAgent.get(agent)
+      const previousRunnerId = String(previous?.runnerId || '').trim()
+      if (previousRunnerId && previousRunnerId !== runnerId) {
+        pending.delete(previousRunnerId)
+        completed.delete(previousRunnerId)
+      }
+      if (isTerminalStoredStatus(refreshedRun.status)) {
+        pending.delete(runnerId)
+        if (!completed.has(runnerId)) completed.set(runnerId, refreshedRun)
+      } else if (!completed.has(runnerId)) {
+        pending.set(runnerId, refreshedRun)
+      }
+      if (!capacityRetryCounts.has(runnerId)) capacityRetryCounts.set(runnerId, Number(refreshedRun.autoRetryCount || 0))
+      if (!promptShrinkRetryCounts.has(runnerId)) promptShrinkRetryCounts.set(runnerId, Number(refreshedRun.promptShrinkRetryCount || 0))
+    }
+    trackedRuns = refreshed
+  }
   const retryFailedRun = async (runState, failedRun) => {
     const capacityRetryCount = capacityRetryCounts.get(runState.runnerId) || 0
     const promptShrinkRetryCount = promptShrinkRetryCounts.get(runState.runnerId) || 0
@@ -1322,7 +1354,24 @@ async function waitForLocalAgentRuns({
   }
 
   while (pending.size > 0 && Date.now() < deadline) {
+    syncRefreshedRuns()
     for (const runState of [...pending.values()]) {
+      const dashboardRetry = runState.raw && typeof runState.raw === 'object'
+        ? /** @type {{ pending?: boolean } | null} */ (runState.raw.dashboardRetry || null)
+        : null
+      if (dashboardRetry?.pending === true) {
+        onProgress({
+          message: `${runState.agent} retry is being submitted`,
+          run: runState,
+          state: 'retrying',
+          terminal: false,
+          terminalSuccess: false,
+          terminalFailure: false,
+          retry: true,
+          retryReason: 'dashboard',
+        })
+        continue
+      }
       const shown = showAgentRun({
         projectRoot,
         runnerId: runState.runnerId,
@@ -1416,7 +1465,7 @@ async function waitForLocalAgentRuns({
     completed.set(runState.runnerId, timeoutRun)
   }
 
-  return runs.map((runState) => completed.get(runState.runnerId) || runState)
+  return trackedRuns.map((runState) => completed.get(runState.runnerId) || runState)
 }
 
 module.exports = {

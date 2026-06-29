@@ -36,6 +36,7 @@ const {
   cancelFollowup: cancelFollowupService,
   cancelReviewGate: cancelReviewGateService,
   cancelRun: cancelRunService,
+  retryAgentRun: retryAgentRunService,
   submitFollowup: submitFollowupService,
 } = require('./services/mutations')
 const { dryRunWorkflow, resumeWorkflowRun } = require('./transports/local-in-process')
@@ -1045,6 +1046,19 @@ function createRequestHandler(options = {}) {
         const durable = durableRunStateForId(id)
         return durable ? { body: cancelReviewGateService({ runState: durable, body }) } : null
       },
+      retryAgentRun: async (id, body) => {
+        const durable = durableRunStateForId(safeDecode(id))
+        if (!durable) return null
+        return {
+          statusCode: 202,
+          body: await retryAgentRunService({
+            projectRoot,
+            durable,
+            body,
+            env,
+          }),
+        }
+      },
       submitFollowup: async (id, body) => {
         const sourceRunId = safeDecode(id)
         const durable = durableRunStateForId(sourceRunId)
@@ -1741,6 +1755,29 @@ function createRequestHandler(options = {}) {
           }
           const body = await readJsonBody(req)
           jsonResponse(res, 200, cancelReviewGateService({ runState: durable, body }))
+          return
+        }
+
+        const runRetryMatch = pathname.match(/^\/api\/runs\/([^/]+)\/retry$/)
+        if (runRetryMatch) {
+          if (req.method !== 'POST') {
+            methodNotAllowed(res, req.method || 'UNKNOWN')
+            return
+          }
+          assertToken(req, requestUrl, token)
+          const sourceRunId = safeDecode(runRetryMatch[1])
+          const durable = durableRunStateForId(sourceRunId)
+          if (!durable) {
+            notFound(res, 'Unknown dashboard run.')
+            return
+          }
+          const body = await readJsonBody(req)
+          jsonResponse(res, 202, await retryAgentRunService({
+            projectRoot,
+            durable,
+            body,
+            env,
+          }))
           return
         }
 

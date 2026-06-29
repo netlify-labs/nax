@@ -1,4 +1,4 @@
-import type { DryRunOptions, DryRunResponse, HealthResponse, RunDetailsResponse, RunFollowupRequest, RunFollowupResponse, RunGraphResponse, RunsResponse, StartRunResponse, WorkflowGraphResponse, WorkflowListResponse, DashboardRun } from './types'
+import type { DryRunOptions, DryRunResponse, HealthResponse, RunDetailsResponse, RunFollowupRequest, RunFollowupResponse, RunGraphResponse, RunRetryRequest, RunRetryResponse, RunsResponse, StartRunResponse, WorkflowGraphResponse, WorkflowListResponse, DashboardRun } from './types'
 
 type DashboardWindow = Window & {
   NAX_DASHBOARD_API_BASE?: string
@@ -196,6 +196,19 @@ export async function cancelHumanReviewGate(
 ): Promise<{ run: DashboardRun; cancelled: boolean }> {
   return fetchJson<{ run: DashboardRun; cancelled: boolean }>(
     `/api/runs/${encodeURIComponent(id)}/review/cancel`,
+    {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify(target),
+    },
+  )
+}
+
+export async function retryAgentRun(id: string, target: RunRetryRequest): Promise<RunRetryResponse> {
+  return fetchJson<RunRetryResponse>(
+    `/api/runs/${encodeURIComponent(id)}/retry`,
     {
       method: 'POST',
       headers: {

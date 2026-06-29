@@ -168,3 +168,25 @@ test('dashboard run projection treats active remote agent runs as conflicting au
     'workflow_status_conflict',
   ])
 })
+
+test('dashboard run projection preserves dismissed workflows with stale active child state', () => {
+  const snapshot = projectRunSnapshot({
+    runId: 'run-1',
+    flowId: 'review',
+    status: 'dismissed',
+    dismissedAt: '2026-06-21T05:19:43.494Z',
+    steps: [{
+      id: 'review',
+      status: 'running',
+      runs: [
+        { agent: 'claude', runnerId: 'runner-1', status: 'running' },
+        { agent: 'gemini', runnerId: 'runner-2', status: 'running' },
+      ],
+    }],
+  }, { cancellable: true })
+
+  assert.equal(snapshot.status, 'dismissed')
+  assert.equal(snapshot.cancellable, false)
+  assert.equal(snapshot.resumable, false)
+  assert.equal(snapshot.diagnostics.some((diagnostic) => diagnostic.code === 'workflow_status_conflict'), true)
+})

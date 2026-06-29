@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type RefObject } from 'react'
 import { ActionIcon, Alert, Anchor, Badge, Box, Button, Code, Group, Menu, Modal, Paper, ScrollArea, Stack, Text, Timeline, Title, Tooltip, UnstyledButton } from '@mantine/core'
-import { Ban, Check, ChevronsDownUp, ChevronsUpDown, ChevronDown, ChevronRight, ExternalLink, FileText, Files, Play } from 'lucide-react'
+import { Ban, Check, ChevronsDownUp, ChevronsUpDown, ChevronDown, ChevronRight, ExternalLink, FileText, Files, Play, RotateCcw } from 'lucide-react'
 import { openLocalFile } from '../api'
-import { useApproveHumanReviewGateMutation, useCancelFollowupRunMutation, useCancelHumanReviewGateMutation, useCancelWorkflowRunMutation } from '../queries/dashboard-mutations'
+import { useApproveHumanReviewGateMutation, useCancelFollowupRunMutation, useCancelHumanReviewGateMutation, useCancelWorkflowRunMutation, useRetryAgentRunMutation } from '../queries/dashboard-mutations'
 import { useRunDetailsQuery } from '../queries/dashboard-queries'
 import { agentLabel, isDoneStatus, recordList, recordValue, runId, statusBadgeStyle, statusColor, statusLabel, workflowName } from '../run-format'
 import { extractMarkdownToc } from '../run-details-toc'
@@ -549,6 +549,21 @@ function cancelTargetForEntry(entry: TimelineEntry): { stepId?: string; agent?: 
   return { stepId, agent, runnerId, sessionId }
 }
 
+function retryTargetForEntry(entry: TimelineEntry): { stepId: string; agent: string; runnerId?: string; sessionId?: string } | null {
+  const stepId = entry.section?.stepId || entry.liveContext?.selector.stepId || ''
+  const agent = entry.section?.agent || entry.liveContext?.selector.agent || ''
+  const runnerId = entry.section?.runnerId || entry.liveContext?.runnerId || entry.liveContext?.selector.runnerId || ''
+  const sessionId = entry.section?.sessionId || entry.liveContext?.sessionId || entry.liveContext?.selector.sessionId || ''
+  if (!stepId || !agent) return null
+  return { stepId, agent, runnerId, sessionId }
+}
+
+function canRetryTimelineEntry(entry: TimelineEntry, workflowStatus: string): boolean {
+  if (entry.kind !== 'session' || !isActiveStatus(workflowStatus)) return false
+  if (!['completed', 'failed', 'timeout'].includes(statusKey(entry.status))) return false
+  return Boolean(retryTargetForEntry(entry))
+}
+
 function shouldPollRunDetails(response: RunDetailsResponse, entries: TimelineEntry[]): boolean {
   if (!isTerminalStatus(response.run.status || '')) return true
   return entries.some((entry) => !isTerminalStatus(entry.status || ''))
@@ -607,6 +622,7 @@ export function RunDetailsModal({
   const cancelFollowupRunMutation = useCancelFollowupRunMutation()
   const approveHumanReviewGateMutation = useApproveHumanReviewGateMutation()
   const cancelHumanReviewGateMutation = useCancelHumanReviewGateMutation()
+  const retryAgentRunMutation = useRetryAgentRunMutation()
   const detailsQuery = useRunDetailsQuery(detailsRunId, {
     enabled: opened && Boolean(detailsRunId),
     refetchInterval: (query) => {
@@ -693,6 +709,20 @@ export function RunDetailsModal({
       runId: detailsRunId,
       stepId: entry.id.replace(/^step:/, ''),
       reason: 'cancelled from dashboard',
+    })
+    await refreshDetails()
+    await onRunUpdated?.(response.run)
+  }
+
+  const retryAgentEntry = async (entry: TimelineEntry) => {
+    const target = retryTargetForEntry(entry)
+    if (!detailsRunId || !target) throw new Error('This agent result is no longer retryable.')
+    const response = await retryAgentRunMutation.mutateAsync({
+      runId: detailsRunId,
+      target: {
+        ...target,
+        reason: 'dashboard retry',
+      },
     })
     await refreshDetails()
     await onRunUpdated?.(response.run)
@@ -846,7 +876,10 @@ export function RunDetailsModal({
                   onCancelFollowup={cancelFollowupEntry}
                   onCancelReview={cancelReviewEntry}
                   onContentViewChange={setContentView}
+                  onRetryAgent={retryAgentEntry}
+                  retrying={retryAgentRunMutation.isPending}
                   canOpenLocalFiles={canOpenLocalFiles}
+                  workflowStatus={detailWorkflowStatus}
                   workflowName={detailWorkflowName}
                   scrollRootRef={markdownScrollRef}
                 />
@@ -1029,7 +1062,10 @@ function RunDetailsContent({
   onCancelFollowup,
   onCancelReview,
   onContentViewChange,
+  onRetryAgent,
+  retrying,
   workflowName: name,
+  workflowStatus,
   scrollRootRef,
 }: {
   canOpenLocalFiles?: boolean
@@ -1040,10 +1076,14 @@ function RunDetailsContent({
   onCancelFollowup: (entry: TimelineEntry) => Promise<void>
   onCancelReview: (entry: TimelineEntry) => Promise<void>
   onContentViewChange: (view: 'results' | 'prompt') => void
+  onRetryAgent: (entry: TimelineEntry) => Promise<void>
+  retrying: boolean
   workflowName: string
+  workflowStatus: string
   scrollRootRef?: RefObject<HTMLDivElement | null>
 }) {
   const [reviewAction, setReviewAction] = useState<'approve' | 'cancel' | ''>('')
+  const [retryAction, setRetryAction] = useState(false)
   const hasPrompt = Boolean(entry.promptMarkdown)
   const showingPrompt = contentView === 'prompt' && hasPrompt
   const markdown = showingPrompt ? entry.promptMarkdown || '' : entry.markdown
@@ -1052,6 +1092,7 @@ function RunDetailsContent({
   const actionSessionUrl = showingPrompt ? '' : entry.section?.links.sessionUrl || entry.section?.links.agentRunUrl
   const canCancel = !showingPrompt && Boolean(detailsRunId && cancelTargetForEntry(entry))
   const canReview = !showingPrompt && entry.kind === 'step' && entry.status === 'awaiting_review'
+  const canRetry = !showingPrompt && Boolean(detailsRunId) && canRetryTimelineEntry(entry, workflowStatus)
   useResetMarkdownScroll(scrollRootRef, `${entry.id}:${showingPrompt ? 'prompt' : 'results'}`)
   const runReviewAction = async (action: 'approve' | 'cancel') => {
     setReviewAction(action)
@@ -1060,6 +1101,14 @@ function RunDetailsContent({
       else await onCancelReview(entry)
     } finally {
       setReviewAction('')
+    }
+  }
+  const runRetryAction = async () => {
+    setRetryAction(true)
+    try {
+      await onRetryAgent(entry)
+    } finally {
+      setRetryAction(false)
     }
   }
   return (
@@ -1084,6 +1133,19 @@ function RunDetailsContent({
             sessionUrl={actionSessionUrl}
             onCancel={canCancel ? () => onCancelFollowup(entry) : undefined}
           />
+        ) : null}
+        {canRetry ? (
+          <Tooltip label="Retry this agent result">
+            <Button
+              leftSection={<RotateCcw size={14} />}
+              loading={retryAction || retrying}
+              onClick={runRetryAction}
+              size="compact-xs"
+              variant="light"
+            >
+              Retry result
+            </Button>
+          </Tooltip>
         ) : null}
         {canReview ? (
           <Group gap={6} wrap="nowrap">

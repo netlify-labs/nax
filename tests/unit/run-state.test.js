@@ -334,3 +334,46 @@ test('saveRunState preserves durable runner metadata from newer state snapshots'
   assert.equal(fs.existsSync(`${workflowStatePath(current.dir)}.lock`), false)
   assert.equal(fs.readdirSync(current.dir).some((entry) => entry.includes('.tmp')), false)
 })
+
+test('saveRunState preserves dashboard retry replacement over stale agent snapshot', () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'nax-run-state-retry-merge-test-'))
+  const current = saveRunState(runState(tmp, {
+    runId: 'retry-merge-run',
+    status: 'running',
+    steps: [{
+      id: 'review',
+      status: 'running',
+      runs: [{
+        agent: 'codex',
+        status: 'submitted',
+        runnerId: 'runner-new',
+        raw: {
+          dashboardRetry: {
+            requestedAt: '2026-06-28T21:48:10.000Z',
+            previous: { runnerId: 'runner-old' },
+          },
+        },
+      }],
+    }],
+  }))
+
+  saveRunState({
+    ...current,
+    steps: [{
+      id: 'review',
+      status: 'running',
+      runs: [{
+        agent: 'codex',
+        status: 'completed',
+        runnerId: 'runner-old',
+        resultText: 'stale result',
+        raw: { create: { id: 'runner-old' } },
+      }],
+    }],
+  })
+
+  const saved = JSON.parse(fs.readFileSync(workflowStatePath(current.dir), 'utf8'))
+  assert.equal(saved.steps[0].runs[0].runnerId, 'runner-new')
+  assert.equal(saved.steps[0].runs[0].status, 'submitted')
+  assert.equal(saved.steps[0].runs[0].raw.dashboardRetry.previous.runnerId, 'runner-old')
+})

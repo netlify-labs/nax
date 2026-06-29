@@ -479,6 +479,15 @@ function createDashboardApi({
     return json(c, result.body, result.statusCode)
   })
 
+  app.post('/api/runs/:id/retry', async (c) => {
+    assertHonoToken(c, token)
+    requireCapability(capabilities, 'canStartRuns')
+    if (typeof mutations.retryAgentRun !== 'function') throw requestError(501, 'unsupported_capability', 'Agent retry is not available in this runtime.')
+    const result = mutationResult(await mutations.retryAgentRun(c.req.param('id'), await honoJsonBody(c)))
+    if (!result) throw requestError(404, 'not_found', 'Unknown dashboard run.')
+    return json(c, result.body, result.statusCode)
+  })
+
   app.post('/api/runs/:id/followups', async (c) => {
     assertHonoToken(c, token)
     requireCapability(capabilities, 'canSubmitFollowups')

@@ -261,6 +261,17 @@ function mergeRunDurableFields(existingRun = {}, incomingRun = {}) {
   return incomingRun
 }
 
+function isDashboardRetryReplacement(existingRun = {}, incomingRun = {}) {
+  if (!existingRun || !incomingRun) return false
+  if (existingRun.agent !== incomingRun.agent) return false
+  const existingRunnerId = String(existingRun.runnerId || '').trim()
+  const incomingRunnerId = String(incomingRun.runnerId || '').trim()
+  if (!existingRunnerId || existingRunnerId === incomingRunnerId) return false
+  const existingRaw = existingRun.raw && typeof existingRun.raw === 'object' ? existingRun.raw : null
+  const incomingRaw = incomingRun.raw && typeof incomingRun.raw === 'object' ? incomingRun.raw : null
+  return Boolean(existingRaw?.dashboardRetry && !incomingRaw?.dashboardRetry)
+}
+
 function mergeExistingStateForWrite(existingState, incomingState) {
   if (!existingState || existingState.runId !== incomingState?.runId) return incomingState
   const existingSteps = Array.isArray(existingState.steps) ? existingState.steps : []
@@ -273,6 +284,10 @@ function mergeExistingStateForWrite(existingState, incomingState) {
     const existingRuns = Array.isArray(existingStep.runs) ? existingStep.runs : []
     for (const [runIndex, incomingRun] of incomingStep.runs.entries()) {
       const existingRun = matchingExistingRun(existingRuns, incomingRun, runIndex)
+      if (isDashboardRetryReplacement(existingRun, incomingRun)) {
+        incomingStep.runs[runIndex] = existingRun
+        continue
+      }
       if (existingRun) mergeRunDurableFields(existingRun, incomingRun)
     }
   }

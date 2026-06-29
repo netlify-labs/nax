@@ -176,7 +176,9 @@ function projectRunSnapshot(runState = {}, options = {}) {
     })
   }
 
-  if (!storedStatus || !isTerminalProjectedStatus(storedStatus) || (stepStatus && isActiveProjectedStatus(stepStatus))) {
+  if (storedStatus === 'dismissed') {
+    status = storedStatus
+  } else if (!storedStatus || !isTerminalProjectedStatus(storedStatus) || (stepStatus && isActiveProjectedStatus(stepStatus))) {
     status = stepStatus || storedStatus || 'unknown'
   }
 

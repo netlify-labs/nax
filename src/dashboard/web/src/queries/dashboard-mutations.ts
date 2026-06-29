@@ -4,11 +4,12 @@ import {
   cancelFollowupRun,
   cancelHumanReviewGate,
   cancelWorkflowRun,
+  retryAgentRun,
   runWorkflowDryRun,
   startRunFollowup,
   startWorkflowRun,
 } from '../api'
-import type { DryRunOptions, RunFollowupRequest } from '../types'
+import type { DryRunOptions, RunFollowupRequest, RunRetryRequest } from '../types'
 import { invalidateRunViews, upsertRunInDashboardCache } from './dashboard-cache'
 
 export function useDryRunWorkflowMutation() {
@@ -65,6 +66,17 @@ export function useCancelHumanReviewGateMutation() {
   const queryClient = useQueryClient()
   return useMutation({
     mutationFn: ({ runId, stepId, reason }: { runId: string; stepId?: string; reason?: string }) => cancelHumanReviewGate(runId, { stepId, reason }),
+    onSuccess(response) {
+      upsertRunInDashboardCache(queryClient, response.run)
+      void invalidateRunViews(queryClient, response.run.runId || response.run.id)
+    },
+  })
+}
+
+export function useRetryAgentRunMutation() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: ({ runId, target }: { runId: string; target: RunRetryRequest }) => retryAgentRun(runId, target),
     onSuccess(response) {
       upsertRunInDashboardCache(queryClient, response.run)
       void invalidateRunViews(queryClient, response.run.runId || response.run.id)

@@ -139,6 +139,16 @@ function maybeReportNetlifySite(options = {}) {
 }
 
 /**
+ * Prints the selected Netlify config path when one was resolved.
+ * @param {NetlifyCliOptions} [options]
+ * @returns {void}
+ */
+function maybeReportNetlifyConfig(options = {}) {
+  if (!options.netlifyConfig) return
+  console.log(`Netlify config: ${options.netlifyConfig}`)
+}
+
+/**
  * Merges resolved Netlify target fields back into CLI options.
  * @param {NetlifyCliOptions} [options]
  * @param {NetlifyProjectTarget} [target]
@@ -335,6 +345,7 @@ module.exports = {
   formatNetlifyConfigAmbiguity,
   formatNetlifyWorkspaceFilterError,
   gitRepositoryRoot,
+  maybeReportNetlifyConfig,
   maybeReportNetlifyFilter,
   maybeReportNetlifySite,
   netlifyConfigChoiceHint,

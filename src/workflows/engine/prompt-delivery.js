@@ -40,6 +40,7 @@ const DEFAULT_LOCAL_SAFE_PROMPT_BYTES = 16384
  * @typedef {{
  *   siteId?: string,
  *   env?: NodeJS.ProcessEnv,
+ *   configDir?: string,
  * }} PromptNetlifyContext
  *
  * Workflow step shape needed by prompt delivery.
@@ -371,7 +372,7 @@ function ensureGithubPlanBlobOffload({
       value: blobPayload,
       siteId: netlify.siteId,
       token: netlify.env?.NETLIFY_AUTH_TOKEN,
-      cwd: projectRoot,
+      cwd: netlify.configDir || projectRoot,
       env: netlify.env,
       onRetry: ({ nextAttempt, attempts, delayMs, error, store, key }) => {
         const delaySeconds = Math.round(delayMs / 1000)
@@ -609,7 +610,7 @@ function ensureStepBlobOffload({
       value: blobPayload,
       siteId: netlify.siteId,
       token: netlify.env?.NETLIFY_AUTH_TOKEN,
-      cwd: projectRoot,
+      cwd: netlify.configDir || projectRoot,
       env: netlify.env,
       onRetry,
     })
@@ -955,6 +956,7 @@ function cleanupLocalWorkflowBlobs({ runState, projectRoot, netlify, reason = 'f
     siteId: netlify?.siteId,
     token: netlify?.env?.NETLIFY_AUTH_TOKEN,
     env: netlify?.env,
+    cwd: netlify?.configDir || projectRoot,
     deleteBlob,
     log: (message) => console.warn(message),
   })

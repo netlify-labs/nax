@@ -1,7 +1,10 @@
 const assert = require('assert/strict')
+const fs = require('node:fs')
+const os = require('node:os')
+const path = require('node:path')
 const test = require('node:test')
 
-const { cancelFollowup, cancelRun } = require('../../src/dashboard/services/mutations')
+const { cancelFollowup, cancelRun, retryAgentRun } = require('../../src/dashboard/services/mutations')
 
 test('mutation service cancels active local runs and records remote stop metadata', async () => {
   const events = []
@@ -99,4 +102,57 @@ test('mutation service validates follow-up cancel target', async () => {
       return true
     }
   )
+})
+
+test('mutation service retries a terminal agent in an active step', async () => {
+  const durable = {
+    runId: 'durable-1',
+    flowId: 'review',
+    flowTitle: 'Review',
+    transport: 'netlify-api',
+    status: 'running',
+    branch: 'master',
+    target: { branch: 'master', sourceType: 'explicit-branch', verified: true },
+    options: { netlifySiteId: 'site-1', branch: 'master', transport: 'netlify-api' },
+    steps: [{
+      id: 'review',
+      title: 'Review',
+      status: 'running',
+      runs: [
+        { agent: 'claude', status: 'running', runnerId: 'runner-claude' },
+        {
+          agent: 'codex',
+          status: 'completed',
+          runnerId: 'runner-old',
+          sessionId: 'session-old',
+          promptText: 'review this repo',
+          resultText: 'junk',
+          raw: { create: { id: 'runner-old' } },
+        },
+      ],
+    }],
+  }
+  durable.dir = fs.mkdtempSync(path.join(os.tmpdir(), 'nax-dashboard-retry-test-'))
+
+  const result = await retryAgentRun({
+    projectRoot: '/tmp/project',
+    durable,
+    body: { stepId: 'review', agent: 'codex', runnerId: 'runner-old' },
+    env: { NETLIFY_SITE_ID: 'site-1' },
+    submitRun: async ({ run }) => ({
+      ...run,
+      status: 'submitted',
+      runnerId: 'runner-new',
+      sessionId: '',
+      raw: { ...run.raw, create: { id: 'runner-new' } },
+    }),
+  })
+
+  assert.equal(result.retried, true)
+  assert.equal(result.previousRunnerId, 'runner-old')
+  assert.equal(result.runnerId, 'runner-new')
+  assert.equal(result.run.status, 'running')
+  assert.equal(durable.steps[0].runs[1].status, 'submitted')
+  assert.equal(durable.steps[0].runs[1].runnerId, 'runner-new')
+  assert.equal(durable.steps[0].runs[1].raw.dashboardRetry.previous.runnerId, 'runner-old')
 })

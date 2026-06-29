@@ -152,6 +152,7 @@ function updateNestedBlobRefs(runState, replacements) {
  *   siteId?: string,
  *   token?: string,
  *   env?: NodeJS.ProcessEnv,
+ *   cwd?: string,
  *   deleteBlob?: DeleteBlob,
  *   log?: (message: string) => void,
  * }} CleanupRunBlobRefsInput
@@ -164,6 +165,7 @@ function cleanupRunBlobRefs({
   siteId,
   token,
   env,
+  cwd = projectRoot,
   deleteBlob,
   log = () => {},
 } = {}) {
@@ -177,7 +179,7 @@ function cleanupRunBlobRefs({
         siteId,
         token,
         env,
-        cwd: projectRoot,
+        cwd,
         allowFailure: false,
       })
       const cleaned = markBlobRef(projectRoot, ref, {

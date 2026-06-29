@@ -15,12 +15,13 @@ const {
 const {
   chooseNetlifyFilterOption,
   configDirForNetlifyOptions,
+  maybeReportNetlifyConfig,
   maybeReportNetlifyFilter,
   maybeReportNetlifySite,
   netlifyOptionsFromTarget,
 } = require('../../integrations/netlify/project-selection')
 const { titleCase, getLocalDate } = require('../catalog/prompts')
-const { saveRunState, workflowStatePath } = require('../../storage/local/run-state')
+const { readRunState, saveRunState, workflowStatePath } = require('../../storage/local/run-state')
 const { clearTrackedRunState, markRunCompleted, trackRunState } = require('../../storage/local/graceful-run-state')
 const { targetBranch } = require('../../integrations/git/target')
 const { NETLIFY_API_TRANSPORT } = require('../../integrations/transports')
@@ -596,6 +597,18 @@ async function completeLocalStep({ runState, stepState, step, options, projectRo
             error: classifiedRun.status === 'failed' || classifiedRun.status === 'timeout' ? conciseErrorMessage(classifiedRun.resultText || classifiedRun.raw?.submissionError || '') : '',
           })
         },
+        refreshRuns: () => {
+          if (!runState?.dir || !stepState?.id) return []
+          try {
+            const refreshed = readRunState(workflowStatePath(runState.dir))
+            const refreshedStep = Array.isArray(refreshed.steps)
+              ? refreshed.steps.find((candidate) => candidate?.id === stepState.id)
+              : null
+            return Array.isArray(refreshedStep?.runs) ? refreshedStep.runs : []
+          } catch (_err) {
+            return []
+          }
+        },
       })
       const classifiedRuns = completedRuns.map((run) => {
         const classifiedRun = applyContextFetchClassification(run)
@@ -660,6 +673,7 @@ async function executeLocalFlow({ flow, steps, options, runState, projectRoot, c
     saveRunState(runState)
   }
   maybeReportNetlifySite(resolvedNetlifyOptions)
+  maybeReportNetlifyConfig(resolvedNetlifyOptions)
   maybeReportNetlifyFilter(netlifyFilter)
 
   for (const [stepIndex, step] of steps.entries()) {

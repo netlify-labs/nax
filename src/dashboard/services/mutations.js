@@ -1,9 +1,16 @@
 const { normalizeAgentList } = require('../../core/agents/selection')
+const { isNetlifyApiTransport } = require('../../core/runs/resumable')
+const { isTerminalRunStatus } = require('../../core/status')
+const { targetBranch } = require('../../integrations/git/target')
+const { resolveNetlifyProjectTarget, submitLocalAgentRun } = require('../../integrations/netlify/local-runner')
+const { netlifyOptionsFromTarget } = require('../../integrations/netlify/project-selection')
+const { saveRunState } = require('../../storage/local/run-state')
 const { buildFollowupContextPackage } = require('../../workflows/followups/context')
 const { prepareFollowupContextDelivery } = require('../../workflows/followups/delivery')
 const { buildFollowupSubmissionPlan } = require('../../workflows/followups/plan')
 const { buildFollowupPrompt, submitFollowupPlan } = require('../../workflows/followups/runner')
 const { appendFollowupRunsToWorkflow, cancelFollowupRunInWorkflow, persistFreshPseudoWorkflow } = require('../../workflows/followups/persistence')
+const { addLocalRunLinks } = require('../../workflows/engine/local-executor')
 const { cancelHumanReviewGate } = require('../../workflows/human-review')
 const { requestError } = require('../api/errors')
 const { buildRunDetails } = require('../shared/run-details')
@@ -72,6 +79,188 @@ function objectValue(value) {
 /** @param {unknown} value */
 function stringValue(value) {
   return typeof value === 'string' ? value : value === undefined || value === null ? '' : String(value)
+}
+
+/** @param {unknown} status */
+function isActiveWorkflowStepStatus(status) {
+  return ['pending', 'queued', 'running', 'submitted', 'submitting', 'retrying', 'waiting'].includes(String(status || '').trim().toLowerCase())
+}
+
+/**
+ * @param {Record<string, unknown>} durable
+ * @param {Record<string, unknown>} body
+ */
+function retryTarget(durable, body = {}) {
+  const stepId = stringValue(body.stepId).trim()
+  const agent = stringValue(body.agent).trim().toLowerCase()
+  const runnerId = stringValue(body.runnerId).trim()
+  const sessionId = stringValue(body.sessionId).trim()
+  if (!stepId || !agent) {
+    throw requestError(400, 'missing_retry_target', 'Select a workflow step and agent result to retry.')
+  }
+  const steps = Array.isArray(durable.steps) ? durable.steps.map(objectValue) : []
+  const step = steps.find((candidate) => stringValue(candidate.id) === stepId) || null
+  if (!step) throw requestError(404, 'retry_step_not_found', `Workflow step "${stepId}" was not found.`)
+  if (!isActiveWorkflowStepStatus(step.status)) {
+    throw requestError(409, 'retry_step_not_active', `Workflow step "${stepId}" is no longer active.`)
+  }
+  const runs = Array.isArray(step.runs) ? step.runs.map(objectValue) : []
+  const matches = runs
+    .map((run, runIndex) => ({ run, runIndex }))
+    .filter(({ run }) => {
+      if (stringValue(run.agent).toLowerCase() !== agent) return false
+      if (runnerId && stringValue(run.runnerId) !== runnerId) return false
+      if (sessionId && stringValue(run.sessionId) !== sessionId) return false
+      return true
+    })
+  if (matches.length === 0) throw requestError(404, 'retry_run_not_found', `No ${agent} run was found for step "${stepId}".`)
+  if (matches.length > 1) throw requestError(409, 'ambiguous_retry_target', `More than one ${agent} run matched step "${stepId}".`)
+  const match = matches[0]
+  if (!isTerminalRunStatus(match.run.status)) {
+    throw requestError(409, 'retry_run_not_terminal', `The ${agent} run is still active.`)
+  }
+  if (!stringValue(match.run.promptText).trim()) {
+    throw requestError(409, 'retry_prompt_unavailable', `The saved ${agent} prompt is not available for retry.`)
+  }
+  return {
+    step,
+    run: match.run,
+    runIndex: match.runIndex,
+    stepId,
+    agent,
+  }
+}
+
+/**
+ * @param {Record<string, unknown>} run
+ * @param {{ requestedAt: string, reason: string }} retry
+ * @param {Record<string, unknown>} [extra]
+ */
+function retryReplacementRun(run, retry, extra = {}) {
+  return {
+    ...run,
+    status: 'pending',
+    runnerId: '',
+    sessionId: '',
+    resultText: '',
+    issueUrl: '',
+    commentUrl: '',
+    prUrl: '',
+    deployUrl: '',
+    links: {},
+    existingRunnerId: '',
+    raw: {
+      ...objectValue(run.raw),
+      dashboardRetry: {
+        requestedAt: retry.requestedAt,
+        reason: retry.reason,
+        ...extra,
+        previous: {
+          agent: stringValue(run.agent),
+          status: stringValue(run.status),
+          runnerId: stringValue(run.runnerId),
+          sessionId: stringValue(run.sessionId),
+        },
+      },
+    },
+  }
+}
+
+/**
+ * @param {{
+ *   projectRoot: string,
+ *   durable: Record<string, unknown>,
+ *   body?: Record<string, unknown>,
+ *   env: NodeJS.ProcessEnv,
+ *   submitRun?: typeof submitLocalAgentRun,
+ * }} input
+ */
+async function retryAgentRun({ projectRoot, durable, body = {}, env, submitRun = submitLocalAgentRun }) {
+  if (!isNetlifyApiTransport(durable.transport)) {
+    throw requestError(409, 'unsupported_retry_transport', `Run ${stringValue(durable.runId)} uses ${stringValue(durable.transport) || 'unknown'} transport; retry supports Netlify API runs only.`)
+  }
+  const target = retryTarget(durable, body)
+  const durableOptions = objectValue(durable.options)
+  const netlify = resolveNetlifyProjectTarget({
+    projectRoot,
+    siteId: stringValue(durableOptions.netlifySiteId || durableOptions.siteId),
+    filter: stringValue(durableOptions.filter),
+    netlifyConfig: stringValue(durableOptions.netlifyConfig),
+    env,
+  })
+  const resolvedOptions = netlifyOptionsFromTarget(durableOptions, netlify)
+  durable.options = {
+    ...durableOptions,
+    ...(resolvedOptions.filter ? { filter: resolvedOptions.filter } : {}),
+    ...(resolvedOptions.netlifyConfig ? { netlifyConfig: resolvedOptions.netlifyConfig } : {}),
+    ...(resolvedOptions.netlifySiteId ? { netlifySiteId: resolvedOptions.netlifySiteId } : {}),
+    ...(resolvedOptions.netlifySiteSource ? { netlifySiteSource: resolvedOptions.netlifySiteSource } : {}),
+  }
+  const replacement = retryReplacementRun(target.run, {
+    requestedAt: new Date().toISOString(),
+    reason: stringValue(body.reason).trim() || 'dashboard retry',
+  }, {
+    pending: true,
+  })
+  replacement.status = 'retrying'
+  replacement.runnerId = `pending-retry-${replacement.raw.dashboardRetry.requestedAt.replace(/[^0-9A-Za-z]+/g, '-')}-${target.agent}`
+  target.step.runs[target.runIndex] = replacement
+  target.step.status = 'running'
+  durable.status = 'running'
+  saveRunState(durable)
+  const submitCandidate = {
+    ...replacement,
+    status: 'pending',
+    runnerId: '',
+    raw: {
+      ...replacement.raw,
+      dashboardRetry: {
+        ...objectValue(objectValue(replacement.raw).dashboardRetry),
+        pending: false,
+      },
+    },
+  }
+  let submitted
+  try {
+    submitted = await submitRun({
+      run: submitCandidate,
+      projectRoot,
+      branch: targetBranch(durable, { required: true }),
+      siteId: netlify.siteId,
+      netlifyFilter: netlify.netlifyFilter.filter,
+      env: netlify.env,
+    })
+  } catch (error) {
+    target.step.runs[target.runIndex] = {
+      ...replacement,
+      status: 'failed',
+      resultText: error?.message || String(error || 'Retry submission failed'),
+      raw: {
+        ...replacement.raw,
+        dashboardRetry: {
+          ...objectValue(objectValue(replacement.raw).dashboardRetry),
+          pending: false,
+          submissionError: error?.message || String(error || 'Retry submission failed'),
+        },
+      },
+    }
+    saveRunState(durable)
+    throw error
+  }
+  addLocalRunLinks(submitted, projectRoot, /** @type {import('../../types').JsonMap} */ (objectValue(durable.options)))
+  target.step.runs[target.runIndex] = submitted
+  target.step.status = 'running'
+  durable.status = 'running'
+  const saved = saveRunState(durable)
+  return {
+    run: publicRunState(saved),
+    retried: true,
+    stepId: target.stepId,
+    agent: target.agent,
+    previousRunnerId: stringValue(target.run.runnerId),
+    runnerId: stringValue(submitted.runnerId),
+    sessionId: stringValue(submitted.sessionId),
+  }
 }
 
 /** @param {SubmitFollowupInput} input */
@@ -353,5 +542,6 @@ module.exports = {
   cancelFollowup,
   cancelReviewGate,
   cancelRun,
+  retryAgentRun,
   submitFollowup,
 }

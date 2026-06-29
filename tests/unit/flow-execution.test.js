@@ -1867,6 +1867,72 @@ test('success box keeps non-TTY links on one line', () => {
   assert.ok(output.includes(longUrl))
 })
 
+test('success box moves oversized TTY links below the box', () => {
+  const originalLog = console.log
+  const originalIsTTY = Object.getOwnPropertyDescriptor(process.stdout, 'isTTY')
+  const originalColumns = Object.getOwnPropertyDescriptor(process.stdout, 'columns')
+  const lines = []
+  const longUrl = 'https://app.netlify.com/projects/revenue-engine-dev/agent-runs/6a419a70f396f82cfe57821f?session=6a419a70f396f82cfe578221'
+  const runDir = path.join(os.tmpdir(), 'netlify-agent-executor-review-artifacts-2026-06-28T21-48-10-975Z-review')
+  const artifactsRoot = path.join(runDir, 'artifacts')
+  console.log = (line = '') => lines.push(String(line))
+  Object.defineProperty(process.stdout, 'isTTY', { configurable: true, value: true })
+  Object.defineProperty(process.stdout, 'columns', { configurable: true, value: 72 })
+  try {
+    printSuccessBox({
+      flow: { title: 'Review' },
+      transport: 'netlify-api',
+      projectRoot: process.cwd(),
+      runState: {
+        dir: runDir,
+        steps: [
+          {
+            id: 'summarize-consensus',
+            title: 'Summarize Consensus',
+            status: 'completed',
+            runs: [
+              {
+                agent: 'codex',
+                status: 'completed',
+                runnerId: '6a419a70f396f82cfe57821f',
+                sessionId: '6a419a70f396f82cfe578221',
+                links: { sessionUrl: longUrl },
+              },
+            ],
+          },
+        ],
+      },
+    })
+  } finally {
+    console.log = originalLog
+    if (originalIsTTY) {
+      Object.defineProperty(process.stdout, 'isTTY', originalIsTTY)
+    } else {
+      delete process.stdout.isTTY
+    }
+    if (originalColumns) {
+      Object.defineProperty(process.stdout, 'columns', originalColumns)
+    } else {
+      delete process.stdout.columns
+    }
+  }
+
+  const outputLines = lines.join('\n').split('\n').map(stripAnsi)
+  const boxLines = outputLines.filter((line) => /^[╭│├╰]/.test(line))
+  assert.ok(boxLines.some((line) => line.includes('Final agent run: see below')))
+  assert.ok(boxLines.some((line) => line.includes('Artifacts: see below')))
+  assert.ok(!boxLines.some((line) => line.includes(longUrl)))
+  assert.ok(!boxLines.some((line) => line.includes(artifactsRoot)))
+  for (const line of boxLines) {
+    assert.ok(line.length <= 72, `box row exceeded terminal width: ${line}`)
+  }
+  const boxEndIndex = outputLines.findIndex((line) => line.startsWith('╰'))
+  const urlIndex = outputLines.findIndex((line) => line === longUrl)
+  const artifactsIndex = outputLines.findIndex((line) => line === artifactsRoot)
+  assert.ok(urlIndex > boxEndIndex, 'expected long URL below the box')
+  assert.ok(artifactsIndex > boxEndIndex, 'expected long artifact path below the box')
+})
+
 test('localRetryCandidates finds failed local runs by step and agent', () => {
   const runState = {
     steps: [

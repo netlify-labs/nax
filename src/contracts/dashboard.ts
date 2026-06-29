@@ -236,6 +236,24 @@ export type RunFollowupRequest = {
   artifacts: Array<{ id: string; kind: string }>
 }
 
+export type RunRetryRequest = {
+  stepId: string
+  agent: string
+  runnerId?: string
+  sessionId?: string
+  reason?: string
+}
+
+export type RunRetryResponse = {
+  run: DashboardRun
+  retried: boolean
+  stepId: string
+  agent: string
+  previousRunnerId: string
+  runnerId: string
+  sessionId: string
+}
+
 export type RunFollowupSubmission = {
   id: string
   mode: 'continue-runner' | 'fresh-runner' | string

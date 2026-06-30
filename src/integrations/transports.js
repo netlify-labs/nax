@@ -1,7 +1,7 @@
 const fs = require('fs')
 const path = require('path')
 const { spawnSync } = require('child_process')
-const { readLinkedSiteId } = require('./netlify/init')
+const { readLinkedSiteId, readNetlifyCliToken } = require('./netlify/init')
 
 const NETLIFY_API_TRANSPORT = 'netlify-api'
 /** @typedef {'github' | typeof NETLIFY_API_TRANSPORT} TransportId */
@@ -14,7 +14,14 @@ const NETLIFY_API_TRANSPORT = 'netlify-api'
  *   reason: string,
  * }} TransportDetection
  */
-/** @typedef {{ projectRoot?: string, env?: NodeJS.ProcessEnv }} DetectTransportsOptions */
+/**
+ * @typedef {{
+ *   projectRoot?: string,
+ *   env?: NodeJS.ProcessEnv,
+ *   home?: string,
+ *   hasNetlifyCli?: () => boolean,
+ * }} DetectTransportsOptions
+ */
 
 /** @type {TransportId[]} */
 const TRANSPORTS = ['github', NETLIFY_API_TRANSPORT]
@@ -77,6 +84,18 @@ function hasNetlifyCli() {
 }
 
 /**
+ * @param {NodeJS.ProcessEnv} [env]
+ * @param {string} [home]
+ * @returns {boolean}
+ */
+function hasNetlifyAuthToken(env = process.env, home) {
+  const token = home
+    ? readNetlifyCliToken({ env, home })
+    : readNetlifyCliToken({ env })
+  return Boolean(token.token)
+}
+
+/**
  * @param {string} projectRoot
  * @param {NodeJS.ProcessEnv} [env]
  * @returns {boolean}
@@ -89,10 +108,18 @@ function hasLocalNetlifySite(projectRoot, env = process.env) {
  * @param {DetectTransportsOptions} [options]
  * @returns {TransportDetection[]}
  */
-function detectTransports({ projectRoot = process.cwd(), env = process.env } = {}) {
+function detectTransports({ projectRoot = process.cwd(), env = process.env, home, hasNetlifyCli: hasNetlifyCliFn = hasNetlifyCli } = {}) {
   const githubReady = hasAgentRunnerAction(projectRoot)
-  const localCliReady = hasNetlifyCli()
+  const localCliReady = hasNetlifyCliFn()
   const localSiteReady = hasLocalNetlifySite(projectRoot, env)
+  const localAuthReady = localCliReady && hasNetlifyAuthToken(env, home)
+  const localReason = !localCliReady
+    ? 'Netlify CLI is not installed or not on PATH.'
+    : (!localSiteReady
+        ? 'Netlify CLI is installed, but no local site context was detected.'
+        : (!localAuthReady
+            ? 'Netlify CLI is installed and local site context was detected, but no Netlify auth token was found. Run netlify login or set NETLIFY_AUTH_TOKEN.'
+            : 'Detected Netlify CLI, local site context, and auth token.'))
   return [
     {
       id: 'github',
@@ -105,10 +132,8 @@ function detectTransports({ projectRoot = process.cwd(), env = process.env } = {
     {
       id: NETLIFY_API_TRANSPORT,
       title: 'This machine via the Netlify CLI',
-      available: localCliReady && localSiteReady,
-      reason: localCliReady
-        ? (localSiteReady ? 'Detected Netlify CLI and local site context.' : 'Netlify CLI is installed, but no local site context was detected.')
-        : 'Netlify CLI is not installed or not on PATH.',
+      available: localCliReady && localSiteReady && localAuthReady,
+      reason: localReason,
     },
   ]
 }
@@ -169,6 +194,7 @@ module.exports = {
   detectTransports,
   formatTransportSetupHelp,
   hasAgentRunnerAction,
+  hasNetlifyAuthToken,
   hasLocalNetlifySite,
   hasNetlifyCli,
   isNetlifyApiTransport,

@@ -7,6 +7,7 @@ const path = require('path')
 const {
   detectTransports,
   hasAgentRunnerAction,
+  hasNetlifyAuthToken,
   hasLocalNetlifySite,
   resolveTransport,
   formatTransportSetupHelp,
@@ -36,6 +37,27 @@ test('hasLocalNetlifySite accepts env site id or Netlify state but not build con
   assert.equal(hasLocalNetlifySite(tmp, {}), true)
 })
 
+test('hasNetlifyAuthToken accepts env token or Netlify CLI config token', () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'nax-transport-home-'))
+  assert.equal(hasNetlifyAuthToken({ NETLIFY_AUTH_TOKEN: 'token-from-env' }, home), true)
+  assert.equal(hasNetlifyAuthToken({}, home), false)
+
+  const configDir = path.join(home, '.config', 'netlify')
+  fs.mkdirSync(configDir, { recursive: true })
+  fs.writeFileSync(path.join(configDir, 'config.json'), JSON.stringify({
+    userId: 'user-1',
+    users: {
+      'user-1': {
+        auth: {
+          token: 'token-from-config',
+        },
+      },
+    },
+  }))
+
+  assert.equal(hasNetlifyAuthToken({}, home), true)
+})
+
 test('resolveTransport honors explicit transports and auto-picks available transport', () => {
   assert.equal(resolveTransport('github', []), 'github')
   assert.equal(resolveTransport('github-actions', []), 'github')
@@ -60,6 +82,35 @@ test('detectTransports returns github and netlify-api entries', () => {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'nax-transport-test-'))
   const transports = detectTransports({ projectRoot: tmp, env: {} })
   assert.deepEqual(transports.map((transport) => transport.id), ['github', 'netlify-api'])
+})
+
+test('detectTransports requires an auth token for local Netlify API runs', () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'nax-transport-test-'))
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'nax-transport-home-'))
+  fs.mkdirSync(path.join(tmp, '.netlify'))
+  fs.writeFileSync(path.join(tmp, '.netlify', 'state.json'), JSON.stringify({ siteId: 'site-1' }))
+
+  const missingToken = detectTransports({
+    projectRoot: tmp,
+    env: {},
+    home,
+    hasNetlifyCli: () => true,
+  }).find((transport) => transport.id === 'netlify-api')
+
+  assert.equal(missingToken?.available, false)
+  assert.match(missingToken?.reason || '', /no Netlify auth token/i)
+  assert.match(missingToken?.reason || '', /netlify login/)
+  assert.match(missingToken?.reason || '', /NETLIFY_AUTH_TOKEN/)
+
+  const withToken = detectTransports({
+    projectRoot: tmp,
+    env: { NETLIFY_AUTH_TOKEN: 'token-1' },
+    home,
+    hasNetlifyCli: () => true,
+  }).find((transport) => transport.id === 'netlify-api')
+
+  assert.equal(withToken?.available, true)
+  assert.match(withToken?.reason || '', /auth token/)
 })
 
 test('formatTransportSetupHelp includes setup steps for both transports', () => {

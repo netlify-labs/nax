@@ -1334,10 +1334,27 @@ function orderSingleRunTransports(transports = []) {
   })
 }
 
+/**
+ * @param {string} transport
+ * @param {ReturnType<typeof detectTransports>} detections
+ * @returns {string}
+ */
+function unavailableTransportMessage(transport, detections) {
+  const selectedDetection = detections.find((candidate) => candidate.id === transport)
+  return [
+    `Transport "${transport}" is not available: ${selectedDetection?.reason || 'unknown reason'}`,
+    '',
+    formatTransportSetupHelp(detections),
+  ].join('\n')
+}
+
 async function chooseSingleRunTransportInteractively({ requested, projectRoot }) {
   const detections = detectTransports({ projectRoot })
   if (requested && requested !== 'auto') {
-    return resolveTransport(requested, detections)
+    const transport = resolveTransport(requested, detections)
+    const selectedDetection = detections.find((candidate) => candidate.id === transport)
+    if (!selectedDetection?.available) throw new Error(unavailableTransportMessage(transport, detections))
+    return transport
   }
   const available = detections.filter((transport) => transport.available)
   if (available.length === 0) {
@@ -2430,13 +2447,7 @@ async function handleRunEngine(flowId, options) {
       : resolveTransport(requestedTransport, detections)
     const selectedDetection = detections.find((candidate) => candidate.id === transport)
     if (!selectedDetection?.available) {
-      throw new Error(
-        [
-          `Transport "${transport}" is not available: ${selectedDetection?.reason || 'unknown reason'}`,
-          '',
-          formatTransportSetupHelp(detections),
-        ].join('\n'),
-      )
+      throw new Error(unavailableTransportMessage(transport, detections))
     }
   }
 
@@ -2585,7 +2596,12 @@ async function handleRun(flowId, options = {}) {
     forceNonInteractive: false,
   })
   if (result.status !== 'completed' && result.status !== AWAITING_REVIEW) {
-    const message = result.stderr.trim().split('\n').filter(Boolean).pop() || `Workflow "${flowId || 'review'}" failed.`
+    const stderr = result.stderr.trim()
+    const lines = stderr.split('\n').filter(Boolean)
+    const shouldPreserveSetupHelp = /No runnable transport detected|Transport "[^"]+" is not available|no Netlify auth token/i.test(stderr)
+    const message = shouldPreserveSetupHelp
+      ? stderr
+      : (lines.pop() || `Workflow "${flowId || 'review'}" failed.`)
     throw new Error(message)
   }
 }

@@ -1,5 +1,9 @@
+const { makeBox } = require('@davidwells/box-logger')
 const { Command, Option } = require('commander')
 const { DEFAULT_MODEL_CSV, DEFAULT_MODELS } = require('../../core/constants')
+const { terminalTrafficLights } = require('../display/terminal')
+
+const TEAL_COLOR = '#0d9488'
 
 /**
  * @typedef {import('commander').Command} CommanderCommand
@@ -57,6 +61,7 @@ const { DEFAULT_MODEL_CSV, DEFAULT_MODELS } = require('../../core/constants')
  *   defaultOutputBudgetBytes?: number,
  *   handlers: NaxCommandHandlers,
  *   mergeCommandOptions: MergeCommandOptions,
+ *   version?: string,
  * }} BuildNaxProgramInput
  */
 
@@ -64,6 +69,7 @@ const { DEFAULT_MODEL_CSV, DEFAULT_MODELS } = require('../../core/constants')
  * Hidden command metadata that Commander stores outside its public typings.
  * @typedef {{
  *   _hidden?: boolean,
+ *   _getHelpCommand?: () => CommanderCommand | null,
  *   _outputConfiguration?: {
  *     writeOut?: (value: string) => void,
  *   },
@@ -101,6 +107,28 @@ function hiddenOption(flags, description, defaultValue) {
  */
 function hiddenCostOption() {
   return hiddenOption('--cost', 'Include estimated USD cost beside Netlify credit usage')
+}
+
+/**
+ * Creates a command row that is rendered in root help but parsed by a nested command.
+ * @param {string} commandPath
+ * @param {string} description
+ * @returns {CommanderCommand}
+ */
+function helpOnlyCommand(commandPath, description) {
+  return new Command(commandPath).description(description)
+}
+
+/**
+ * Returns visible subcommands with Commander's implicit help command when applicable.
+ * @param {CommanderCommand} command
+ * @returns {CommanderCommand[]}
+ */
+function visibleCommandsWithHelp(command) {
+  const visible = command.commands.filter((child) => !/** @type {HiddenCommanderFields} */ (child)._hidden)
+  const helpCommand = /** @type {HiddenCommanderFields} */ (command)._getHelpCommand?.()
+  if (helpCommand && !/** @type {HiddenCommanderFields} */ (helpCommand)._hidden) visible.push(helpCommand)
+  return visible
 }
 
 /**
@@ -346,8 +374,29 @@ function buildNaxProgram({
   defaultOutputBudgetBytes = 64000,
   handlers,
   mergeCommandOptions,
+  version = '',
 }) {
   const program = new Command()
+  const rootHelpCommands = [
+    helpOnlyCommand('admin skills install', 'Install ai skills to help your agents build nax workflows'),
+  ]
+  const rootHelpHeader = makeBox({
+    title: {
+      left: 'Netlify Agent Runner Executor',
+      right: terminalTrafficLights(),
+    },
+    content: [
+      'NAX runs repeatable multi-step agent workflows for Netlify Agent Runners.',
+      '',
+      'Use Claude, Gemini, and Codex across implementations, reviews, handoffs, and custom flows.',
+      '',
+      'Docs: https://netlify-agent-executor.netlify.app/',
+    ].join('\n'),
+    borderStyle: 'rounded',
+    borderColor: TEAL_COLOR,
+    width: Math.min(100, Math.max(72, process.stdout.columns || 100)),
+    marginBottom: 1,
+  })
   program
     .name('nax')
     .description('Run Netlify agent workflows.')
@@ -357,6 +406,20 @@ function buildNaxProgram({
     .action(() => {
       program.outputHelp()
     })
+    .addHelpText('before', rootHelpHeader)
+  if (version) program.version(version, '-v, --version')
+  program.configureHelp({
+    subcommandTerm(command) {
+      if (command.parent === program && command.name() === 'run') return 'run [flow] [options]'
+      if (command.parent === program && command.name() === 'handoff') return 'handoff [run-id] [options]'
+      return Command.prototype.createHelp().subcommandTerm(command)
+    },
+    visibleCommands(command) {
+      const visible = visibleCommandsWithHelp(command)
+      if (command !== program || visible.some((child) => child.name() === 'admin')) return visible
+      return [...visible, ...rootHelpCommands]
+    },
+  })
 
   const helpCommand = program
     .command('help [topic...]', { hidden: true })

@@ -3,6 +3,7 @@ const os = require('os')
 const path = require('path')
 const { spawnSync } = require('child_process')
 const { makeBox, makeHorizontalBoxes } = require('@davidwells/box-logger')
+const { version: packageVersion } = require('../../package.json')
 const { buildNaxProgram } = require('./commands/nax')
 const {
   actionOptions,
@@ -77,6 +78,7 @@ const {
   workflowPickerHint,
   workflowPickerLabel,
 } = require('./display/flow-list')
+const { terminalTrafficLights } = require('./display/terminal')
 const {
   buildHandoffPrompt,
   copyToClipboard,
@@ -1800,19 +1802,6 @@ async function selectSearchableOption({
   return clack.select({ message, options, maxItems })
 }
 
-function ansiColor(code, value) {
-  if (process.env.NO_COLOR && !process.env.FORCE_COLOR) return value
-  return `\x1b[${code}m${value}\x1b[39m`
-}
-
-function terminalTrafficLights() {
-  return [
-    ansiColor(31, '●'),
-    ansiColor(33, '●'),
-    ansiColor(32, '●'),
-  ].join(' ')
-}
-
 function printInteractiveIntroBox() {
   const teal = '#0d9488'
   console.log(makeBox({
@@ -2698,6 +2687,7 @@ function buildProgram() {
       dashboard: handleDashboard,
     },
     mergeCommandOptions,
+    version: packageVersion,
   })
 }
 

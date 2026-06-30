@@ -55,6 +55,7 @@ function makeProgram() {
       dashboard: (flow, options) => record('dashboard', flow, options),
     },
     mergeCommandOptions,
+    version: '9.8.7-test',
   })
   program.exitOverride()
   program.configureOutput({
@@ -86,15 +87,33 @@ test('bare nax prints compact root help without execution flags', async () => {
   const { calls, output, program } = makeProgram()
 
   await parse(program, [])
+  const normalizedOutput = output().replace(/\s+/g, ' ')
 
   assert.deepEqual(calls, [])
+  assert.match(output(), /NAX runs repeatable multi-step agent workflows/)
+  assert.match(output(), /Docs: https:\/\/netlify-agent-executor\.netlify\.app\/?/)
   assert.match(output(), /Usage: nax \[command\]/)
-  assert.match(output(), /run \[options\] \[flow\]/)
+  assert.match(output(), /-v, --version/)
+  assert.match(output(), /run \[flow\] \[options\]/)
+  assert.match(output(), /handoff \[run-id\] \[options\]/)
   assert.match(output(), /dashboard \[options\] \[workflow\]/)
+  assert.match(normalizedOutput, /admin skills install Install ai skills to help your agents build nax workflows/)
+  assert.doesNotMatch(output(), /admin skills list/)
   assert.doesNotMatch(output(), /--agent/)
   assert.doesNotMatch(output(), /recent/)
-  assert.doesNotMatch(output(), /admin/)
+  assert.doesNotMatch(output(), /\n\s*admin\s+Advanced maintenance commands/)
   assert.doesNotMatch(output(), /ci \[options\]/)
+})
+
+test('root version flags print package version without routing to a handler', async () => {
+  for (const flag of ['--version', '-v']) {
+    const { calls, output, program } = makeProgram()
+
+    await assert.rejects(parse(program, [flag]), { code: 'commander.version' })
+
+    assert.deepEqual(calls, [])
+    assert.equal(output(), '9.8.7-test\n')
+  }
 })
 
 test('advanced help reveals hidden admin and engineering commands', async () => {
@@ -157,17 +176,21 @@ test('handoff, admin, and hidden ci route to their handlers', async () => {
   await parse(program, ['handoff', '--agent', 'gemini', '--workflow', 'run-2'])
   await parse(program, ['admin', 'sync', 'last'])
   await parse(program, ['admin', 'clean', 'blobs', '--force'])
+  await parse(program, ['admin', 'skills', 'install'])
+  await parse(program, ['admin', 'skills', 'list'])
   await parse(program, ['admin', 'skills', 'check', '--provider', 'codex'])
   await parse(program, ['ci', '--quiet', 'npm', 'test'])
 
-  assert.deepEqual(calls.map((call) => call.name), ['handoff', 'handoff', 'sync', 'clean', 'skills', 'ci'])
+  assert.deepEqual(calls.map((call) => call.name), ['handoff', 'handoff', 'sync', 'clean', 'skills', 'skills', 'skills', 'ci'])
   assert.equal(calls[0].args[0], 'run-1')
   assert.equal(/** @type {{ path?: boolean }} */ (calls[0].args[1]).path, true)
   assert.equal(/** @type {{ agent?: string, workflow?: string }} */ (calls[1].args[1]).agent, 'gemini')
   assert.deepEqual(calls[2].args, ['last', {}])
   assert.equal(/** @type {{ force?: boolean }} */ (calls[3].args[1]).force, true)
-  assert.equal(calls[4].args[0], 'check')
-  assert.deepEqual(calls[5].args[0], ['npm', 'test'])
+  assert.equal(calls[4].args[0], 'install')
+  assert.equal(calls[5].args[0], 'list')
+  assert.equal(calls[6].args[0], 'check')
+  assert.deepEqual(calls[7].args[0], ['npm', 'test'])
 })
 
 test('removed root invocations are rejected', async () => {

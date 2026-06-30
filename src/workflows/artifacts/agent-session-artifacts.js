@@ -1,5 +1,6 @@
 const fs = require('fs')
 const path = require('path')
+const { ensureNaxGitignore } = require('../../storage/local/nax-gitignore')
 const {
   buildAgentSessionJson,
   buildAgentSessionMarkdown,
@@ -104,6 +105,7 @@ function persistAgentSessionArtifact(input = {}, options = {}) {
   session.sessionId = sessionArtifactId(session)
   const dir = agentSessionDir(projectRoot, session.sessionId)
   if (options.dryRun) return { dir, session }
+  ensureNaxGitignore({ projectRoot })
   ensureDir(dir)
   writeJson(path.join(dir, 'agent-session.json'), session)
   writeJson(path.join(dir, 'usage.json'), buildAgentSessionUsageJson(session))

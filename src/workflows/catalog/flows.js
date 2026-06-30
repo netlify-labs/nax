@@ -16,6 +16,8 @@ const ALLOWED_STEP_SUBMITS = ['new-run', 'follow-up', HUMAN_REVIEW_SUBMIT]
 /**
  * @typedef {{ stepId: string, code: string, message: string, hint: string }} FlowDiagnostic
  * @typedef {{ errors: FlowDiagnostic[], warnings: FlowDiagnostic[] }} FlowValidation
+ * @typedef {import('../../types').WorkflowFlow} WorkflowFlow
+ * @typedef {{ safeMode: true, allowedFileRoots: string[] }} SafeConfigoramaOptions
  * @typedef {{
  *   projectRoot?: string,
  *   flowsDir?: string | string[],
@@ -46,6 +48,26 @@ const FLOW_PICKER_ORDER = [
   'error-handling',
   'ux-copy-polish',
 ]
+
+/**
+ * @param {string} filePath
+ * @returns {SafeConfigoramaOptions}
+ */
+function safeConfigOptions(filePath) {
+  return {
+    safeMode: true,
+    allowedFileRoots: [path.dirname(filePath)],
+  }
+}
+
+/**
+ * @param {string} filePath
+ * @returns {Promise<WorkflowFlow>}
+ */
+async function loadConfigFile(filePath) {
+  const config = await configorama(filePath, safeConfigOptions(filePath))
+  return config && typeof config === 'object' && !Array.isArray(config) ? config : {}
+}
 
 function findFlowFile(flowDir) {
   for (const name of FLOW_FILE_NAMES) {
@@ -98,8 +120,7 @@ async function readNaxConfig(projectRoot) {
   for (const name of NAX_CONFIG_FILE_NAMES) {
     const filePath = path.join(projectRoot, name)
     if (!fs.existsSync(filePath)) continue
-    const config = await configorama(filePath)
-    return config && typeof config === 'object' && !Array.isArray(config) ? config : {}
+    return loadConfigFile(filePath)
   }
   return {}
 }
@@ -193,7 +214,7 @@ function normalizeBoolean(value, fallback = false) {
   return fallback
 }
 
-/** @param {import('../../types').WorkflowFlow} raw */
+/** @param {WorkflowFlow} raw */
 function isFlowDisabled(raw) {
   return normalizeBoolean(raw.disabled, false)
 }
@@ -379,7 +400,7 @@ function assertValidFlowStructure(flow, options = {}) {
  * }} NormalizeFlowMetadata
  */
 
-/** @param {import('../../types').WorkflowFlow} raw @param {NormalizeFlowMetadata} param1 */
+/** @param {WorkflowFlow} raw @param {NormalizeFlowMetadata} param1 */
 function normalizeFlow(raw, { id, dir, file, source = {} }) {
   const flowId = String(raw.id || id || path.basename(dir))
   const defaults = raw.defaults && typeof raw.defaults === 'object' ? raw.defaults : {}
@@ -454,7 +475,7 @@ async function listFlows(options = {}) {
       const dir = path.join(source.dir, entry.name)
       const file = findFlowFile(dir)
       if (!file) continue
-      const raw = await configorama(file)
+      const raw = await loadConfigFile(file)
       if (isFlowDisabled(raw)) continue
       const flow = normalizeFlow(raw, { id: entry.name, dir, file, source })
       if (seenIds.has(flow.id)) continue

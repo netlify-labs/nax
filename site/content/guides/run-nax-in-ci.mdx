@@ -1,0 +1,228 @@
+---
+title: Run NAX in CI
+description: Run NAX workflows from GitHub Actions, publish results back to GitHub, and combine them with Netlify Agent Runner triggers.
+---
+
+import { Callout, Tabs } from 'nextra/components'
+
+# Run NAX in CI
+
+Use the NAX GitHub Action when you want GitHub Actions to run a named NAX workflow against a branch or pull request. The action installs `netlify-agent-executor` and `netlify-cli` from npm, runs the selected flow against Netlify Agent Runners, prints the latest summary, and can upload the generated artifacts.
+
+This is the CI path for council reviews, audits, docs work, test generation, and other multi-step workflows that should be visible to the team.
+
+## Use the action
+
+Create `.github/workflows/run-nax.yml` in your app repository:
+
+```yaml copy
+name: Run NAX
+
+on:
+  workflow_dispatch:
+    inputs:
+      flow:
+        description: NAX flow to run
+        type: choice
+        required: true
+        default: review
+        options:
+          - review
+          - security-audit
+          - performance-audit
+          - documentation
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+concurrency:
+  group: run-nax-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  nax:
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    permissions:
+      contents: read
+      pull-requests: read
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Run NAX
+        id: nax
+        uses: netlify-labs/nax@v1.0.2
+        with:
+          flow: ${{ github.event.inputs.flow || 'review' }}
+          repo: ${{ github.repository }}
+          branch: ${{ github.head_ref || github.ref_name }}
+          netlify-auth-token: ${{ secrets.NETLIFY_AUTH_TOKEN }}
+          netlify-site-id: ${{ secrets.NETLIFY_SITE_ID }}
+          github-token: ${{ github.token }}
+```
+
+The action defaults to:
+
+| Input | Default |
+| --- | --- |
+| `transport` | `netlify-api` |
+| `nax-version` | `latest` |
+| `netlify-cli-version` | `latest` |
+| `node-version` | `22` |
+| `timeout-minutes` | `60` |
+| `force` | `true` |
+| `upload-artifacts` | `true` |
+
+Pin `uses:` to a released NAX tag, then choose the npm package version with `nax-version` when you need to test a newer or older CLI without changing the action ref.
+
+## What the action does
+
+The action in `action.yml`:
+
+1. Sets up Node.js.
+2. Installs `netlify-agent-executor` and `netlify-cli` from npm.
+3. Resolves the flow, repo, and branch.
+4. Runs `nax run <flow> --transport netlify-api --repo <repo> --branch <branch> --force`.
+5. Prints the latest `summary.md` if one was created.
+6. Uploads workflow, Agent Runner, and agent session artifacts unless `upload-artifacts` is `false`.
+
+The example workflow above has two triggers:
+
+| Trigger | Behavior |
+| --- | --- |
+| `workflow_dispatch` | Lets a human choose a NAX flow from the GitHub Actions UI and run it against a selected branch. |
+| `pull_request` | Runs the default `review` flow when a PR is opened, synchronized, or reopened. |
+
+<Callout type="info">
+  The workflow intentionally uses `netlify-api` inside GitHub Actions. Set `NETLIFY_AUTH_TOKEN` as a repository secret so NAX and the Netlify CLI can authenticate before submitting work to Netlify Agent Runners.
+</Callout>
+
+## Required setup
+
+Add these repository secrets under **Settings → Secrets and variables → Actions**:
+
+| Secret | Used for |
+| --- | --- |
+| `NETLIFY_AUTH_TOKEN` | Authenticates NAX and Netlify CLI calls to Netlify. |
+| `NETLIFY_SITE_ID` | Selects the Netlify site whose Agent Runners should execute the work. |
+
+The action uses the built-in `github.token` as `GH_TOKEN` and `GITHUB_TOKEN` when you pass `github-token: ${{ github.token }}`. The example workflow permissions are intentionally narrow:
+
+| Permission | Why it is needed |
+| --- | --- |
+| `contents: read` | Check out and inspect the repository. |
+| `pull-requests: read` | Read PR context for pull request runs. |
+
+Add `issues: write` only when your workflow has a follow-up step that posts the NAX summary back to a PR or issue.
+
+Pull requests from forks are skipped by this guard:
+
+```yaml copy
+if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+```
+
+That keeps repository secrets away from untrusted forked PR code.
+
+## Publish results back to GitHub
+
+The action prints the latest summary and exposes it as `steps.nax.outputs.summary-path`. Add a follow-up step when you want to turn that summary into a PR comment, issue, Slack notification, or release note.
+
+The NAX repository's own `.github/workflows/run-nax.yml` wraps the action with extra steps that inspect `.nax`, upload a custom artifact name, and publish the summary as a PR comment or GitHub issue. The source repository also keeps `.github/workflows/run-local-nax.yml` for testing the checked-out source tree directly with `node src/cli/nax.js`.
+
+## Run on demand
+
+<Tabs items={['GitHub UI', 'GitHub CLI']}>
+  <Tabs.Tab>
+
+1. Open your repository on GitHub.
+2. Go to **Actions → Run NAX**.
+3. Choose **Run workflow**.
+4. Pick the branch to inspect.
+5. Choose the NAX flow, such as `review`, `security-audit`, `documentation`, or `e2e-tests`.
+6. Start the run and watch the Actions log.
+
+The example workflow presents flow slugs such as:
+
+```text copy
+review
+security-audit
+```
+
+  </Tabs.Tab>
+  <Tabs.Tab>
+
+Pass the flow slug from `.github/workflows/run-nax.yml`:
+
+```sh copy
+gh workflow run run-nax.yml \
+  --ref main \
+  -f flow=security-audit
+```
+
+Then watch the run:
+
+```sh copy
+gh run list --workflow run-nax.yml --limit 5
+gh run watch <run-id>
+```
+
+  </Tabs.Tab>
+</Tabs>
+
+When the run finishes, inspect the Actions log for the printed summary and download the uploaded artifact when you need the full workflow record.
+
+## Flow locations
+
+The resolver accepts project workflows from these roots:
+
+| Root | Use it for |
+| --- | --- |
+| `.github/nax-flows` | Repository-specific flows that should live with CI configuration. |
+| `workflows` | Shared project workflows committed with the NAX project. |
+| `flows` | Lightweight project-local flow collections. |
+
+Each flow directory should contain a `flow` file:
+
+```text copy
+workflows/security-audit/flow.yml
+.github/nax-flows/release-check/flow.yml
+flows/customer-triage/flow.yml
+```
+
+## Automatic PR runs
+
+The same workflow also runs on:
+
+```yaml copy
+pull_request:
+  types: [opened, synchronize, reopened]
+```
+
+For those runs, the action receives `review`, so every internal PR can get the standard multi-model review unless you remove the PR trigger or change the fallback.
+
+```yaml copy
+flow: ${{ github.event.inputs.flow || 'review' }}
+```
+
+## Combine with Netlify Agent Runner comments
+
+Use `run-nax.yml` for structured, named NAX workflows. Use `.github/workflows/netlify-agents.yml` when you also want direct `@netlify` issue and PR comments to start single Netlify Agent Runner sessions.
+
+The included `netlify-agents.yml` workflow listens to issues, PRs, reviews, review comments, issue comments, and manual dispatch. It authorizes the sender, then calls `netlify-labs/agent-runner-action` with `NETLIFY_AUTH_TOKEN` and `NETLIFY_SITE_ID`.
+
+That pairing gives you two GitHub entry points:
+
+| Workflow | Best for |
+| --- | --- |
+| `run-nax.yml` | Repeatable multi-step flows such as review, security audit, docs, tests, and synthesis. |
+| `netlify-agents.yml` | Ad hoc `@netlify` prompts, implementation requests, and follow-up comments on GitHub issues or PRs. |
+
+See the [`netlify-labs/agent-runner-action`](https://github.com/netlify-labs/agent-runner-action) repository and the [Netlify Agent Runner GitHub Action docs](https://agent-runner-github-action.netlify.app/) for supported inputs, outputs, `@netlify` usage, preflight checks, dry runs, and follow-up behavior.
+
+## See also
+
+- [Run workflows](/guides/run-workflows) for local and transport-specific `nax run` commands.
+- [Use the dashboard](/guides/use-the-dashboard) for inspecting saved runs locally.
+- [Artifacts](/concepts/artifacts) for the workflow record created by each run.

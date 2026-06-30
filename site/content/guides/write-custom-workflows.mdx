@@ -9,6 +9,8 @@ import { Callout, Steps } from 'nextra/components'
 
 Custom workflows are the main way to make `nax` fit a team's recurring work. A workflow lives in a directory with one `flow.*` file and a `prompts/` folder. The file describes orchestration; the Markdown prompts describe the work each agent should do.
 
+The most useful workflows usually preserve independent first passes before the agents see each other's output. Later steps can feed those results forward for cross-review, consensus synthesis, or human approval.
+
 <Steps>
 
 ### Create the directory
@@ -86,16 +88,19 @@ nax run conversion-audit --dry --force
 ## Design guidance
 
 - Give each step one job.
+- Run independent first-pass steps with `submit: new-run` before cross-review steps read prior outputs.
 - Use `waitFor: agent-results` when later steps depend on all prior outputs.
 - Use `submit: follow-up` when the same agent should continue an earlier runner context.
 - Use `submit: new-run` when a step should start with a clean context plus selected inputs.
+- Use a single synthesis step when you want a concise artifact for human review.
 
 <Callout type="warning">
-  JavaScript and TypeScript flow files are executable project code. Use YAML, JSON, or TOML for workflows from repositories you do not already trust.
+  JavaScript and TypeScript flow files are executable project code and are blocked by safe mode. Use YAML, JSON, or TOML for project workflows.
 </Callout>
 
 ## See also
 
 - [Workflow file reference](/reference/workflow-files) for every supported key.
 - [Run workflows](/guides/run-workflows) for execution flags.
+- [Council pattern](/concepts/council-pattern) for designing multi-model review loops.
 - [Architecture](/concepts/architecture) for how prompts become agent runs.

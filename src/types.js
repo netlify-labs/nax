@@ -120,6 +120,7 @@
  * Durable workflow state stored under .nax/workflows/<runId>/state.json.
  * @typedef {Record<string, unknown> & {
  *   schemaVersion?: number,
+ *   generatedBy?: { name?: string, version?: string },
  *   runId?: string,
  *   flowId?: string,
  *   flowTitle?: string,

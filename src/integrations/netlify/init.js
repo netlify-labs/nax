@@ -3,6 +3,7 @@ const os = require('os')
 const path = require('path')
 const { spawnSync } = require('child_process')
 const { assertGhAuthenticated, runGh } = require('../github/gh-cli')
+const { ensureNaxGitignore, naxStatePath } = require('../../storage/local/nax-gitignore')
 
 const WORKFLOW_PATH = path.join('.github', 'workflows', 'netlify-agents.yml')
 const WORKFLOWS_DIR = path.join('.github', 'workflows')
@@ -285,26 +286,6 @@ function ensureWorkflow({ projectRoot, force = false, dryRun = false } = {}) {
   return { path: workflowPath, status: exists ? 'replaced' : 'created' }
 }
 
-/** @param {{ projectRoot?: string, dryRun?: boolean }} param0 */
-function ensureNaxGitignore({ projectRoot, dryRun = false } = {}) {
-  const gitignorePath = path.join(projectRoot, '.gitignore')
-  const entryPattern = /^\.nax\/?$/m
-  const exists = fs.existsSync(gitignorePath)
-  const current = exists ? fs.readFileSync(gitignorePath, 'utf8') : ''
-  if (entryPattern.test(current)) {
-    return { path: gitignorePath, status: 'exists' }
-  }
-
-  if (!dryRun) {
-    const next = exists && current.trim()
-      ? `${current.replace(/\s*$/, '\n\n')}# Added by nax init\n.nax/\n`
-      : '.nax/\n'
-    fs.writeFileSync(gitignorePath, next)
-  }
-
-  return { path: gitignorePath, status: exists ? 'updated' : 'created' }
-}
-
 function parseCreatedSiteId(stdout) {
   try {
     const parsed = JSON.parse(stdout)
@@ -573,6 +554,7 @@ module.exports = {
   initSite,
   initProject,
   listGitHubSecretNames,
+  naxStatePath,
   readLinkedSiteId,
   readNetlifyCliToken,
   readNetlifyProject,

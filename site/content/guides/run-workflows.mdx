@@ -9,6 +9,8 @@ import { Callout, Tabs } from 'nextra/components'
 
 Use this guide after `nax` is installed and initialized. The runner is designed around repeatable, reviewable flows: each flow declares its steps, prompts, models, inputs, and wait behavior, so a multi-agent process can be rerun without copy-paste coordination.
 
+The bundled review-style flows use the council pattern: independent first passes, cross-review, then a final synthesis that keeps confirmed findings and useful disagreement visible.
+
 ## List and pick workflows
 
 ```sh
@@ -77,6 +79,8 @@ nax run review --step-models review=gemini,codex --step-models synthesize=codex
 
 `--models` changes all runnable steps. `--step-models` changes named steps and can be repeated.
 
+Model overrides are useful when you want the full council for ambiguous work, two models for a cheaper confirmation pass, or one model for a targeted follow-up.
+
 ## Add context
 
 ```sh
@@ -103,4 +107,5 @@ Interrupted `netlify-api` runs write state under `.nax/workflows/<run-id>/workfl
 
 - [Command reference](/reference/commands) for the full public command surface.
 - [Workflow file reference](/reference/workflow-files) for step schema.
+- [Council pattern](/concepts/council-pattern) for the independent-review shape behind multi-model flows.
 - [Transports](/concepts/transports) for transport trade-offs.

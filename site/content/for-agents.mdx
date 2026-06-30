@@ -1,0 +1,248 @@
+---
+title: Agents
+description: Programmatic setup and execution guide for AI agents using nax.
+---
+
+import { Callout } from 'nextra/components'
+
+# Agents
+
+This page is for AI coding agents that need to operate `nax` non-interactively. `nax` runs Netlify Agent Runner jobs for Claude, Gemini, and Codex, then records workflow state and artifacts for inspection, handoff, and follow-up runs.
+
+<Callout type="warning">
+  Agent Runner jobs can spend Netlify resources and can create GitHub issues, comments, or workflow runs. Use `--dry --force` first unless the user explicitly asked for a real run.
+</Callout>
+
+## Variables
+
+Use explicit variables in scripts and agent plans:
+
+```sh
+PROJECT_ROOT=/path/to/repo
+GITHUB_REPO=owner/name
+NETLIFY_SITE_ID=site-id
+BRANCH=main
+```
+
+Run commands from the project root unless a command accepts `--project-root` directly:
+
+```sh
+cd "$PROJECT_ROOT"
+```
+
+## Prerequisites
+
+`nax` expects the host environment to have:
+
+- Node 20+.
+- `netlify` authenticated with access to the target site.
+- `gh` authenticated when GitHub Actions setup, GitHub transport, or GitHub comments are needed.
+- A pushed branch when using `--branch`.
+
+## Install
+
+Use a global install when the agent will run multiple commands:
+
+```sh
+npm install -g netlify-agent-executor
+nax --help
+nax list
+```
+
+Use `npx` for one-off execution when a global install is not desirable:
+
+```sh
+npx netlify-agent-executor@latest list
+```
+
+## Install agent skills
+
+Install the bundled `nax-workflows` skill into the local agent harness so future agents know how to operate the project workflows.
+
+```sh
+nax admin skills install \
+  --project-root "$PROJECT_ROOT" \
+  --provider codex \
+  --skill nax-workflows
+```
+
+Use the provider for the current harness:
+
+```sh
+nax admin skills install --project-root "$PROJECT_ROOT" --provider claude --skill nax-workflows
+nax admin skills install --project-root "$PROJECT_ROOT" --provider cursor --skill nax-workflows
+nax admin skills install --project-root "$PROJECT_ROOT" --provider gemini --skill nax-workflows
+```
+
+When maintaining a repo for multiple local agents:
+
+```sh
+nax admin skills install --project-root "$PROJECT_ROOT" --all-providers --skill nax-workflows
+nax admin skills check --project-root "$PROJECT_ROOT" --all-providers --skill nax-workflows
+nax admin skills update --project-root "$PROJECT_ROOT" --all-providers --skill nax-workflows
+```
+
+If no provider directory exists and no provider is passed, `nax` installs into `.claude/skills` by default.
+
+## Initialize non-interactively
+
+Preview first:
+
+```sh
+nax init \
+  --project-root "$PROJECT_ROOT" \
+  --repo "$GITHUB_REPO" \
+  --site-id "$NETLIFY_SITE_ID" \
+  --github-actions \
+  --dry
+```
+
+Initialize a repo that already has a Netlify site:
+
+```sh
+nax init \
+  --project-root "$PROJECT_ROOT" \
+  --repo "$GITHUB_REPO" \
+  --site-id "$NETLIFY_SITE_ID" \
+  --github-actions \
+  --force
+```
+
+Create and link a new Netlify site by name:
+
+```sh
+nax init \
+  --project-root "$PROJECT_ROOT" \
+  --repo "$GITHUB_REPO" \
+  --site-name my-netlify-site \
+  --create \
+  --github-actions \
+  --force
+```
+
+If GitHub Actions secrets are managed outside `nax`, add `--skip-secrets`:
+
+```sh
+nax init \
+  --project-root "$PROJECT_ROOT" \
+  --repo "$GITHUB_REPO" \
+  --site-id "$NETLIFY_SITE_ID" \
+  --github-actions \
+  --skip-secrets \
+  --force
+```
+
+## Run one-off Agent Runner jobs
+
+Use `nax run agent` when the task does not need a full multi-step workflow.
+
+```sh
+cd "$PROJECT_ROOT"
+nax run agent codex --prompt "Inspect the current branch for regressions." --transport netlify-api --force
+```
+
+Use another supported model when appropriate:
+
+```sh
+nax run agent claude --prompt "Propose a minimal fix for the failing tests." --transport netlify-api --force
+nax run agent gemini --prompt "Check the docs for broken links and stale setup steps." --transport netlify-api --force
+```
+
+Add branch and context when the target is not the current default:
+
+```sh
+nax run agent codex \
+  --branch "$BRANCH" \
+  --context "Focus on the auth callback and billing webhook changes." \
+  --prompt "Review this branch for bugs and missing tests." \
+  --transport netlify-api \
+  --force
+```
+
+Use a file for longer instructions:
+
+```sh
+nax run agent codex \
+  --context-file ./agent-context.md \
+  --prompt "Run the requested investigation and summarize concrete findings." \
+  --transport netlify-api \
+  --force
+```
+
+## Run multi-step workflows
+
+List available bundled and project-local workflows:
+
+```sh
+cd "$PROJECT_ROOT"
+nax list --verbose
+```
+
+Dry-run the workflow shape before creating Agent Runner jobs:
+
+```sh
+nax run review --dry --force
+```
+
+Run the workflow:
+
+```sh
+nax run review --transport netlify-api --force
+```
+
+Override the model set for a cheaper or more targeted run:
+
+```sh
+nax run review --models codex,claude --transport netlify-api --force
+```
+
+Run part of a workflow:
+
+```sh
+nax run review --step cross-review --transport netlify-api --force
+nax run review --from-step synthesize --transport netlify-api --force
+```
+
+Use bundled workflows by id:
+
+```sh
+nax run security-audit --transport netlify-api --force
+nax run documentation --transport netlify-api --force
+nax run ideas --transport netlify-api --force
+nax run do-next --transport netlify-api --force
+```
+
+## Inspect and hand off results
+
+Use `handoff` to read the latest summary or pass it to another agent run:
+
+```sh
+nax handoff
+nax handoff -c
+nax handoff --workflow <workflow-run-id>
+nax handoff --runner <runner-id>
+nax handoff --session <session-id>
+```
+
+For local Netlify API orchestration, resume or retry interrupted work:
+
+```sh
+nax run --retry <workflow-run-id>
+nax admin sync last
+```
+
+## Agent operating rules
+
+- Prefer `--dry --force` before real runs.
+- Prefer `--transport netlify-api` for local orchestration, dashboard events, resume, and immediate handoff.
+- Prefer `--transport github-actions` when the user wants hosted GitHub logs and team-visible automation.
+- Include `--branch` when the user named a branch or PR.
+- Include `--context` or `--context-file` when the user supplied extra constraints.
+- Do not assume a final agent recommendation is correct; inspect artifacts and ask for human approval before merging code.
+
+## See also
+
+- [Get started](/get-started) for human-oriented setup.
+- [Run workflows](/guides/run-workflows) for workflow execution flags.
+- [Workflow file reference](/reference/workflow-files) for flow schema.
+- [Council pattern](/concepts/council-pattern) for multi-model workflow design.

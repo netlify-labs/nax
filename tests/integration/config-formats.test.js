@@ -124,6 +124,9 @@ const SYNTAX_CASES = [
   { label: 'YAML', extension: 'yml' },
   { label: 'JSON', extension: 'json' },
   { label: 'TOML', extension: 'toml' },
+]
+
+const EXECUTABLE_SYNTAX_CASES = [
   { label: 'JavaScript', extension: 'js' },
   { label: 'TypeScript', extension: 'ts' },
 ]
@@ -148,6 +151,24 @@ test('CLI dry run loads project flow files across supported syntaxes', async (t)
   }
 })
 
+test('CLI dry run blocks executable project flow files', async (t) => {
+  for (const { label, extension } of EXECUTABLE_SYNTAX_CASES) {
+    await t.test(label, () => {
+      const root = tmpRoot()
+      const flowId = `flow-${extension}`
+      const title = `${label} Flow`
+      writeFlow(root, path.join('.github', 'nax-flows'), flowId, `flow.${extension}`, flowSource(extension, flowId, title))
+
+      const result = runDryFlow(root, flowId)
+      const output = stripAnsi(`${result.stdout}\n${result.stderr}`)
+
+      assert.notEqual(result.status, 0)
+      assert.match(output, /Blocked executable config file in safe mode/)
+      assert.equal(fs.existsSync(path.join(root, '.nax')), false)
+    })
+  }
+})
+
 test('CLI dry run loads nax config files across supported syntaxes', async (t) => {
   for (const { label, extension } of SYNTAX_CASES) {
     await t.test(label, () => {
@@ -166,6 +187,27 @@ test('CLI dry run loads nax config files across supported syntaxes', async (t) =
       assert.match(stdout, /Multi step agent workflow:/)
       assert.match(stdout, new RegExp(`"${title}"`))
       assert.match(stdout, /Dry run only/)
+      assert.equal(fs.existsSync(path.join(root, '.nax')), false)
+    })
+  }
+})
+
+test('CLI dry run blocks executable nax config files', async (t) => {
+  for (const { label, extension } of EXECUTABLE_SYNTAX_CASES) {
+    await t.test(label, () => {
+      const root = tmpRoot()
+      const flowsDir = 'custom-flows'
+      const flowId = `config-${extension}`
+      const title = `${label} Config Flow`
+
+      fs.writeFileSync(path.join(root, `nax.config.${extension}`), configSource(extension, flowsDir))
+      writeFlow(root, flowsDir, flowId, 'flow.yml', flowSource('yml', flowId, title))
+
+      const result = runDryFlow(root, flowId)
+      const output = stripAnsi(`${result.stdout}\n${result.stderr}`)
+
+      assert.notEqual(result.status, 0)
+      assert.match(output, /Blocked executable config file in safe mode/)
       assert.equal(fs.existsSync(path.join(root, '.nax')), false)
     })
   }

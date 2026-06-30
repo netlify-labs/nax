@@ -58,6 +58,34 @@ test('persistAgentSessionArtifact writes canonical session files', () => {
   assert.match(summary, /File changes: yes, commit abcdef123456/)
 })
 
+test('persistAgentSessionArtifact adds .nax to gitignore for standalone agent runs', () => {
+  const projectRoot = tmpRoot()
+  const gitignorePath = path.join(projectRoot, '.gitignore')
+
+  persistAgentSessionArtifact({
+    projectRoot,
+    run: {
+      agent: 'codex',
+      status: 'completed',
+      runnerId: 'runner-1',
+      sessionId: 'session-1',
+      resultText: 'Done.',
+    },
+  })
+  persistAgentSessionArtifact({
+    projectRoot,
+    run: {
+      agent: 'codex',
+      status: 'completed',
+      runnerId: 'runner-2',
+      sessionId: 'session-2',
+      resultText: 'Done again.',
+    },
+  })
+
+  assert.equal(fs.readFileSync(gitignorePath, 'utf8'), '.nax/\n')
+})
+
 test('persistAgentSessionArtifact omits result.md when there is no result text', () => {
   const projectRoot = tmpRoot()
   const result = persistAgentSessionArtifact({

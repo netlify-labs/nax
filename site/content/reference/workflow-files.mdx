@@ -9,6 +9,8 @@ import { Callout, FileTree } from 'nextra/components'
 
 A workflow is a directory containing one `flow.*` file and any prompt files referenced by its steps. It is the durable program for a multi-agent run: it names the steps, which agents run each step, how results feed forward, and what `nax` must wait for before continuing.
 
+Council-style workflows usually start with independent `new-run` submissions, feed all first-pass results into a cross-review step, then send those outputs into one final synthesis step.
+
 <FileTree>
   <FileTree.Folder name=".github/nax-flows" defaultOpen>
     <FileTree.Folder name="review-plus" defaultOpen>
@@ -24,7 +26,9 @@ A workflow is a directory containing one `flow.*` file and any prompt files refe
 
 ## Supported files
 
-`flow.yml`, `flow.yaml`, `flow.json`, `flow.toml`, `flow.js`, and `flow.ts` are supported.
+`flow.yml`, `flow.yaml`, `flow.json`, and `flow.toml` are supported.
+
+JavaScript and TypeScript flow files are blocked by safe mode during workflow discovery. Use static flow files for project workflows.
 
 ## Top-level keys
 
@@ -77,6 +81,19 @@ steps:
       - step: review
         results: all
     waitFor: agent-results
+
+  - id: synthesize
+    title: Summarize Consensus
+    prompt: prompts/3_synthesize.md
+    action: issue
+    submit: new-run
+    agents: [codex]
+    input:
+      - step: review
+        results: all
+      - step: cross-review
+        results: all
+    waitFor: agent-results
 ```
 
 <Callout type="warning">
@@ -87,4 +104,6 @@ steps:
 
 - [Write custom workflows](/guides/write-custom-workflows) for a guided setup.
 - [Configuration reference](/reference/configuration) for flow discovery.
+- [Security policies](/reference/security-policies) for safe-mode behavior.
+- [Council pattern](/concepts/council-pattern) for why independent passes feed cross-review and synthesis.
 - [Architecture](/concepts/architecture) for execution flow.

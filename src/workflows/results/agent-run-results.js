@@ -1,3 +1,5 @@
+const { artifactMeta } = require('../../core/artifact-metadata')
+
 const ID_FORMAT = /^[A-Za-z0-9_-]{1,128}$/
 const TERMINAL_STATUSES = new Set(['completed', 'failed', 'timeout', 'cancelled', 'canceled', 'dry-run'])
 const NETLIFY_CREDITS_PER_USD = 180
@@ -388,7 +390,7 @@ function buildAgentSessionJson(input = {}) {
     updatedAt,
   })
   return {
-    schemaVersion: 1,
+    ...artifactMeta(),
     sessionId,
     runnerId: input.runnerId || run.runnerId || '',
     agent: input.agent || run.agent || '',
@@ -407,7 +409,7 @@ function buildAgentSessionUsageJson(input = {}) {
   const session = input.sessionId ? input : buildAgentSessionJson(input)
   const usage = normalizeUsage(input.usage || session.usage) || {}
   return {
-    schemaVersion: 1,
+    ...artifactMeta(),
     sessionId: session.sessionId || '',
     runnerId: session.runnerId || '',
     agent: session.agent || '',
@@ -468,7 +470,7 @@ function buildAgentRunnerJson(input = {}) {
   }
   if (!hasUsage(usage)) usage = normalizeUsage(input.usage || latestSession?.usage) || {}
   return {
-    schemaVersion: 1,
+    ...artifactMeta(),
     runnerId: input.runnerId || latestSession?.runnerId || '',
     agent: input.agent || latestSession?.agent || '',
     status: input.status || latestSession?.status || '',
@@ -491,7 +493,7 @@ function buildAgentRunnerUsageJson(input = {}) {
   const runner = input.runnerId ? input : buildAgentRunnerJson(input)
   const usage = normalizeUsage(runner.usage) || {}
   return {
-    schemaVersion: 1,
+    ...artifactMeta(),
     runnerId: runner.runnerId || '',
     agent: runner.agent || '',
     usage,

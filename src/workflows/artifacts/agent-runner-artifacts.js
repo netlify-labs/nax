@@ -1,5 +1,6 @@
 const fs = require('fs')
 const path = require('path')
+const { ensureNaxGitignore } = require('../../storage/local/nax-gitignore')
 const {
   ID_FORMAT,
   buildAgentRunnerJson,
@@ -163,6 +164,7 @@ function persistAgentRunnerArtifact(input = {}, options = {}) {
     links: input.links || latestSession?.links || existing.links || {},
   })
   if (options.dryRun) return { dir, runner, sessions }
+  ensureNaxGitignore({ projectRoot })
   ensureDir(sessionsDir)
   writeJson(path.join(dir, 'agent-runner.json'), runner)
   writeJson(path.join(dir, 'usage.json'), buildAgentRunnerUsageJson(runner))

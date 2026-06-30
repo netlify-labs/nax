@@ -4,6 +4,7 @@ const fs = require('fs')
 const os = require('os')
 const path = require('path')
 const { Writable } = require('stream')
+const packageJson = require('../../package.json')
 
 const { readEventLog } = require('../../src/workflows/events/runner-event-log')
 const {
@@ -51,6 +52,7 @@ test('runner event emitter writes one-line JSON to an enabled stream', () => {
   assert.equal(lines.length, 1)
   const event = JSON.parse(lines[0])
   assert.equal(event.schemaVersion, 1)
+  assert.equal(event.generatedBy.version, packageJson.version)
   assert.equal(event.seq, 1)
   assert.equal(event.eventId, 'run-1:1')
   assert.equal(event.flowId, 'review')

@@ -40,19 +40,13 @@ To preview setup before writing files or secrets:
 nax init --dry
 ```
 
-To use only local Netlify API orchestration:
-
-```sh
-nax init --no-github-actions
-```
-
 ### Preview a workflow
 
 ```sh
 nax run review --dry --force
 ```
 
-The dry run loads the flow, resolves prompts, and prints the plan without creating GitHub issues, Agent Runner jobs, or `.nax` artifacts.
+The dry run loads the flow, resolves prompts, and prints the council plan without creating GitHub issues, Agent Runner jobs, or `.nax` artifacts.
 
 ### Run for real
 
@@ -60,7 +54,7 @@ The dry run loads the flow, resolves prompts, and prints the plan without creati
 nax run review
 ```
 
-Force local Netlify API orchestration when you want resume support and dashboard event streaming:
+Force local Netlify API orchestration when you want resume support, dashboard event streaming, and fast local follow-up:
 
 ```sh
 nax run review --transport netlify-api
@@ -85,6 +79,8 @@ Completed workflows write summaries under:
 .nax/agent-sessions/<session-id>/summary.md
 ```
 
+On the first non-dry run in a project, `nax` also adds `.nax/` to `.gitignore` if no equivalent rule exists. The one-time check is recorded in `.nax/state.json`, so removing that ignore rule later is respected.
+
 ## Common mistakes
 
 <Callout type="warning">
@@ -99,4 +95,5 @@ Completed workflows write summaries under:
 
 - [Run workflows](/guides/run-workflows) for branch targeting, model overrides, retries, and single-agent runs.
 - [Write custom workflows](/guides/write-custom-workflows) for project-local flows.
+- [Council pattern](/concepts/council-pattern) for independent review, cross-checking, and consensus synthesis.
 - [Transports](/concepts/transports) for choosing the right execution path.

@@ -3,6 +3,7 @@ const assert = require('node:assert/strict')
 const fs = require('fs')
 const os = require('os')
 const path = require('path')
+const packageJson = require('../../package.json')
 
 const {
   WORKFLOW_PATH,
@@ -14,6 +15,7 @@ const {
   findExistingAgentRunnerWorkflow,
   initProject,
   listGitHubSecretNames,
+  naxStatePath,
   readLinkedSiteId,
   readNetlifyCliToken,
   setGitHubSecret,
@@ -337,9 +339,13 @@ test('maybeInstallInitSkills skips non-TTY and dry runs', async () => {
 test('ensureNaxGitignore creates gitignore with .nax entry', () => {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'nax-init-test-'))
   const result = ensureNaxGitignore({ projectRoot: tmp })
+  const state = JSON.parse(fs.readFileSync(naxStatePath(tmp), 'utf8'))
 
   assert.equal(result.status, 'created')
   assert.equal(fs.readFileSync(path.join(tmp, '.gitignore'), 'utf8'), '.nax/\n')
+  assert.equal(state.gitignore.status, 'created')
+  assert.equal(state.gitignore.path, path.join(tmp, '.gitignore'))
+  assert.equal(state.generatedBy.version, packageJson.version)
 })
 
 test('ensureNaxGitignore appends .nax entry without duplicating it', () => {
@@ -348,9 +354,42 @@ test('ensureNaxGitignore appends .nax entry without duplicating it', () => {
   fs.writeFileSync(gitignorePath, 'node_modules/\n')
 
   assert.equal(ensureNaxGitignore({ projectRoot: tmp }).status, 'updated')
-  assert.match(fs.readFileSync(gitignorePath, 'utf8'), /# Added by nax init\n\.nax\/\n$/)
-  assert.equal(ensureNaxGitignore({ projectRoot: tmp }).status, 'exists')
+  assert.match(fs.readFileSync(gitignorePath, 'utf8'), /# Added by nax\n\.nax\/\n$/)
+  assert.equal(ensureNaxGitignore({ projectRoot: tmp }).status, 'skipped')
   assert.equal((fs.readFileSync(gitignorePath, 'utf8').match(/\.nax\/?/g) || []).length, 1)
+})
+
+test('ensureNaxGitignore respects root-anchored .nax entries', () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'nax-init-test-'))
+  const gitignorePath = path.join(tmp, '.gitignore')
+  fs.writeFileSync(gitignorePath, '/.nax/\n')
+
+  assert.equal(ensureNaxGitignore({ projectRoot: tmp }).status, 'exists')
+  assert.equal(fs.readFileSync(gitignorePath, 'utf8'), '/.nax/\n')
+})
+
+test('ensureNaxGitignore does not re-add .nax after the one-time check', () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'nax-init-test-'))
+  const gitignorePath = path.join(tmp, '.gitignore')
+
+  assert.equal(ensureNaxGitignore({ projectRoot: tmp }).status, 'created')
+  fs.writeFileSync(gitignorePath, 'node_modules/\n')
+
+  assert.equal(ensureNaxGitignore({ projectRoot: tmp }).status, 'skipped')
+  assert.equal(fs.readFileSync(gitignorePath, 'utf8'), 'node_modules/\n')
+})
+
+test('ensureNaxGitignore preserves unrelated local nax state', () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'nax-init-test-'))
+  const statePath = naxStatePath(tmp)
+  fs.mkdirSync(path.dirname(statePath), { recursive: true })
+  fs.writeFileSync(statePath, `${JSON.stringify({ version: 1, future: { enabled: true } }, null, 2)}\n`)
+
+  assert.equal(ensureNaxGitignore({ projectRoot: tmp }).status, 'created')
+
+  const state = JSON.parse(fs.readFileSync(statePath, 'utf8'))
+  assert.deepEqual(state.future, { enabled: true })
+  assert.equal(state.gitignore.status, 'created')
 })
 
 test('siteIdFromStatus and defaultSiteName normalize expected values', () => {

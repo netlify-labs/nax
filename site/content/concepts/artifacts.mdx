@@ -9,10 +9,13 @@ import { Callout, FileTree } from 'nextra/components'
 
 Every `nax` run writes a durable local record under `.nax/`. The artifact tree is the handoff surface between workflow steps, the dashboard, follow-up prompts, and later debugging sessions.
 
+For multi-model workflows, artifacts are the evidence trail. They let you inspect the workflow config, prompts, per-model responses, cross-review notes, consensus summaries, generated patches, and token or cost metadata when available.
+
 ## Artifact layout
 
 <FileTree>
   <FileTree.Folder name=".nax" defaultOpen>
+    <FileTree.File name="state.json" />
     <FileTree.Folder name="workflows" defaultOpen>
       <FileTree.Folder name="<workflow-run-id>" defaultOpen>
         <FileTree.File name="workflow.json" />
@@ -41,6 +44,52 @@ Every `nax` run writes a durable local record under `.nax/`. The artifact tree i
 ```text
 .nax/workflows/latest/artifacts/summary.md
 ```
+
+## Local state and git ignore
+
+The first time `nax` writes durable artifacts in a project, it also makes sure local artifacts are ignored by Git. If the project `.gitignore` does not already contain a `.nax` rule, `nax` adds:
+
+```gitignore
+.nax/
+```
+
+This check is intentionally one-time. After the first check, `nax` records it in `.nax/state.json`:
+
+```json
+{
+  "schemaVersion": 1,
+  "generatedBy": {
+    "name": "netlify-agent-executor",
+    "version": "<installed-version>"
+  },
+  "version": 1,
+  "gitignore": {
+    "checkedAt": "<timestamp>",
+    "status": "created",
+    "path": "/path/to/project/.gitignore"
+  }
+}
+```
+
+On later runs, `nax` sees `gitignore.checkedAt` and does not touch `.gitignore` again. If you remove `.nax/` from `.gitignore`, `nax` will respect that choice and will not re-add it unless you delete `.nax/state.json` or remove the `gitignore` entry from that file.
+
+`nax` treats existing `.nax`, `.nax/`, `/.nax/`, `.nax/**`, and `/.nax/**` entries as already configured.
+
+## Artifact metadata
+
+New JSON artifacts include both a schema version and the package version that generated them:
+
+```json
+{
+  "schemaVersion": 1,
+  "generatedBy": {
+    "name": "netlify-agent-executor",
+    "version": "<installed-version>"
+  }
+}
+```
+
+Older artifacts may not have `generatedBy`. Dashboard and tooling should treat that field as optional and use `schemaVersion` as the primary compatibility signal.
 
 ## Handoff paths
 
@@ -79,4 +128,5 @@ nax admin clean blobs --force
 
 - [Transports](/concepts/transports) for how runs are submitted.
 - [Run workflows](/guides/run-workflows) for the commands that produce workflow artifacts.
+- [Council pattern](/concepts/council-pattern) for the review, cross-check, and synthesis loop these artifacts preserve.
 - [Troubleshooting](/troubleshooting) for recovery commands.

@@ -4,6 +4,7 @@ const http = require('http')
 const path = require('path')
 const { URL } = require('url')
 
+const { artifactMeta } = require('../core/artifact-metadata')
 const { listFlows, loadFlow } = require('../workflows/catalog/flows')
 const { listRunStates, listWorkflowStatePage, saveRunState } = require('../storage/local/run-state')
 const { flowToGraph } = require('./shared/graph')
@@ -782,7 +783,7 @@ function appendDurableWorkflowEvent(runState = {}, type, data = {}) {
   const replay = readEventLog(filePath)
   const seq = replay.events.reduce((max, event) => Math.max(max, Number(event.seq || 0)), 0) + 1
   const event = {
-    schemaVersion: 1,
+    ...artifactMeta(),
     seq,
     eventId: `${runState.runId || 'workflow'}:${seq}`,
     type,

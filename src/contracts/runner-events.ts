@@ -1,6 +1,10 @@
 export type RunnerEvent = {
   id?: number
   schemaVersion?: number
+  generatedBy?: {
+    name?: string
+    version?: string
+  }
   seq?: number
   eventId?: string
   type: string

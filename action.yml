@@ -1,0 +1,257 @@
+name: Run NAX
+description: Run a Netlify Agent Executor workflow from GitHub Actions.
+
+inputs:
+  flow:
+    description: NAX flow slug to run.
+    required: false
+    default: review
+  repo:
+    description: GitHub repository in owner/name form. Defaults to the current repository.
+    required: false
+    default: ''
+  branch:
+    description: Branch or PR ref to run. Defaults to the current workflow ref.
+    required: false
+    default: ''
+  transport:
+    description: NAX transport to use.
+    required: false
+    default: netlify-api
+  models:
+    description: Optional comma-separated model override.
+    required: false
+    default: ''
+  step:
+    description: Optional single workflow step to run.
+    required: false
+    default: ''
+  from-step:
+    description: Optional workflow step to start from.
+    required: false
+    default: ''
+  context:
+    description: Optional context appended to each workflow prompt.
+    required: false
+    default: ''
+  context-file:
+    description: Optional file containing context appended to each workflow prompt.
+    required: false
+    default: ''
+  timeout-minutes:
+    description: Minutes to wait for each Netlify Agent Runner step.
+    required: false
+    default: '60'
+  force:
+    description: Skip confirmation prompts.
+    required: false
+    default: 'true'
+  netlify-auth-token:
+    description: Netlify personal access token.
+    required: true
+  netlify-site-id:
+    description: Netlify site ID.
+    required: true
+  github-token:
+    description: GitHub token used by NAX when GitHub API access is needed.
+    required: false
+    default: ''
+  nax-version:
+    description: npm version or dist-tag for netlify-agent-executor.
+    required: false
+    default: latest
+  netlify-cli-version:
+    description: npm version or dist-tag for netlify-cli.
+    required: false
+    default: latest
+  node-version:
+    description: Node.js version used to install and run NAX.
+    required: false
+    default: '22'
+  upload-artifacts:
+    description: Upload .nax artifacts after the run.
+    required: false
+    default: 'true'
+  artifact-name:
+    description: GitHub Actions artifact name. Defaults to nax-<flow>-<run_id>.
+    required: false
+    default: ''
+  artifact-retention-days:
+    description: Number of days to retain uploaded artifacts.
+    required: false
+    default: '30'
+
+outputs:
+  flow:
+    description: Resolved NAX flow slug.
+    value: ${{ steps.resolve.outputs.flow }}
+  repo:
+    description: Resolved repository.
+    value: ${{ steps.resolve.outputs.repo }}
+  branch:
+    description: Resolved branch.
+    value: ${{ steps.resolve.outputs.branch }}
+  artifact-name:
+    description: GitHub Actions artifact name used by the action.
+    value: ${{ steps.artifact-meta.outputs.artifact-name }}
+  summary-path:
+    description: Latest summary.md path found under .nax.
+    value: ${{ steps.summary.outputs.summary-path }}
+
+runs:
+  using: composite
+  steps:
+    - uses: actions/setup-node@v6
+      with:
+        node-version: ${{ inputs.node-version }}
+
+    - name: Install NAX
+      shell: bash
+      env:
+        NAX_VERSION: ${{ inputs.nax-version }}
+        NETLIFY_CLI_VERSION: ${{ inputs.netlify-cli-version }}
+      run: |
+        set -euo pipefail
+        npm install -g "netlify-agent-executor@${NAX_VERSION}" "netlify-cli@${NETLIFY_CLI_VERSION}"
+
+    - name: Resolve run inputs
+      id: resolve
+      shell: bash
+      env:
+        INPUT_FLOW: ${{ inputs.flow }}
+        INPUT_REPO: ${{ inputs.repo }}
+        INPUT_BRANCH: ${{ inputs.branch }}
+      run: |
+        set -euo pipefail
+
+        flow="${INPUT_FLOW%% - *}"
+        repo="$INPUT_REPO"
+        branch="$INPUT_BRANCH"
+
+        if [ -z "$flow" ]; then
+          echo "::error::Missing NAX flow."
+          exit 1
+        fi
+
+        if [ -z "$repo" ]; then
+          repo="${GITHUB_REPOSITORY:-}"
+        fi
+
+        if [ -z "$branch" ]; then
+          branch="${GITHUB_HEAD_REF:-${GITHUB_REF_NAME:-}}"
+        fi
+
+        if [ -z "$repo" ]; then
+          echo "::error::Could not resolve repository. Pass the repo input."
+          exit 1
+        fi
+
+        if [ -z "$branch" ]; then
+          echo "::error::Could not resolve branch. Pass the branch input."
+          exit 1
+        fi
+
+        echo "flow=$flow" >> "$GITHUB_OUTPUT"
+        echo "repo=$repo" >> "$GITHUB_OUTPUT"
+        echo "branch=$branch" >> "$GITHUB_OUTPUT"
+
+    - name: Run NAX flow
+      shell: bash
+      env:
+        NAX_FLOW: ${{ steps.resolve.outputs.flow }}
+        NAX_REPO: ${{ steps.resolve.outputs.repo }}
+        NAX_BRANCH: ${{ steps.resolve.outputs.branch }}
+        NAX_TRANSPORT: ${{ inputs.transport }}
+        NAX_MODELS: ${{ inputs.models }}
+        NAX_STEP: ${{ inputs.step }}
+        NAX_FROM_STEP: ${{ inputs.from-step }}
+        NAX_CONTEXT: ${{ inputs.context }}
+        NAX_CONTEXT_FILE: ${{ inputs.context-file }}
+        NAX_TIMEOUT_MINUTES: ${{ inputs.timeout-minutes }}
+        NAX_FORCE: ${{ inputs.force }}
+        NETLIFY_AUTH_TOKEN: ${{ inputs.netlify-auth-token }}
+        NETLIFY_SITE_ID: ${{ inputs.netlify-site-id }}
+        GH_TOKEN: ${{ inputs.github-token || github.token }}
+        GITHUB_TOKEN: ${{ inputs.github-token || github.token }}
+      run: |
+        set -euo pipefail
+
+        args=(run "$NAX_FLOW")
+        args+=(--transport "$NAX_TRANSPORT")
+        args+=(--repo "$NAX_REPO")
+        args+=(--branch "$NAX_BRANCH")
+        args+=(--timeout-minutes "$NAX_TIMEOUT_MINUTES")
+
+        if [ "$NAX_FORCE" = "true" ]; then
+          args+=(--force)
+        fi
+
+        if [ -n "$NAX_MODELS" ]; then
+          args+=(--models "$NAX_MODELS")
+        fi
+
+        if [ -n "$NAX_STEP" ]; then
+          args+=(--step "$NAX_STEP")
+        fi
+
+        if [ -n "$NAX_FROM_STEP" ]; then
+          args+=(--from-step "$NAX_FROM_STEP")
+        fi
+
+        if [ -n "$NAX_CONTEXT" ]; then
+          args+=(--context "$NAX_CONTEXT")
+        fi
+
+        if [ -n "$NAX_CONTEXT_FILE" ]; then
+          args+=(--context-file "$NAX_CONTEXT_FILE")
+        fi
+
+        nax "${args[@]}"
+
+    - name: Resolve artifact metadata
+      id: artifact-meta
+      if: ${{ always() }}
+      shell: bash
+      env:
+        INPUT_ARTIFACT_NAME: ${{ inputs.artifact-name }}
+        NAX_FLOW: ${{ steps.resolve.outputs.flow }}
+      run: |
+        set -euo pipefail
+
+        artifact_name="$INPUT_ARTIFACT_NAME"
+        if [ -z "$artifact_name" ]; then
+          artifact_name="nax-${NAX_FLOW}-${GITHUB_RUN_ID:-local}"
+        fi
+
+        echo "artifact-name=$artifact_name" >> "$GITHUB_OUTPUT"
+
+    - name: Locate latest NAX summary
+      id: summary
+      if: ${{ always() }}
+      shell: bash
+      run: |
+        set -euo pipefail
+
+        latest_summary="$(find .nax -path '*/summary.md' -type f -print 2>/dev/null | sort | tail -n 1 || true)"
+        echo "summary-path=$latest_summary" >> "$GITHUB_OUTPUT"
+
+        if [ -n "$latest_summary" ]; then
+          echo "Latest NAX summary: $latest_summary"
+          sed -n '1,220p' "$latest_summary"
+        else
+          echo "No NAX summary.md files found."
+        fi
+
+    - name: Upload NAX artifacts
+      if: ${{ always() && inputs.upload-artifacts == 'true' }}
+      uses: actions/upload-artifact@v7
+      with:
+        name: ${{ steps.artifact-meta.outputs.artifact-name }}
+        path: |
+          .nax/workflows/**/workflow.json
+          .nax/workflows/**/artifacts/**
+          .nax/agent-runners/**
+          .nax/agent-sessions/**
+        if-no-files-found: ignore
+        include-hidden-files: true
+        retention-days: ${{ inputs.artifact-retention-days }}

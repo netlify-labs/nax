@@ -1,5 +1,6 @@
 const fs = require('fs')
 const path = require('path')
+const { artifactMeta } = require('../../core/artifact-metadata')
 const { formatFileChangesSummary, formatUsageSummary, usageSummariesForRunState } = require('../results/agent-run-results')
 const { persistAgentRunnerArtifact } = require('./agent-runner-artifacts')
 const { persistAgentSessionArtifact } = require('./agent-session-artifacts')
@@ -179,7 +180,7 @@ function resultUrlForRun(run = {}) {
 /** @param {BuildAgentJsonInput} param0 */
 function buildAgentJson({ runState = {}, step = {}, run = {}, attemptNumber = null } = {}) {
   return {
-    schemaVersion: 1,
+    ...artifactMeta(),
     runId: runState.runId || '',
     stepId: step.id || '',
     stepTitle: step.title || step.id || '',
@@ -438,7 +439,7 @@ function buildStepJson({ runState = {}, step = {}, ordinal = stepOrdinal(runStat
   const runsDir = runsArtifactsDir(runState, step)
   const stepDir = stepArtifactsDir(runState, step)
   return {
-    schemaVersion: 1,
+    ...artifactMeta(),
     ordinal,
     id: step.id || '',
     title: step.title || step.id || '',
@@ -554,7 +555,7 @@ function persistCanonicalAgentArtifacts(runState = {}, step = {}, run = {}, opti
 function buildTopUsageJson(runState = {}) {
   const summaries = usageSummariesForRunState(runState)
   return {
-    schemaVersion: 1,
+    ...artifactMeta(),
     runId: runState.runId || '',
     target: runState.target || null,
     total: summaries.total,
@@ -630,7 +631,7 @@ function writeStepSummaryFiles(runState, step, options = {}) {
   writeJson(path.join(dir, 'step.json'), buildStepJson({ runState, step }))
   const stepUsage = usageSummariesForRunState({ steps: [step] })
   writeJson(path.join(dir, 'usage.json'), {
-    schemaVersion: 1,
+    ...artifactMeta(),
     stepId: step.id || '',
     usage: stepUsage.steps[0]?.usage || {},
     summary: stepUsage.steps[0]?.summary || '',

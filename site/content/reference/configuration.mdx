@@ -27,6 +27,8 @@ nax list --flows-dir tools/nax/flows
 NAX_FLOWS_DIRS=tools/nax/flows,.github/nax-flows nax list
 ```
 
+Project config files may be `nax.config.yml`, `nax.config.yaml`, `nax.config.json`, or `nax.config.toml`. JavaScript and TypeScript config files are blocked by safe mode during flow discovery.
+
 ## Prompt delivery
 
 | Variable | Default | Purpose |
@@ -65,5 +67,6 @@ NAX_FLOWS_DIRS=tools/nax/flows,.github/nax-flows nax list
 ## See also
 
 - [Workflow file reference](/reference/workflow-files) for flow schema.
+- [Security policies](/reference/security-policies) for safe-mode behavior.
 - [Use the dashboard](/guides/use-the-dashboard) for local dashboard setup.
 - [Troubleshooting](/troubleshooting) for common configuration failures.

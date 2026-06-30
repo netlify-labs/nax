@@ -1,4 +1,4 @@
-name: Run Agent Workflow
+name: Run Local NAX Workflow
 
 on:
   workflow_dispatch:
@@ -27,7 +27,7 @@ on:
     types: [opened, synchronize, reopened]
 
 concurrency:
-  group: run-nax-${{ github.event.pull_request.number || github.ref }}
+  group: run-local-nax-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: false
 
 jobs:
@@ -82,18 +82,14 @@ jobs:
           echo "NAX_FLOW=$flow" >> "$GITHUB_ENV"
           echo "Resolved NAX flow: $flow"
 
-      - name: Run NAX flow
-        uses: ./
+      - uses: actions/setup-node@v6
         with:
-          flow: ${{ steps.resolve-flow.outputs.flow }}
-          repo: ${{ github.repository }}
-          branch: ${{ env.BRANCH }}
-          transport: netlify-api
-          timeout-minutes: '60'
-          netlify-auth-token: ${{ secrets.NETLIFY_AUTH_TOKEN }}
-          netlify-site-id: ${{ secrets.NETLIFY_SITE_ID }}
-          github-token: ${{ github.token }}
-          upload-artifacts: 'false'
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+      - run: npm install -g netlify-cli
+      - run: node src/cli/nax.js run "$NAX_FLOW" --transport netlify-api --repo "$GITHUB_REPOSITORY" --branch "$BRANCH" --force --timeout-minutes 60
       - name: Inspect nax run artifacts
         if: always()
         run: |

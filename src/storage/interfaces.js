@@ -158,6 +158,7 @@
  * @typedef {{
  *   id?: number,
  *   schemaVersion?: number,
+ *   generatedBy?: { name?: string, version?: string },
  *   seq?: number,
  *   eventId?: string,
  *   type?: string,

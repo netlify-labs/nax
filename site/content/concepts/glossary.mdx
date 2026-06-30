@@ -19,6 +19,10 @@ The Netlify-hosted execution environment that runs an agent against a repository
 
 A persisted local output under `.nax/`, such as a workflow summary, runner summary, session summary, event log, or prompt blob mirror.
 
+## Council pattern
+
+A workflow shape where multiple agents first inspect the same task independently, then cross-review the findings before a final synthesis step prepares a human-readable artifact.
+
 ## Flow
 
 The workflow definition loaded from `flow.yml`, `flow.json`, `flow.toml`, `flow.js`, or `flow.ts`.
@@ -58,6 +62,7 @@ One execution of a flow, persisted under `.nax/workflows/<workflow-run-id>/`.
 ## See also
 
 - [Architecture](/concepts/architecture) for how these pieces fit together.
+- [Council pattern](/concepts/council-pattern) for the main multi-model workflow shape.
 - [Workflow file reference](/reference/workflow-files) for schema terms.
 - [Transports](/concepts/transports) for execution paths.
 - [Artifacts](/concepts/artifacts) for handoff files and saved state.

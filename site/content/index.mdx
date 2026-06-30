@@ -4,10 +4,70 @@ description: Documentation for the Netlify-Agent-eXecutor CLI.
 ---
 
 import { HomeCard, HomeCards } from '@/components/home-cards'
+import { Callout } from 'nextra/components'
 
-# Netlify-Agent-eXecutor (`nax`)
+<div className="nax-home-page">
 
-`nax` is a command-line orchestrator for Netlify Agent Runner workflows. It runs Claude, Gemini, and Codex against the same repository task, waits for every agent in a step, feeds earlier results into later prompts, and writes durable artifacts under `.nax/` for inspection and handoff.
+<div className="nax-hero">
+  <div className="nax-hero-copy">
+    <span className="nax-eyebrow">Netlify Agent Executor</span>
+    <h1>Multi-step agentic workflows for Netlify Agent Runners.</h1>
+    <p className="nax-hero-lede">Run the world’s leading coding models as one repeatable workflow. <code>nax</code> orchestrates Claude, Gemini, and Codex on Netlify Agent Runners across parallel implementations, cross-checks, reviews, handoffs, and any agentic workflow you can define.</p>
+    <div className="nax-hero-actions">
+      <a className="nax-primary-action" href="/get-started">Get started</a>
+      <a className="nax-secondary-action" href="/guides/run-workflows">Run workflows</a>
+    </div>
+  </div>
+  <div className="nax-hero-media" aria-label="nax demo video">
+    <div className="nax-demo-video">
+      <iframe
+        title="nax demo video"
+        src="https://www.youtube.com/embed/HjXaDKEhvLs"
+        loading="lazy"
+        allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
+        allowFullScreen
+      />
+    </div>
+    <Callout type="info">
+      <strong>Early alpha:</strong> <code>nax</code> is still evolving and is subject to change.
+    </Callout>
+  </div>
+</div>
+
+<div className="nax-home-body">
+
+<div className="nax-value-grid">
+  <div>
+    <strong>Independent first passes</strong>
+    <span>Run selected models against the same repo task before they influence each other.</span>
+  </div>
+  <div>
+    <strong>Cross-review before consensus</strong>
+    <span>Feed earlier outputs into later steps so agents confirm, reject, or challenge findings.</span>
+  </div>
+  <div>
+    <strong>Inspectable artifacts</strong>
+    <span>Save prompts, responses, summaries, state, and handoff files under <code>.nax/</code>.</span>
+  </div>
+  <div>
+    <strong>CLI, dashboard, and Netlify</strong>
+    <span>Run locally, inspect in the dashboard, or submit work through Netlify Agent Runners.</span>
+  </div>
+</div>
+
+## From prompt ritual to playbook
+
+<div className="nax-flow-strip">
+  <span>Task</span>
+  <span>Fan-out</span>
+  <span>Cross-review</span>
+  <span>Consensus</span>
+  <span>Handoff</span>
+</div>
+
+Workflows define the models, prompts, step order, wait behavior, and artifacts for a repeatable agent process. Use them for code review, security audits, bug triage, PR repair, implementation bake-offs, or any workflow where structured disagreement is more useful than one confident answer.
+
+The default pattern is a council, not a vote. Claude, Gemini, and Codex first inspect the same task separately, then review each other's findings before one synthesis step turns confirmed issues and high-signal disagreements into a handoff a person can evaluate.
 
 <HomeCards>
   <HomeCard title="Get started" href="/get-started">
@@ -19,25 +79,13 @@ import { HomeCard, HomeCards } from '@/components/home-cards'
   <HomeCard title="Write custom workflows" href="/guides/write-custom-workflows">
     Add project-local `flow.yml` files and Markdown prompts.
   </HomeCard>
+  <HomeCard title="Council pattern" href="/concepts/council-pattern">
+    Preserve independent model judgment before cross-review, consensus, and human approval.
+  </HomeCard>
   <HomeCard title="Command reference" href="/reference/commands">
     Look up the public command surface and important flags.
   </HomeCard>
 </HomeCards>
-
-## Mental model
-
-```text
-Project repo
-  -> flow.yml + prompts
-  -> fan-out step
-  -> follow-up step
-  -> synthesis step
-  -> .nax artifacts
-       -> nax handoff
-       -> dashboard
-```
-
-The workflow file is the program. It names the steps, agents, prompts, inputs, and wait behavior. `nax` chooses a transport, submits the prompts, waits for declared results, writes state under `.nax/`, and exposes those artifacts through `nax handoff` and the dashboard.
 
 ## Common paths
 
@@ -47,3 +95,7 @@ nax run review --dry --force
 nax run review
 nax handoff -c
 ```
+
+</div>
+
+</div>

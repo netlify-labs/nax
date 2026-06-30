@@ -1,0 +1,40 @@
+---
+title: Security Policies
+description: Safe-mode settings and file-root restrictions for workflow loading.
+---
+
+# Security policies
+
+`nax` loads workflow files and `nax.config.*` files through Configorama safe mode. This means static config files can still use supported data-flow variables, but JavaScript and TypeScript execution is blocked while workflows are discovered.
+
+The internal loader is equivalent to:
+
+```js
+import path from 'node:path'
+
+const configPath = path.resolve('flow.yml')
+
+await configorama(configPath, {
+  safeMode: true,
+  allowedFileRoots: [path.dirname(configPath)]
+})
+```
+
+| Setting | Default | Purpose |
+| --- | --- | --- |
+| `safeMode` | `true` | Enables safe inspection and blocking policy while `nax` loads configs. |
+| `allowedFileRoots` | config directory | Roots for file/text references. |
+| `restrictFileRoots` | `true` | Blocks traversal outside allowed roots. |
+| `blockExecutableFiles` | `true` | Blocks JavaScript, TypeScript, ESM, and CJS execution. |
+| `blockCustomResolvers` | `true` | Blocks user resolver code. |
+| `blockCustomFunctions` | `true` | Blocks user function code. |
+| `blockDotEnv` | `true` | Blocks dotenv mutation. |
+
+Use `flow.yml`, `flow.yaml`, `flow.json`, or `flow.toml` for project workflows. `nax.config.yml`, `nax.config.yaml`, `nax.config.json`, and `nax.config.toml` are supported for project flow-root discovery.
+
+`eval(...)` and `if(...)` are sandboxed data-flow expressions in Configorama, so safe mode does not treat them like executable config. Prefer static workflow files and data-flow expressions for comparisons, arithmetic, ternaries, and boolean checks before reaching for JavaScript or TypeScript files.
+
+## See also
+
+- [Workflow file reference](/reference/workflow-files) for supported workflow files.
+- [Configuration reference](/reference/configuration) for project flow-root discovery.

@@ -3,6 +3,7 @@ const assert = require('node:assert/strict')
 const fs = require('fs')
 const os = require('os')
 const path = require('path')
+const packageJson = require('../../package.json')
 
 const {
   createRunState,
@@ -78,8 +79,28 @@ test('createRunState persists immutable target and branch aliases', () => {
   })
 
   assert.deepEqual(state.target, target)
+  assert.equal(state.generatedBy.version, packageJson.version)
   assert.equal(state.branch, 'main')
   assert.equal(state.branchSource, 'current-branch')
+})
+
+test('saveRunState adds .nax to gitignore once when writing artifacts', () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'nax-run-state-gitignore-test-'))
+  const gitignorePath = path.join(tmp, '.gitignore')
+  fs.writeFileSync(gitignorePath, 'node_modules/\n')
+  const state = createRunState({
+    projectRoot: tmp,
+    flow: { id: 'review', title: 'Review' },
+    transport: 'netlify-api',
+    now: new Date('2026-05-12T00:00:00.000Z'),
+  })
+
+  saveRunState(state)
+  saveRunState(state)
+
+  const gitignore = fs.readFileSync(gitignorePath, 'utf8')
+  assert.match(gitignore, /# Added by nax\n\.nax\/\n$/)
+  assert.equal((gitignore.match(/\.nax\/?/g) || []).length, 1)
 })
 
 test('hasRepairableRuns ignores terminal failed and timeout runs', () => {

@@ -23,6 +23,10 @@ nax run
 
 ---
 
+## Demo
+
+[![Watch the nax demo](site/public/nax-video-thumbnail.webp)](https://youtu.be/HjXaDKEhvLs)
+
 ## TL;DR
 
 ### The Problem
@@ -241,7 +245,6 @@ nax list
    Variations:
 
    ```bash
-   nax init --no-github-actions        # only link a Netlify site, skip workflow + secrets
    nax init --create --site-name my-app # create a fresh Netlify site instead of linking
    nax init --dry                       # preview without writing
    ```
@@ -815,7 +818,7 @@ A: The step still completes when the other agents finish or time out. The failed
 A: No. YAML is the default in the bundled examples because it is diffable, reviewable, and trivially generatable, but custom flows can be JSON, JavaScript, TypeScript, or TOML too. Use whichever format your team will actually read.
 
 **Q: Can I run this without GitHub Actions?**
-A: Yes — pass `--transport netlify-api` (or skip the workflow file in `nax init --no-github-actions`). The trade-off is that your machine has to stay alive for the duration of the run (or you'll hit the resume path).
+A: Yes. Pass `--transport netlify-api`. The trade-off is that your machine has to stay alive for the duration of the run, or you will need to use the resume path.
 
 **Q: Can I use it from `npx`?**
 A: Yes. Use `npx netlify-agent-executor ...`. For shell commands, quote the command passed to `nax ci`, e.g. `npx netlify-agent-executor ci 'npm test'`.

@@ -1,5 +1,7 @@
 const fs = require('fs')
 const path = require('path')
+const { artifactMeta } = require('../../core/artifact-metadata')
+const { ensureNaxGitignore } = require('./nax-gitignore')
 const {
   hasInFlightRuns,
   hasRepairableRuns,
@@ -420,7 +422,7 @@ function createRunState({ projectRoot, flow, transport, options = {}, target = n
   cleanupLegacyRunsDir(projectRoot)
   const dir = path.join(getWorkflowsDir(projectRoot), runId)
   return {
-    schemaVersion: 1,
+    ...artifactMeta(),
     runId,
     flowId: flow.id,
     flowTitle: flow.title,
@@ -444,6 +446,7 @@ function createRunState({ projectRoot, flow, transport, options = {}, target = n
 }
 
 function saveRunState(state) {
+  ensureNaxGitignore({ projectRoot: state.projectRoot })
   fs.mkdirSync(state.dir, { recursive: true })
   const filePath = workflowStatePath(state.dir)
   const release = acquireStateFileLock(filePath)

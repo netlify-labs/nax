@@ -1,5 +1,6 @@
 const fs = require('fs')
 
+const { ARTIFACT_SCHEMA_VERSION, artifactMeta } = require('../../core/artifact-metadata')
 const { appendEventLog } = require('./runner-event-log')
 
 /**
@@ -57,7 +58,6 @@ const { appendEventLog } = require('./runner-event-log')
  * @typedef {Record<string, unknown> | unknown[]} SeenEventObject
  */
 
-const SCHEMA_VERSION = 1
 const LARGE_STRING_LIMIT = 16 * 1024
 const REDACTED = '[redacted]'
 const SECRET_KEY_PATTERN = /(?:token|secret|password|authorization|apikey|api_key|auth)/i
@@ -134,7 +134,7 @@ function normalizeRunnerEvent(base = {}, type, payload = {}, seq, now = new Date
   const runId = sanitized.runId || base.runId || ''
   const flowId = sanitized.flowId || base.flowId || ''
   return {
-    schemaVersion: SCHEMA_VERSION,
+    ...artifactMeta(),
     seq,
     eventId: `${runId || 'pending'}:${seq}`,
     type,
@@ -253,7 +253,7 @@ function createRunnerEventEmitter(options = {}) {
 
 module.exports = {
   LARGE_STRING_LIMIT,
-  SCHEMA_VERSION,
+  SCHEMA_VERSION: ARTIFACT_SCHEMA_VERSION,
   createRunnerEventEmitter,
   isRunnerEventEnabled,
   normalizeRunnerEvent,

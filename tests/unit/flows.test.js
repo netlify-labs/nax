@@ -128,7 +128,7 @@ test('loadFlow uses nax.config.json flowsDirs and project flows shadow bundled f
   assert.equal(flows.find((candidate) => candidate.id === 'release-readiness').sourceLabel, 'project .github/nax-flows')
 })
 
-test('loadFlow uses JavaScript nax config files', async () => {
+test('loadFlow blocks JavaScript nax config files', async () => {
   const projectRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'nax-flow-js-config-'))
   fs.writeFileSync(path.join(projectRoot, 'nax.config.js'), [
     'module.exports = {',
@@ -140,12 +140,14 @@ test('loadFlow uses JavaScript nax config files', async () => {
     title: 'JS Config Flow',
   })
 
-  const dirs = await projectFlowDirs({ projectRoot })
-  assert.deepEqual(dirs.map((dir) => path.relative(projectRoot, dir)), ['tools/nax/flows'])
-
-  const flow = await loadFlow('js-config-flow', { projectRoot })
-  assert.equal(flow.title, 'JS Config Flow')
-  assert.equal(flow.sourceLabel, 'project tools/nax/flows')
+  await assert.rejects(
+    () => projectFlowDirs({ projectRoot }),
+    /Blocked executable config file in safe mode/,
+  )
+  await assert.rejects(
+    () => loadFlow('js-config-flow', { projectRoot }),
+    /Blocked executable config file in safe mode/,
+  )
 })
 
 test('loadFlow accepts explicit project workflow directories', async () => {
@@ -293,7 +295,7 @@ test('loadFlow accepts toml flow files through configorama', async () => {
   assert.equal(loadStepPrompt(flow, flow.steps[0]).title, 'One')
 })
 
-test('loadFlow accepts JavaScript flow files through configorama', async () => {
+test('loadFlow blocks JavaScript flow files through configorama safe mode', async () => {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'nax-flow-test-'))
   const flowDir = path.join(tmp, 'js-flow')
   fs.mkdirSync(path.join(flowDir, 'prompts'), { recursive: true })
@@ -307,11 +309,32 @@ test('loadFlow accepts JavaScript flow files through configorama', async () => {
   ].join('\n'))
   fs.writeFileSync(path.join(flowDir, 'prompts', 'one.md'), '---\ntitle: One\n---\n\nBody\n')
 
-  const flow = await loadFlow('js-flow', { flowsDir: tmp })
-  assert.equal(flow.id, 'js-flow')
-  assert.equal(flow.title, 'JavaScript Flow')
-  assert.equal(flow.steps[0].id, 'one')
-  assert.equal(loadStepPrompt(flow, flow.steps[0]).title, 'One')
+  await assert.rejects(
+    () => loadFlow('js-flow', { flowsDir: tmp }),
+    /Blocked executable config file in safe mode/,
+  )
+})
+
+test('loadFlow blocks executable file references in safe mode', async () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'nax-flow-test-'))
+  const flowDir = path.join(tmp, 'file-ref-flow')
+  fs.mkdirSync(path.join(flowDir, 'prompts'), { recursive: true })
+  fs.writeFileSync(path.join(flowDir, 'dynamic-title.js'), 'module.exports = "Dynamic Title"\n')
+  fs.writeFileSync(path.join(flowDir, 'flow.yml'), [
+    'id: file-ref-flow',
+    'title: ${file(./dynamic-title.js)}',
+    'steps:',
+    '  - id: one',
+    '    prompt: prompts/one.md',
+    '    agents: [codex]',
+    '',
+  ].join('\n'))
+  fs.writeFileSync(path.join(flowDir, 'prompts', 'one.md'), '---\ntitle: One\n---\n\nBody\n')
+
+  await assert.rejects(
+    () => loadFlow('file-ref-flow', { flowsDir: tmp }),
+    /Blocked executable config reference in safe mode/,
+  )
 })
 
 test('loadFlow rejects unsupported wait modes', async () => {

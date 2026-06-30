@@ -33,6 +33,7 @@ A workflow is a directory containing one `flow.*` file and any prompt files refe
 | `id` | yes | Stable workflow id used by `nax run <id>`. |
 | `title` | yes | Human name shown in lists, prompts, and dashboard. |
 | `description` | recommended | One-sentence summary. |
+| `disabled` | no | Set to `true` to hide a workflow from `nax list`, `nax run`, and the dashboard without deleting its files. |
 | `defaults` | no | Default transport, notification, and agents. |
 | `steps` | yes | Ordered workflow steps. |
 

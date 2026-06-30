@@ -101,6 +101,7 @@
  *   id?: string,
  *   title?: string,
  *   description?: string,
+ *   disabled?: boolean,
  *   dir?: string,
  *   file?: string,
  *   source?: string,

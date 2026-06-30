@@ -1,6 +1,7 @@
 id: human-review-example
 title: Human Review Example
 description: Demonstrate a workflow that pauses for a human approval before continuing.
+disabled: true
 
 defaults:
   transport: auto

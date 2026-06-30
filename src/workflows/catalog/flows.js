@@ -193,6 +193,11 @@ function normalizeBoolean(value, fallback = false) {
   return fallback
 }
 
+/** @param {import('../../types').WorkflowFlow} raw */
+function isFlowDisabled(raw) {
+  return normalizeBoolean(raw.disabled, false)
+}
+
 function flowDiagnostic({ stepId = '', code, message, hint = '' }) {
   return { stepId, code, message, hint }
 }
@@ -450,6 +455,7 @@ async function listFlows(options = {}) {
       const file = findFlowFile(dir)
       if (!file) continue
       const raw = await configorama(file)
+      if (isFlowDisabled(raw)) continue
       const flow = normalizeFlow(raw, { id: entry.name, dir, file, source })
       if (seenIds.has(flow.id)) continue
       seenIds.add(flow.id)
@@ -491,6 +497,7 @@ module.exports = {
   findFlowFile,
   flowSources,
   formatFlowValidation,
+  isFlowDisabled,
   isHumanReviewStep,
   listFlows,
   loadFlow,

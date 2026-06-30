@@ -72,6 +72,7 @@ test('listFlows discovers flow directories', async () => {
     assert.ok(ids.includes(id), `expected ${id} to be discovered`)
   }
   assert.equal(ids.includes('long-descriptions'), false)
+  assert.equal(ids.includes('human-review-example'), false)
 })
 
 test('listFlows only exposes long-descriptions from the fixture flow root', async () => {
@@ -160,7 +161,32 @@ test('loadFlow accepts explicit project workflow directories', async () => {
 
 test('listFlows orders primary workflows for the picker', async () => {
   const flows = await listFlows()
-  assert.deepEqual(flows.slice(0, FLOW_PICKER_ORDER.length).map((flow) => flow.id), FLOW_PICKER_ORDER)
+  const ids = flows.map((flow) => flow.id)
+  const expectedOrder = FLOW_PICKER_ORDER.filter((id) => ids.includes(id))
+  assert.deepEqual(flows.slice(0, expectedOrder.length).map((flow) => flow.id), expectedOrder)
+})
+
+test('listFlows excludes disabled workflows', async () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'nax-flow-disabled-'))
+  writeFlow(tmp, '.', 'visible-flow', { title: 'Visible Flow' })
+  writeFlow(tmp, '.', 'disabled-flow', { title: 'Disabled Flow' })
+  fs.writeFileSync(path.join(tmp, 'disabled-flow', 'flow.yml'), [
+    'id: disabled-flow',
+    'title: Disabled Flow',
+    'disabled: true',
+    'steps:',
+    '  - id: unfinished',
+    '    prompt: prompts/missing.md',
+    '',
+  ].join('\n'))
+
+  const flows = await listFlows({ flowsDir: tmp })
+  assert.ok(flows.some((flow) => flow.id === 'visible-flow'))
+  assert.equal(flows.some((flow) => flow.id === 'disabled-flow'), false)
+  await assert.rejects(
+    () => loadFlow('disabled-flow', { flowsDir: tmp }),
+    /Unknown flow "disabled-flow"/,
+  )
 })
 
 test('loadStepPrompt resolves prompts relative to the flow directory', async () => {

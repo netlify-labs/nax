@@ -23,7 +23,7 @@ import {
   useMantineColorScheme,
 } from '@mantine/core'
 import { useDisclosure, type UseSplitterReturnValue } from '@mantine/hooks'
-import { Check, Copy, FolderGit2, GitBranch, Moon, RefreshCw, Sun } from 'lucide-react'
+import { BookOpen, Check, Copy, FolderGit2, GitBranch, Moon, RefreshCw, Sun } from 'lucide-react'
 import { ReactFlowProvider } from '@xyflow/react'
 import { runEventsStream, type RunEventStream } from './api'
 import { WorkflowOutputTabs } from './components/DryRunPanel'
@@ -1084,6 +1084,19 @@ export default function App() {
                 onChange={(event) => setDryRunOptions((options) => ({ ...options, branch: event.currentTarget.value }))}
                 size="xs"
               />
+              <Tooltip label="Open documentation">
+                <ActionIcon
+                  component="a"
+                  href="https://netlify-agent-executor.netlify.app/"
+                  target="_blank"
+                  rel="noreferrer"
+                  variant="subtle"
+                  color="gray"
+                  aria-label="Open documentation"
+                >
+                  <BookOpen size={17} />
+                </ActionIcon>
+              </Tooltip>
               <Tooltip label={`Switch to ${colorScheme === 'dark' ? 'light' : 'dark'} mode`}>
                 <ActionIcon
                   variant="subtle"

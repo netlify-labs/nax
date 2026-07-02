@@ -1017,6 +1017,7 @@ async function submitLocalAgentRun({
     status: 'submitted',
     runnerId: created.runnerId,
     sessionId: run.existingRunnerId ? (created.raw.id || run.sessionId || '') : (run.sessionId || ''),
+    ...(siteId || run.netlifySiteId ? { netlifySiteId: siteId || run.netlifySiteId } : {}),
     raw: {
       ...run.raw,
       [run.existingRunnerId ? 'session' : 'create']: created.raw,

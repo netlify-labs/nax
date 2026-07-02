@@ -28,6 +28,7 @@ test('persistAgentRunnerArtifact writes a runner thread rollup', () => {
       status: 'completed',
       runnerId: 'runner-1',
       sessionId: 'session-1',
+      netlifySiteId: 'site-123',
       resultText: 'First result.',
       usage: { totalCreditsCost: 1, stepsCount: 2, totalTokens: 100 },
       fileChanges: { hasChanges: false, hasSessionDiff: false },
@@ -41,6 +42,7 @@ test('persistAgentRunnerArtifact writes a runner thread rollup', () => {
       status: 'completed',
       runnerId: 'runner-1',
       sessionId: 'session-2',
+      netlifySiteId: 'site-123',
       resultText: 'Second result.',
       usage: { totalCreditsCost: 2, stepsCount: 3, totalTokens: 200 },
       fileChanges: { hasChanges: true, hasSessionDiff: true, attachedFileKeys: ['diff.patch'] },
@@ -60,6 +62,7 @@ test('persistAgentRunnerArtifact writes a runner thread rollup', () => {
   assert.equal(fs.existsSync(path.join(dir, 'sessions', 'session-2.json')), true)
 
   const runner = readJson(path.join(dir, 'agent-runner.json'))
+  assert.equal(runner.netlifySiteId, 'site-123')
   assert.equal(runner.latestSessionId, 'session-2')
   assert.deepEqual(runner.sessionIds, ['session-1', 'session-2'])
   assert.deepEqual(runner.usage, { totalCreditsCost: 3, stepsCount: 5, totalTokens: 300 })
@@ -68,7 +71,9 @@ test('persistAgentRunnerArtifact writes a runner thread rollup', () => {
     hasSessionDiff: true,
     attachedFileKeys: ['diff.patch'],
   })
+  assert.equal(readJson(path.join(dir, 'sessions', 'session-1.json')).netlifySiteId, 'site-123')
   const summary = fs.readFileSync(path.join(dir, 'summary.md'), 'utf8')
+  assert.match(summary, /Netlify site ID: `site-123`/)
   assert.match(summary, /session-2/)
   assert.match(summary, /File changes: yes, 1 attached file/)
 })

@@ -27,6 +27,7 @@ test('persistAgentSessionArtifact writes canonical session files', () => {
       status: 'completed',
       runnerId: 'runner-1',
       sessionId: 'session-1',
+      netlifySiteId: 'site-123',
       resultText: 'Done.',
       usage: { totalCreditsCost: 1.25, stepsCount: 2, totalTokens: 300 },
       fileChanges: { hasChanges: true, hasSessionDiff: true, commitSha: 'abcdef1234567890' },
@@ -47,6 +48,7 @@ test('persistAgentSessionArtifact writes canonical session files', () => {
   const session = readJson(path.join(dir, 'agent-session.json'))
   assert.equal(session.sessionId, 'session-1')
   assert.equal(session.runnerId, 'runner-1')
+  assert.equal(session.netlifySiteId, 'site-123')
   assert.equal(session.source.type, 'manual')
   assert.deepEqual(session.fileChanges, {
     hasChanges: true,
@@ -54,6 +56,7 @@ test('persistAgentSessionArtifact writes canonical session files', () => {
     commitSha: 'abcdef1234567890',
   })
   const summary = fs.readFileSync(path.join(dir, 'summary.md'), 'utf8')
+  assert.match(summary, /Netlify site ID: `site-123`/)
   assert.match(summary, /1.25 credits, 2 steps, 300 tokens/)
   assert.match(summary, /File changes: yes, commit abcdef123456/)
 })

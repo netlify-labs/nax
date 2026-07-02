@@ -98,6 +98,13 @@ function readJsonIfExists(filePath) {
   }
 }
 
+/** @param {unknown} value */
+function siteIdAlias(value) {
+  if (!value || typeof value !== 'object') return ''
+  const alias = /** @type {{ siteId?: unknown }} */ (value)
+  return String(alias.siteId || '')
+}
+
 /** @param {string} projectRoot @param {string} runnerId */
 function updateLatestAgentRunnerSymlink(projectRoot, runnerId) {
   if (!runnerId) return false
@@ -154,6 +161,7 @@ function persistAgentRunnerArtifact(input = {}, options = {}) {
   const latestSession = input.session || sessions[sessions.length - 1] || null
   const runner = buildAgentRunnerJson({
     runnerId,
+    netlifySiteId: input.netlifySiteId || siteIdAlias(input) || latestSession?.netlifySiteId || existing.netlifySiteId || '',
     agent: input.agent || latestSession?.agent || existing.agent || '',
     status: input.status || latestSession?.status || existing.status || '',
     createdAt: existing.createdAt || input.createdAt || latestSession?.createdAt || '',
@@ -172,6 +180,7 @@ function persistAgentRunnerArtifact(input = {}, options = {}) {
   for (const session of sessions) {
     writeJson(path.join(sessionsDir, `${session.sessionId}.json`), {
       sessionId: session.sessionId,
+      netlifySiteId: session.netlifySiteId || runner.netlifySiteId || '',
       path: `../../agent-sessions/${session.sessionId}/summary.md`,
       status: session.status || '',
       usage: session.usage || null,

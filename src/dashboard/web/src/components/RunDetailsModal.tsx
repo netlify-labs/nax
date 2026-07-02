@@ -599,6 +599,14 @@ async function copyTextToClipboard(text: string) {
   document.body.removeChild(textarea)
 }
 
+function markdownContentKey(markdown: string): string {
+  let hash = 0
+  for (let index = 0; index < markdown.length; index += 1) {
+    hash = ((hash << 5) - hash + markdown.charCodeAt(index)) | 0
+  }
+  return `${markdown.length}:${hash >>> 0}`
+}
+
 export function RunDetailsModal({
   opened,
   onClose,
@@ -1087,6 +1095,17 @@ function RunDetailsContent({
   const hasPrompt = Boolean(entry.promptMarkdown)
   const showingPrompt = contentView === 'prompt' && hasPrompt
   const markdown = showingPrompt ? entry.promptMarkdown || '' : entry.markdown
+  const markdownKey = [
+    detailsRunId,
+    entry.id,
+    showingPrompt ? 'prompt' : 'results',
+    entry.path,
+    entry.absolutePath,
+    entry.section?.id || '',
+    entry.section?.runnerId || '',
+    entry.section?.sessionId || '',
+    markdownContentKey(markdown),
+  ].join('|')
   const promptTitle = entry.promptTitle || entry.section?.stepTitle || entry.title
   const actionFilePath = showingPrompt ? entry.promptPath || '' : entry.absolutePath
   const actionSessionUrl = showingPrompt ? '' : entry.section?.links.sessionUrl || entry.section?.links.agentRunUrl
@@ -1196,7 +1215,7 @@ function RunDetailsContent({
         ) : null}
         <Box className="prompt-markdown run-details-markdown" ref={scrollRootRef}>
           {markdown ? (
-            <MarkdownRenderer copyLabel={showingPrompt ? 'Copy prompt markdown' : 'Copy results markdown'}>{markdown}</MarkdownRenderer>
+            <MarkdownRenderer key={markdownKey} copyLabel={showingPrompt ? 'Copy prompt markdown' : 'Copy results markdown'}>{markdown}</MarkdownRenderer>
           ) : entry.liveContext ? (
             <LivePanel context={entry.liveContext} />
           ) : (

@@ -161,6 +161,7 @@
  *   resultText?: string,
  *   runnerId?: string,
  *   sessionId?: string,
+ *   netlifySiteId?: string,
  *   issueNumber?: number,
  *   issueUrl?: string,
  *   commentUrl?: string,
@@ -204,6 +205,7 @@
  * @typedef {{
  *   sessionId?: string,
  *   runnerId?: string,
+ *   netlifySiteId?: string,
  *   agent?: string,
  *   status?: string,
  *   resultText?: string,
@@ -221,6 +223,7 @@
  * Materialized Netlify Agent Runner artifact, optionally with session summaries.
  * @typedef {{
  *   runnerId?: string,
+ *   netlifySiteId?: string,
  *   agent?: string,
  *   status?: string,
  *   latestSessionId?: string,

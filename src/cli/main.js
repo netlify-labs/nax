@@ -929,6 +929,7 @@ async function runSingleNetlifyAgent({
     const sessionArtifact = persistAgentSessionArtifact({
       projectRoot,
       run: completed,
+      netlifySiteId: netlify.siteId,
       source: artifactSource,
       createdAt: completed.createdAt || new Date().toISOString(),
       updatedAt: completed.updatedAt || new Date().toISOString(),
@@ -936,6 +937,7 @@ async function runSingleNetlifyAgent({
     const runnerArtifact = persistAgentRunnerArtifact({
       projectRoot,
       runnerId: completed.runnerId,
+      netlifySiteId: netlify.siteId,
       agent: completed.agent,
       status: completed.status,
       session: sessionArtifact?.session || null,
@@ -1074,6 +1076,7 @@ async function runSingleGithubAgent({ projectRoot, agent, promptText, source, op
   const sessionArtifact = persistAgentSessionArtifact({
     projectRoot,
     run: completed,
+    netlifySiteId: options.netlifySiteId || options.siteId || '',
     source: artifactSource,
     createdAt: completed.createdAt || new Date().toISOString(),
     updatedAt: completed.updatedAt || new Date().toISOString(),
@@ -1081,6 +1084,7 @@ async function runSingleGithubAgent({ projectRoot, agent, promptText, source, op
   const runnerArtifact = completed.runnerId ? persistAgentRunnerArtifact({
     projectRoot,
     runnerId: completed.runnerId,
+    netlifySiteId: options.netlifySiteId || options.siteId || '',
     agent: completed.agent,
     status: completed.status,
     session: sessionArtifact?.session || null,

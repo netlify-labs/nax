@@ -533,6 +533,7 @@ function persistCanonicalAgentArtifacts(runState = {}, step = {}, run = {}, opti
   const sessionResult = persistAgentSessionArtifact({
     projectRoot: runState.projectRoot,
     run,
+    netlifySiteId: run.netlifySiteId || runState.options?.netlifySiteId || runState.options?.siteId || '',
     source,
     createdAt,
     updatedAt,
@@ -541,6 +542,7 @@ function persistCanonicalAgentArtifacts(runState = {}, step = {}, run = {}, opti
   const runnerResult = run.runnerId ? persistAgentRunnerArtifact({
     projectRoot: runState.projectRoot,
     runnerId: run.runnerId,
+    netlifySiteId: run.netlifySiteId || runState.options?.netlifySiteId || runState.options?.siteId || '',
     agent: run.agent || '',
     status: run.status || '',
     session: sessionResult?.session || null,

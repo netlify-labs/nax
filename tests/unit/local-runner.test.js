@@ -634,6 +634,7 @@ test('submitLocalAgentRun returns a submitted run with create metadata', async (
 
   assert.equal(submitted.status, 'submitted')
   assert.equal(submitted.runnerId, 'runner-1')
+  assert.equal(submitted.netlifySiteId, 'site-123')
   assert.equal(submitted.raw.create.id, 'runner-1')
 })
 
@@ -659,6 +660,7 @@ test('submitLocalAgentRun preserves follow-up session id', async () => {
   assert.equal(submitted.status, 'submitted')
   assert.equal(submitted.runnerId, 'runner-1')
   assert.equal(submitted.sessionId, 'session-1')
+  assert.equal(submitted.netlifySiteId, 'site-123')
   assert.equal(submitted.raw.session.id, 'session-1')
 })
 

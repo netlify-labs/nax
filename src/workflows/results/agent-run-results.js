@@ -364,6 +364,13 @@ function statusIsTerminal(status) {
   return TERMINAL_STATUSES.has(String(status || '').toLowerCase())
 }
 
+/** @param {unknown} value */
+function siteIdAlias(value) {
+  if (!value || typeof value !== 'object') return ''
+  const alias = /** @type {{ siteId?: unknown }} */ (value)
+  return String(alias.siteId || '')
+}
+
 /** @param {{ sessionId?: string, agent?: string, createdAt?: string, updatedAt?: string }} param0 */
 function sessionArtifactId({ sessionId, agent, createdAt, updatedAt } = {}) {
   if (sessionId && ID_FORMAT.test(String(sessionId))) return String(sessionId)
@@ -393,6 +400,7 @@ function buildAgentSessionJson(input = {}) {
     ...artifactMeta(),
     sessionId,
     runnerId: input.runnerId || run.runnerId || '',
+    netlifySiteId: input.netlifySiteId || siteIdAlias(input) || run.netlifySiteId || run.rawResult?.runner?.site_id || run.rawResult?.runner?.siteId || '',
     agent: input.agent || run.agent || '',
     status: input.status || run.status || '',
     createdAt,
@@ -439,6 +447,7 @@ function buildAgentSessionMarkdown(input = {}) {
   if (session.agent) lines.push(`- Agent: ${titleCaseLocal(session.agent)}`)
   if (session.runnerId) lines.push(`- Runner ID: \`${session.runnerId}\``)
   if (session.sessionId) lines.push(`- Session ID: \`${session.sessionId}\``)
+  if (session.netlifySiteId) lines.push(`- Netlify site ID: \`${session.netlifySiteId}\``)
   const usageSummary = formatUsageSummary(session.usage || {})
   if (usageSummary) lines.push(`- Usage: ${usageSummary}`)
   const fileChangesSummary = formatFileChangesSummary(session.fileChanges || {})
@@ -472,6 +481,7 @@ function buildAgentRunnerJson(input = {}) {
   return {
     ...artifactMeta(),
     runnerId: input.runnerId || latestSession?.runnerId || '',
+    netlifySiteId: input.netlifySiteId || siteIdAlias(input) || latestSession?.netlifySiteId || '',
     agent: input.agent || latestSession?.agent || '',
     status: input.status || latestSession?.status || '',
     createdAt: input.createdAt || sessions[0]?.createdAt || '',
@@ -512,6 +522,7 @@ function buildAgentRunnerMarkdown(input = {}) {
   ]
   if (runner.agent) lines.push(`- Agent: ${titleCaseLocal(runner.agent)}`)
   if (runner.runnerId) lines.push(`- Runner ID: \`${runner.runnerId}\``)
+  if (runner.netlifySiteId) lines.push(`- Netlify site ID: \`${runner.netlifySiteId}\``)
   if (runner.latestSessionId) lines.push(`- Latest session: [${runner.latestSessionId}](sessions/${runner.latestSessionId}.json)`)
   const usageSummary = formatUsageSummary(runner.usage || {})
   if (usageSummary) lines.push(`- Usage: ${usageSummary}`)
@@ -558,6 +569,7 @@ function normalizeAgentRunResult({
 } = {}) {
   const runnerId = String(run.runnerId || runner.id || session.agent_runner_id || '')
   const sessionId = String(run.sessionId || session.id || '')
+  const netlifySiteId = String(run.netlifySiteId || siteIdAlias(run) || runner.site_id || runner.siteId || session.site_id || session.siteId || '')
   const normalizedUsage = normalizeUsage(usage) || usageFromSessionOrRunner(session, runner, run.usage)
   const normalizedFileChanges = fileChangesFromSessionOrRunner(session, runner, fileChanges || run.fileChanges)
   const normalizedLinks = normalizeLinks({
@@ -573,6 +585,7 @@ function normalizeAgentRunResult({
     ...run,
     ...(runnerId ? { runnerId } : {}),
     ...(sessionId ? { sessionId } : {}),
+    ...(netlifySiteId ? { netlifySiteId } : {}),
     agent: run.agent || session.agent_config?.agent || runner.agent_config?.agent || '',
     status,
     resultText: resultText !== undefined ? resultText : (run.resultText || session.result || runner.result || ''),

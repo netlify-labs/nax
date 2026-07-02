@@ -66,6 +66,13 @@ function sessionUrl(agentRunUrl, id) {
   return agentRunUrl.includes('?') ? `${agentRunUrl}&session=${id}` : `${agentRunUrl}?session=${id}`
 }
 
+/** @param {import('../../types').AgentRunner | null | undefined} runner */
+function runnerSiteIdAlias(runner) {
+  if (!runner || typeof runner !== 'object') return ''
+  const alias = /** @type {{ siteId?: unknown }} */ (runner)
+  return String(alias.siteId || '')
+}
+
 /** @param {PersistRemoteSessionInput} param0 */
 function persistRemoteSession({ projectRoot, runner, session, source }) {
   const id = sessionId(session)
@@ -75,6 +82,7 @@ function persistRemoteSession({ projectRoot, runner, session, source }) {
     projectRoot,
     session,
     runnerId: runner.runnerId,
+    netlifySiteId: runner.netlifySiteId || runnerSiteIdAlias(runner) || '',
     agent: runner.agent || session.agent_config?.agent || '',
     sessionId: id,
     status: normalizeRemoteSessionStatus(session),
@@ -116,6 +124,7 @@ function syncAgentRunner({ projectRoot, runner, env, runCommand } = {}) {
     runnerArtifact = persistAgentRunnerArtifact({
       projectRoot,
       runnerId: runner.runnerId,
+      netlifySiteId: runner.netlifySiteId || runnerSiteIdAlias(runner) || entry.session.netlifySiteId || '',
       agent: runner.agent || entry.session.agent || '',
       status: entry.session.status || runner.status || '',
       session: entry.session,

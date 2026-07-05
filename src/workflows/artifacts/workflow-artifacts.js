@@ -4,6 +4,7 @@ const { artifactMeta } = require('../../core/artifact-metadata')
 const { formatFileChangesSummary, formatUsageSummary, usageSummariesForRunState } = require('../results/agent-run-results')
 const { persistAgentRunnerArtifact } = require('./agent-runner-artifacts')
 const { persistAgentSessionArtifact } = require('./agent-session-artifacts')
+const { ensureDir, readFileIfExists, updateLatestSymlink: replaceLatestSymlink, writeAtomic, writeJson } = require('../../storage/local/artifact-fs')
 
 const TERMINAL_STATUSES = new Set(['completed', 'failed', 'timeout', 'cancelled', 'canceled', 'dry-run'])
 const GITHUB_STEP_SUMMARY_LIMIT_BYTES = 900 * 1024
@@ -75,28 +76,6 @@ function hasMeaningfulRunArtifact(run = {}) {
 
 function isTerminalRun(run = {}) {
   return TERMINAL_STATUSES.has(String(run.status || '').toLowerCase())
-}
-
-function ensureDir(dir) {
-  fs.mkdirSync(dir, { recursive: true })
-}
-
-function readFileIfExists(filePath) {
-  return fs.existsSync(filePath) ? fs.readFileSync(filePath, 'utf8') : ''
-}
-
-function writeAtomic(target, content) {
-  ensureDir(path.dirname(target))
-  const next = String(content)
-  if (readFileIfExists(target) === next) return false
-  const tmp = `${target}.tmp-${process.pid}-${Date.now()}`
-  fs.writeFileSync(tmp, next)
-  fs.renameSync(tmp, target)
-  return true
-}
-
-function writeJson(target, value) {
-  return writeAtomic(target, `${JSON.stringify(value, null, 2)}\n`)
 }
 
 function existingAttemptFiles(runsDir, agent) {
@@ -643,26 +622,7 @@ function writeStepSummaryFiles(runState, step, options = {}) {
 
 function updateLatestSymlink(runState = {}) {
   if (!runState.dir) return false
-  const runsDir = path.dirname(runState.dir)
-  const latest = path.join(runsDir, 'latest')
-  const tmp = path.join(runsDir, `latest.tmp-${process.pid}-${Date.now()}`)
-  try {
-    if (fs.existsSync(tmp)) fs.rmSync(tmp, { recursive: true, force: true })
-    fs.symlinkSync(path.basename(runState.dir), tmp, 'dir')
-    fs.rmSync(latest, { recursive: true, force: true })
-    fs.renameSync(tmp, latest)
-    return true
-  } catch (error) {
-    try {
-      fs.rmSync(tmp, { recursive: true, force: true })
-    } catch {
-      // Ignore cleanup failures.
-    }
-    if (process.env.NAX_DEBUG_ARTIFACTS) {
-      console.error(`nax artifact latest symlink failed: ${error.message}`)
-    }
-    return false
-  }
+  return replaceLatestSymlink(path.dirname(runState.dir), path.basename(runState.dir), 'nax artifact latest symlink')
 }
 
 function persistStepArtifacts(runState = {}, step = {}, options = {}) {

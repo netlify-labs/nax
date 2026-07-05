@@ -1,6 +1,7 @@
 const fs = require('fs')
 const path = require('path')
 const { ensureNaxGitignore } = require('../../storage/local/nax-gitignore')
+const { ensureDir, readJsonIfExists, updateLatestSymlink, writeAtomic, writeJson } = require('../../storage/local/artifact-fs')
 const {
   buildAgentSessionJson,
   buildAgentSessionMarkdown,
@@ -31,11 +32,6 @@ const {
  * }} AgentSessionArtifactInput
  */
 
-/** @param {string} dir */
-function ensureDir(dir) {
-  fs.mkdirSync(dir, { recursive: true })
-}
-
 /** @param {string} projectRoot */
 function agentSessionsRoot(projectRoot) {
   return path.join(projectRoot, '.nax', 'agent-sessions')
@@ -46,51 +42,12 @@ function agentSessionDir(projectRoot, sessionId) {
   return path.join(agentSessionsRoot(projectRoot), sessionId)
 }
 
-/** @param {string} target @param {unknown} value */
-function writeJson(target, value) {
-  writeAtomic(target, `${JSON.stringify(value, null, 2)}\n`)
-}
-
-/** @param {string} filePath */
-function readFileIfExists(filePath) {
-  return fs.existsSync(filePath) ? fs.readFileSync(filePath, 'utf8') : ''
-}
-
-/** @param {string} target @param {unknown} content */
-function writeAtomic(target, content) {
-  ensureDir(path.dirname(target))
-  const next = String(content)
-  if (readFileIfExists(target) === next) return false
-  const tmp = `${target}.tmp-${process.pid}-${Date.now()}`
-  fs.writeFileSync(tmp, next)
-  fs.renameSync(tmp, target)
-  return true
-}
-
 /** @param {string} projectRoot @param {string} sessionId */
 function updateLatestAgentSessionSymlink(projectRoot, sessionId) {
   if (!sessionId) return false
   const root = agentSessionsRoot(projectRoot)
   ensureDir(root)
-  const latest = path.join(root, 'latest')
-  const tmp = path.join(root, `latest.tmp-${process.pid}-${Date.now()}`)
-  try {
-    if (fs.existsSync(tmp)) fs.rmSync(tmp, { recursive: true, force: true })
-    fs.symlinkSync(sessionId, tmp, 'dir')
-    fs.rmSync(latest, { recursive: true, force: true })
-    fs.renameSync(tmp, latest)
-    return true
-  } catch (error) {
-    try {
-      fs.rmSync(tmp, { recursive: true, force: true })
-    } catch {
-      // Ignore cleanup failures.
-    }
-    if (process.env.NAX_DEBUG_ARTIFACTS) {
-      console.error(`nax agent session latest symlink failed: ${error.message}`)
-    }
-    return false
-  }
+  return updateLatestSymlink(root, sessionId, 'nax agent session latest symlink')
 }
 
 /**
@@ -123,13 +80,7 @@ function persistAgentSessionArtifact(input = {}, options = {}) {
 
 /** @param {string} dir @returns {import('../../types').AgentSession | null} */
 function readAgentSessionArtifact(dir) {
-  const filePath = path.join(dir, 'agent-session.json')
-  if (!fs.existsSync(filePath)) return null
-  try {
-    return JSON.parse(fs.readFileSync(filePath, 'utf8'))
-  } catch {
-    return null
-  }
+  return readJsonIfExists(path.join(dir, 'agent-session.json'))
 }
 
 /** @param {string} projectRoot */

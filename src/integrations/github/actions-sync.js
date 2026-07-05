@@ -3,6 +3,7 @@ const os = require('os')
 const path = require('path')
 const { runGh } = require('./gh-cli')
 const { listWorkflowStates, workflowStatePath } = require('../../storage/local/run-state')
+const { ensureDir, readJsonIfExists, updateLatestSymlink } = require('../../storage/local/artifact-fs')
 const { persistWorkflowArtifacts } = require('../../workflows/artifacts/workflow-artifacts')
 const { listAgentRunnerArtifacts, persistAgentRunnerArtifact } = require('../../workflows/artifacts/agent-runner-artifacts')
 const { listAgentSessionArtifacts, persistAgentSessionArtifact } = require('../../workflows/artifacts/agent-session-artifacts')
@@ -158,15 +159,6 @@ function copyNaxDir(sourceRoot, projectRoot) {
   return copiedFiles
 }
 
-function readJsonIfExists(filePath) {
-  if (!fs.existsSync(filePath)) return null
-  try {
-    return JSON.parse(fs.readFileSync(filePath, 'utf8'))
-  } catch {
-    return null
-  }
-}
-
 function writeJson(filePath, value) {
   fs.mkdirSync(path.dirname(filePath), { recursive: true })
   fs.writeFileSync(filePath, `${JSON.stringify(value, null, 2)}\n`)
@@ -188,27 +180,6 @@ function localizeWorkflowStates(projectRoot) {
   return count
 }
 
-function updateLatestSymlink(root, targetName) {
-  if (!root || !targetName) return false
-  fs.mkdirSync(root, { recursive: true })
-  const latest = path.join(root, 'latest')
-  const tmp = path.join(root, `latest.tmp-${process.pid}-${Date.now()}`)
-  try {
-    if (fs.existsSync(tmp)) fs.rmSync(tmp, { recursive: true, force: true })
-    fs.symlinkSync(targetName, tmp, 'dir')
-    fs.rmSync(latest, { recursive: true, force: true })
-    fs.renameSync(tmp, latest)
-    return true
-  } catch {
-    try {
-      fs.rmSync(tmp, { recursive: true, force: true })
-    } catch {
-      // Ignore cleanup failures.
-    }
-    return false
-  }
-}
-
 function refreshMaterializedArtifacts(projectRoot) {
   localizeWorkflowStates(projectRoot)
   const sessions = listAgentSessionArtifacts(projectRoot).slice().reverse()
@@ -218,7 +189,11 @@ function refreshMaterializedArtifacts(projectRoot) {
   const workflows = listWorkflowStates(projectRoot).slice().reverse()
   for (const workflow of workflows) persistWorkflowArtifacts({ ...workflow, projectRoot }, { summaryOnly: true, updateLatest: false })
   const latestWorkflow = listWorkflowStates(projectRoot)[0] || null
-  if (latestWorkflow?.runId) updateLatestSymlink(path.join(projectRoot, '.nax', 'workflows'), latestWorkflow.runId)
+  if (latestWorkflow?.runId) {
+    const workflowsRoot = path.join(projectRoot, '.nax', 'workflows')
+    ensureDir(workflowsRoot)
+    updateLatestSymlink(workflowsRoot, latestWorkflow.runId)
+  }
   return {
     workflowCount: workflows.length,
     runnerCount: runners.length,

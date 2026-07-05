@@ -75,6 +75,7 @@ const {
   formatFlowList,
   formatFlowListBox,
   formatFlowListJson,
+  wordWrap,
   workflowPickerHint,
   workflowPickerLabel,
 } = require('./display/flow-list')
@@ -1772,24 +1773,6 @@ function stepActionLabel(step, transport) {
   if (action === 'comment') return 'comment'
   if (action === 'issue') return 'issue'
   return [action, submit].filter(Boolean).join(' / ')
-}
-
-function wordWrap(text, width) {
-  if (!text) return ''
-  const lines = []
-  for (const paragraph of text.split('\n')) {
-    let line = ''
-    for (const word of paragraph.split(/\s+/).filter(Boolean)) {
-      if (line && line.length + 1 + word.length > width) {
-        lines.push(line)
-        line = word
-      } else {
-        line = line ? `${line} ${word}` : word
-      }
-    }
-    lines.push(line)
-  }
-  return lines.join('\n')
 }
 
 function isUrlLine(line) {

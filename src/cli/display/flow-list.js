@@ -291,6 +291,7 @@ module.exports = {
   formatFlowListBox,
   formatFlowListJson,
   trimWorkflowHint,
+  wordWrap,
   workflowPickerHint,
   workflowPickerLabel,
 }

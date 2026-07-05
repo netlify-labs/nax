@@ -194,6 +194,8 @@ const {
   TEAL_COLOR,
   colorText,
   findLatestResumableRun,
+  flowFromRunState,
+  flowLoadOptions,
   formatDetailedRelativeTime,
   formatResumeRunDetails,
   isAutomaticResumeCandidate,
@@ -529,21 +531,6 @@ async function confirmRemoteRunnerCanMissLocalChanges({ projectRoot, branch, opt
     console.log('Cancelled')
     process.exit(0)
   }
-}
-
-function flowLoadOptions(options = {}, projectRoot = options.projectRoot || process.cwd()) {
-  return {
-    projectRoot,
-    flowsDir: options.flowsDir,
-    flowsDirs: options.flowsDirs,
-  }
-}
-
-function flowFromRunState(runState = {}) {
-  if (runState.flow && typeof runState.flow === 'object' && Array.isArray(runState.flow.steps)) {
-    return runState.flow
-  }
-  return null
 }
 
 function githubSafePromptBytes(options = {}) {

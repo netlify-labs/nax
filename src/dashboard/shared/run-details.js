@@ -639,31 +639,40 @@ function buildRunDetails(runState = {}, options = {}) {
       }
       sections.push(section)
       sessionSections.push(section)
-      const sessionTarget = followupTargetFromArtifact({
+      /** @param {{ kind: string, label: string, filePath: string, targets: RunDetailFollowupTarget[] }} input */
+      const pushAgentTargetAndArtifact = ({ kind, label, filePath, targets }) => {
+        const target = followupTargetFromArtifact({
+          kind,
+          label,
+          filePath,
+          runDir,
+          status: metadata.status || '',
+          agent,
+          stepId: metadata.stepId || stepMeta.id || '',
+          stepNumber,
+          stepTitle,
+          runnerId: metadata.runnerId || '',
+          sessionId: metadata.sessionId || '',
+          links: metadata.links || {},
+        })
+        if (target) targets.push(target)
+        addUnique(followupArtifacts, followupArtifact({
+          kind,
+          label,
+          filePath,
+          runDir,
+          stepId: metadata.stepId || stepMeta.id || '',
+          stepNumber,
+          runnerId: metadata.runnerId || '',
+          sessionId: metadata.sessionId || '',
+        }))
+      }
+      pushAgentTargetAndArtifact({
         kind: 'agent-result',
         label: `${stepTitle} · ${agent} result`,
         filePath: markdownPath,
-        runDir,
-        status: metadata.status || '',
-        agent,
-        stepId: metadata.stepId || stepMeta.id || '',
-        stepNumber,
-        stepTitle,
-        runnerId: metadata.runnerId || '',
-        sessionId: metadata.sessionId || '',
-        links: metadata.links || {},
+        targets: sessionTargets,
       })
-      if (sessionTarget) sessionTargets.push(sessionTarget)
-      addUnique(followupArtifacts, followupArtifact({
-        kind: 'agent-result',
-        label: `${stepTitle} · ${agent} result`,
-        filePath: markdownPath,
-        runDir,
-        stepId: metadata.stepId || stepMeta.id || '',
-        stepNumber,
-        runnerId: metadata.runnerId || '',
-        sessionId: metadata.sessionId || '',
-      }))
       addUnique(followupArtifacts, followupArtifact({
         kind: 'metadata-json',
         label: `${stepTitle} · ${agent} metadata JSON`,
@@ -678,60 +687,22 @@ function buildRunDetails(runState = {}, options = {}) {
 
       const runnerSummaryPath = externalAgentArtifactPath(runDir, 'agent-runners', metadata.runnerId)
       if (readText(runnerSummaryPath)) {
-        const runnerTarget = followupTargetFromArtifact({
+        pushAgentTargetAndArtifact({
           kind: 'runner-summary',
           label: `${agent} runner summary`,
           filePath: runnerSummaryPath,
-          runDir,
-          status: metadata.status || '',
-          agent,
-          stepId: metadata.stepId || stepMeta.id || '',
-          stepNumber,
-          stepTitle,
-          runnerId: metadata.runnerId || '',
-          sessionId: metadata.sessionId || '',
-          links: metadata.links || {},
+          targets: alternateTargets,
         })
-        if (runnerTarget) alternateTargets.push(runnerTarget)
-        addUnique(followupArtifacts, followupArtifact({
-          kind: 'runner-summary',
-          label: `${agent} runner summary`,
-          filePath: runnerSummaryPath,
-          runDir,
-          stepId: metadata.stepId || stepMeta.id || '',
-          stepNumber,
-          runnerId: metadata.runnerId || '',
-          sessionId: metadata.sessionId || '',
-        }))
       }
 
       const sessionSummaryPath = externalAgentArtifactPath(runDir, 'agent-sessions', metadata.sessionId)
       if (readText(sessionSummaryPath)) {
-        const externalSessionTarget = followupTargetFromArtifact({
+        pushAgentTargetAndArtifact({
           kind: 'session-result',
           label: `${agent} session summary`,
           filePath: sessionSummaryPath,
-          runDir,
-          status: metadata.status || '',
-          agent,
-          stepId: metadata.stepId || stepMeta.id || '',
-          stepNumber,
-          stepTitle,
-          runnerId: metadata.runnerId || '',
-          sessionId: metadata.sessionId || '',
-          links: metadata.links || {},
+          targets: alternateTargets,
         })
-        if (externalSessionTarget) alternateTargets.push(externalSessionTarget)
-        addUnique(followupArtifacts, followupArtifact({
-          kind: 'session-result',
-          label: `${agent} session summary`,
-          filePath: sessionSummaryPath,
-          runDir,
-          stepId: metadata.stepId || stepMeta.id || '',
-          stepNumber,
-          runnerId: metadata.runnerId || '',
-          sessionId: metadata.sessionId || '',
-        }))
       }
     }
 

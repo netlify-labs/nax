@@ -225,16 +225,7 @@ function listFiles(dir, predicate = (_name) => true) {
 
 /** @param {string} dir @returns {string[]} */
 function listMarkdownFiles(dir) {
-  try {
-    if (!fs.existsSync(dir)) return []
-    return fs
-      .readdirSync(dir, { withFileTypes: true })
-      .filter((entry) => entry.isFile() && entry.name.endsWith('.md') && !entry.name.includes('.attempt-'))
-      .map((entry) => path.join(dir, entry.name))
-      .sort((a, b) => path.basename(a).localeCompare(path.basename(b)))
-  } catch {
-    return []
-  }
+  return listFiles(dir, (name) => name.endsWith('.md') && !name.includes('.attempt-'))
 }
 
 /** @param {string} fromDir @param {string} filePath @returns {string} */

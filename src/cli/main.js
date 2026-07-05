@@ -114,6 +114,7 @@ const {
 const { NETLIFY_API_TRANSPORT, detectTransports, formatTransportSetupHelp, isNetlifyApiTransport, resolveTransport } = require('../integrations/transports')
 const { readNetlifyProject } = require('../integrations/netlify/init')
 const { runWorkflow } = require('../workflows/engine/runner')
+const { DEFAULT_OUTPUT_BUDGET_BYTES, completedStepMapFromRunState } = require('../workflows/engine/execution-context')
 const { createWorkflowEventContext } = require('../workflows/events/workflow-events')
 const {
   AGENT_RUNNER_USE_CASES,
@@ -298,7 +299,6 @@ function requireWithoutArgvFlag(flag, load) {
   }
 }
 
-const DEFAULT_OUTPUT_BUDGET_BYTES = 64000
 const COMPACT_LOCAL_RESULT_CHAR_LIMIT = 6000
 const COMPACT_LOCAL_RESULTS_TOTAL_LIMIT = 36000
 const COMPACT_LOCAL_CONTEXT_CHAR_LIMIT = 12000
@@ -440,53 +440,6 @@ function loadDashboardServer() {
  * }} CompleteGithubStepInput
  */
 
-function outputBudgetEnabled(options = {}) {
-  if (options.outputBudget === true) return true
-  if (options.outputBudget === false) return false
-  const raw = String(process.env.NAX_OUTPUT_BUDGET || '').trim().toLowerCase()
-  if (['1', 'true', 'yes', 'on'].includes(raw)) return true
-  if (['0', 'false', 'no', 'off'].includes(raw)) return false
-  if (options.outputBudgetBytes || process.env.NAX_OUTPUT_BUDGET_BYTES) return true
-  return false
-}
-
-function outputBudgetBytes(options = {}) {
-  return parsePositiveInteger(
-    options.outputBudgetBytes || process.env.NAX_OUTPUT_BUDGET_BYTES,
-    DEFAULT_OUTPUT_BUDGET_BYTES,
-  )
-}
-
-function buildOutputBudgetContext({ bytes = DEFAULT_OUTPUT_BUDGET_BYTES } = {}) {
-  return [
-    '## Output Budget',
-    '',
-    `Your response will be reused as input to later workflow steps. Keep the final answer concise and aim to stay under ${bytes.toLocaleString()} bytes.`,
-    '',
-    'Prioritize:',
-    '',
-    '1. Required structured JSON blocks, scores, rankings, and final recommendations.',
-    '2. Concise evidence that changes downstream decisions.',
-    '3. Links or references instead of repeated long prose when possible.',
-    '',
-    'Omit:',
-    '',
-    '- repeated repository state, git status, and architecture inventories',
-    '- prompt recaps, methodology narration, and generic preamble',
-    '- long file lists unless they directly affect the result',
-    '- duplicate rationale already captured in structured output',
-  ].join('\n')
-}
-
-function shouldApplyOutputBudget({ options = {}, hasPriorResults = false, hasFutureSteps = false } = {}) {
-  return outputBudgetEnabled(options) && (hasPriorResults || hasFutureSteps)
-}
-
-function contextWithOutputBudget(context, options = {}, details = {}) {
-  if (!shouldApplyOutputBudget({ options, ...details })) return context || ''
-  return joinContext(context, buildOutputBudgetContext({ bytes: outputBudgetBytes(options) }))
-}
-
 function resolveDryRunTransport({ requestedTransport, projectRoot }) {
   const requested = requestedTransport || 'auto'
   if (requested && requested !== 'auto') return resolveTransport(requested, [])
@@ -526,24 +479,6 @@ function buildFlowRunContext({ options, projectRoot, transport, target }) {
     pinnedSha: contextOptions.pinnedSha || contextOptions.sha || '',
     pinnedSource: contextOptions.pinnedSource || (contextOptions.sha ? 'explicit --sha' : ''),
   }
-}
-
-function extractSavedContextFromPrompt(promptText) {
-  const marker = '\n## Additional Context\n\n'
-  const index = String(promptText || '').lastIndexOf(marker)
-  if (index === -1) return ''
-  return String(promptText).slice(index + marker.length).trim()
-}
-
-function contextForRunState(runState, options) {
-  if (runState.context?.combined) return runState.context.combined
-  for (const step of runState.steps || []) {
-    for (const run of step.runs || []) {
-      const saved = extractSavedContextFromPrompt(run.promptText)
-      if (saved) return saved
-    }
-  }
-  return joinContext(readAutoContext(options), readManualContext(options))
 }
 
 function readRemoteInvisibleGitState(projectRoot) {
@@ -618,12 +553,6 @@ function githubSafePromptBytes(options = {}) {
 async function loadClack() {
   clackModulePromise = clackModulePromise || import('@clack/prompts')
   return clackModulePromise
-}
-
-function parsePositiveInteger(value, fallback) {
-  if (value === undefined || value === null || value === '') return fallback
-  const parsed = Number.parseInt(String(value), 10)
-  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback
 }
 
 async function handleList(options = {}) {
@@ -1691,37 +1620,6 @@ async function prepareInteractiveFlowRun({ flow, options, transport, projectRoot
   }
 }
 
-function uniqueNumbers(numbers) {
-  return [...new Set(numbers.filter((number) => Number.isFinite(number)))]
-}
-
-function sourceIssueNumbersForStep(step, completedStepStates) {
-  if (!Array.isArray(step.input)) return []
-  const numbers = []
-  for (const input of step.input) {
-    numbers.push(...issueNumbersFromStep(completedStepStates.get(input.step)))
-  }
-  return uniqueNumbers(numbers)
-}
-
-function sourceRunsForStep(step, completedStepStates) {
-  if (!Array.isArray(step.input)) return []
-  const runs = []
-  for (const input of step.input) {
-    const seen = new Set()
-    for (const run of runsFromStep(completedStepStates.get(input.step))) {
-      const key = run.runnerId || `${run.agent}:${run.stepId || input.step}:${runs.length}`
-      if (seen.has(key)) continue
-      seen.add(key)
-      runs.push({ ...run, sourceStep: input.step })
-    }
-  }
-  return runs
-}
-
-
-
-
 async function promptForOptionalHandoffInstructions() {
   const value = await multiline({
     message: 'Additional instructions for the next agent run',
@@ -1965,16 +1863,6 @@ function findStepRange(flow, options) {
   return steps
 }
 
-function issueNumbersFromStep(stepState) {
-  return (stepState?.runs || [])
-    .map((run) => run.issueNumber)
-    .filter((number) => Number.isFinite(number))
-}
-
-function runsFromStep(stepState) {
-  return Array.isArray(stepState?.runs) ? stepState.runs : []
-}
-
 function cancellableLocalRunnerIds(runState = {}) {
   const terminal = new Set(['completed', 'failed', 'timeout', 'cancelled', 'canceled', 'dry-run'])
   const ids = []
@@ -2078,25 +1966,6 @@ function handleClean(target = '', options = {}) {
   if (!options.force && results.length > 0) console.log('Run again with --force to delete these blobs.')
   if (options.force) compactBlobRefs(projectRoot)
   return results
-}
-
-function completedStepMapFromRunState(runState) {
-  const completed = new Map()
-  for (const step of runState.steps || []) {
-    if (step.status === 'completed' || step.status === 'dry-run') {
-      completed.set(step.id, step)
-    }
-  }
-  return completed
-}
-
-function firstRunnableStepIndex(flow, runState) {
-  const byId = new Map((runState.steps || []).map((step) => [step.id, step]))
-  for (let index = 0; index < flow.steps.length; index += 1) {
-    const saved = byId.get(flow.steps[index].id)
-    if (!saved || saved.status !== 'completed' && saved.status !== 'dry-run') return index
-  }
-  return flow.steps.length
 }
 
 /** @param {CompleteGithubStepInput} param0 */

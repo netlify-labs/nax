@@ -8,6 +8,7 @@ const { listRunStates } = require('../../storage/local/run-state')
 const { titleCase } = require('../../workflows/catalog/prompts')
 const { artifactsRootForRunState, persistWorkflowArtifacts } = require('../../workflows/artifacts/workflow-artifacts')
 const { buildHandoffPrompt } = require('../../workflows/followups/runner')
+const { formatHumanRunDate } = require('../../workflows/engine/resume')
 
 const HANDOFF_DETAIL_LABEL_WIDTH = 9
 
@@ -163,20 +164,6 @@ function formatRelativeTime(value, now = Date.now()) {
   const count = Math.max(1, Math.round(absMs / unitMs))
   const label = `${count} ${unit}${count === 1 ? '' : 's'}`
   return diffMs > 0 ? `in ${label}` : `${label} ago`
-}
-
-/** @param {string | null | undefined} value @returns {string} */
-function formatHumanRunDate(value) {
-  if (!value) return ''
-  const date = new Date(value)
-  if (Number.isNaN(date.getTime())) return String(value)
-  return date.toLocaleString(undefined, {
-    year: 'numeric',
-    month: 'short',
-    day: 'numeric',
-    hour: 'numeric',
-    minute: '2-digit',
-  })
 }
 
 /** @param {HandoffSource} [source] @returns {string} */

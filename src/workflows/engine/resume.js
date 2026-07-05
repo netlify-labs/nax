@@ -356,6 +356,7 @@ module.exports = {
   flowFromRunState,
   flowLoadOptions,
   formatDetailedRelativeTime,
+  formatHumanRunDate,
   formatResumeRunDetails,
   isAutomaticResumeCandidate,
   printResumeRunDetails,

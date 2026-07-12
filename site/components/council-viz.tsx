@@ -265,9 +265,9 @@ export function CouncilViz() {
         {/* Fan-out arrows: flow file -> agents */}
         {phase >= 1 && (
           <g opacity={phase === 1 ? 1 : 0.3}>
-            <Arrow d={`M 160 200 C 195 190, 190 95, ${AGENT_X - 5} 95`} color={MUTED} animate={phase === 1} marker="url(#nax-viz-arrow-slate)" />
-            <Arrow d={`M 160 225 L ${AGENT_X - 5} 225`} color={MUTED} animate={phase === 1} marker="url(#nax-viz-arrow-slate)" />
-            <Arrow d={`M 160 250 C 195 260, 190 355, ${AGENT_X - 5} 355`} color={MUTED} animate={phase === 1} marker="url(#nax-viz-arrow-slate)" />
+            <Arrow d={`M 162 195 L ${AGENT_X - 5} 100`} color={MUTED} animate={phase === 1} marker="url(#nax-viz-arrow-slate)" />
+            <Arrow d={`M 162 225 L ${AGENT_X - 5} 225`} color={MUTED} animate={phase === 1} marker="url(#nax-viz-arrow-slate)" />
+            <Arrow d={`M 162 255 L ${AGENT_X - 5} 350`} color={MUTED} animate={phase === 1} marker="url(#nax-viz-arrow-slate)" />
           </g>
         )}
 
@@ -382,18 +382,18 @@ export function CouncilViz() {
                 </g>
               ))}
             </g>
-            <Arrow d="M 488 192 C 440 178, 440 112, 397 100" color={VIOLET} animate={!reduced} marker="url(#nax-viz-arrow-violet)" />
+            <Arrow d="M 488 192 L 397 108" color={VIOLET} animate={!reduced} marker="url(#nax-viz-arrow-violet)" />
             <Arrow d="M 488 225 L 397 225" color={VIOLET} animate={!reduced} marker="url(#nax-viz-arrow-violet)" />
-            <Arrow d="M 488 258 C 440 272, 440 338, 397 350" color={VIOLET} animate={!reduced} marker="url(#nax-viz-arrow-violet)" />
+            <Arrow d="M 488 258 L 397 342" color={VIOLET} animate={!reduced} marker="url(#nax-viz-arrow-violet)" />
           </g>
         )}
 
         {/* Agents -> consensus */}
         {phase >= 4 && (
           <g opacity={phase === 4 ? 1 : 0.4}>
-            <Arrow d="M 395 95 C 440 100, 440 195, 466 205" color={VIOLET} animate={phase === 4 && !reduced} marker="url(#nax-viz-arrow-violet)" />
+            <Arrow d="M 395 100 L 466 193" color={VIOLET} animate={phase === 4 && !reduced} marker="url(#nax-viz-arrow-violet)" />
             <Arrow d="M 395 225 L 466 225" color={VIOLET} animate={phase === 4 && !reduced} marker="url(#nax-viz-arrow-violet)" />
-            <Arrow d="M 395 355 C 440 350, 440 255, 466 245" color={VIOLET} animate={phase === 4 && !reduced} marker="url(#nax-viz-arrow-violet)" />
+            <Arrow d="M 395 350 L 466 257" color={VIOLET} animate={phase === 4 && !reduced} marker="url(#nax-viz-arrow-violet)" />
           </g>
         )}
 
@@ -425,8 +425,8 @@ export function CouncilViz() {
         {/* Consensus -> artifacts + human */}
         {phase === 5 && (
           <g>
-            <Arrow d="M 614 205 C 632 195, 630 150, 642 145" color={MUTED} animate={!reduced} marker="url(#nax-viz-arrow-slate)" />
-            <Arrow d="M 614 245 C 632 255, 630 300, 642 305" color={MUTED} animate={!reduced} marker="url(#nax-viz-arrow-slate)" />
+            <Arrow d="M 616 200 L 642 148" color={MUTED} animate={!reduced} marker="url(#nax-viz-arrow-slate)" />
+            <Arrow d="M 616 250 L 642 300" color={MUTED} animate={!reduced} marker="url(#nax-viz-arrow-slate)" />
           </g>
         )}
 

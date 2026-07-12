@@ -84,9 +84,9 @@ const NEXT_MOVES = [
     color: '#38bdf8'
   },
   {
-    title: 'Chain another run',
+    title: 'Trigger another remote run',
     cmd: 'nax handoff --flow <id>',
-    desc: 'new remote run, summary as context',
+    desc: 'or just prompt a follow-up in the dashboard',
     color: VIOLET
   }
 ]

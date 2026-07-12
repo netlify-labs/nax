@@ -74,13 +74,13 @@ const NEXT_MOVES = [
   {
     title: 'Copy the consensus',
     cmd: 'nax handoff -c',
-    desc: 'paste it into your local agent',
+    desc: 'paste into Claude Code, Codex, or Gemini',
     color: EMERALD
   },
   {
     title: 'Copy the artifact path',
     cmd: 'nax handoff --copy-path',
-    desc: 'point your local harness at the file',
+    desc: 'point Claude Code, Codex, or Gemini at it',
     color: '#38bdf8'
   },
   {
@@ -267,7 +267,8 @@ export function CouncilViz() {
         </defs>
 
         {/* Flow file */}
-        <g opacity={phase === 6 ? 0.1 : phase === 0 ? 1 : 0.55}>
+        {phase !== 6 && (
+        <g opacity={phase === 0 ? 1 : 0.55}>
           <rect x={18} y={150} width={142} height={150} rx={10} fill={CARD_BG} stroke={phase === 0 ? VIOLET : CARD_STROKE} strokeWidth={phase === 0 ? 1.5 : 1} />
           <text x={32} y={175} fontSize={12} fontWeight={600} fill={TEXT} fontFamily="var(--nax-viz-mono)">
             flow.yaml
@@ -287,10 +288,11 @@ export function CouncilViz() {
             )
           })}
         </g>
+        )}
 
         {/* Fan-out arrows: flow file -> agents */}
-        {phase >= 1 && (
-          <g opacity={phase === 6 ? 0.1 : phase === 1 ? 1 : 0.3}>
+        {phase >= 1 && phase !== 6 && (
+          <g opacity={phase === 1 ? 1 : 0.3}>
             <Arrow d={`M 162 195 L ${AGENT_X - 5} 100`} color={MUTED} animate={phase === 1} marker="url(#nax-viz-arrow-slate)" />
             <Arrow d={`M 162 225 L ${AGENT_X - 5} 225`} color={MUTED} animate={phase === 1} marker="url(#nax-viz-arrow-slate)" />
             <Arrow d={`M 162 255 L ${AGENT_X - 5} 350`} color={MUTED} animate={phase === 1} marker="url(#nax-viz-arrow-slate)" />
@@ -298,7 +300,7 @@ export function CouncilViz() {
         )}
 
         {/* Agents */}
-        {AGENTS.map((agent, i) => {
+        {phase !== 6 && AGENTS.map((agent, i) => {
           const y = AGENT_Y[i] - AGENT_H / 2
           const isRunning = (phase === 1 || phase === 3) && !done[i]
           const finished = agentDone(i)
@@ -315,7 +317,7 @@ export function CouncilViz() {
                 ? 'notes.md ✓'
                 : 'findings.md ✓'
           return (
-            <g key={agent.key} opacity={phase === 6 ? 0.1 : dimmed ? 0.45 : 1}>
+            <g key={agent.key} opacity={dimmed ? 0.45 : 1}>
               <rect x={AGENT_X} y={y} width={AGENT_W} height={AGENT_H} rx={10} fill={CARD_BG} stroke={isRunning ? agent.color : CARD_STROKE} strokeWidth={isRunning ? 1.5 : 1} />
               <circle cx={AGENT_X + 18} cy={y + 20} r={5} fill={agent.color} />
               <text x={AGENT_X + 30} y={y + 24} fontSize={12.5} fontWeight={600} fill={TEXT} fontFamily="var(--nax-viz-sans)">
@@ -415,8 +417,8 @@ export function CouncilViz() {
         )}
 
         {/* Agents -> consensus */}
-        {phase >= 4 && (
-          <g opacity={phase === 6 ? 0.1 : phase === 4 ? 1 : 0.4}>
+        {phase >= 4 && phase !== 6 && (
+          <g opacity={phase === 4 ? 1 : 0.4}>
             <Arrow d="M 395 100 L 466 193" color={VIOLET} animate={phase === 4 && !reduced} marker="url(#nax-viz-arrow-violet)" />
             <Arrow d="M 395 225 L 466 225" color={VIOLET} animate={phase === 4 && !reduced} marker="url(#nax-viz-arrow-violet)" />
             <Arrow d="M 395 350 L 466 257" color={VIOLET} animate={phase === 4 && !reduced} marker="url(#nax-viz-arrow-violet)" />
@@ -424,8 +426,8 @@ export function CouncilViz() {
         )}
 
         {/* Consensus */}
-        {phase >= 4 && (
-          <g className={phase === 4 && !reduced ? 'nax-viz-pop' : undefined} opacity={phase === 6 ? 0.1 : phase === 4 ? 1 : 0.6}>
+        {phase >= 4 && phase !== 6 && (
+          <g className={phase === 4 && !reduced ? 'nax-viz-pop' : undefined} opacity={phase === 4 ? 1 : 0.6}>
             <rect x={472} y={165} width={140} height={120} rx={10} fill={CARD_BG} stroke={VIOLET} strokeWidth={1.5} />
             <text x={486} y={190} fontSize={12} fontWeight={600} fill={TEXT} fontFamily="var(--nax-viz-sans)">
               Consensus
@@ -490,33 +492,33 @@ export function CouncilViz() {
         {phase === 6 && (
           <g>
             <g className={reduced ? undefined : 'nax-viz-pop'}>
-              <rect x={40} y={180} width={120} height={90} rx={10} fill={CARD_BG} stroke={TEXT} strokeWidth={1} />
-              <circle cx={70} cy={207} r={7} fill="none" stroke={TEXT} strokeWidth={1.5} />
-              <path d="M 59 226 C 61 217, 79 217, 81 226" fill="none" stroke={TEXT} strokeWidth={1.5} />
-              <text x={92} y={215} fontSize={11} fontWeight={600} fill={TEXT} fontFamily="var(--nax-viz-sans)">
+              <rect x={120} y={180} width={120} height={90} rx={10} fill={CARD_BG} stroke={TEXT} strokeWidth={1} />
+              <circle cx={150} cy={207} r={7} fill="none" stroke={TEXT} strokeWidth={1.5} />
+              <path d="M 139 226 C 141 217, 159 217, 161 226" fill="none" stroke={TEXT} strokeWidth={1.5} />
+              <text x={172} y={215} fontSize={11} fontWeight={600} fill={TEXT} fontFamily="var(--nax-viz-sans)">
                 you
               </text>
-              <text x={56} y={252} fontSize={9.5} fill={EMERALD} fontFamily="var(--nax-viz-mono)">
+              <text x={136} y={252} fontSize={9.5} fill={EMERALD} fontFamily="var(--nax-viz-mono)">
                 summary.md ✓
               </text>
             </g>
-            <Arrow d="M 164 202 L 242 102" color={MUTED} animate={!reduced} marker="url(#nax-viz-arrow-slate)" />
-            <Arrow d="M 164 225 L 242 225" color={MUTED} animate={!reduced} marker="url(#nax-viz-arrow-slate)" />
-            <Arrow d="M 164 248 L 242 348" color={MUTED} animate={!reduced} marker="url(#nax-viz-arrow-slate)" />
+            <Arrow d="M 244 202 L 322 102" color={MUTED} animate={!reduced} marker="url(#nax-viz-arrow-slate)" />
+            <Arrow d="M 244 225 L 322 225" color={MUTED} animate={!reduced} marker="url(#nax-viz-arrow-slate)" />
+            <Arrow d="M 244 248 L 322 348" color={MUTED} animate={!reduced} marker="url(#nax-viz-arrow-slate)" />
             {NEXT_MOVES.map((move, i) => (
               <g
                 key={move.title}
                 className={reduced ? undefined : 'nax-viz-pop'}
                 style={reduced ? undefined : { animationDelay: `${200 + i * 140}ms` }}
               >
-                <rect x={250} y={AGENT_Y[i] - 45} width={260} height={90} rx={10} fill={CARD_BG} stroke={move.color} strokeWidth={1} />
-                <text x={266} y={AGENT_Y[i] - 19} fontSize={12.5} fontWeight={600} fill={TEXT} fontFamily="var(--nax-viz-sans)">
+                <rect x={330} y={AGENT_Y[i] - 45} width={290} height={90} rx={10} fill={CARD_BG} stroke={move.color} strokeWidth={1} />
+                <text x={346} y={AGENT_Y[i] - 19} fontSize={12.5} fontWeight={600} fill={TEXT} fontFamily="var(--nax-viz-sans)">
                   {move.title}
                 </text>
-                <text x={266} y={AGENT_Y[i] + 3} fontSize={10.5} fill={move.color} fontFamily="var(--nax-viz-mono)">
+                <text x={346} y={AGENT_Y[i] + 3} fontSize={10.5} fill={move.color} fontFamily="var(--nax-viz-mono)">
                   {move.cmd}
                 </text>
-                <text x={266} y={AGENT_Y[i] + 25} fontSize={10} fill={MUTED} fontFamily="var(--nax-viz-sans)">
+                <text x={346} y={AGENT_Y[i] + 25} fontSize={10} fill={MUTED} fontFamily="var(--nax-viz-sans)">
                   {move.desc}
                 </text>
               </g>

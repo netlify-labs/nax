@@ -365,15 +365,26 @@ export function CouncilViz() {
           </g>
         )}
 
-        {/* Cross-review arrows between agents */}
+        {/* Cross-review: round 1 findings feed back into every agent */}
         {phase === 3 && (
           <g>
-            <Arrow d="M 395 105 C 450 130, 450 190, 397 215" color={AGENTS[0].color} animate={!reduced} marker="url(#nax-viz-arrow-claude)" />
-            <Arrow d="M 395 235 C 450 260, 450 320, 397 345" color={AGENTS[1].color} animate={!reduced} marker="url(#nax-viz-arrow-gemini)" />
-            <Arrow d="M 395 345 C 480 300, 480 145, 397 100" color={AGENTS[2].color} animate={!reduced} marker="url(#nax-viz-arrow-codex)" />
-            <Arrow d="M 215 215 C 165 190, 165 130, 213 105" color={AGENTS[1].color} animate={!reduced} opacity={0.55} marker="url(#nax-viz-arrow-gemini)" />
-            <Arrow d="M 215 345 C 165 320, 165 260, 213 235" color={AGENTS[2].color} animate={!reduced} opacity={0.55} marker="url(#nax-viz-arrow-codex)" />
-            <Arrow d="M 213 100 C 135 145, 135 300, 215 345" color={AGENTS[0].color} animate={!reduced} opacity={0.55} marker="url(#nax-viz-arrow-claude)" />
+            <g className={reduced ? undefined : 'nax-viz-pop'}>
+              <rect x={492} y={158} width={132} height={134} rx={10} fill={CARD_BG} stroke={VIOLET} strokeWidth={1} />
+              <text x={506} y={182} fontSize={11} fontWeight={600} fill={TEXT} fontFamily="var(--nax-viz-sans)">
+                round 1 findings
+              </text>
+              {AGENTS.map((agent, i) => (
+                <g key={agent.key}>
+                  <circle cx={512} cy={202 + i * 26} r={4} fill={agent.color} />
+                  <text x={523} y={206 + i * 26} fontSize={10.5} fill={MUTED} fontFamily="var(--nax-viz-mono)">
+                    {agent.key}.md
+                  </text>
+                </g>
+              ))}
+            </g>
+            <Arrow d="M 488 192 C 440 178, 440 112, 397 100" color={VIOLET} animate={!reduced} marker="url(#nax-viz-arrow-violet)" />
+            <Arrow d="M 488 225 L 397 225" color={VIOLET} animate={!reduced} marker="url(#nax-viz-arrow-violet)" />
+            <Arrow d="M 488 258 C 440 272, 440 338, 397 350" color={VIOLET} animate={!reduced} marker="url(#nax-viz-arrow-violet)" />
           </g>
         )}
 

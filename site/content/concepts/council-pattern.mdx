@@ -3,11 +3,17 @@ title: Council Pattern
 description: Use independent model passes, cross-review, and consensus synthesis for repeatable agent workflows.
 ---
 
+import { CouncilViz } from '../../components/council-viz'
+
 # Council pattern
 
 The core `nax` workflow shape is a council of agents: run selected models independently, pass their findings into a cross-review step, then synthesize only the claims with enough evidence or useful disagreement.
 
 This is not majority voting. The goal is to preserve independent judgment before the models influence each other, then make disagreements inspectable before a person acts on the result.
+
+Step through a full council run below — or press play.
+
+<CouncilViz />
 
 ## Shape
 

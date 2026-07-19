@@ -1359,3 +1359,65 @@ test('waitForLocalAgentRuns fails completed parent runners with errored latest s
   assert.equal(result[0].status, 'failed')
   assert.equal(result[0].resultText, 'Encountered a temporary issue — the agent will attempt to continue.')
 })
+
+test('createAgentRunAsync wraps access-denied CLI failures with wrong-account guidance', async () => {
+  await assert.rejects(
+    () => createAgentRunAsync({
+      projectRoot: '/tmp/project',
+      promptText: 'Review async',
+      agent: 'gemini',
+      siteId: 'site-999',
+      env: {},
+      retryAttempts: 1,
+      async runCommand() {
+        throw new Error('netlify agents:create --json failed: Not Found (404)')
+      },
+    }),
+    (error) => {
+      assert.match(error.message, /wrong Netlify account/)
+      assert.match(error.message, /site-999/)
+      assert.match(error.message, /Not Found \(404\)/)
+      return true
+    },
+  )
+})
+
+test('createAgentRunAsync rethrows non-access failures unchanged', async () => {
+  await assert.rejects(
+    () => createAgentRunAsync({
+      projectRoot: '/tmp/project',
+      promptText: 'Review async',
+      agent: 'gemini',
+      siteId: 'site-999',
+      env: {},
+      retryAttempts: 1,
+      async runCommand() {
+        throw new Error('netlify agents:create --json failed: something exploded')
+      },
+    }),
+    (error) => {
+      assert.equal(error.message, 'netlify agents:create --json failed: something exploded')
+      return true
+    },
+  )
+})
+
+test('createAgentRun wraps access-denied CLI failures with wrong-account guidance', () => {
+  assert.throws(
+    () => createAgentRun({
+      projectRoot: '/tmp/project',
+      promptText: 'Review',
+      agent: 'codex',
+      siteId: 'site-999',
+      env: {},
+      runCommand() {
+        throw new Error('netlify agents:create --json failed: Unauthorized')
+      },
+    }),
+    (error) => {
+      assert.match(error.message, /wrong Netlify account/)
+      assert.match(error.message, /Unauthorized/)
+      return true
+    },
+  )
+})

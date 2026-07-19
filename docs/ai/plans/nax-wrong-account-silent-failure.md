@@ -301,23 +301,21 @@ blast radius to the child-died-early corner.
 - **Startup latency** for dashboard: two small GETs with a short timeout
   (~3s cap), non-blocking for server listen (print/emit verdict when ready).
 
-## 9. Decisions (PROPOSED — need David's call)
+## 9. Decisions (RESOLVED 2026-07-19)
 
-- **D1 — Preflight mechanism**: direct API fetch (`/user` + `/sites/:id`)
-  **[recommended]** vs `netlify status --json` shell-out. Fetch is ~100ms vs
-  1-3s, gives exact 401/404 semantics, and injects cleanly for tests. CLI
-  shell-out kept only as the *source* of nothing — token/site come from the
-  same config files the CLI uses, so verdicts can't disagree with the CLI.
-- **D2 — Dashboard startup behavior**: warn + banner **[recommended]** vs
-  block dashboard until auth fixed. Browsing old runs offline/wrong-account
-  is legitimate.
-- **D3 — Where the run gate lives**: in the `nax run` child
-  **[recommended]** vs in the dashboard server before spawn. Child covers
-  CLI + dashboard with one gate; server-side would leave `nax run` unfixed.
+- **D1 — Preflight mechanism**: resolve site id + token from config files
+  first (`readLinkedSiteId`/`readNetlifyCliToken`), then check access with a
+  direct API call (`/user` + `/sites/:id`). Never depend on
+  `netlify status --json` for this — it errors when the CWD isn't a linked
+  folder ("You don't appear to be in a folder that is linked to a project"),
+  which is orthogonal to what we're checking. `netlify api getSite` shell-out
+  is an acceptable fallback but not needed when direct fetch works.
+- **D2 — Dashboard startup behavior**: warn + banner. Browsing old runs on a
+  wrong-account machine keeps working; only run submission hard-fails.
+- **D3 — Where the run gate lives**: in the `nax run` child, before
+  `executeLocalFlow`. One gate covers CLI and dashboard-spawned runs.
 - **D4 — 4.C scope**: parent appends terminal events only when the child
-  emitted none **[recommended]** vs always append parent `error`/`exited`.
-  Minimal variant avoids duplicate terminal events and stays out of the
-  dual-source plan's way.
+  emitted no terminal workflow event.
 
 ## 10. Open questions
 

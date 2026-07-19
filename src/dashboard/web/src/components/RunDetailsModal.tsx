@@ -212,6 +212,12 @@ function buildStepItems(
 ): StepItem[] {
   const stepSections = details?.sections.filter((section) => section.kind === 'step') || []
   const sectionByStepId = new Map(stepSections.map((section) => [section.stepId || section.id, section]))
+  const artifactStatusByStepAgent = new Map<string, string>()
+  for (const section of details?.sections || []) {
+    if (section.kind !== 'session' || !section.stepId || !section.agent) continue
+    const status = statusKey(section.status || '')
+    if (isTerminalStatus(status)) artifactStatusByStepAgent.set(`${section.stepId}/${section.agent}`, status)
+  }
   const savedSteps = Array.isArray(run?.steps) ? run.steps : []
   const savedStepById = new Map<string, Record<string, unknown>>()
   savedSteps.forEach((step, index) => {
@@ -273,10 +279,16 @@ function buildStepItems(
     const hasStarted = Boolean(section || runs.length > 0 || liveContext?.selector.stepId === id)
     const shouldQueue = !hasStarted && isActiveLiveStatus(run?.status || '') && statusKey(rawStepStatus || 'pending') === 'running'
     const stepStatus = shouldQueue ? 'queued' : rawStepStatus || 'pending'
+    const artifactAgentStatuses: Record<string, string> = {}
+    for (const agent of agents) {
+      const status = artifactStatusByStepAgent.get(`${id}/${agent}`)
+      if (status) artifactAgentStatuses[agent] = status
+    }
     const statusInput = {
       status: stepStatus,
       agents,
       selectedAgents: agents,
+      agentStatuses: artifactAgentStatuses,
       runs: runs
         .filter((runRecord): runRecord is Record<string, unknown> => (
           Boolean(runRecord) && typeof runRecord === 'object' && !Array.isArray(runRecord)

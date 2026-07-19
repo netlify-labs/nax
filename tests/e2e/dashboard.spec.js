@@ -345,7 +345,7 @@ test('dashboard deep-links workflow routes and prompt modal routes', async ({ pa
   await expect(page.locator('.inspector').getByRole('heading', { name: 'Cross Review' })).toBeVisible()
 
   await page.goto(dashboardRouteUrl(instance.url, '/workflows/review/prompts/cross-review'), { waitUntil: 'networkidle' })
-  const promptDialog = page.getByRole('dialog', { name: /"Review" prompt sequence/ })
+  const promptDialog = page.getByRole('dialog', { name: /"Review" workflow details/ })
   await expect(promptDialog).toBeVisible()
   await expect(promptDialog.getByRole('heading', { name: 'Step 2: Cross Review' })).toBeVisible()
 
@@ -380,7 +380,7 @@ test('run details timeline shows all configured agents for running steps', async
 
     const runItem = page.locator('.run-item').filter({ hasText: runId })
     await expect(runItem).toBeVisible()
-    await runItem.getByText('Security Audit').first().click()
+    await runItem.getByRole('button', { name: 'View run details' }).click()
 
     await expect(page.getByRole('dialog', { name: /Workflow results for "Security Audit"/ })).toBeVisible()
     const timeline = page.locator('.run-details-timeline')
@@ -420,7 +420,7 @@ test('dashboard deep-links run details modal routes', async ({ page }) => {
 
     await page.goto(dashboardRouteUrl(server.url, `/runs/${runId}/steps/review`), { waitUntil: 'networkidle' })
     await expect(detailsDialog).toBeVisible()
-    await expect(detailsDialog.getByText('No saved step details were found for this workflow step.')).toBeVisible()
+    await expect(detailsDialog.getByRole('heading', { name: 'Step 1: Review' })).toBeVisible()
     await expect(page).toHaveURL(new RegExp(`/runs/${runId}/steps/review$`))
 
     await page.goto(dashboardRouteUrl(server.url, `/runs/${runId}/steps/review/agents/codex`), { waitUntil: 'networkidle' })
@@ -431,7 +431,7 @@ test('dashboard deep-links run details modal routes', async ({ page }) => {
 
     await page.goBack()
     await expect(page).toHaveURL(new RegExp(`/runs/${runId}/steps/review$`))
-    await expect(detailsDialog.getByText('No saved step details were found for this workflow step.')).toBeVisible()
+    await expect(detailsDialog.getByRole('heading', { name: 'Step 1: Review' })).toBeVisible()
   } finally {
     await server.close()
   }
@@ -451,7 +451,7 @@ test('dashboard opens shared run details modal from runs and graph agent results
 
     const runItem = page.locator('.run-item').filter({ hasText: runId })
     await expect(runItem).toBeVisible()
-    await runItem.getByText('Review').first().click()
+    await runItem.getByRole('button', { name: 'View run details' }).click()
 
     await expect(page.getByRole('dialog', { name: /Workflow results for "Review"/ })).toBeVisible()
     await expect(page.getByRole('heading', { name: 'Review summary' })).toBeVisible()
@@ -461,7 +461,7 @@ test('dashboard opens shared run details modal from runs and graph agent results
     await page.keyboard.press('Escape')
     await expect(page.getByRole('dialog', { name: /Workflow results for "Review"/ })).toBeHidden()
 
-    await runItem.getByRole('button', { name: 'Load run graph' }).click()
+    await runItem.click()
     await expect(page.locator('.workflow-node.status-completed')).toHaveCount(1)
 
     const reviewNode = page.locator('.workflow-node').filter({ has: page.getByRole('heading', { name: 'Review', exact: true }) })
@@ -558,7 +558,7 @@ test('dashboard submits a follow-up from run details composer', async ({ page })
 
     const runItem = page.locator('.run-item').filter({ hasText: runId })
     await expect(runItem).toBeVisible()
-    await runItem.getByText('Review').first().click()
+    await runItem.getByRole('button', { name: 'View run details' }).click()
 
     await expect(page.getByRole('dialog', { name: /Workflow results for "Review"/ })).toBeVisible()
     await page.getByRole('button', { name: 'Send to next agent' }).click()

@@ -268,3 +268,82 @@ test('local run store rejects invalid opaque cursors', () => {
     code: 'invalid_cursor',
   })
 })
+
+test('local run store upgrades stale active run records from terminal step artifacts', () => {
+  const projectRoot = tmpRoot()
+  writeProjectFlow(projectRoot)
+  const runId = 'run-stale-artifacts'
+  const dir = path.join(projectRoot, '.nax', 'workflows', runId)
+  const runnerDir = path.join(dir, 'artifacts', 'steps', '01-one', 'agent-runners')
+  fs.mkdirSync(runnerDir, { recursive: true })
+  fs.writeFileSync(path.join(dir, 'workflow.json'), JSON.stringify({
+    schemaVersion: 1,
+    runId,
+    flowId: 'review',
+    flowTitle: 'Review',
+    status: 'running',
+    branch: 'main',
+    createdAt: '2026-06-22T00:00:00.000Z',
+    updatedAt: '2026-06-22T00:01:00.000Z',
+    dir,
+    flow: { id: 'review', title: 'Review', steps: [{ id: 'one', title: 'One', agents: ['codex'] }] },
+    steps: [{
+      id: 'one',
+      title: 'One',
+      status: 'completed',
+      agents: ['codex'],
+      runs: [{ agent: 'codex', status: 'submitted', runnerId: 'runner-1', sessionId: 'session-1' }],
+    }],
+  }, null, 2))
+  fs.writeFileSync(path.join(dir, 'artifacts', 'steps', '01-one', 'step.json'), JSON.stringify({ id: 'one', title: 'One', status: 'completed' }))
+  fs.writeFileSync(path.join(runnerDir, 'codex.json'), JSON.stringify({
+    agent: 'codex',
+    stepId: 'one',
+    status: 'completed',
+    runnerId: 'runner-1',
+    sessionId: 'session-1',
+  }))
+
+  const store = createLocalRunStore({ projectRoot })
+  const page = store.listRunsPage()
+  const listed = page.runs.find((run) => run.runId === runId)
+  assert.equal(listed?.status, 'completed')
+  assert.equal(listed?.resumable, false)
+  assert.equal(listed?.steps?.[0]?.status, 'completed')
+  assert.equal(listed?.steps?.[0]?.runs?.[0]?.status, 'completed')
+
+  const detail = store.getRun(runId)
+  assert.equal(detail?.status, 'completed')
+})
+
+test('local run store keeps genuinely active runs active when artifacts are not terminal', () => {
+  const projectRoot = tmpRoot()
+  writeProjectFlow(projectRoot)
+  const runId = 'run-still-active'
+  const dir = path.join(projectRoot, '.nax', 'workflows', runId)
+  fs.mkdirSync(path.join(dir, 'artifacts'), { recursive: true })
+  fs.writeFileSync(path.join(dir, 'workflow.json'), JSON.stringify({
+    schemaVersion: 1,
+    runId,
+    flowId: 'review',
+    flowTitle: 'Review',
+    status: 'running',
+    branch: 'main',
+    createdAt: '2026-06-22T00:00:00.000Z',
+    updatedAt: '2026-06-22T00:01:00.000Z',
+    dir,
+    flow: { id: 'review', title: 'Review', steps: [{ id: 'one', title: 'One', agents: ['codex'] }] },
+    steps: [{
+      id: 'one',
+      title: 'One',
+      status: 'running',
+      agents: ['codex'],
+      runs: [{ agent: 'codex', status: 'submitted', runnerId: 'runner-1' }],
+    }],
+  }, null, 2))
+
+  const store = createLocalRunStore({ projectRoot })
+  const listed = store.listRunsPage().runs.find((run) => run.runId === runId)
+  assert.equal(listed?.status, 'running')
+  assert.equal(listed?.steps?.[0]?.runs?.[0]?.status, 'running')
+})

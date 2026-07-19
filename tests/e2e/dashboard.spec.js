@@ -451,6 +451,7 @@ test('dashboard opens shared run details modal from runs and graph agent results
 
     const runItem = page.locator('.run-item').filter({ hasText: runId })
     await expect(runItem).toBeVisible()
+    await expect(runItem.locator('.run-status')).toHaveText('Completed')
     await runItem.getByRole('button', { name: 'View run details' }).click()
 
     await expect(page.getByRole('dialog', { name: /Workflow results for "Review"/ })).toBeVisible()

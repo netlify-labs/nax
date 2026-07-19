@@ -4,6 +4,7 @@ const { buildRunDetails } = require('../shared/run-details')
 const { isActiveProjectedStatus, projectRunSnapshot, publicFlow, publicRunOptions, publicRunState } = require('../api/serializers')
 const { requestError } = require('../api/errors')
 const { isActiveFollowupStatus, syncSubmittedFollowupRunsToWorkflow } = require('../../workflows/followups/persistence')
+const { applyArtifactStatuses } = require('../shared/run-artifact-status')
 
 const DEFAULT_RUNS_DURABLE_LIMIT = 50
 const MAX_RUNS_DURABLE_LIMIT = 200
@@ -115,10 +116,10 @@ function createLocalRunStore({
   function getRunState(id) {
     const states = listStates()
     const exact = runStateForId(id, states)
-    if (exact) return exact
+    if (exact) return applyArtifactStatuses(exact)
     const resolved = typeof resolveRunStateId === 'function' ? resolveRunStateId(id) : ''
     if (!resolved || resolved === id) return null
-    return runStateForId(resolved, states)
+    return applyArtifactStatuses(runStateForId(resolved, states))
   }
 
   /** @param {Record<string, unknown> | null} runState @param {RefreshRunStateContext} [context] */
@@ -160,7 +161,7 @@ function createLocalRunStore({
       const nextOffset = page.offset + page.limit
       const hasMore = nextOffset < page.total
       return {
-        runs: page.items.map(publicRunState),
+        runs: page.items.map((item) => publicRunState(applyArtifactStatuses(item))),
         pagination: {
           limit: page.limit,
           offset: page.offset,

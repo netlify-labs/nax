@@ -169,3 +169,48 @@ test('accessDeniedMessage names account and site with switch guidance', () => {
   assert.match(withoutEmail, /site-1/)
   assert.match(withoutEmail, /netlify login/)
 })
+
+test('enforceRunPreflight throws on blocking verdicts and warns on ambiguous ones', async () => {
+  const { enforceRunPreflight } = require('../../src/integrations/netlify/preflight')
+
+  const blockedRoot = linkedProjectRoot('site-blocked')
+  const blockedFetch = stubFetch([
+    { match: '/user', status: 200, body: { email: 'david@example.com' } },
+    { match: '/sites/site-blocked', status: 404, body: {} },
+  ])
+  await assert.rejects(
+    () => enforceRunPreflight({ projectRoot: blockedRoot, env: { NETLIFY_AUTH_TOKEN: 'tok-1' }, home: tmpRoot('nax-preflight-home-'), fetch: blockedFetch }),
+    /wrong Netlify account/,
+  )
+
+  const offlineRoot = linkedProjectRoot('site-offline')
+  const warnings = []
+  const offlineFetch = stubFetch([
+    { match: '/user', error: new Error('ENOTFOUND api.netlify.com') },
+  ])
+  const offlineVerdict = await enforceRunPreflight({
+    projectRoot: offlineRoot,
+    env: { NETLIFY_AUTH_TOKEN: 'tok-1' },
+    home: tmpRoot('nax-preflight-home-'),
+    fetch: offlineFetch,
+    warn: (message) => warnings.push(message),
+  })
+  assert.equal(offlineVerdict.code, 'network_error')
+  assert.equal(warnings.length, 1)
+
+  const okRoot = linkedProjectRoot('site-ok')
+  const okWarnings = []
+  const okFetch = stubFetch([
+    { match: '/user', status: 200, body: { email: 'david@example.com' } },
+    { match: '/sites/site-ok', status: 200, body: { name: 'demo', account_slug: 'team' } },
+  ])
+  const okVerdict = await enforceRunPreflight({
+    projectRoot: okRoot,
+    env: { NETLIFY_AUTH_TOKEN: 'tok-1' },
+    home: tmpRoot('nax-preflight-home-'),
+    fetch: okFetch,
+    warn: (message) => okWarnings.push(message),
+  })
+  assert.equal(okVerdict.ok, true)
+  assert.equal(okWarnings.length, 0)
+})

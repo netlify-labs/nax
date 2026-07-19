@@ -114,6 +114,7 @@ const {
 } = require('../integrations/skills')
 const { NETLIFY_API_TRANSPORT, detectTransports, formatTransportSetupHelp, isNetlifyApiTransport, resolveTransport } = require('../integrations/transports')
 const { readNetlifyProject } = require('../integrations/netlify/init')
+const { checkNetlifyAccess, enforceRunPreflight } = require('../integrations/netlify/preflight')
 const { runWorkflow } = require('../workflows/engine/runner')
 const { DEFAULT_OUTPUT_BUDGET_BYTES, completedStepMapFromRunState } = require('../workflows/engine/execution-context')
 const { createWorkflowEventContext } = require('../workflows/events/workflow-events')
@@ -2292,6 +2293,10 @@ async function handleRunEngine(flowId, options) {
     if (!selectedDetection?.available) {
       throw new Error(unavailableTransportMessage(transport, detections))
     }
+  }
+
+  if (isNetlifyApiTransport(transport) && !flowOptions.dryRun) {
+    await enforceRunPreflight({ projectRoot })
   }
 
   const target = resolveTarget({ options: flowOptions, projectRoot, transport })

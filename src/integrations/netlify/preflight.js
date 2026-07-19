@@ -97,7 +97,23 @@ function verdict(code, message) {
   return { ok: false, code, message, account: null, site: null }
 }
 
+/**
+ * Blocks a run when the token verifiably cannot access the linked site;
+ * ambiguous verdicts (offline, missing config) only warn so runs can proceed.
+ * @param {{ projectRoot?: string, env?: NodeJS.ProcessEnv, home?: string, fetch?: typeof fetch, warn?: (message: string) => void }} [options]
+ * @returns {Promise<NetlifyAccessVerdict>}
+ */
+async function enforceRunPreflight({ warn = console.warn, ...options } = {}) {
+  const result = await checkNetlifyAccess(options)
+  if (result.code === 'bad_token' || result.code === 'no_access') {
+    throw new Error(result.message)
+  }
+  if (!result.ok) warn(`Warning: ${result.message}`)
+  return result
+}
+
 module.exports = {
   accessDeniedMessage,
   checkNetlifyAccess,
+  enforceRunPreflight,
 }

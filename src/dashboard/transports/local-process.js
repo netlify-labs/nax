@@ -17,6 +17,7 @@ const { appendBounded } = require('../runtime/live-run-registry')
  *   now?: () => number,
  *   isoNow?: () => string,
  *   forceKillDelayMs?: number,
+ *   closeGraceDelayMs?: number,
  *   detached?: boolean,
  * }} LocalProcessWorkflowRunnerDeps
  *
@@ -157,6 +158,9 @@ function runWorkflowChild({ flowId, projectRoot, options = {}, eventSink = () =>
   let runnerTerminalStatus = ''
   /** @type {NodeJS.Timeout | null} */
   let forceKillTimer = null
+  /** @type {NodeJS.Timeout | null} */
+  let closeGraceTimer = null
+  const closeGraceDelayMs = deps.closeGraceDelayMs ?? 2000
   /** @type {NodeJS.ProcessEnv} */
   const childEnv = {
     ...sourceEnv,
@@ -229,6 +233,7 @@ function runWorkflowChild({ flowId, projectRoot, options = {}, eventSink = () =>
       if (settled) return
       settled = true
       if (forceKillTimer) clearTimeout(forceKillTimer)
+      if (closeGraceTimer) clearTimeout(closeGraceTimer)
       const message = error?.message || String(error)
       const bounded = appendBounded(stderr, `${message}\n`)
       stderr = bounded.text
@@ -251,10 +256,11 @@ function runWorkflowChild({ flowId, projectRoot, options = {}, eventSink = () =>
       eventSink({ type: 'exited', status: result.status, exitCode: result.exitCode, signal: result.signal, durationMs: result.durationMs })
       resolve(result)
     })
-    child.on('close', (code, signal) => {
+    const settleExit = (code, signal) => {
       if (settled) return
       settled = true
       if (forceKillTimer) clearTimeout(forceKillTimer)
+      if (closeGraceTimer) clearTimeout(closeGraceTimer)
       const status = code === 0 ? runnerTerminalStatus || 'completed' : cancelRequested ? 'cancelled' : 'failed'
       const result = {
         status,
@@ -276,6 +282,13 @@ function runWorkflowChild({ flowId, projectRoot, options = {}, eventSink = () =>
       eventParser.end()
       eventSink({ type: 'exited', status: result.status, exitCode: result.exitCode, signal: result.signal, durationMs: result.durationMs })
       resolve(result)
+    }
+    child.on('close', settleExit)
+    // 'close' waits on stdio pipes that detached grandchildren can inherit and
+    // hold open forever; settle from 'exit' after a short drain window instead.
+    child.on('exit', (code, signal) => {
+      if (settled || closeGraceTimer) return
+      closeGraceTimer = setTimeout(() => settleExit(code, signal), closeGraceDelayMs)
     })
   })
 

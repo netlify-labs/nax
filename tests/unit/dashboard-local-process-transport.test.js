@@ -223,3 +223,64 @@ test('signalWorkflowChild targets a POSIX process group before child fallback', 
     process.kill = originalKill
   }
 })
+
+test('local process transport settles after exit when inherited pipes never close', async () => {
+  const child = new FakeChild()
+  const fakeSpawn = fakeSpawnFor(child)
+  const clock = fixedClock()
+  const events = []
+  const run = runWorkflowChild({
+    flowId: 'review',
+    projectRoot: '/tmp/project',
+    options: { transport: 'netlify-api', branch: 'main' },
+    eventSink: (event) => events.push(event),
+    deps: {
+      spawn: fakeSpawn.spawn,
+      execPath: '/usr/bin/node',
+      env: { NO_COLOR: '1' },
+      now: clock.now,
+      isoNow: clock.isoNow,
+      closeGraceDelayMs: 20,
+    },
+  })
+
+  child.stdout.write('output\n')
+  child.stderr.write('netlify agents:create failed: Not Found\n')
+  child.emit('exit', 1, null)
+
+  const result = await run.promise
+  assert.equal(result.status, 'failed')
+  assert.equal(result.exitCode, 1)
+  assert.equal(events.filter((event) => event.type === 'exited').length, 1)
+  assert.equal(events.some((event) => event.type === 'error' && /Not Found/.test(event.message)), true)
+})
+
+test('local process transport prefers close over the exit grace timer without double settling', async () => {
+  const child = new FakeChild()
+  const fakeSpawn = fakeSpawnFor(child)
+  const clock = fixedClock()
+  const events = []
+  const run = runWorkflowChild({
+    flowId: 'review',
+    projectRoot: '/tmp/project',
+    options: { transport: 'netlify-api', branch: 'main' },
+    eventSink: (event) => events.push(event),
+    deps: {
+      spawn: fakeSpawn.spawn,
+      execPath: '/usr/bin/node',
+      env: { NO_COLOR: '1' },
+      now: clock.now,
+      isoNow: clock.isoNow,
+      closeGraceDelayMs: 50,
+    },
+  })
+
+  child.events.end()
+  child.emit('exit', 0, null)
+  child.emit('close', 0, null)
+
+  const result = await run.promise
+  assert.equal(result.status, 'completed')
+  await new Promise((resolve) => setTimeout(resolve, 80))
+  assert.equal(events.filter((event) => event.type === 'exited').length, 1)
+})

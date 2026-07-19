@@ -1529,3 +1529,26 @@ test('stopWorkflowRunners stops cancellable workflow runners and reports warning
   assert.deepEqual(result.runnerIds, ['runner-ok', 'runner-fail'])
   assert.deepEqual(result.warnings, ['runner-fail: nope'])
 })
+
+test('dashboard health includes the netlify access verdict only for authenticated readers', async () => {
+  const netlifyAccess = {
+    ok: false,
+    code: 'no_access',
+    message: 'Logged in as david@example.com, but that account cannot access site site-1.',
+    account: { email: 'david@example.com' },
+    site: null,
+  }
+  const server = await startDashboardServer({ projectRoot: process.cwd(), netlifyAccess })
+  try {
+    const base = `http://127.0.0.1:${server.port}`
+    const anonymous = await requestJson(`${base}/api/health`)
+    assert.equal(anonymous.statusCode, 200)
+    assert.equal(Object.hasOwn(anonymous.payload, 'netlifyAccess'), false)
+
+    const authenticated = await requestJson(`${base}/api/health`, { token: server.token })
+    assert.equal(authenticated.statusCode, 200)
+    assert.deepEqual(authenticated.payload.netlifyAccess, netlifyAccess)
+  } finally {
+    await server.close()
+  }
+})

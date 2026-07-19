@@ -897,6 +897,7 @@ function createRequestHandler(options = {}) {
   }
   const token = options.token || crypto.randomBytes(24).toString('hex')
   const initialWorkflow = options.initialWorkflow || ''
+  const netlifyAccess = options.netlifyAccess || null
   const env = options.env || process.env
   const followupSiteId = resolveFollowupSiteId({ projectRoot, siteId: options.siteId, env })
   const followupSiteName = options.siteName || env.NETLIFY_SITE_NAME || ''
@@ -953,6 +954,7 @@ function createRequestHandler(options = {}) {
       projectRoot,
       capabilities,
       healthCapabilities,
+      netlifyAccess,
     },
     token,
     workflowStore,
@@ -1551,14 +1553,17 @@ function createRequestHandler(options = {}) {
             canStreamRunEvents: true,
             requiresAuth: true,
           }
-          /** @type {{ ok: boolean, tokenRequiredForMutations: boolean, tokenRequiredForSensitiveReads: boolean, capabilities: typeof capabilities, projectRoot?: string }} */
+          /** @type {{ ok: boolean, tokenRequiredForMutations: boolean, tokenRequiredForSensitiveReads: boolean, capabilities: typeof capabilities, projectRoot?: string, netlifyAccess?: Record<string, unknown> }} */
           const health = {
             ok: true,
             tokenRequiredForMutations: true,
             tokenRequiredForSensitiveReads: true,
             capabilities,
           }
-          if (timingSafeTokenEqual(tokenFromRequest(req, requestUrl), token)) health.projectRoot = projectRoot
+          if (timingSafeTokenEqual(tokenFromRequest(req, requestUrl), token)) {
+            health.projectRoot = projectRoot
+            if (netlifyAccess) health.netlifyAccess = netlifyAccess
+          }
           jsonResponse(res, 200, health, sessionBootstrapHeadersForRequest(req, requestUrl, token))
           return
         }

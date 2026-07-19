@@ -564,6 +564,8 @@ async function handleDashboard(flowId, options = {}) {
     await loadFlow(flowId, flowLoadOptions(options, projectRoot))
   }
 
+  const netlifyAccess = await checkNetlifyAccess({ projectRoot, timeoutMs: 3000 })
+
   const startServer = loadDashboardServer()
   const instance = await startServer({
     projectRoot,
@@ -575,10 +577,12 @@ async function handleDashboard(flowId, options = {}) {
     initialPath: runId ? `/runs/${encodeURIComponent(runId)}/details` : '',
     dev: options.dev === true,
     tail: options.tail === true,
+    netlifyAccess,
   })
 
   console.log(`Nax dashboard: ${instance.url}`)
   console.log(`Project root:  ${instance.projectRoot}`)
+  console.log(`Netlify auth:  ${netlifyAccess.ok ? netlifyAccess.message : `⚠️  ${netlifyAccess.message}`}`)
   if (options.tail === true) console.log('Tail output:   on')
 
   if (options.open !== false) {

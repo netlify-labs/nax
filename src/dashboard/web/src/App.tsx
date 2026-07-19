@@ -235,6 +235,7 @@ export default function App() {
   const [runRunning, setRunRunning] = useState(false)
   const [cancelRunning, setCancelRunning] = useState(false)
   const [runError, setRunError] = useState('')
+  const [netlifyAccessDismissed, setNetlifyAccessDismissed] = useState(false)
   const [liveRunState, dispatchLiveRun] = useReducer(liveRunReducer, initialLiveRunState())
   const [lastWorkflowGraph, setLastWorkflowGraph] = useState<WorkflowGraph | null>(null)
   const liveStepStatuses = liveRunState.stepStatuses
@@ -270,6 +271,7 @@ export default function App() {
   const workflows = workflowsQuery.data?.items || []
   const projectRoot = healthQuery.data?.projectRoot || ''
   const capabilities = healthQuery.data?.capabilities || defaultDashboardCapabilities
+  const netlifyAccess = healthQuery.data?.netlifyAccess
   const runsList = runsQuery.data || { runs: [], hasMore: false, shownCount: 0, totalCount: 0 }
   const runs = runsList.runs
   const visibleRunActive = runs.some((run) => isActiveStatus(run.status || ''))
@@ -1132,6 +1134,17 @@ export default function App() {
         </AppShell.Navbar>
 
         <AppShell.Main className="app-main">
+          {netlifyAccess && !netlifyAccess.ok && !netlifyAccessDismissed ? (
+            <Alert
+              color={netlifyAccess.code === 'network_error' ? 'yellow' : 'red'}
+              variant="light"
+              withCloseButton
+              onClose={() => setNetlifyAccessDismissed(true)}
+              title="Netlify account check"
+            >
+              <Text size="sm">{netlifyAccess.message}</Text>
+            </Alert>
+          ) : null}
           <Splitter className="main-workspace" lineSize={1} handleColor="blue">
             <Splitter.Pane defaultSize={78} min={55}>
               <Box component="section" className="center-column">

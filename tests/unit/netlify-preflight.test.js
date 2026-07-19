@@ -33,7 +33,7 @@ function stubFetch(responses) {
     }
   }
   fetchStub.calls = calls
-  return fetchStub
+  return /** @type {typeof fetch & { calls: Array<{ url: string, options: Record<string, any> }> }} */ (/** @type {unknown} */ (fetchStub))
 }
 
 test('preflight returns ok with account and site details when token can access the site', async () => {

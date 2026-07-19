@@ -19,12 +19,21 @@ export type DashboardCapabilities = {
   requiresAuth: boolean
 }
 
+export type NetlifyAccessVerdict = {
+  ok: boolean
+  code: 'ok' | 'no_token' | 'no_site' | 'bad_token' | 'no_access' | 'network_error'
+  message: string
+  account: { email: string } | null
+  site: { id: string, name: string, accountSlug: string } | null
+}
+
 export type HealthResponse = {
   ok: boolean
   projectRoot?: string
   tokenRequiredForMutations: boolean
   tokenRequiredForSensitiveReads: boolean
   capabilities?: DashboardCapabilities
+  netlifyAccess?: NetlifyAccessVerdict
 }
 
 export type Target = {

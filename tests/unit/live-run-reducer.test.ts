@@ -77,3 +77,38 @@ test('visual status maps raw runner statuses into UI vocabulary', () => {
   assert.equal(visualStatus('timeout'), 'failed')
   assert.equal(visualStatus('abandoned'), 'abandoned')
 })
+
+test('live run reducer surfaces workflow_failed message in errors', () => {
+  let state = initialLiveRunState({ id: 'dashboard-run', flowId: 'review', status: 'running' })
+  state = liveRunReducer(state, { type: 'event', event: { type: 'workflow_failed', eventId: 'run-1:20', seq: 20, runId: 'run-1', status: 'failed', exitCode: 1, message: 'Netlify API request failed (404): site not found' } })
+
+  assert.equal(state.run?.status, 'failed')
+  assert.deepEqual(state.errors, ['Netlify API request failed (404): site not found'])
+})
+
+test('live run reducer surfaces failed agent_status message in errors', () => {
+  let state = initialLiveRunState({ id: 'dashboard-run', flowId: 'review', status: 'running' })
+  state = liveRunReducer(state, { type: 'event', event: { type: 'agent_status', eventId: 'run-1:21', seq: 21, runId: 'run-1', stepId: 'review', agent: 'codex', status: 'failed', message: 'netlify agents:create failed: Not Found' } })
+
+  assert.equal(state.agentStatuses.review.codex, 'failed')
+  assert.deepEqual(state.errors, ['review/codex: netlify agents:create failed: Not Found'])
+})
+
+test('live run reducer does not duplicate identical error messages across events', () => {
+  let state = initialLiveRunState({ id: 'dashboard-run', flowId: 'review', status: 'running' })
+  state = liveRunReducer(state, { type: 'event', event: { type: 'workflow_failed', eventId: 'run-1:22', seq: 22, runId: 'run-1', status: 'failed', message: 'Submission failed' } })
+  state = liveRunReducer(state, { type: 'event', event: { type: 'workflow_failed', eventId: 'run-1:23', seq: 23, runId: 'run-1', status: 'failed', message: 'Submission failed' } })
+  state = liveRunReducer(state, { type: 'event', event: { type: 'error', id: 30, message: 'Submission failed' } })
+
+  assert.deepEqual(state.errors, ['Submission failed'])
+})
+
+test('live run reducer ignores terminal and failed-agent events without a message', () => {
+  let state = initialLiveRunState({ id: 'dashboard-run', flowId: 'review', status: 'running' })
+  state = liveRunReducer(state, { type: 'event', event: { type: 'agent_status', eventId: 'run-1:24', seq: 24, runId: 'run-1', stepId: 'review', agent: 'codex', status: 'failed' } })
+  state = liveRunReducer(state, { type: 'event', event: { type: 'workflow_failed', eventId: 'run-1:25', seq: 25, runId: 'run-1', status: 'failed', exitCode: 1 } })
+
+  assert.equal(state.run?.status, 'failed')
+  assert.equal(state.agentStatuses.review.codex, 'failed')
+  assert.deepEqual(state.errors, [])
+})

@@ -690,7 +690,7 @@ export default function App() {
             startedAt: typeof data.at === 'string' ? data.at : value.startedAt,
           } : value)
         }
-        if (typeof data.message === 'string' && (data.type === 'error' || data.type === 'runner_event_error')) {
+        if (typeof data.message === 'string' && (data.type === 'error' || data.type === 'runner_event_error' || data.type === 'workflow_failed')) {
           setRunError(data.message)
         }
       }

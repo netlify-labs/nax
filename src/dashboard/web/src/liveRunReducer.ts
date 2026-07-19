@@ -70,6 +70,10 @@ export function appendBoundedOutput(current: string, text: string, maxChars = MA
   return next.length > maxChars ? next.slice(-maxChars) : next
 }
 
+function appendError(errors: string[], message: unknown): string[] {
+  return typeof message === 'string' && message && !errors.includes(message) ? [...errors, message] : errors
+}
+
 function applyEvent(state: LiveRunState, event: RunnerEvent): LiveRunState {
   const key = eventDedupeKey(event)
   if (key && state.seen[key]) return state
@@ -123,13 +127,17 @@ function applyEvent(state: LiveRunState, event: RunnerEvent): LiveRunState {
     const seq = eventSeq(event)
     const previousSeq = withRawEvents.agentSeqs[event.stepId]?.[event.agent] || 0
     if (seq < previousSeq) return withRawEvents
+    const status = visualStatus(event.status)
     return {
       ...withRawEvents,
+      errors: status === 'failed' && typeof event.message === 'string' && event.message
+        ? appendError(withRawEvents.errors, `${event.stepId}/${event.agent}: ${event.message}`)
+        : withRawEvents.errors,
       agentStatuses: {
         ...withRawEvents.agentStatuses,
         [event.stepId]: {
           ...(withRawEvents.agentStatuses[event.stepId] || {}),
-          [event.agent]: visualStatus(event.status),
+          [event.agent]: status,
         },
       },
       agentSeqs: {
@@ -152,13 +160,14 @@ function applyEvent(state: LiveRunState, event: RunnerEvent): LiveRunState {
   if (event.type === 'runner_event_error' || event.type === 'error') {
     return {
       ...withRawEvents,
-      errors: typeof event.message === 'string' ? [...withRawEvents.errors, event.message] : withRawEvents.errors,
+      errors: appendError(withRawEvents.errors, event.message),
     }
   }
 
   if (event.type === 'workflow_cancelled' || event.type === 'workflow_completed' || event.type === 'workflow_failed' || event.type === 'exited') {
     return {
       ...withRawEvents,
+      errors: event.type === 'workflow_failed' ? appendError(withRawEvents.errors, event.message) : withRawEvents.errors,
       run: withRawEvents.run ? {
         ...withRawEvents.run,
         status: typeof event.status === 'string' ? event.status : withRawEvents.run.status,

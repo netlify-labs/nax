@@ -1552,3 +1552,50 @@ test('dashboard health includes the netlify access verdict only for authenticate
     await server.close()
   }
 })
+
+test('dashboard persists terminal events durably when the child exits without one', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'nax-silent-exit-'))
+  const durable = { runId: 'run-silent', flowId: 'review', dir }
+  const logPath = path.join(dir, 'events.jsonl')
+  appendEventLog(logPath, { type: 'workflow_started', seq: 1, runId: 'run-silent' })
+  appendEventLog(logPath, { type: 'agent_status', seq: 2, runId: 'run-silent', stepId: 'review', agent: 'codex', status: 'submitted' })
+
+  const appended = _private.appendMissingTerminalEvents({
+    status: 'failed',
+    runId: 'run-silent',
+    flowId: 'review',
+    stderr: 'boom line one\nnetlify agents:create failed: Not Found\n',
+    exitCode: 1,
+    signal: null,
+    durationMs: 1234,
+  }, durable)
+
+  assert.equal(appended, true)
+  const events = fs.readFileSync(logPath, 'utf8').trim().split('\n').map((line) => JSON.parse(line))
+  assert.deepEqual(events.map((event) => event.type), ['workflow_started', 'agent_status', 'error', 'exited'])
+  assert.equal(events[2].message, 'netlify agents:create failed: Not Found')
+  assert.equal(events[2].seq, 3)
+  assert.equal(events[3].seq, 4)
+  assert.equal(events[3].status, 'failed')
+  assert.equal(events[3].exitCode, 1)
+})
+
+test('dashboard does not duplicate terminal events the child already logged', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'nax-terminal-exit-'))
+  const durable = { runId: 'run-done', flowId: 'review', dir }
+  const logPath = path.join(dir, 'events.jsonl')
+  appendEventLog(logPath, { type: 'workflow_started', seq: 1, runId: 'run-done' })
+  appendEventLog(logPath, { type: 'workflow_failed', seq: 2, runId: 'run-done', status: 'failed', message: 'Submission failed' })
+
+  const appended = _private.appendMissingTerminalEvents({
+    status: 'failed',
+    runId: 'run-done',
+    flowId: 'review',
+    stderr: 'whatever\n',
+    exitCode: 1,
+  }, durable)
+
+  assert.equal(appended, false)
+  const events = fs.readFileSync(logPath, 'utf8').trim().split('\n').map((line) => JSON.parse(line))
+  assert.deepEqual(events.map((event) => event.type), ['workflow_started', 'workflow_failed'])
+})

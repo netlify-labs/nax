@@ -777,6 +777,29 @@ async function stopWorkflowRunners({ runState, projectRoot, env, stopRun = stopA
   return { runnerIds, stopped, warnings }
 }
 
+const TERMINAL_WORKFLOW_EVENT_TYPES = new Set(['workflow_failed', 'workflow_completed', 'workflow_cancelled'])
+
+/**
+ * Preserves the failure reason for late readers when a child process died
+ * before logging its own terminal workflow event.
+ * @param {{ status?: string, flowId?: string, stderr?: string, exitCode?: number | null, signal?: string | null, durationMs?: number }} run
+ * @param {import('../types').WorkflowRunState} [durable]
+ */
+function appendMissingTerminalEvents(run, durable) {
+  if (!durable?.dir) return false
+  const replay = readEventLog(eventLogPathForRunState(durable))
+  if (replay.events.some((event) => TERMINAL_WORKFLOW_EVENT_TYPES.has(String(event.type)))) return false
+  const message = String(run.stderr || '').trim().split('\n').filter(Boolean).pop() || `Workflow "${run.flowId || durable.flowId || ''}" failed.`
+  appendDurableWorkflowEvent(durable, 'error', { message })
+  appendDurableWorkflowEvent(durable, 'exited', {
+    status: run.status || 'failed',
+    exitCode: typeof run.exitCode === 'number' ? run.exitCode : null,
+    signal: run.signal || null,
+    durationMs: run.durationMs || 0,
+  })
+  return true
+}
+
 function appendDurableWorkflowEvent(runState = {}, type, data = {}) {
   if (!runState?.dir) return null
   const filePath = eventLogPathForRunState(runState)
@@ -1317,6 +1340,9 @@ function createRequestHandler(options = {}) {
       liveRunRegistry.clearWorkflow(flowId)
       recordStepStatusEvents(run)
       recordEvent(run, 'exited', { status: run.status, exitCode: run.exitCode, signal: run.signal, durationMs: run.durationMs })
+      if (run.status === 'failed' && run.runId) {
+        appendMissingTerminalEvents(run, listRunStates(projectRoot).find((state) => state.runId === run.runId))
+      }
       endClients(run.clients)
       liveRunRegistry.evictFinishedRuns()
     }).catch((error) => {
@@ -1337,6 +1363,9 @@ function createRequestHandler(options = {}) {
       recordStepStatusEvents(run)
       recordEvent(run, 'error', { message })
       recordEvent(run, 'exited', { status: run.status, exitCode: run.exitCode, signal: run.signal })
+      if (run.runId) {
+        appendMissingTerminalEvents(run, listRunStates(projectRoot).find((state) => state.runId === run.runId))
+      }
       endClients(run.clients)
       liveRunRegistry.evictFinishedRuns()
     })
@@ -1424,6 +1453,9 @@ function createRequestHandler(options = {}) {
       liveRunRegistry.clearWorkflow(flowId)
       recordStepStatusEvents(run)
       recordEvent(run, 'exited', { status: run.status, exitCode: run.exitCode, signal: run.signal, durationMs: run.durationMs })
+      if (run.status === 'failed' && run.runId) {
+        appendMissingTerminalEvents(run, listRunStates(projectRoot).find((state) => state.runId === run.runId))
+      }
       endClients(run.clients)
       liveRunRegistry.evictFinishedRuns()
     }).catch((error) => {
@@ -1440,6 +1472,9 @@ function createRequestHandler(options = {}) {
       recordStepStatusEvents(run)
       recordEvent(run, 'error', { message })
       recordEvent(run, 'exited', { status: run.status, exitCode: run.exitCode, signal: run.signal })
+      if (run.runId) {
+        appendMissingTerminalEvents(run, listRunStates(projectRoot).find((state) => state.runId === run.runId))
+      }
       endClients(run.clients)
       liveRunRegistry.evictFinishedRuns()
     })
@@ -2065,6 +2100,7 @@ module.exports = {
   _private: {
     appendBounded,
     appendDurableWorkflowEvent,
+    appendMissingTerminalEvents,
     applyRemoteCancelToWorkflow,
     broadcastEvent,
     cancellableWorkflowRunnerIds,

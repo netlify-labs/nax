@@ -149,6 +149,11 @@ export function RecentRuns({
                     >
                       {statusLabel(run.status || 'unknown')}
                     </Badge>
+                    {run.stalled ? (
+                      <Tooltip label={run.lastEventAt ? `No events since ${new Date(run.lastEventAt).toLocaleTimeString()}` : 'No recent events'}>
+                        <Badge className="run-stalled" variant="outline" color="yellow" size="xs">Stalled</Badge>
+                      </Tooltip>
+                    ) : null}
                     <Text size="xs" c="dimmed" truncate>{runId(run)}</Text>
                   </Box>
                 </Box>

@@ -870,6 +870,11 @@ export function RunDetailsModal({
           />
         ) : (
         <Stack gap="md">
+          {detailRun?.stalled ? (
+            <Alert color="yellow" variant="light">
+              This run has produced no events since {detailRun.lastEventAt ? new Date(detailRun.lastEventAt).toLocaleString() : 'a while ago'}. It may be stuck — you can cancel it, or resume after cancelling.
+            </Alert>
+          ) : null}
           {selectionWarning ? <Alert color="yellow" variant="light">{selectionWarning}</Alert> : null}
           <Box className="run-details-layout">
             {timelineEntries.length > 0 ? (

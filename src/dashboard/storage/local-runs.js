@@ -199,7 +199,7 @@ function createLocalRunStore({
       if (!flow) return null
       return {
         run: {
-          ...publicRunState(durable),
+          ...publicRunWithLiveness(durable),
           options: publicRunOptions(durable),
         },
         workflow: publicFlow(flow),
@@ -217,7 +217,7 @@ function createLocalRunStore({
       }
       return {
         run: {
-          ...publicRunState(durable),
+          ...publicRunWithLiveness(durable),
           options: publicRunOptions(durable),
         },
         details: buildRunDetails(durable, { flow }),

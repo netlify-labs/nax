@@ -380,9 +380,11 @@ test('run details timeline shows all configured agents for running steps', async
 
     const runItem = page.locator('.run-item').filter({ hasText: runId })
     await expect(runItem).toBeVisible()
+    await expect(runItem.locator('.run-stalled')).toHaveText('Stalled')
     await runItem.getByRole('button', { name: 'View run details' }).click()
 
     await expect(page.getByRole('dialog', { name: /Workflow results for "Security Audit"/ })).toBeVisible()
+    await expect(page.getByText(/produced no events since/)).toBeVisible()
     const timeline = page.locator('.run-details-timeline')
     await expect(timeline.locator('.run-details-timeline-card').filter({ hasText: 'Audit Security' })).toContainText('In progress')
     await expect(timeline.locator('.run-details-timeline-child-button')).toHaveCount(4)

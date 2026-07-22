@@ -522,6 +522,15 @@ test('dashboard recent runs loads older durable pages', async ({ page }) => {
     await expect(page.getByText('paged-run-01', { exact: true })).toHaveCount(1)
     await expect(page.getByText('Showing 52 of 52 saved runs')).toBeVisible()
     await expect(page.getByRole('button', { name: 'Load older' })).toHaveCount(0)
+
+    await page.getByRole('textbox', { name: 'Search runs' }).fill('paged-run-07')
+    await expect(page.locator('.run-item')).toHaveCount(1)
+    await expect(page.getByText('Paged Run 7', { exact: true })).toBeVisible()
+
+    await page.getByRole('textbox', { name: 'Search runs' }).fill('')
+    await page.getByRole('combobox', { name: 'Filter runs by status' }).click()
+    await page.getByRole('option', { name: 'Failed' }).click()
+    await expect(page.getByText('No matching runs — clear the filter to see all.')).toBeVisible()
   } finally {
     await server.close()
   }

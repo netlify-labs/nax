@@ -1,5 +1,5 @@
 import type { CSSProperties } from 'react'
-import { isCompletedStatus, statusLabel as displayStatusLabel, statusTone } from './status-model'
+import { isCompletedStatus, statusKey, statusLabel as displayStatusLabel, statusTone } from './status-model'
 import type { DashboardRun } from './types'
 
 export function runId(run: Partial<DashboardRun>): string {
@@ -58,4 +58,22 @@ export function statusBadgeStyle(status: string): CSSProperties | undefined {
 
 export function workflowName(run: DashboardRun | undefined): string {
   return run ? run.flowTitle || run.flowId || runId(run) : ''
+}
+
+export type RunListFilter = {
+  text: string
+  status: string
+}
+
+export function filterRuns(runs: DashboardRun[], { text, status }: RunListFilter): DashboardRun[] {
+  const normalized = text.trim().toLowerCase()
+  return runs.filter((run) => {
+    if (status !== 'all' && statusKey(run.status || '') !== status) return false
+    if (!normalized) return true
+    return [run.flowTitle, run.flowId, runId(run), run.branch]
+      .filter(Boolean)
+      .join(' ')
+      .toLowerCase()
+      .includes(normalized)
+  })
 }

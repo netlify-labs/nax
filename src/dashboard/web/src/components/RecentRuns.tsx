@@ -1,8 +1,17 @@
-import { ActionIcon, Badge, Box, Button, Group, Paper, ScrollArea, Stack, Text, Title, Tooltip } from '@mantine/core'
-import { History, Info, RotateCcw } from 'lucide-react'
-import { runId, statusBadgeStyle, statusColor, statusLabel } from '../run-format'
+import { ActionIcon, Badge, Box, Button, Group, Paper, ScrollArea, Select, Stack, Text, TextInput, Title, Tooltip } from '@mantine/core'
+import { History, Info, RotateCcw, Search } from 'lucide-react'
+import { useMemo, useState } from 'react'
+import { filterRuns, runId, statusBadgeStyle, statusColor, statusLabel } from '../run-format'
 import { statusKey } from '../status-model'
 import type { DashboardRun } from '../types'
+
+const STATUS_FILTER_OPTIONS = [
+  { value: 'all', label: 'All statuses' },
+  { value: 'running', label: 'Running' },
+  { value: 'completed', label: 'Completed' },
+  { value: 'failed', label: 'Failed' },
+  { value: 'cancelled', label: 'Cancelled' },
+]
 
 type Props = {
   runs: DashboardRun[]
@@ -30,16 +39,46 @@ export function RecentRuns({
   onResume,
 }: Props) {
   const showCount = totalCount > 0
+  const [filterText, setFilterText] = useState('')
+  const [filterStatus, setFilterStatus] = useState('all')
+  const filterActive = filterText.trim() !== '' || filterStatus !== 'all'
+  const visibleRuns = useMemo(
+    () => filterRuns(runs, { text: filterText, status: filterStatus }),
+    [runs, filterText, filterStatus],
+  )
   return (
     <Box className="recent-runs" component="section" aria-label="Recent runs">
         <Group className="panel-header" justify="space-between" wrap="nowrap">
           <Title order={2} size="sm">Runs</Title>
-          <Badge variant="light" color="gray">{runs.length}</Badge>
+          <Badge variant="light" color="gray">{filterActive ? `${visibleRuns.length}/${runs.length}` : runs.length}</Badge>
+        </Group>
+        <Group gap="xs" px="sm" pb={4} wrap="nowrap">
+          <TextInput
+            value={filterText}
+            onChange={(event) => setFilterText(event.currentTarget.value)}
+            placeholder="Search runs"
+            aria-label="Search runs"
+            leftSection={<Search size={14} />}
+            size="xs"
+            style={{ flex: 1 }}
+          />
+          <Select
+            value={filterStatus}
+            onChange={(value) => setFilterStatus(value || 'all')}
+            data={STATUS_FILTER_OPTIONS}
+            aria-label="Filter runs by status"
+            size="xs"
+            w={124}
+          />
         </Group>
         <ScrollArea className="run-list-scroll">
           <Stack gap="xs" p="sm">
-            {runs.length === 0 ? <Text className="empty-state" size="sm" c="dimmed">No runs</Text> : null}
-            {runs.map((run) => (
+            {visibleRuns.length === 0 ? (
+              <Text className="empty-state" size="sm" c="dimmed">
+                {filterActive ? 'No matching runs — clear the filter to see all.' : 'No runs'}
+              </Text>
+            ) : null}
+            {visibleRuns.map((run) => (
               <Paper
                 key={runId(run)}
                 className={`run-item${selectedRunId === runId(run) ? ' selected' : ''}`}
@@ -118,6 +157,7 @@ export function RecentRuns({
             {showCount ? (
               <Text size="xs" c="dimmed" ta="center">
                 Showing {Math.min(shownCount, totalCount)} of {totalCount} saved runs
+                {filterActive && hasMore ? ' · searching loaded runs only' : ''}
               </Text>
             ) : null}
             {hasMore ? (

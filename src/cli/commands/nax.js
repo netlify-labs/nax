@@ -41,6 +41,7 @@ const TEAL_COLOR = '#0d9488'
  *   handoff: (runId: string, options: JsonMap) => CommandActionResult,
  *   init: (options: JsonMap) => CommandActionResult,
  *   issue: (prompt: string | undefined, options: JsonMap) => CommandActionResult,
+ *   costs: (options: JsonMap) => CommandActionResult,
  *   list: (options: JsonMap) => CommandActionResult,
  *   previewBoxes: (flow: string | undefined, options: JsonMap) => CommandActionResult,
  *   previewSpinner: (options: JsonMap) => CommandActionResult,
@@ -523,6 +524,14 @@ function buildNaxProgram({
     .option('--json', 'Print available workflows as JSON')
     .option('--verbose', 'Include step count, models, and workflow location')
     .action((options, command) => settleAction(handlers.list(actionOptions(options, command))))
+
+  program
+    .command('costs')
+    .description('Show credits usage for the latest workflow runs')
+    .option('--project-root <path>', 'Project root containing saved workflow runs')
+    .option('--limit <count>', 'Number of recent runs to include', '20')
+    .option('--json', 'Print the usage report as JSON')
+    .action((options, command) => settleAction(handlers.costs(actionOptions(options, command))))
 
   addAdvancedFlowsDirOption(program
     .command('dashboard [workflow]')

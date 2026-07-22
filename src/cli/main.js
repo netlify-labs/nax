@@ -79,6 +79,7 @@ const {
   workflowPickerHint,
   workflowPickerLabel,
 } = require('./display/flow-list')
+const { buildCostsReport, formatCostsTable } = require('./display/costs-report')
 const { terminalTrafficLights } = require('./display/terminal')
 const {
   buildHandoffPrompt,
@@ -553,6 +554,24 @@ async function handleList(options = {}) {
     return
   }
   console.log(formatFlowList(flows, { verbose: options.verbose, baseDir: invocationDir }))
+}
+
+/** @param {import('../types').JsonMap} [options] */
+async function handleCosts(options = {}) {
+  const projectRoot = resolveProjectRoot(options.projectRoot, { cwd: process.cwd() })
+  const limit = Number.parseInt(String(options.limit || ''), 10)
+  const report = buildCostsReport(listRunStates(projectRoot), {
+    limit: Number.isFinite(limit) && limit > 0 ? limit : 20,
+  })
+  if (options.json) {
+    console.log(JSON.stringify(report, null, 2))
+    return
+  }
+  if (report.runs.length === 0) {
+    console.log('No saved workflow runs found.')
+    return
+  }
+  for (const line of formatCostsTable(report)) console.log(line)
 }
 
 async function handleDashboard(flowId, options = {}) {
@@ -2544,6 +2563,7 @@ function buildProgram() {
       comment: issueHandlers.handleComment,
       handoff: handleHandoff,
       init: handleInit,
+      costs: handleCosts,
       issue: issueHandlers.handleIssue,
       list: handleList,
       previewBoxes: handlePreviewBoxes,

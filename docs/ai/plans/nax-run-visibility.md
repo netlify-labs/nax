@@ -198,13 +198,14 @@ Server:
 
 Dashboard:
 
-- Run card (`RecentRuns.tsx`): compact right-aligned text when totals exist —
-  `$0.84` if `costUsd`, else `12.3 cr` if credits (formatting helper shared
-  in `run-format.ts`; unit-testable).
+- Run card (`RecentRuns.tsx`): compact right-aligned credits text when totals
+  exist — `12.3 cr` (formatting helper shared in `run-format.ts`;
+  unit-testable). Credits lead per D3; no dollars on the card.
 - Run details modal: totals line in the summary entry's Metadata panel
-  ("Usage · 3 agents · 41.2k in / 8.9k out · $0.84") plus per-step usage in
-  the step card subtitle where present (`usageSummariesForRunState` shapes
-  already produce per-step summaries — reuse `formatUsageSummary`).
+  ("Usage · 3 agents · 41.2k in / 8.9k out · 12.3 credits", with cost USD
+  appended only there when present) plus per-step usage in the step card
+  subtitle where present (`usageSummariesForRunState` shapes already produce
+  per-step summaries — reuse `formatUsageSummary`).
 
 CLI:
 
@@ -313,25 +314,18 @@ CLI:
   count badge shows `filtered/loaded` and empty state says "No matching runs
   — clear filter", so hidden-not-gone stays evident.
 
-## 9. Decisions (PROPOSED — need David's call)
+## 9. Decisions (RESOLVED 2026-07-22)
 
-- **D1 — Taxonomy scope at launch**: Netlify agent-runner signatures only
-  **[recommended]** vs also gh/GitHub-transport signatures. We have no
-  captured gh failure worth mapping; speculative entries violate the
-  "every signature actually hit" rule.
+- **D1 — Taxonomy scope at launch**: Netlify agent-runner signatures only.
+  No speculative gh entries — every signature must be one we actually hit.
 - **D2 — Stalled representation**: presentation metadata
-  (`stalled`/`lastEventAt` fields) **[recommended]** vs new `stalled` status
-  key. A status key ripples through statusKey/labels/cancel/resume/duplicate
-  guards for zero added capability.
-- **D3 — Usage display unit**: prefer `costUsd` when present, else credits
-  **[recommended]** vs credits-only. Dollars are the demo-compelling number;
-  credits are the fallback truth.
-- **D4 — Filter mechanics**: client-side over loaded pages with honest
-  "loaded runs only" caption **[recommended]** vs server-side query params.
-  YAGNI until someone actually can't find a run this way.
-- **D5 — `nax costs` in launch scope**: include **[recommended]** vs
-  dashboard-only first. It's a thin reuse of existing aggregation and the
-  scriptable `--json` face of the feature.
+  (`stalled`/`lastEventAt` fields), not a status-model key.
+- **D3 — Usage display unit**: credits lead everywhere (run card, costs
+  table); `costUsd` appears only in the run details metadata panel when
+  present. No dollar amounts on glanceable surfaces.
+- **D4 — Filter mechanics**: client-side over loaded pages with the honest
+  "loaded runs only" caption.
+- **D5 — `nax costs`**: in scope, with `--json`.
 
 ## 10. Open questions
 

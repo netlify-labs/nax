@@ -60,6 +60,30 @@ export function workflowName(run: DashboardRun | undefined): string {
   return run ? run.flowTitle || run.flowId || runId(run) : ''
 }
 
+type UsageTotalsLike = {
+  totalTokens?: number
+  totalCreditsCost?: number
+  creditLimitExceeded?: boolean
+}
+
+export function usageBadgeText(totals: UsageTotalsLike | undefined): string {
+  const credits = totals?.totalCreditsCost
+  return typeof credits === 'number' && Number.isFinite(credits) ? `${credits} cr` : ''
+}
+
+export function usageSummaryLabel(totals: UsageTotalsLike | undefined): string {
+  if (!totals) return ''
+  const parts: string[] = []
+  if (typeof totals.totalCreditsCost === 'number' && Number.isFinite(totals.totalCreditsCost)) {
+    parts.push(`${totals.totalCreditsCost} credits`)
+  }
+  if (typeof totals.totalTokens === 'number' && Number.isFinite(totals.totalTokens)) {
+    parts.push(`${totals.totalTokens.toLocaleString('en-US')} tokens`)
+  }
+  if (totals.creditLimitExceeded) parts.push('credit limit exceeded')
+  return parts.join(' · ')
+}
+
 export type RunListFilter = {
   text: string
   status: string

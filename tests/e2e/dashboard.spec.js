@@ -160,7 +160,7 @@ function writeCompletedRunFixture(projectRoot, options = {}) {
       title: 'Review',
       status: 'completed',
       agents: ['codex'],
-      runs: [{ agent: 'codex', status: options.staleRunStatus || 'completed', runnerId: 'runner-1', sessionId: 'session-1' }],
+      runs: [{ agent: 'codex', status: options.staleRunStatus || 'completed', runnerId: 'runner-1', sessionId: 'session-1', usage: { totalCreditsCost: 7.5, totalTokens: 2150 } }],
     }],
   }, null, 2))
 
@@ -454,11 +454,13 @@ test('dashboard opens shared run details modal from runs and graph agent results
     const runItem = page.locator('.run-item').filter({ hasText: runId })
     await expect(runItem).toBeVisible()
     await expect(runItem.locator('.run-status')).toHaveText('Completed')
+    await expect(runItem.locator('.run-usage')).toHaveText('7.5 cr')
     await runItem.getByRole('button', { name: 'View run details' }).click()
 
     await expect(page.getByRole('dialog', { name: /Workflow results for "Review"/ })).toBeVisible()
     await expect(page.getByRole('heading', { name: 'Review summary' })).toBeVisible()
     await expect(page.getByText('Final workflow summary.')).toBeVisible()
+    await expect(page.getByText('7.5 credits · 2,150 tokens')).toBeVisible()
     await expect(page.locator('.run-details-timeline-card').filter({ hasText: '"Review" Workflow Completed' })).toBeVisible()
     await expect(page.locator('.run-details-timeline-card').filter({ hasText: '"Review" Workflow Running' })).toHaveCount(0)
     await page.keyboard.press('Escape')

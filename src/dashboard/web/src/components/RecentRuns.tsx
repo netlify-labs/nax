@@ -1,7 +1,7 @@
 import { ActionIcon, Badge, Box, Button, Group, Paper, ScrollArea, Select, Stack, Text, TextInput, Title, Tooltip } from '@mantine/core'
 import { History, Info, RotateCcw, Search } from 'lucide-react'
 import { useMemo, useState } from 'react'
-import { filterRuns, runId, statusBadgeStyle, statusColor, statusLabel } from '../run-format'
+import { filterRuns, runId, statusBadgeStyle, statusColor, statusLabel, usageBadgeText } from '../run-format'
 import { statusKey } from '../status-model'
 import type { DashboardRun } from '../types'
 
@@ -155,6 +155,9 @@ export function RecentRuns({
                       </Tooltip>
                     ) : null}
                     <Text size="xs" c="dimmed" truncate>{runId(run)}</Text>
+                    {usageBadgeText(run.usageTotals) ? (
+                      <Text className="run-usage" size="xs" c="dimmed" style={{ marginLeft: 'auto', whiteSpace: 'nowrap' }}>{usageBadgeText(run.usageTotals)}</Text>
+                    ) : null}
                   </Box>
                 </Box>
               </Paper>

@@ -4,7 +4,7 @@ import { Ban, Check, ChevronsDownUp, ChevronsUpDown, ChevronDown, ChevronRight, 
 import { openLocalFile } from '../api'
 import { useApproveHumanReviewGateMutation, useCancelFollowupRunMutation, useCancelHumanReviewGateMutation, useCancelWorkflowRunMutation, useRetryAgentRunMutation } from '../queries/dashboard-mutations'
 import { useRunDetailsQuery } from '../queries/dashboard-queries'
-import { agentLabel, isDoneStatus, recordList, recordValue, runId, statusBadgeStyle, statusColor, statusLabel, workflowName } from '../run-format'
+import { agentLabel, isDoneStatus, recordList, recordValue, runId, statusBadgeStyle, statusColor, statusLabel, usageSummaryLabel, workflowName } from '../run-format'
 import { extractMarkdownToc } from '../run-details-toc'
 import { selectRunDetailsSection, selectorKey, type RunDetailsSelector } from '../run-details-selection'
 import { displayAgentStatuses, displayStepStatus } from '../run-projection'
@@ -1524,6 +1524,7 @@ function RunDetailsMetadata({
       <Stack gap={10}>
         <MetadataRow label="Workflow" value={name} />
         <MetadataRow label="Status" value={statusLabel(workflowStatus || run?.status || liveContext?.status || 'unknown')} />
+        <MetadataRow label="Usage" value={usageSummaryLabel(run?.usageTotals)} />
         <MetadataRow label="Transport" value={run?.transport || ''} />
         <MetadataRow label="Branch" value={run?.branch || ''} />
         <MetadataRow label="Target" value={targetLabel(run?.target)} />

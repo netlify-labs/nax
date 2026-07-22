@@ -78,7 +78,22 @@ function wrapFailure(error, ctx = {}) {
   return wrapped
 }
 
+/**
+ * Formats a terminal failure detail for display: guidance first when the
+ * detail matches a known signature, the raw detail alone otherwise.
+ * @param {unknown} detail
+ * @param {FailureContext} [ctx]
+ * @returns {string}
+ */
+function describeRunFailure(detail, ctx = {}) {
+  const text = typeof detail === 'string' ? detail : ''
+  if (!text) return ''
+  const explained = explainFailure(text, ctx)
+  return explained ? `${explained.message} (${text})` : text
+}
+
 module.exports = {
+  describeRunFailure,
   explainFailure,
   wrapFailure,
 }

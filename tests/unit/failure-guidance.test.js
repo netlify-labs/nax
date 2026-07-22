@@ -62,3 +62,15 @@ test('wrapFailure returns unknown errors untouched', () => {
   const original = new Error('netlify agents:create failed: something exploded')
   assert.equal(wrapFailure(original, {}), original)
 })
+
+test('describeRunFailure prepends guidance when matched and passes detail through otherwise', () => {
+  const { describeRunFailure } = require('../../src/integrations/netlify/failure-guidance')
+  const explained = describeRunFailure('The Codex model is currently at capacity. Retrying automatically...', {})
+  assert.match(explained, /at capacity/)
+  assert.match(explained, /switch the step's agent/)
+
+  const passthrough = describeRunFailure('agent crashed with a novel error', {})
+  assert.equal(passthrough, 'agent crashed with a novel error')
+
+  assert.equal(describeRunFailure('', {}), '')
+})

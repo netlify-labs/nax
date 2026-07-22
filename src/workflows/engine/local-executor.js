@@ -4,6 +4,7 @@ const { formatAgentRunUrl, formatAgentRunUrlFromAdminUrl } = require('../results
 const { WAIT_FOR_AGENT_RESULTS, isHumanReviewStep, loadStepPrompt } = require('../catalog/flows')
 const { AWAITING_REVIEW, createHumanReviewStepState } = require('../human-review')
 const { readNetlifyProject } = require('../../integrations/netlify/init')
+const { describeRunFailure } = require('../../integrations/netlify/failure-guidance')
 const {
   archiveAgentRun,
   currentGitBranch,
@@ -589,12 +590,17 @@ async function completeLocalStep({ runState, stepState, step, options, projectRo
           emitRunArtifact(runtimeEvents, runState, stepState, classifiedRun, artifactResult)
           saveRunState(runState)
           reportTerminalLocalRun(reporter, classifiedRun, projectRoot)
+          const failureDetail = classifiedRun.status === 'failed' || classifiedRun.status === 'timeout'
+            ? conciseErrorMessage(classifiedRun.resultText || classifiedRun.raw?.submissionError || '')
+            : ''
+          const failureMessage = describeRunFailure(failureDetail)
           runtimeEvents?.agentStatus(classifiedRun.status || 'completed', classifiedRun, stepState, step, {
             terminal: true,
             usage: classifiedRun.usage || null,
             hasResult: Boolean(classifiedRun.resultText),
             contextFetchStatus: classifiedRun.contextFetchStatus || '',
-            error: classifiedRun.status === 'failed' || classifiedRun.status === 'timeout' ? conciseErrorMessage(classifiedRun.resultText || classifiedRun.raw?.submissionError || '') : '',
+            error: failureDetail,
+            ...(failureMessage ? { message: failureMessage } : {}),
           })
         },
         refreshRuns: () => {

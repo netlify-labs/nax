@@ -2,7 +2,7 @@ const { execFile, spawnSync } = require('child_process')
 const fs = require('fs')
 const path = require('path')
 const { readLinkedSiteId, readNetlifyCliToken } = require('./init')
-const { accessDeniedMessage } = require('./preflight')
+const { wrapFailure } = require('./failure-guidance')
 const { normalizeAgentRunResult } = require('../../workflows/results/agent-run-results')
 
 const TERMINAL_SUCCESS_STATES = new Set(['completed', 'done'])
@@ -577,20 +577,6 @@ function redactCommandDetail(command, args, detail) {
   return redacted
 }
 
-const ACCESS_ERROR_PATTERN = /\b401\b|\b403\b|\b404\b|unauthorized|not found|access denied/i
-
-/**
- * Access-flavored agents:create failures usually mean the CLI login cannot
- * see the site (wrong account); keep the original detail for debugging.
- * @param {unknown} error
- * @param {string} siteId
- */
-function wrapAccessError(error, siteId) {
-  const detail = error instanceof Error ? error.message : String(error || '')
-  if (!ACCESS_ERROR_PATTERN.test(detail)) return error
-  return new Error(`${accessDeniedMessage({ siteId })} (${detail})`)
-}
-
 function resultDetail(command, args, result) {
   const detail = (result.stderr || result.stdout || result.error?.message || '').toString().trim()
   const timedOut = result.error?.code === 'ETIMEDOUT' || (result.error?.killed && result.signal)
@@ -858,7 +844,7 @@ function createAgentRun({
   try {
     result = runCommand('netlify', args, { cwd: projectRoot, env, timeout: 120000 })
   } catch (error) {
-    throw wrapAccessError(error, siteId)
+    throw wrapFailure(error, { siteId })
   }
   const raw = parseJson(result.stdout, 'agents:create')
   const runnerId = raw.id || ''
@@ -912,7 +898,7 @@ async function createAgentRunAsync({
       sleepFn,
     })
   } catch (error) {
-    throw wrapAccessError(error, siteId)
+    throw wrapFailure(error, { siteId, attempts: retryAttempts })
   }
 }
 
@@ -970,28 +956,32 @@ async function createAgentSessionAsync({
     },
   })
   const args = ['api', 'createAgentRunnerSession', '--data', data]
-  return withSubmissionRetry(async () => {
-    const result = await runCommand('netlify', args, {
-      cwd: projectRoot,
-      env,
-      timeout: 120000,
+  try {
+    return await withSubmissionRetry(async () => {
+      const result = await runCommand('netlify', args, {
+        cwd: projectRoot,
+        env,
+        timeout: 120000,
+      })
+      const raw = parseJson(result.stdout, 'createAgentRunnerSession')
+      const state = raw.state || ''
+      if (!state) {
+        throw new Error(`Netlify follow-up session was submitted but no state was returned for ${agent}.`)
+      }
+      return {
+        runnerId,
+        state,
+        raw,
+      }
+    }, {
+      attempts: retryAttempts,
+      delayMs: retryDelayMs,
+      onRetry,
+      sleepFn,
     })
-    const raw = parseJson(result.stdout, 'createAgentRunnerSession')
-    const state = raw.state || ''
-    if (!state) {
-      throw new Error(`Netlify follow-up session was submitted but no state was returned for ${agent}.`)
-    }
-    return {
-      runnerId,
-      state,
-      raw,
-    }
-  }, {
-    attempts: retryAttempts,
-    delayMs: retryDelayMs,
-    onRetry,
-    sleepFn,
-  })
+  } catch (error) {
+    throw wrapFailure(error, { attempts: retryAttempts })
+  }
 }
 
 /** @param {SubmitLocalAgentRunOptions} param0 */

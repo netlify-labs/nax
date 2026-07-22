@@ -1421,3 +1421,25 @@ test('createAgentRun wraps access-denied CLI failures with wrong-account guidanc
     },
   )
 })
+
+test('createAgentRunAsync explains argv-limit failures that survive retries', async () => {
+  await assert.rejects(
+    () => createAgentRunAsync({
+      projectRoot: '/tmp/project',
+      promptText: 'huge prompt',
+      agent: 'codex',
+      siteId: 'site-1',
+      env: {},
+      retryAttempts: 1,
+      async runCommand() {
+        throw new Error('netlify agents:create --json failed: fork/exec /opt/build-bin/agent-runner: argument list too long')
+      },
+    }),
+    (error) => {
+      assert.match(error.message, /argument size limit/)
+      assert.match(error.message, /retrying will not help/i)
+      assert.match(error.message, /argument list too long/)
+      return true
+    },
+  )
+})

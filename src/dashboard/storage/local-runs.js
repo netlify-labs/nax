@@ -5,6 +5,7 @@ const { isActiveProjectedStatus, projectRunSnapshot, publicFlow, publicRunOption
 const { requestError } = require('../api/errors')
 const { isActiveFollowupStatus, syncSubmittedFollowupRunsToWorkflow } = require('../../workflows/followups/persistence')
 const { applyArtifactStatuses } = require('../shared/run-artifact-status')
+const { livenessFields, stalledThresholdMs } = require('../shared/run-liveness')
 
 const DEFAULT_RUNS_DURABLE_LIMIT = 50
 const MAX_RUNS_DURABLE_LIMIT = 200
@@ -108,6 +109,14 @@ function createLocalRunStore({
 }) {
   /** @type {Map<string, number>} */
   const refreshAttemptedAt = new Map()
+  const stalledAfterMs = stalledThresholdMs(env)
+
+  /** @param {Record<string, unknown> | null} runState */
+  function publicRunWithLiveness(runState) {
+    if (!runState) return null
+    const run = publicRunState(runState)
+    return { ...run, ...livenessFields(runState, String(run.status || ''), { thresholdMs: stalledAfterMs }) }
+  }
 
   function listStates() {
     return listRunStates(projectRoot)
@@ -161,7 +170,7 @@ function createLocalRunStore({
       const nextOffset = page.offset + page.limit
       const hasMore = nextOffset < page.total
       return {
-        runs: page.items.map((item) => publicRunState(applyArtifactStatuses(item))),
+        runs: page.items.map((item) => publicRunWithLiveness(applyArtifactStatuses(item))),
         pagination: {
           limit: page.limit,
           offset: page.offset,
@@ -174,7 +183,7 @@ function createLocalRunStore({
     getRunState,
     getRun(id) {
       const runState = refreshRunStateIfNeeded(getRunState(id), { view: 'detail' })
-      return runState ? publicRunState(runState) : null
+      return publicRunWithLiveness(runState)
     },
     refreshRunStateIfNeeded,
     async getRunGraph(id) {

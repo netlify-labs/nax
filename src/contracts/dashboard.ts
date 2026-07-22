@@ -98,6 +98,8 @@ export type DashboardRun = {
   stderr?: string
   eventCount?: number
   cancellable?: boolean
+  lastEventAt?: string
+  stalled?: boolean
   options?: Partial<DryRunOptions>
 }
 

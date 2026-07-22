@@ -347,3 +347,43 @@ test('local run store keeps genuinely active runs active when artifacts are not 
   assert.equal(listed?.status, 'running')
   assert.equal(listed?.steps?.[0]?.runs?.[0]?.status, 'running')
 })
+
+test('local run store flags quiet active runs as stalled', () => {
+  const projectRoot = tmpRoot()
+  writeProjectFlow(projectRoot)
+  const runId = 'run-quiet-active'
+  const dir = path.join(projectRoot, '.nax', 'workflows', runId)
+  fs.mkdirSync(path.join(dir, 'artifacts'), { recursive: true })
+  fs.writeFileSync(path.join(dir, 'workflow.json'), JSON.stringify({
+    schemaVersion: 1,
+    runId,
+    flowId: 'review',
+    flowTitle: 'Review',
+    status: 'running',
+    branch: 'main',
+    createdAt: '2026-06-22T00:00:00.000Z',
+    updatedAt: '2026-06-22T00:01:00.000Z',
+    dir,
+    flow: { id: 'review', title: 'Review', steps: [{ id: 'one', title: 'One', agents: ['codex'] }] },
+    steps: [{
+      id: 'one',
+      title: 'One',
+      status: 'running',
+      agents: ['codex'],
+      runs: [{ agent: 'codex', status: 'submitted', runnerId: 'runner-1' }],
+    }],
+  }, null, 2))
+  const logPath = path.join(dir, 'events.jsonl')
+  fs.writeFileSync(logPath, '{"type":"workflow_started","seq":1}\n')
+  const quietTime = new Date(Date.now() - 30 * 60 * 1000)
+  fs.utimesSync(logPath, quietTime, quietTime)
+
+  const store = createLocalRunStore({ projectRoot, env: { NAX_STALLED_AFTER_MINUTES: '10' } })
+  const listed = store.listRunsPage().runs.find((run) => run.runId === runId)
+  assert.equal(listed?.stalled, true)
+  assert.equal(typeof listed?.lastEventAt, 'string')
+  assert.equal(listed?.status, 'running')
+
+  const completed = store.listRunsPage().runs.find((run) => run.runId !== runId)
+  assert.equal(completed?.stalled, undefined)
+})

@@ -73,6 +73,13 @@ export type DryRunResponse = {
   dryRun: DryRunResult
 }
 
+export type UsageTotals = {
+  totalTokens?: number
+  totalCreditsCost?: number
+  stepsCount?: number
+  creditLimitExceeded?: boolean
+}
+
 export type DashboardRun = {
   id: string
   runId?: string
@@ -100,6 +107,7 @@ export type DashboardRun = {
   cancellable?: boolean
   lastEventAt?: string
   stalled?: boolean
+  usageTotals?: UsageTotals
   options?: Partial<DryRunOptions>
 }
 

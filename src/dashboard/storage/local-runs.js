@@ -6,6 +6,7 @@ const { requestError } = require('../api/errors')
 const { isActiveFollowupStatus, syncSubmittedFollowupRunsToWorkflow } = require('../../workflows/followups/persistence')
 const { applyArtifactStatuses } = require('../shared/run-artifact-status')
 const { livenessFields, stalledThresholdMs } = require('../shared/run-liveness')
+const { hasUsage, usageSummariesForRunState } = require('../../workflows/results/agent-run-results')
 
 const DEFAULT_RUNS_DURABLE_LIMIT = 50
 const MAX_RUNS_DURABLE_LIMIT = 200
@@ -115,7 +116,12 @@ function createLocalRunStore({
   function publicRunWithLiveness(runState) {
     if (!runState) return null
     const run = publicRunState(runState)
-    return { ...run, ...livenessFields(runState, String(run.status || ''), { thresholdMs: stalledAfterMs }) }
+    const usageTotals = usageSummariesForRunState(runState).total
+    return {
+      ...run,
+      ...livenessFields(runState, String(run.status || ''), { thresholdMs: stalledAfterMs }),
+      ...(hasUsage(usageTotals) ? { usageTotals } : {}),
+    }
   }
 
   function listStates() {

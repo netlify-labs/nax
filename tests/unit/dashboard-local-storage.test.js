@@ -387,3 +387,51 @@ test('local run store flags quiet active runs as stalled', () => {
   const completed = store.listRunsPage().runs.find((run) => run.runId !== runId)
   assert.equal(completed?.stalled, undefined)
 })
+
+test('local run store rolls up usage totals from step run records', () => {
+  const projectRoot = tmpRoot()
+  writeProjectFlow(projectRoot)
+  const runId = 'run-with-usage'
+  const dir = path.join(projectRoot, '.nax', 'workflows', runId)
+  fs.mkdirSync(path.join(dir, 'artifacts'), { recursive: true })
+  fs.writeFileSync(path.join(dir, 'workflow.json'), JSON.stringify({
+    schemaVersion: 1,
+    runId,
+    flowId: 'review',
+    flowTitle: 'Review',
+    status: 'completed',
+    branch: 'main',
+    createdAt: '2026-06-22T00:00:00.000Z',
+    updatedAt: '2026-06-22T00:01:00.000Z',
+    dir,
+    flow: { id: 'review', title: 'Review', steps: [{ id: 'one', title: 'One', agents: ['codex', 'gemini'] }] },
+    steps: [{
+      id: 'one',
+      title: 'One',
+      status: 'completed',
+      agents: ['codex', 'gemini'],
+      runs: [
+        { agent: 'codex', status: 'completed', usage: { totalCreditsCost: 4.5, totalTokens: 1200 } },
+        { agent: 'gemini', status: 'completed', usage: { totalCreditsCost: 3, totalTokens: 950 } },
+      ],
+    }],
+  }, null, 2))
+
+  const store = createLocalRunStore({ projectRoot })
+  const listed = store.listRunsPage().runs.find((run) => run.runId === runId)
+  assert.equal(listed?.usageTotals?.totalCreditsCost, 7.5)
+  assert.equal(listed?.usageTotals?.totalTokens, 2150)
+
+  const detail = store.getRun(runId)
+  assert.equal(detail?.usageTotals?.totalCreditsCost, 7.5)
+})
+
+test('local run store omits usage totals when no run reported usage', () => {
+  const projectRoot = tmpRoot()
+  writeProjectFlow(projectRoot)
+  writeRunState(projectRoot, 'run-no-usage')
+
+  const store = createLocalRunStore({ projectRoot })
+  const listed = store.listRunsPage().runs.find((run) => run.runId === 'run-no-usage')
+  assert.equal(listed?.usageTotals, undefined)
+})

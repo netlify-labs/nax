@@ -115,7 +115,11 @@ const {
 } = require('../integrations/skills')
 const { NETLIFY_API_TRANSPORT, detectTransports, formatTransportSetupHelp, isNetlifyApiTransport, resolveTransport } = require('../integrations/transports')
 const { readNetlifyProject } = require('../integrations/netlify/init')
-const { checkNetlifyAccess, enforceRunPreflight } = require('../integrations/netlify/preflight')
+const { enforceRunPreflight } = require('../integrations/netlify/preflight')
+const {
+  formatDashboardNetlifyContext,
+  resolveDashboardNetlifyContext,
+} = require('../integrations/netlify/dashboard-context')
 const { runWorkflow } = require('../workflows/engine/runner')
 const { DEFAULT_OUTPUT_BUDGET_BYTES, completedStepMapFromRunState } = require('../workflows/engine/execution-context')
 const { createWorkflowEventContext } = require('../workflows/events/workflow-events')
@@ -583,7 +587,29 @@ async function handleDashboard(flowId, options = {}) {
     await loadFlow(flowId, flowLoadOptions(options, projectRoot))
   }
 
-  const netlifyAccess = await checkNetlifyAccess({ projectRoot, timeoutMs: 3000 })
+  const netlifyContext = await resolveDashboardNetlifyContext({
+    projectRoot,
+    invocationDir,
+    timeoutMs: 3000,
+  })
+  const netlifyAccess = netlifyContext.targetAccess || {
+    ok: false,
+    code: 'no_site',
+    message: netlifyContext.targetError || 'No Agent Runner site could be resolved.',
+    account: netlifyContext.account,
+    site: null,
+  }
+  const {
+    targetAccess: _targetAccess,
+    ...publicNetlifyContext
+  } = netlifyContext
+  const defaultRunOptions = netlifyContext.target
+    ? {
+        siteId: netlifyContext.target.siteId,
+        netlifySiteId: netlifyContext.target.siteId,
+        ...(netlifyContext.target.filter ? { filter: netlifyContext.target.filter } : {}),
+      }
+    : {}
 
   const startServer = loadDashboardServer()
   const instance = await startServer({
@@ -597,11 +623,13 @@ async function handleDashboard(flowId, options = {}) {
     dev: options.dev === true,
     tail: options.tail === true,
     netlifyAccess,
+    netlifyContext: publicNetlifyContext,
+    defaultRunOptions,
   })
 
   console.log(`Nax dashboard: ${instance.url}`)
   console.log(`Project root:  ${instance.projectRoot}`)
-  console.log(`Netlify auth:  ${netlifyAccess.ok ? netlifyAccess.message : `⚠️  ${netlifyAccess.message}`}`)
+  for (const line of formatDashboardNetlifyContext(netlifyContext)) console.log(line)
   if (options.tail === true) console.log('Tail output:   on')
 
   if (options.open !== false) {
@@ -2318,10 +2346,6 @@ async function handleRunEngine(flowId, options) {
     }
   }
 
-  if (isNetlifyApiTransport(transport) && !flowOptions.dryRun) {
-    await enforceRunPreflight({ projectRoot })
-  }
-
   const target = resolveTarget({ options: flowOptions, projectRoot, transport })
   const branchOptions = {
     ...flowOptions,
@@ -2333,6 +2357,12 @@ async function handleRunEngine(flowId, options) {
   const netlifyOptions = isNetlifyApiTransport(transport) && !branchOptions.dryRun
     ? await chooseNetlifyFilterOption({ projectRoot, invocationDir, options: branchOptions })
     : branchOptions
+  if (isNetlifyApiTransport(transport) && !netlifyOptions.dryRun) {
+    await enforceRunPreflight({
+      projectRoot,
+      siteId: netlifyOptions.netlifySiteId || netlifyOptions.siteId,
+    })
+  }
 
   const prepared = await prepareInteractiveFlowRun({ flow, options: netlifyOptions, transport, projectRoot })
   const configuredFlow = prepared.flow

@@ -20,6 +20,7 @@ const {
   inferNetlifyFilterFromCommand,
   latestSessionFromList,
   listNetlifyFilterCandidates,
+  listLinkedNetlifySites,
   listAgentSessions,
   normalizeCompletedRun,
   readNetlifyState,
@@ -281,6 +282,38 @@ test('listNetlifyFilterCandidates includes exact local Netlify site state for co
     siteId: 'site-from-app',
     stateSource: path.join('projects', 'data', 'snowflake_dbt', '.netlify', 'state.json'),
   }])
+})
+
+test('listLinkedNetlifySites includes root and nested links without requiring netlify.toml', () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'nax-local-runner-linked-sites-'))
+  const nestedDir = path.join(tmp, 'clients', 'frontend')
+  const unconfiguredDir = path.join(tmp, 'tools', 'preview')
+  fs.mkdirSync(path.join(tmp, '.netlify'), { recursive: true })
+  fs.mkdirSync(path.join(nestedDir, '.netlify'), { recursive: true })
+  fs.mkdirSync(path.join(unconfiguredDir, '.netlify'), { recursive: true })
+  fs.mkdirSync(path.join(tmp, 'node_modules', 'ignored', '.netlify'), { recursive: true })
+  fs.writeFileSync(path.join(tmp, '.netlify', 'state.json'), JSON.stringify({ siteId: 'root-site' }))
+  fs.writeFileSync(path.join(nestedDir, '.netlify', 'state.json'), JSON.stringify({ siteId: 'frontend-site' }))
+  fs.writeFileSync(path.join(unconfiguredDir, '.netlify', 'state.json'), JSON.stringify({ siteId: 'preview-site' }))
+  fs.writeFileSync(path.join(tmp, 'node_modules', 'ignored', '.netlify', 'state.json'), JSON.stringify({ siteId: 'ignored-site' }))
+
+  assert.deepEqual(listLinkedNetlifySites(tmp).map(({ siteId, source, dir }) => ({ siteId, source, dir })), [
+    {
+      siteId: 'root-site',
+      source: path.join('.netlify', 'state.json'),
+      dir: '.',
+    },
+    {
+      siteId: 'frontend-site',
+      source: path.join('clients', 'frontend', '.netlify', 'state.json'),
+      dir: path.join('clients', 'frontend'),
+    },
+    {
+      siteId: 'preview-site',
+      source: path.join('tools', 'preview', '.netlify', 'state.json'),
+      dir: path.join('tools', 'preview'),
+    },
+  ])
 })
 
 test('resolveNetlifyProjectTarget uses nested config site state with inferred filter', () => {

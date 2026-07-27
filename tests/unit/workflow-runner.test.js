@@ -22,6 +22,8 @@ test('workflowCommand renders the direct runner command shape', () => {
     dryRun: true,
     options: {
       transport: 'netlify-api',
+      netlifySiteId: 'runner-site',
+      filter: 'frontend-app',
       branch: 'main',
       models: ['codex'],
       stepModels: {
@@ -41,6 +43,10 @@ test('workflowCommand renders the direct runner command shape', () => {
     '--transport',
     'netlify-api',
     '--dry',
+    '--site-id',
+    'runner-site',
+    '--filter',
+    'frontend-app',
     '--branch',
     'main',
     '--models',

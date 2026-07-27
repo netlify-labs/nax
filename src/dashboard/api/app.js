@@ -13,6 +13,7 @@ const { localDashboardCapabilities } = require('./capabilities')
  *   capabilities?: Record<string, boolean | string>,
  *   healthCapabilities?: Record<string, boolean | string>,
  *   netlifyAccess?: Record<string, unknown>,
+ *   netlifyContext?: Record<string, unknown>,
  * }} DashboardApiRuntime
  *
  * @typedef {{
@@ -299,6 +300,7 @@ function createDashboardApi({
     if (timingSafeTokenEqual(provided, token)) {
       if (runtime.projectRoot) health.projectRoot = runtime.projectRoot
       if (runtime.netlifyAccess) health.netlifyAccess = runtime.netlifyAccess
+      if (runtime.netlifyContext) health.netlifyContext = runtime.netlifyContext
     }
     return json(c, health, 200, headers)
   })

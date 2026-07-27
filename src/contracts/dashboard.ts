@@ -27,6 +27,28 @@ export type NetlifyAccessVerdict = {
   site: { id: string, name: string, accountSlug: string } | null
 }
 
+export type DashboardLinkedNetlifySite = {
+  siteId: string
+  name: string
+  adminUrl: string
+  source: string
+  configSource: string
+  filter: string
+  accessible: boolean
+  accessCode: string
+}
+
+export type DashboardNetlifyTarget = DashboardLinkedNetlifySite & {
+  reason: string
+}
+
+export type DashboardNetlifyContext = {
+  account: { email: string } | null
+  linkedSites: DashboardLinkedNetlifySite[]
+  target: DashboardNetlifyTarget | null
+  targetError: string
+}
+
 export type HealthResponse = {
   ok: boolean
   projectRoot?: string
@@ -34,6 +56,7 @@ export type HealthResponse = {
   tokenRequiredForSensitiveReads: boolean
   capabilities?: DashboardCapabilities
   netlifyAccess?: NetlifyAccessVerdict
+  netlifyContext?: DashboardNetlifyContext
 }
 
 export type Target = {
@@ -53,6 +76,9 @@ export type DryRunOptions = {
   context: string
   step: string
   fromStep: string
+  siteId?: string
+  netlifySiteId?: string
+  filter?: string
   target?: Target | null
 }
 

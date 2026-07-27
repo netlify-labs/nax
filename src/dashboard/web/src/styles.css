@@ -132,6 +132,15 @@ body {
   color: var(--mantine-color-text);
 }
 
+.header-netlify-target {
+  max-width: min(28vw, 280px);
+}
+
+.header-netlify-target .mantine-Button-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 .run-controls {
   display: grid;
   grid-template-columns: minmax(230px, 0.8fr) minmax(260px, 1fr) auto;
@@ -1648,6 +1657,21 @@ body {
 
   .header-repo {
     display: none;
+  }
+
+  .header-netlify-target {
+    width: 32px;
+    min-width: 32px;
+    max-width: 32px;
+    padding-inline: 0;
+  }
+
+  .header-netlify-target .mantine-Button-label {
+    display: none;
+  }
+
+  .header-netlify-target .mantine-Button-section {
+    margin-inline: 0;
   }
 
   .header-branch {

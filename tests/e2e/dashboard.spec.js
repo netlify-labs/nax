@@ -12,6 +12,43 @@ test.beforeAll(async () => {
   instance = await startDashboardServer({
     projectRoot: process.cwd(),
     initialWorkflow: 'review',
+    netlifyContext: {
+      account: { email: 'david@example.com' },
+      linkedSites: [
+        {
+          siteId: 'notify-site',
+          name: 're-notify-demo',
+          adminUrl: 'https://app.netlify.com/projects/re-notify-demo/agent-runs',
+          source: '.netlify/state.json',
+          configSource: '',
+          filter: '',
+          accessible: true,
+          accessCode: 'ok',
+        },
+        {
+          siteId: 'runner-site',
+          name: 'revenue-engine-dev',
+          adminUrl: 'https://app.netlify.com/projects/revenue-engine-dev/agent-runs',
+          source: 'clients/frontend/.netlify/state.json',
+          configSource: 'clients/frontend/netlify.toml',
+          filter: 'revenue-engine-frontend',
+          accessible: true,
+          accessCode: 'ok',
+        },
+      ],
+      target: {
+        siteId: 'runner-site',
+        name: 'revenue-engine-dev',
+        adminUrl: 'https://app.netlify.com/projects/revenue-engine-dev/agent-runs',
+        source: 'clients/frontend/.netlify/state.json',
+        configSource: 'clients/frontend/netlify.toml',
+        filter: 'revenue-engine-frontend',
+        reason: 'Auto-selected clients/frontend/netlify.toml because it is the only detected config with a monorepo filter.',
+        accessible: true,
+        accessCode: 'ok',
+      },
+      targetError: '',
+    },
   })
 })
 
@@ -298,6 +335,17 @@ test('dashboard renders Review graph on desktop', async ({ page }, testInfo) => 
     body: await page.screenshot({ fullPage: true }),
     contentType: 'image/png',
   })
+})
+
+test('dashboard identifies the Agent Runner target and lists every local site link', async ({ page }) => {
+  await openReview(page, { width: 1360, height: 860 })
+  const targetButton = page.getByRole('button', { name: 'Agent Runner site: revenue-engine-dev' })
+  await expect(targetButton).toBeVisible()
+  await targetButton.click()
+  await expect(page.getByText('Locally linked sites (2)')).toBeVisible()
+  await expect(page.getByText('re-notify-demo')).toBeVisible()
+  await expect(page.getByText('clients/frontend/.netlify/state.json')).toBeVisible()
+  await expect(page.getByText(/only detected config with a monorepo filter/)).toBeVisible()
 })
 
 test('dashboard renders Review graph on narrow viewport', async ({ page }, testInfo) => {

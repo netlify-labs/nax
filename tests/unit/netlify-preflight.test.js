@@ -57,6 +57,26 @@ test('preflight returns ok with account and site details when token can access t
   assert.equal(fetchStub.calls[0].options.headers.authorization, 'Bearer tok-1')
 })
 
+test('preflight checks an explicit run target instead of the root-linked site', async () => {
+  const projectRoot = linkedProjectRoot('root-site')
+  const fetchStub = stubFetch([
+    { match: '/user', status: 200, body: { email: 'david@example.com' } },
+    { match: '/sites/runner-site', status: 200, body: { name: 'runner-site-name', account_slug: 'good-team' } },
+  ])
+  const verdict = await checkNetlifyAccess({
+    projectRoot,
+    siteId: 'runner-site',
+    env: { NETLIFY_AUTH_TOKEN: 'tok-1' },
+    home: tmpRoot('nax-preflight-home-'),
+    fetch: fetchStub,
+  })
+
+  assert.equal(verdict.ok, true)
+  assert.equal(verdict.site.id, 'runner-site')
+  assert.equal(verdict.site.name, 'runner-site-name')
+  assert.equal(fetchStub.calls.some((call) => call.url.includes('/sites/root-site')), false)
+})
+
 test('preflight reports no_token without any network calls', async () => {
   const projectRoot = linkedProjectRoot()
   const fetchStub = stubFetch([])

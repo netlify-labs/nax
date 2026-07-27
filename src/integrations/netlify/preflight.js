@@ -20,11 +20,12 @@ function accessDeniedMessage({ email, siteId } = {}) {
 }
 
 /**
- * @param {{ projectRoot?: string, env?: NodeJS.ProcessEnv, home?: string, fetch?: typeof fetch, baseUrl?: string, timeoutMs?: number }} [options]
+ * @param {{ projectRoot?: string, siteId?: string, env?: NodeJS.ProcessEnv, home?: string, fetch?: typeof fetch, baseUrl?: string, timeoutMs?: number }} [options]
  * @returns {Promise<NetlifyAccessVerdict>}
  */
 async function checkNetlifyAccess({
   projectRoot = process.cwd(),
+  siteId: requestedSiteId = '',
   env = process.env,
   home,
   fetch: fetchImpl = globalThis.fetch,
@@ -35,7 +36,7 @@ async function checkNetlifyAccess({
   if (!token) {
     return verdict('no_token', 'No Netlify auth token found. Run `netlify login` or set NETLIFY_AUTH_TOKEN.')
   }
-  const siteId = readLinkedSiteId(projectRoot, env)
+  const siteId = String(requestedSiteId || readLinkedSiteId(projectRoot, env)).trim()
   if (!siteId) {
     return verdict('no_site', 'No linked Netlify site found. Run `nax init` or set NETLIFY_SITE_ID.')
   }
@@ -100,7 +101,7 @@ function verdict(code, message) {
 /**
  * Blocks a run when the token verifiably cannot access the linked site;
  * ambiguous verdicts (offline, missing config) only warn so runs can proceed.
- * @param {{ projectRoot?: string, env?: NodeJS.ProcessEnv, home?: string, fetch?: typeof fetch, warn?: (message: string) => void }} [options]
+ * @param {{ projectRoot?: string, siteId?: string, env?: NodeJS.ProcessEnv, home?: string, fetch?: typeof fetch, warn?: (message: string) => void }} [options]
  * @returns {Promise<NetlifyAccessVerdict>}
  */
 async function enforceRunPreflight({ warn = console.warn, ...options } = {}) {

@@ -604,7 +604,7 @@ function normalizeDryRunOptions(raw = {}, flow = {}) {
   }
   out.transport = transport
 
-  for (const key of ['branch', 'context', 'step', 'fromStep']) {
+  for (const key of ['branch', 'context', 'step', 'fromStep', 'filter']) {
     if (raw[key] === undefined || raw[key] === null) continue
     out[key] = String(raw[key])
   }
@@ -921,6 +921,10 @@ function createRequestHandler(options = {}) {
   const token = options.token || crypto.randomBytes(24).toString('hex')
   const initialWorkflow = options.initialWorkflow || ''
   const netlifyAccess = options.netlifyAccess || null
+  const netlifyContext = options.netlifyContext || null
+  const defaultRunOptions = options.defaultRunOptions && typeof options.defaultRunOptions === 'object'
+    ? options.defaultRunOptions
+    : {}
   const env = options.env || process.env
   const followupSiteId = resolveFollowupSiteId({ projectRoot, siteId: options.siteId, env })
   const followupSiteName = options.siteName || env.NETLIFY_SITE_NAME || ''
@@ -978,6 +982,7 @@ function createRequestHandler(options = {}) {
       capabilities,
       healthCapabilities,
       netlifyAccess,
+      netlifyContext,
     },
     token,
     workflowStore,
@@ -1009,7 +1014,7 @@ function createRequestHandler(options = {}) {
       dryRunWorkflow: async (id, body) => {
         const flowId = safeDecode(id)
         const flow = await loadFlow(flowId, flowOptions)
-        const options = normalizeDryRunOptions(body, flow)
+        const options = normalizeDryRunOptions({ ...defaultRunOptions, ...body }, flow)
         const result = await dryRunWorkflow({ flowId, projectRoot, options, tailOutput })
         return {
           statusCode: result.exitCode === 0 ? 200 : 500,
@@ -1022,7 +1027,7 @@ function createRequestHandler(options = {}) {
       startWorkflow: async (id, body) => {
         const flowId = safeDecode(id)
         const flow = await loadFlow(flowId, flowOptions)
-        const runOptions = normalizeDryRunOptions(body, flow)
+        const runOptions = normalizeDryRunOptions({ ...defaultRunOptions, ...body }, flow)
         const run = startRun({ flowId, runOptions })
         await run.startedPromise
         return {
@@ -1588,7 +1593,7 @@ function createRequestHandler(options = {}) {
             canStreamRunEvents: true,
             requiresAuth: true,
           }
-          /** @type {{ ok: boolean, tokenRequiredForMutations: boolean, tokenRequiredForSensitiveReads: boolean, capabilities: typeof capabilities, projectRoot?: string, netlifyAccess?: Record<string, unknown> }} */
+          /** @type {{ ok: boolean, tokenRequiredForMutations: boolean, tokenRequiredForSensitiveReads: boolean, capabilities: typeof capabilities, projectRoot?: string, netlifyAccess?: Record<string, unknown>, netlifyContext?: Record<string, unknown> }} */
           const health = {
             ok: true,
             tokenRequiredForMutations: true,
@@ -1598,6 +1603,7 @@ function createRequestHandler(options = {}) {
           if (timingSafeTokenEqual(tokenFromRequest(req, requestUrl), token)) {
             health.projectRoot = projectRoot
             if (netlifyAccess) health.netlifyAccess = netlifyAccess
+            if (netlifyContext) health.netlifyContext = netlifyContext
           }
           jsonResponse(res, 200, health, sessionBootstrapHeadersForRequest(req, requestUrl, token))
           return
@@ -1946,7 +1952,7 @@ function createRequestHandler(options = {}) {
           const id = safeDecode(dryRunMatch[1])
           const flow = await loadFlow(id, flowOptions)
           const body = await readJsonBody(req)
-          const options = normalizeDryRunOptions(body, flow)
+          const options = normalizeDryRunOptions({ ...defaultRunOptions, ...body }, flow)
           const result = await dryRunWorkflow({ flowId: id, projectRoot, options, tailOutput })
           jsonResponse(res, result.exitCode === 0 ? 200 : 500, {
             workflow: publicFlow(flow),
@@ -1965,7 +1971,7 @@ function createRequestHandler(options = {}) {
           const id = safeDecode(startRunMatch[1])
           const flow = await loadFlow(id, flowOptions)
           const body = await readJsonBody(req)
-          const runOptions = normalizeDryRunOptions(body, flow)
+          const runOptions = normalizeDryRunOptions({ ...defaultRunOptions, ...body }, flow)
           const run = startRun({ flowId: id, runOptions })
           jsonResponse(res, 202, {
             workflow: publicFlow(flow),

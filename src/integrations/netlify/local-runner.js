@@ -42,6 +42,13 @@ const NETLIFY_CONFIG_SCAN_SKIP_DIRS = new Set([
  *   buildCommand: string,
  * }} NetlifyTargetCandidate
  *
+ * @typedef {{
+ *   siteId: string,
+ *   statePath: string,
+ *   source: string,
+ *   dir: string,
+ * }} LinkedNetlifySite
+ *
  * Raw Netlify Agent Runner API payload fields used by polling and normalization.
  * @typedef {Record<string, unknown> & {
  *   id?: string,
@@ -375,6 +382,62 @@ function findNetlifyConfigPaths(projectRoot, { maxDepth = 6 } = {}) {
   }
   visit(root, 0)
   return filterOutGitignored(configs, root)
+}
+
+/** @param {string} projectRoot @param {{ maxDepth?: number }} param1 */
+function findNetlifyStatePaths(projectRoot, { maxDepth = 6 } = {}) {
+  const root = path.resolve(projectRoot || process.cwd())
+  const states = []
+  const visit = (dir, depth) => {
+    if (depth > maxDepth) return
+    let entries = []
+    try {
+      entries = fs.readdirSync(dir, { withFileTypes: true })
+    } catch {
+      return
+    }
+    entries.sort((a, b) => a.name.localeCompare(b.name))
+    for (const entry of entries) {
+      if (!entry.isDirectory()) continue
+      const fullPath = path.join(dir, entry.name)
+      if (entry.name === '.netlify') {
+        const statePath = path.join(fullPath, 'state.json')
+        if (fs.existsSync(statePath)) states.push(statePath)
+        continue
+      }
+      if (NETLIFY_CONFIG_SCAN_SKIP_DIRS.has(entry.name) || entry.name.startsWith('.')) continue
+      visit(fullPath, depth + 1)
+    }
+  }
+  visit(root, 0)
+  return states
+}
+
+/**
+ * Lists every locally linked Netlify site in a repository, including a root
+ * link and links owned by nested monorepo apps.
+ * @param {string} projectRoot
+ * @param {{ maxDepth?: number }} [options]
+ * @returns {LinkedNetlifySite[]}
+ */
+function listLinkedNetlifySites(projectRoot, options = {}) {
+  const root = path.resolve(projectRoot || process.cwd())
+  return findNetlifyStatePaths(root, options).flatMap((statePath) => {
+    let siteId = ''
+    try {
+      siteId = String(JSON.parse(fs.readFileSync(statePath, 'utf8')).siteId || '').trim()
+    } catch {
+      siteId = ''
+    }
+    if (!siteId) return []
+    const configDir = path.dirname(path.dirname(statePath))
+    return [{
+      siteId,
+      statePath,
+      source: path.relative(root, statePath) || path.join('.netlify', 'state.json'),
+      dir: path.relative(root, configDir) || '.',
+    }]
+  })
 }
 
 function listNetlifyFilterCandidates(projectRoot) {
@@ -1496,8 +1559,10 @@ module.exports = {
   detectJavascriptWorkspace,
   formatCommandForError,
   findNetlifyConfigPaths,
+  findNetlifyStatePaths,
   inferNetlifyFilterFromCommand,
   listNetlifyFilterCandidates,
+  listLinkedNetlifySites,
   latestSessionFromList,
   latestSessionFromRunner,
   listAgentSessions,

@@ -610,9 +610,17 @@ test('dashboard real-run endpoint starts a tracked process and replays events', 
   const durableRunId = '2026-06-25T20-12-41-929Z-review'
   /** @type {Array<() => void>} */
   const cancelCallbacks = []
+  /** @type {Record<string, unknown>} */
+  let launchedOptions = {}
   const server = await startDashboardServer({
     projectRoot,
-    runWorkflowChild: ({ flowId, eventSink }) => {
+    defaultRunOptions: {
+      siteId: 'runner-site',
+      netlifySiteId: 'runner-site',
+      filter: 'frontend-app',
+    },
+    runWorkflowChild: ({ flowId, eventSink, options }) => {
+      launchedOptions = options
       /** @type {(result: Record<string, unknown>) => void} */
       let resolveRun = () => {}
       const promise = new Promise((resolve) => {
@@ -677,6 +685,9 @@ test('dashboard real-run endpoint starts a tracked process and replays events', 
     assert.doesNotMatch(started.payload.run.id, /^pending-/)
     assert.equal(started.payload.run.command[0], 'nax')
     assert.notEqual(started.payload.run.command[0], process.execPath)
+    assert.equal(launchedOptions.siteId, 'runner-site')
+    assert.equal(launchedOptions.netlifySiteId, 'runner-site')
+    assert.equal(launchedOptions.filter, 'frontend-app')
 
     await sleep(500)
     const detail = await requestJson(`${base}/api/runs/${encodeURIComponent(started.payload.run.id)}`, { token: server.token })
@@ -1538,16 +1549,33 @@ test('dashboard health includes the netlify access verdict only for authenticate
     account: { email: 'david@example.com' },
     site: null,
   }
-  const server = await startDashboardServer({ projectRoot: process.cwd(), netlifyAccess })
+  const netlifyContext = {
+    account: { email: 'david@example.com' },
+    linkedSites: [{
+      siteId: 'site-1',
+      name: 'demo-site',
+      adminUrl: 'https://app.netlify.com/projects/demo-site/agent-runs',
+      source: '.netlify/state.json',
+      configSource: '',
+      filter: '',
+      accessible: false,
+      accessCode: 'no_access',
+    }],
+    target: null,
+    targetError: 'No target',
+  }
+  const server = await startDashboardServer({ projectRoot: process.cwd(), netlifyAccess, netlifyContext })
   try {
     const base = `http://127.0.0.1:${server.port}`
     const anonymous = await requestJson(`${base}/api/health`)
     assert.equal(anonymous.statusCode, 200)
     assert.equal(Object.hasOwn(anonymous.payload, 'netlifyAccess'), false)
+    assert.equal(Object.hasOwn(anonymous.payload, 'netlifyContext'), false)
 
     const authenticated = await requestJson(`${base}/api/health`, { token: server.token })
     assert.equal(authenticated.statusCode, 200)
     assert.deepEqual(authenticated.payload.netlifyAccess, netlifyAccess)
+    assert.deepEqual(authenticated.payload.netlifyContext, netlifyContext)
   } finally {
     await server.close()
   }

@@ -53,6 +53,12 @@ nax dashboard --no-open --tail
 | Recent runs | Reads `.nax/workflows` and highlights resumable or completed runs. |
 | Run details | Shows results, prompt source, artifacts, copy/open actions, and follow-up controls. |
 
+## Verify the Agent Runner site
+
+When the dashboard starts, the terminal lists every `.netlify/state.json` link found in the repository and marks the site selected for Agent Runner execution. The dashboard header repeats that target in the **Agent runs** menu, where you can inspect every local link and open the corresponding Netlify Agent Runs page.
+
+In a monorepo, the repository-root link is not automatically the run target. If exactly one discovered `netlify.toml` contains a package-manager `--filter`, `nax` selects that app and its adjacent `.netlify/state.json`. The startup output and dashboard menu include this selection reason, and the run confirmation names the exact Netlify site before remote work begins.
+
 ## Develop the dashboard UI
 
 ```sh

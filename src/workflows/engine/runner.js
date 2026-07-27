@@ -21,6 +21,9 @@ function normalizeModels(models) {
  *   fromStep?: string,
  *   models?: string | string[],
  *   stepModels?: unknown,
+ *   siteId?: string,
+ *   netlifySiteId?: string,
+ *   filter?: string,
  *   dryRun?: boolean,
  * }} WorkflowCommandOptions
  */
@@ -42,6 +45,9 @@ function workflowCommand(input) {
     options.transport || 'auto',
   ]
   if (dryRun) args.push('--dry')
+  const siteId = options.netlifySiteId || options.siteId
+  if (siteId) args.push('--site-id', siteId)
+  if (options.filter) args.push('--filter', options.filter)
   if (options.branch) args.push('--branch', options.branch)
   if (options.context) args.push('--context', options.context)
   if (options.notifyUrl) args.push('--notify-url', options.notifyUrl)

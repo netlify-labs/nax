@@ -28,6 +28,7 @@ import { ReactFlowProvider } from '@xyflow/react'
 import { runEventsStream, type RunEventStream } from './api'
 import { WorkflowOutputTabs } from './components/DryRunPanel'
 import { Inspector } from './components/Inspector'
+import { NetlifyTargetMenu } from './components/NetlifyTargetMenu'
 import { RecentRuns } from './components/RecentRuns'
 import { RunDetailsModal, type RunDetailsLiveContext, type TimelineEntry } from './components/RunDetailsModal'
 import { WorkflowCanvas } from './components/WorkflowCanvas'
@@ -272,6 +273,7 @@ export default function App() {
   const projectRoot = healthQuery.data?.projectRoot || ''
   const capabilities = healthQuery.data?.capabilities || defaultDashboardCapabilities
   const netlifyAccess = healthQuery.data?.netlifyAccess
+  const netlifyContext = healthQuery.data?.netlifyContext
   const runsList = runsQuery.data || { runs: [], hasMore: false, shownCount: 0, totalCount: 0 }
   const runs = runsList.runs
   const visibleRunActive = runs.some((run) => isActiveStatus(run.status || ''))
@@ -647,11 +649,16 @@ export default function App() {
     }
     const stepOverrideCount = Object.keys(optionsOverride.stepModels).length
     const models = stepOverrideCount > 0 ? `${stepOverrideCount} step override${stepOverrideCount === 1 ? '' : 's'}` : 'all configured agents'
+    const netlifyTarget = optionsOverride.transport === 'netlify-api' ? netlifyContext?.target : null
     const allowed = confirmed || window.confirm([
       `Start "${workflow.title}"?`,
       '',
       `Branch: ${optionsOverride.branch || 'default'}`,
       `Transport: ${optionsOverride.transport}`,
+      ...(netlifyTarget ? [
+        `Agent Runner site: ${netlifyTarget.name}`,
+        `Selected because: ${netlifyTarget.reason}`,
+      ] : []),
       `Models: ${models}`,
       '',
       'This can create remote work and spend Netlify agent credits.',
@@ -1078,6 +1085,7 @@ export default function App() {
                   <Text size="sm" fw={700} truncate>{repoName}</Text>
                 </Group>
               </Tooltip>
+              <NetlifyTargetMenu context={netlifyContext} />
               <TextInput
                 aria-label="Branch"
                 className="header-branch"

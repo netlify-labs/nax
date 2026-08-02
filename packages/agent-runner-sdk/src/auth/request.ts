@@ -1,5 +1,6 @@
 import {
   BasicAgentRunnerSdkError,
+  HttpResponseError,
   NetlifyNetworkError,
 } from '../errors.js'
 import {
@@ -125,7 +126,8 @@ function statusErrorCode(status: number) {
   if (status === 401) return 'auth-invalid' as const
   if (status === 403) return 'auth-permission' as const
   if (status === 400 || status === 422) return 'validation-error' as const
-  if (status === 429) return 'capacity-exhausted' as const
+  if (status === 404) return 'not-found' as const
+  if (status === 429) return 'rate-limited' as const
   return 'http-error' as const
 }
 
@@ -360,9 +362,10 @@ export function createAuthenticatedNetlifyClient({
   ): Promise<unknown> {
     const response = await requestResponse(method, path, options)
     if (response.ok) return response.payload
-    throw new BasicAgentRunnerSdkError(
+    throw new HttpResponseError(
       statusErrorCode(response.status),
-      `Netlify API request failed with status ${response.status}.`,
+      response.status,
+      response.pathname,
     )
   }
 

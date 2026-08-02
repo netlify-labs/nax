@@ -31,6 +31,14 @@ export type AgentRunnerSdkErrorCode =
   | 'invalid-handle'
   | 'unsupported-handle-version'
 
+export type HttpResponseErrorCode =
+  | 'auth-invalid'
+  | 'auth-permission'
+  | 'not-found'
+  | 'rate-limited'
+  | 'http-error'
+  | 'validation-error'
+
 type PayloadErrorCode =
   | 'invalid-api-shape'
   | 'create-ambiguous'
@@ -62,14 +70,6 @@ export class BasicAgentRunnerSdkError<
     super(code, message, options)
   }
 }
-
-export type HttpResponseErrorCode =
-  | 'auth-invalid'
-  | 'auth-permission'
-  | 'not-found'
-  | 'rate-limited'
-  | 'http-error'
-  | 'validation-error'
 
 export class HttpResponseError<
   C extends HttpResponseErrorCode = HttpResponseErrorCode,
@@ -215,9 +215,13 @@ type BasicErrorUnion = {
   [C in BasicAgentRunnerSdkErrorCode]: AgentRunnerSdkError<C>
 }[BasicAgentRunnerSdkErrorCode]
 
+type HttpErrorUnion = {
+  [C in HttpResponseErrorCode]: HttpResponseError<C>
+}[HttpResponseErrorCode]
+
 export type AnyAgentRunnerSdkError =
   | BasicErrorUnion
-  | HttpResponseError
+  | HttpErrorUnion
   | InvalidApiShapeError
   | CreateAmbiguousError
   | SessionCreateAmbiguousError

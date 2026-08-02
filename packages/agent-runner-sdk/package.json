@@ -42,9 +42,10 @@
     "test": "node --import tsx --test test/*.test.ts",
     "example:check": "tsc -p examples/tsconfig.json --noEmit",
     "pack:smoke": "node scripts/pack-smoke.mjs",
+    "published:smoke": "node scripts/published-smoke.mjs",
     "ci": "npm run typecheck && npm run test && npm run build && npm run example:check && npm run pack:smoke",
     "version": "node scripts/sync-version.mjs",
-    "release:next": "npm run ci && npm publish --tag next",
+    "release:next": "npm run ci && npm publish --tag next && npm run published:smoke",
     "release:patch": "npm version patch --tag-version-prefix=agent-runner-sdk-v && npm publish",
     "release:minor": "npm version minor --tag-version-prefix=agent-runner-sdk-v && npm publish",
     "release:major": "npm version major --tag-version-prefix=agent-runner-sdk-v && npm publish"

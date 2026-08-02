@@ -1,19 +1,15 @@
 import assert from 'node:assert/strict'
 import { execFileSync } from 'node:child_process'
-import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, mkdirSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
+import { smokePackageSpec } from './consumer-smoke.mjs'
+
 const packageRoot = resolve(fileURLToPath(new URL('..', import.meta.url)))
 const scratchRoot = mkdtempSync(join(tmpdir(), 'agent-runner-sdk-pack-'))
 const packRoot = join(scratchRoot, 'pack')
-const tsc = join(
-  packageRoot,
-  'node_modules',
-  '.bin',
-  process.platform === 'win32' ? 'tsc.cmd' : 'tsc',
-)
 mkdirSync(packRoot)
 
 try {
@@ -43,43 +39,10 @@ try {
   }
   const tarball = join(packRoot, packed.filename)
 
-  for (const moduleType of ['module', 'commonjs']) {
-    const consumerRoot = join(scratchRoot, moduleType)
-    mkdirSync(consumerRoot)
-    writeFileSync(
-      join(consumerRoot, 'package.json'),
-      `${JSON.stringify({ private: true, type: moduleType }, null, 2)}\n`,
-    )
-    execFileSync(
-      'npm',
-      ['install', '--ignore-scripts', '--no-audit', '--no-fund', tarball],
-      { cwd: consumerRoot, stdio: 'pipe' },
-    )
-    const source = moduleType === 'module'
-      ? "import { AGENT_RUNNER_SDK_HANDLE_VERSION } from 'agent-runner-sdk'\nif (AGENT_RUNNER_SDK_HANDLE_VERSION !== 1) process.exit(1)\n"
-      : "const { AGENT_RUNNER_SDK_HANDLE_VERSION } = require('agent-runner-sdk')\nif (AGENT_RUNNER_SDK_HANDLE_VERSION !== 1) process.exit(1)\n"
-    const entrypoint = join(consumerRoot, 'smoke.js')
-    writeFileSync(entrypoint, source)
-    execFileSync(process.execPath, [entrypoint], { cwd: consumerRoot, stdio: 'pipe' })
-
-    if (moduleType === 'module') {
-      const installedExamples = join(
-        consumerRoot,
-        'node_modules',
-        'agent-runner-sdk',
-        'examples',
-        'tsconfig.json',
-      )
-      execFileSync(tsc, ['-p', installedExamples], {
-        cwd: consumerRoot,
-        stdio: 'pipe',
-      })
-    }
-  }
-
   const manifest = JSON.parse(readFileSync(join(packageRoot, 'package.json'), 'utf8'))
   assert.equal(manifest.name, 'agent-runner-sdk')
   assert.equal(manifest.engines.node, '>=18')
+  smokePackageSpec(tarball, { expectedVersion: manifest.version })
 } finally {
   rmSync(scratchRoot, { recursive: true, force: true })
 }

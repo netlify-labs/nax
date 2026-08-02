@@ -447,10 +447,11 @@ For an authorized prerelease:
 npm run ci
 npm version 0.1.0 --allow-same-version \
   --tag-version-prefix=agent-runner-sdk-v
-npm publish --tag next
+npm run release:next
 ```
 
-Use the intended package version in place of `0.1.0`. Verify the published
-artifact from a clean directory with both `import` and `require`; the package's
-`npm run pack:smoke` performs the equivalent check against the exact local
-tarball before publication.
+Use the intended package version in place of `0.1.0`. `release:next` publishes
+with the `next` distribution tag, then installs that registry artifact in clean
+ESM and CommonJS projects and compiles its shipped examples. `npm run
+pack:smoke` performs the equivalent check against the exact local tarball
+before publication.

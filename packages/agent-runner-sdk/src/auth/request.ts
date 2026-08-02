@@ -166,8 +166,9 @@ function safeNetworkError(
   })
 }
 
-function safeHeaders(headers: Headers): SafeResponseHeaders {
+function safeHeaders(headers: Headers | undefined): SafeResponseHeaders {
   const values: SafeResponseHeaders = {}
+  if (!headers || typeof headers.get !== 'function') return values
   const contentType = headers.get('content-type')
   const link = headers.get('link')
   const retryAfter = headers.get('retry-after')

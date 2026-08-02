@@ -20,9 +20,14 @@
   "sideEffects": false,
   "exports": {
     ".": {
-      "types": "./dist/index.d.ts",
-      "import": "./dist/index.js",
-      "require": "./dist/index.cjs"
+      "import": {
+        "types": "./dist/index.d.ts",
+        "default": "./dist/index.js"
+      },
+      "require": {
+        "types": "./dist/index.d.cts",
+        "default": "./dist/index.cjs"
+      }
     }
   },
   "main": "./dist/index.cjs",
@@ -31,12 +36,13 @@
   "scripts": {
     "build": "npm run build:js && npm run build:types",
     "build:js": "tsup src/index.ts --format esm,cjs --clean --sourcemap --target node18",
-    "build:types": "tsc -p tsconfig.build.json",
+    "build:types": "tsc -p tsconfig.build.json && tsup src/index.cts --dts-only --format cjs --out-dir dist --tsconfig tsconfig.dts.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "node --import tsx --test test/*.test.ts",
     "example:check": "tsc -p examples/tsconfig.json --noEmit",
     "pack:smoke": "node scripts/pack-smoke.mjs",
     "ci": "npm run typecheck && npm run test && npm run build && npm run example:check && npm run pack:smoke",
+    "version": "node scripts/sync-version.mjs",
     "release:patch": "npm version patch --tag-version-prefix=agent-runner-sdk-v && npm publish",
     "release:minor": "npm version minor --tag-version-prefix=agent-runner-sdk-v && npm publish",
     "release:major": "npm version major --tag-version-prefix=agent-runner-sdk-v && npm publish"

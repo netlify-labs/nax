@@ -2,7 +2,10 @@
 
 ## Purpose
 
-The hosted dashboard runtime cannot shell out to the Netlify CLI. `src/netlify/api-client.js` centralizes the direct API contract needed by hosted Agent Runner transports while endpoint details are still provisional.
+The hosted dashboard runtime cannot shell out to the Netlify CLI.
+`src/integrations/netlify/api-client.js` preserves nax's compatibility surface,
+while authentication and authenticated request mechanics live in
+`packages/agent-runner-sdk/src/auth/`.
 
 ## Dashboard Runtime Usage
 
@@ -23,7 +26,35 @@ These paths are deliberately isolated in the client so the hosted dashboard tran
 
 ## Auth And Targets
 
-Token precedence is explicit option `token`, then `env.NETLIFY_AUTH_TOKEN`. Site ID precedence is explicit option `siteId`, then `env.NETLIFY_SITE_ID`. Missing auth maps to `runner_auth_failed`; missing site/runner IDs map to `runner_validation_failed`.
+Token precedence is per-request `token`, SDK-constructor `token`,
+`env.NETLIFY_AUTH_TOKEN`, then Netlify CLI config discovery.
+`NETLIFY_AGENT_RUNNER_TOKEN` is not an alias. Site ID precedence remains
+explicit option `siteId`, then `env.NETLIFY_SITE_ID`. Missing auth maps to
+`runner_auth_failed`; missing site/runner IDs map to
+`runner_validation_failed`.
+
+Every direct request carries `agent-runner-sdk/<version>` as its user agent.
+CLI token discovery is owned by the SDK and re-exported through
+`src/integrations/netlify/auth.js`; the permanent `init.js` compatibility
+export remains available.
+
+## Response modes and telemetry
+
+`requestResponse()` is the non-throwing authenticated primitive. It returns
+normalized status, text/payload, method, pathname, and attempt metadata for
+both successful and non-2xx responses. `request()` wraps it and preserves
+nax's legacy thrown error codes, payload, and value-free `requestMeta`.
+
+SDK `onTelemetry` events are constructed from an allowlist: operation,
+method, pathname, status, attempt/retry state, safe duration, and network
+error name. Query strings, headers, tokens, prompts, request/response bodies,
+status text, raw error messages, causes, and stacks are forbidden. Observer
+exceptions are swallowed. The nax adapter also exposes the older
+`onRequestFailure` event names for compatibility.
+
+Authenticated destinations remain constrained to the configured Netlify API
+base; absolute-looking input is treated as a relative path and never receives
+credentials at another origin.
 
 The required token scope is still an open Netlify product/API question. Hosted transport work should verify the minimum scope for creating, reading, cancelling, and archiving Agent Runners.
 

@@ -7,6 +7,7 @@ const os = require('os')
 const path = require('path')
 
 const { checkNetlifyAccess, accessDeniedMessage } = require('../../src/integrations/netlify/preflight')
+const { DEFAULT_USER_AGENT } = require('../../src/integrations/netlify/api-client')
 
 function tmpRoot(prefix) {
   return fs.mkdtempSync(path.join(os.tmpdir(), prefix))
@@ -19,6 +20,17 @@ function linkedProjectRoot(siteId = 'site-123') {
   return root
 }
 
+/**
+ * @typedef {{
+ *   match: string,
+ *   status?: number,
+ *   body?: unknown,
+ *   text?: string,
+ *   error?: Error,
+ * }} StubResponse
+ */
+
+/** @param {StubResponse[]} responses */
 function stubFetch(responses) {
   const calls = []
   const fetchStub = async (url, options = {}) => {
@@ -26,14 +38,18 @@ function stubFetch(responses) {
     const match = responses.find((entry) => String(url).includes(entry.match))
     if (!match) throw new Error(`Unexpected fetch: ${url}`)
     if (match.error) throw match.error
+    const status = match.status ?? 200
     return {
-      ok: match.status >= 200 && match.status < 300,
-      status: match.status,
-      text: async () => JSON.stringify(match.body || {}),
+      ok: status >= 200 && status < 300,
+      status,
+      statusText: '',
+      text: async () => match.text === undefined
+        ? JSON.stringify(match.body ?? {})
+        : match.text,
     }
   }
   fetchStub.calls = calls
-  return /** @type {typeof fetch & { calls: Array<{ url: string, options: Record<string, any> }> }} */ (/** @type {unknown} */ (fetchStub))
+  return /** @type {typeof fetch & { calls: Array<{ url: string, options: RequestInit }> }} */ (/** @type {unknown} */ (fetchStub))
 }
 
 test('preflight returns ok with account and site details when token can access the site', async () => {
@@ -54,7 +70,100 @@ test('preflight returns ok with account and site details when token can access t
   assert.equal(verdict.account.email, 'david@example.com')
   assert.deepEqual(verdict.site, { id: 'site-123', name: 'demo-site', accountSlug: 'good-team' })
   assert.equal(fetchStub.calls.length, 2)
-  assert.equal(fetchStub.calls[0].options.headers.authorization, 'Bearer tok-1')
+  const headers = /** @type {Record<string, string>} */ (fetchStub.calls[0].options.headers)
+  assert.equal(headers.authorization, 'Bearer tok-1')
+  assert.equal(headers['user-agent'], DEFAULT_USER_AGENT)
+})
+
+test('preflight continues from a non-401 user failure to the site lookup', async () => {
+  const projectRoot = linkedProjectRoot('site-continue')
+  const fetchStub = stubFetch([
+    { match: '/user', status: 500, body: { error: 'temporary' } },
+    {
+      match: '/sites/site-continue',
+      status: 200,
+      body: { name: 'continued', account_slug: 'team' },
+    },
+  ])
+  const verdict = await checkNetlifyAccess({
+    projectRoot,
+    env: { NETLIFY_AUTH_TOKEN: 'tok-1' },
+    home: tmpRoot('nax-preflight-home-'),
+    fetch: fetchStub,
+  })
+
+  assert.equal(verdict.ok, true)
+  assert.equal(verdict.account, null)
+  assert.equal(verdict.site.name, 'continued')
+  assert.equal(fetchStub.calls.length, 2)
+})
+
+test('preflight guards empty, null, and non-JSON successful payloads', async () => {
+  for (const text of ['', 'null', 'plain text']) {
+    const projectRoot = linkedProjectRoot(`site-${text.length}`)
+    const fetchStub = stubFetch([
+      { match: '/user', status: 200, text },
+      { match: '/sites/', status: 200, text },
+    ])
+    const verdict = await checkNetlifyAccess({
+      projectRoot,
+      env: { NETLIFY_AUTH_TOKEN: 'tok-1' },
+      home: tmpRoot('nax-preflight-home-'),
+      fetch: fetchStub,
+    })
+
+    assert.equal(verdict.ok, true)
+    assert.equal(verdict.account, null)
+    assert.equal(verdict.site.name, '')
+    assert.equal(fetchStub.calls.length, 2)
+  }
+})
+
+test('preflight maps other site HTTP failures without retrying', async () => {
+  const projectRoot = linkedProjectRoot('site-error')
+  const fetchStub = stubFetch([
+    { match: '/user', status: 200, body: { email: 'david@example.com' } },
+    { match: '/sites/site-error', status: 500, body: { error: 'down' } },
+  ])
+  const verdict = await checkNetlifyAccess({
+    projectRoot,
+    env: { NETLIFY_AUTH_TOKEN: 'tok-1' },
+    home: tmpRoot('nax-preflight-home-'),
+    fetch: fetchStub,
+  })
+
+  assert.equal(verdict.code, 'network_error')
+  assert.match(verdict.message, /returned 500/)
+  assert.equal(fetchStub.calls.length, 2)
+})
+
+test('preflight telemetry is value-free and observer-safe', async () => {
+  const projectRoot = linkedProjectRoot('site-telemetry')
+  const fetchStub = stubFetch([
+    {
+      match: '/user',
+      status: 401,
+      body: { error: 'response-secret' },
+    },
+  ])
+  const events = []
+  const verdict = await checkNetlifyAccess({
+    projectRoot,
+    env: { NETLIFY_AUTH_TOKEN: 'token-secret' },
+    home: tmpRoot('nax-preflight-home-'),
+    fetch: fetchStub,
+    onRequestFailure: (event) => {
+      events.push(event)
+      throw new Error('observer-secret')
+    },
+  })
+
+  assert.equal(verdict.code, 'bad_token')
+  assert.equal(events.length, 1)
+  assert.doesNotMatch(
+    JSON.stringify(events),
+    /token-secret|response-secret|observer-secret/,
+  )
 })
 
 test('preflight checks an explicit run target instead of the root-linked site', async () => {

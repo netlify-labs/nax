@@ -18,6 +18,10 @@ try {
   )
   const [packed] = JSON.parse(packJson)
   assert.equal(typeof packed?.filename, 'string')
+  assert.equal(
+    packed.files.some((file) => file.path === 'dist/index.d.cts'),
+    true,
+  )
   const tarball = join(packRoot, packed.filename)
 
   for (const moduleType of ['module', 'commonjs']) {

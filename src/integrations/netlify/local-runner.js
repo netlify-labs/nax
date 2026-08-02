@@ -1,7 +1,8 @@
 const { execFile, spawnSync } = require('child_process')
 const fs = require('fs')
 const path = require('path')
-const { readLinkedSiteId, readNetlifyCliToken } = require('./init')
+const { readLinkedSiteId } = require('./init')
+const { readNetlifyCliToken } = require('./auth')
 const { wrapFailure } = require('./failure-guidance')
 const { normalizeAgentRunResult } = require('../../workflows/results/agent-run-results')
 

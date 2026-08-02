@@ -17,7 +17,6 @@ const {
   listGitHubSecretNames,
   naxStatePath,
   readLinkedSiteId,
-  readNetlifyCliToken,
   setGitHubSecret,
   siteIdFromStatus,
 } = require('../../src/integrations/netlify/init')
@@ -53,42 +52,6 @@ test('readLinkedSiteId reads .netlify/state.json and env wins', () => {
 
   assert.equal(readLinkedSiteId(tmp, {}), 'site-from-file')
   assert.equal(readLinkedSiteId(tmp, { NETLIFY_SITE_ID: 'site-from-env' }), 'site-from-env')
-})
-
-test('readNetlifyCliToken reads env before config', () => {
-  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'nax-init-home-'))
-  const configDir = path.join(home, 'Library', 'Preferences', 'netlify')
-  fs.mkdirSync(configDir, { recursive: true })
-  fs.writeFileSync(path.join(configDir, 'config.json'), JSON.stringify({
-    userId: 'u1',
-    users: {
-      u1: { auth: { token: 'token-from-config' } },
-    },
-  }))
-
-  assert.deepEqual(readNetlifyCliToken({ env: { NETLIFY_AUTH_TOKEN: 'token-from-env' }, home }), {
-    token: 'token-from-env',
-    source: 'NETLIFY_AUTH_TOKEN',
-  })
-  assert.equal(readNetlifyCliToken({ env: {}, home }).token, 'token-from-config')
-})
-
-test('readNetlifyCliToken reads Linux XDG config path', () => {
-  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'nax-init-home-'))
-  const xdg = fs.mkdtempSync(path.join(os.tmpdir(), 'nax-init-xdg-'))
-  const configDir = path.join(xdg, 'netlify')
-  fs.mkdirSync(configDir, { recursive: true })
-  fs.writeFileSync(path.join(configDir, 'config.json'), JSON.stringify({
-    userId: 'u1',
-    users: {
-      u1: { auth: { token: 'token-from-xdg' } },
-    },
-  }))
-
-  assert.deepEqual(readNetlifyCliToken({ env: { XDG_CONFIG_HOME: xdg }, home }), {
-    token: 'token-from-xdg',
-    source: path.join(configDir, 'config.json'),
-  })
 })
 
 test('ensureWorkflow creates workflow from bundled template and preserves existing nax workflow', () => {

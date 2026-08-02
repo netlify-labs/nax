@@ -1,4 +1,15 @@
 export {
+  AGENT_RUNNER_SDK_VERSION,
+  DEFAULT_NETLIFY_API_URL,
+  DEFAULT_USER_AGENT,
+  createAuthenticatedNetlifyClient,
+  netlifyCliConfigCandidates,
+  preflightNetlifyAccess,
+  readNetlifyCliToken,
+  redactSensitiveText,
+  resolveNetlifyToken,
+} from './auth/index.js'
+export {
   AgentRunnerSdkError,
   BasicAgentRunnerSdkError,
   CreateAmbiguousError,
@@ -14,6 +25,18 @@ export {
   serializeHandle,
 } from './handles.js'
 
+export type {
+  AuthTelemetryEvent,
+  AuthenticatedNetlifyClient,
+  AuthenticatedNetlifyClientOptions,
+  AuthenticatedRequestOptions,
+  AuthenticatedResponse,
+  NetlifyCliConfigOptions,
+  NetlifyPreflightOptions,
+  NetlifyPreflightResult,
+  NetlifyTokenResult,
+  ResolveNetlifyTokenOptions,
+} from './auth/index.js'
 export type {
   BlobRef,
   BlobStore,

@@ -1,7 +1,12 @@
 // Checks that the resolved Netlify auth token can access the linked site.
 // Returns verdict objects; never throws, so callers decide to warn or block.
-const { readLinkedSiteId, readNetlifyCliToken } = require('./init')
-const { DEFAULT_BASE_URL, redactToken } = require('./api-client')
+const { readLinkedSiteId } = require('./init')
+const { readNetlifyCliToken } = require('./auth')
+const {
+  DEFAULT_BASE_URL,
+  createNetlifyApiClient,
+  redactToken,
+} = require('./api-client')
 
 /**
  * @typedef {{
@@ -20,7 +25,27 @@ function accessDeniedMessage({ email, siteId } = {}) {
 }
 
 /**
- * @param {{ projectRoot?: string, siteId?: string, env?: NodeJS.ProcessEnv, home?: string, fetch?: typeof fetch, baseUrl?: string, timeoutMs?: number }} [options]
+ * @param {{
+ *   projectRoot?: string,
+ *   siteId?: string,
+ *   env?: NodeJS.ProcessEnv,
+ *   home?: string,
+ *   fetch?: typeof fetch,
+ *   baseUrl?: string,
+ *   timeoutMs?: number,
+ *   userAgent?: string,
+ *   onTelemetry?: (event: import('agent-runner-sdk').AuthTelemetryEvent) => void,
+ *   onRequestFailure?: (event: {
+ *     kind: 'http_failure'|'network_error',
+ *     method: string,
+ *     apiPath: string,
+ *     status?: number,
+ *     attempt: number,
+ *     maxAttempts: number,
+ *     retrying: boolean,
+ *     errorName?: string,
+ *   }) => void,
+ * }} [options]
  * @returns {Promise<NetlifyAccessVerdict>}
  */
 async function checkNetlifyAccess({
@@ -31,8 +56,14 @@ async function checkNetlifyAccess({
   fetch: fetchImpl = globalThis.fetch,
   baseUrl = DEFAULT_BASE_URL,
   timeoutMs = 5000,
+  userAgent,
+  onTelemetry,
+  onRequestFailure,
 } = {}) {
-  const { token } = readNetlifyCliToken({ env, ...(home ? { home } : {}) })
+  const { token } = readNetlifyCliToken({
+    env,
+    ...(home === undefined ? {} : { home }),
+  })
   if (!token) {
     return verdict('no_token', 'No Netlify auth token found. Run `netlify login` or set NETLIFY_AUTH_TOKEN.')
   }
@@ -41,52 +72,62 @@ async function checkNetlifyAccess({
     return verdict('no_site', 'No linked Netlify site found. Run `nax init` or set NETLIFY_SITE_ID.')
   }
 
-  /** @param {string} path */
-  async function get(path) {
-    const response = await fetchImpl(`${baseUrl}${path}`, {
-      headers: { authorization: `Bearer ${token}`, accept: 'application/json' },
-      signal: AbortSignal.timeout(timeoutMs),
-    })
-    const text = await response.text()
-    let body = {}
-    try {
-      body = JSON.parse(text)
-    } catch {
-      body = {}
-    }
-    return { status: response.status, ok: response.ok, body }
-  }
+  const client = createNetlifyApiClient({
+    fetch: fetchImpl,
+    token,
+    env,
+    baseUrl,
+    timeoutMs,
+    retryAttempts: 1,
+    ...(home === undefined ? {} : { home }),
+    ...(userAgent === undefined ? {} : { userAgent }),
+    onTelemetry,
+    onRequestFailure,
+  })
 
   try {
-    const user = await get('/user')
+    const user = await client.requestResponse('GET', '/user', {
+      operation: 'preflight-user',
+    })
     if (user.status === 401) {
       return verdict('bad_token', 'Netlify auth token is invalid or expired. Run `netlify login`.')
     }
-    const email = user.ok ? String(user.body.email || '') : ''
+    const userBody = objectValue(user.payload)
+    const email = user.ok ? String(userBody.email || '') : ''
     const account = email ? { email } : null
 
-    const site = await get(`/sites/${encodeURIComponent(siteId)}`)
+    const site = await client.requestResponse('GET', `/sites/${encodeURIComponent(siteId)}`, {
+      operation: 'preflight-site',
+    })
     if (site.status === 404 || site.status === 403) {
       return { ...verdict('no_access', accessDeniedMessage({ email, siteId })), account }
     }
     if (!site.ok) {
       return { ...verdict('network_error', `Could not verify access to site ${siteId} (Netlify API returned ${site.status}).`), account }
     }
+    const siteBody = objectValue(site.payload)
     return {
       ok: true,
       code: 'ok',
-      message: email ? `Logged in as ${email} with access to site ${String(site.body.name || siteId)}.` : `Netlify token has access to site ${String(site.body.name || siteId)}.`,
+      message: email ? `Logged in as ${email} with access to site ${String(siteBody.name || siteId)}.` : `Netlify token has access to site ${String(siteBody.name || siteId)}.`,
       account,
       site: {
         id: siteId,
-        name: String(site.body.name || ''),
-        accountSlug: String(site.body.account_slug || ''),
+        name: String(siteBody.name || ''),
+        accountSlug: String(siteBody.account_slug || ''),
       },
     }
   } catch (error) {
     const detail = redactToken(token, error?.message || String(error))
     return verdict('network_error', `Could not reach the Netlify API to verify access (${detail}). Continuing without verification.`)
   }
+}
+
+/** @param {unknown} value @returns {Record<string, unknown>} */
+function objectValue(value) {
+  return value && typeof value === 'object' && !Array.isArray(value)
+    ? /** @type {Record<string, unknown>} */ (value)
+    : {}
 }
 
 /**
@@ -101,7 +142,7 @@ function verdict(code, message) {
 /**
  * Blocks a run when the token verifiably cannot access the linked site;
  * ambiguous verdicts (offline, missing config) only warn so runs can proceed.
- * @param {{ projectRoot?: string, siteId?: string, env?: NodeJS.ProcessEnv, home?: string, fetch?: typeof fetch, warn?: (message: string) => void }} [options]
+ * @param {Parameters<typeof checkNetlifyAccess>[0] & { warn?: (message: string) => void }} [options]
  * @returns {Promise<NetlifyAccessVerdict>}
  */
 async function enforceRunPreflight({ warn = console.warn, ...options } = {}) {

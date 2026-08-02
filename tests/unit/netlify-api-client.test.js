@@ -1,7 +1,10 @@
 const assert = require('assert/strict')
 const test = require('node:test')
+const os = require('os')
+const path = require('path')
 
 const {
+  DEFAULT_USER_AGENT,
   createNetlifyApiClient,
   errorCodeForStatus,
   normalizeAgentRunner,
@@ -14,8 +17,12 @@ function fakeFetch(responses) {
   const fetchImpl = async (url, options = {}) => {
     calls.push({ url: String(url), options })
     const next = responses.shift() || { status: 200, body: {} }
-    const status = next.status || 200
-    const body = typeof next.body === 'string' ? next.body : JSON.stringify(next.body || {})
+    const status = next.status ?? 200
+    const body = status === 204
+      ? null
+      : (typeof next.body === 'string'
+          ? next.body
+          : JSON.stringify(next.body ?? {}))
     return new Response(body, { status })
   }
   return {
@@ -42,6 +49,7 @@ test('Netlify API client constructs authenticated create runner requests', async
   assert.equal(fake.calls[0].url, 'https://api.example.test/api/v1/sites/site-1/agent-runners')
   assert.equal(fake.calls[0].options.method, 'POST')
   assert.equal(fake.calls[0].options.headers.authorization, 'Bearer secret-token')
+  assert.equal(fake.calls[0].options.headers['user-agent'], DEFAULT_USER_AGENT)
   assert.deepEqual(JSON.parse(String(fake.calls[0].options.body)), {
     prompt: 'Do work',
     agent: 'codex',
@@ -72,7 +80,12 @@ test('Netlify API client normalizes session lists and runner links', async () =>
 })
 
 test('Netlify API client validates token, site id, and runner id', async () => {
-  const client = createNetlifyApiClient({ fetch: fakeFetch([]).fetch, token: '' })
+  const client = createNetlifyApiClient({
+    fetch: fakeFetch([]).fetch,
+    token: '',
+    env: {},
+    home: path.join(os.tmpdir(), 'nax-api-client-no-auth'),
+  })
   await assert.rejects(() => client.getAgentRunner({ runnerId: 'runner-1' }), /token is required/)
 
   const authed = createNetlifyApiClient({ fetch: fakeFetch([]).fetch, token: 'token' })
@@ -85,6 +98,104 @@ test('Netlify API client validates token, site id, and runner id', async () => {
     }
   )
   await assert.rejects(() => authed.cancelAgentRunner({}), /Agent Runner ID is required/)
+})
+
+test('Netlify API client preserves token/site precedence and response normalization', async () => {
+  const fake = fakeFetch([
+    { body: { id: 'runner-1', state: 'running' } },
+    { body: 'plain response' },
+    { status: 204 },
+  ])
+  const client = createNetlifyApiClient({
+    fetch: fake.fetch,
+    token: 'constructor-token',
+    env: {
+      NETLIFY_AUTH_TOKEN: 'env-token',
+      NETLIFY_SITE_ID: 'env-site',
+    },
+    siteId: 'constructor-site',
+    baseUrl: 'https://api.example.test/api/v1/',
+  })
+
+  await client.createAgentRunner({ promptText: 'work' })
+  const text = await client.request('GET', '/text', {
+    token: 'operation-token',
+  })
+  const empty = await client.request('DELETE', '/empty')
+
+  assert.match(fake.calls[0].url, /constructor-site/)
+  assert.equal(
+    fake.calls[0].options.headers.authorization,
+    'Bearer constructor-token',
+  )
+  assert.equal(
+    fake.calls[1].options.headers.authorization,
+    'Bearer operation-token',
+  )
+  assert.deepEqual(text, { text: 'plain response' })
+  assert.equal(empty, null)
+})
+
+test('Netlify API client exposes non-throwing responses and safe request metadata', async () => {
+  const events = []
+  const fake = fakeFetch([
+    { status: 403, body: { error: 'response-secret' } },
+    { status: 403, body: { error: 'response-secret' } },
+  ])
+  const client = createNetlifyApiClient({
+    fetch: fake.fetch,
+    token: 'token-secret',
+    baseUrl: 'https://api.example.test/api/v1',
+    onRequestFailure: (event) => events.push(event),
+  })
+
+  const response = await client.requestResponse(
+    'get',
+    '/sites/site-1?query=query-secret',
+  )
+  assert.equal(response.ok, false)
+  assert.equal(response.apiPath, '/api/v1/sites/site-1')
+  assert.equal(response.method, 'GET')
+
+  await assert.rejects(
+    () => client.request('GET', '/sites/site-1?query=query-secret'),
+    (error) => {
+      const typed = /** @type {{
+       *   statusCode?: number,
+       *   code?: string,
+       *   requestMeta?: { method: string, apiPath: string, attempts: number },
+       * }} */ (error)
+      assert.equal(typed.statusCode, 403)
+      assert.equal(typed.code, 'runner_permission_denied')
+      assert.deepEqual(typed.requestMeta, {
+        method: 'GET',
+        apiPath: '/api/v1/sites/site-1',
+        attempts: 1,
+      })
+      return true
+    },
+  )
+
+  const serialized = JSON.stringify(events)
+  assert.doesNotMatch(
+    serialized,
+    /token-secret|query-secret|response-secret/,
+  )
+})
+
+test('Netlify API client constrains authenticated destinations to its API base', async () => {
+  const fake = fakeFetch([{ body: {} }])
+  const client = createNetlifyApiClient({
+    fetch: fake.fetch,
+    token: 'token',
+    baseUrl: 'https://api.example.test/api/v1',
+  })
+
+  await client.request('GET', 'https://attacker.invalid/collect')
+  assert.equal(
+    fake.calls[0].url,
+    'https://api.example.test/api/v1/https://attacker.invalid/collect',
+  )
 })
 
 test('Netlify API client maps API errors, retries retryable statuses, and redacts tokens', async () => {
@@ -115,6 +226,31 @@ test('Netlify API client maps API errors, retries retryable statuses, and redact
       assert.doesNotMatch(String(typed.message), /secret-token/)
       return true
     }
+  )
+})
+
+test('Netlify API client redacts prompt and request markers from error messages', async () => {
+  const prompt = 'sensitive prompt body'
+  const marker = '<!-- agent-runner-sdk-request-id:44444444-4444-4444-8444-444444444444 -->'
+  const client = createNetlifyApiClient({
+    fetch: fakeFetch([{
+      status: 422,
+      body: { error: `${prompt}\n${marker}` },
+    }]).fetch,
+    token: 'token',
+  })
+
+  await assert.rejects(
+    () => client.request('POST', '/runs', {
+      body: { prompt: `${prompt}\n${marker}` },
+    }),
+    (error) => {
+      assert.doesNotMatch(
+        error instanceof Error ? error.message : String(error),
+        /sensitive prompt|agent-runner-sdk-request-id/,
+      )
+      return true
+    },
   )
 })
 

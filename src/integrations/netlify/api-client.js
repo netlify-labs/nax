@@ -1,4 +1,12 @@
-const DEFAULT_BASE_URL = 'https://api.netlify.com/api/v1'
+const {
+  DEFAULT_NETLIFY_API_URL,
+  DEFAULT_USER_AGENT,
+  createAuthenticatedNetlifyClient,
+  isAgentRunnerSdkError,
+  redactSensitiveText,
+} = require('agent-runner-sdk')
+
+const DEFAULT_BASE_URL = DEFAULT_NETLIFY_API_URL
 
 /**
  * Provisional Agent Runner endpoints used by the hosted dashboard transport.
@@ -25,7 +33,41 @@ const DEFAULT_BASE_URL = 'https://api.netlify.com/api/v1'
  *   timeoutMs?: number,
  *   retryAttempts?: number,
  *   sleep?: (ms: number) => Promise<unknown>,
+ *   home?: string,
+ *   platform?: NodeJS.Platform,
+ *   userAgent?: string,
+ *   onTelemetry?: (event: import('agent-runner-sdk').AuthTelemetryEvent) => void,
+ *   onRequestFailure?: (event: NetlifyRequestFailureEvent) => void,
  * }} NetlifyApiClientOptions
+ *
+ * @typedef {{
+ *   kind: 'http_failure',
+ *   method: string,
+ *   apiPath: string,
+ *   status: number,
+ *   attempt: number,
+ *   maxAttempts: number,
+ *   retrying: boolean,
+ * } | {
+ *   kind: 'network_error',
+ *   method: string,
+ *   apiPath: string,
+ *   attempt: number,
+ *   maxAttempts: number,
+ *   retrying: false,
+ *   errorName: string,
+ * }} NetlifyRequestFailureEvent
+ *
+ * @typedef {{
+ *   ok: boolean,
+ *   status: number,
+ *   statusText: string,
+ *   text: string,
+ *   payload: unknown,
+ *   method: string,
+ *   apiPath: string,
+ *   attempts: number,
+ * }} NetlifyApiResponse
  *
  * @typedef {Record<string, unknown> & {
  *   id?: string,
@@ -58,16 +100,6 @@ function stringValue(value) {
   return value === undefined || value === null ? '' : String(value)
 }
 
-/** @param {string} value */
-function trimTrailingSlash(value) {
-  return String(value || '').replace(/\/+$/, '')
-}
-
-/** @param {string} value */
-function trimLeadingSlash(value) {
-  return String(value || '').replace(/^\/+/, '')
-}
-
 /**
  * @param {string} path
  * @param {Record<string, string>} params
@@ -85,7 +117,7 @@ function pathWithParams(path, params) {
  * @param {string} detail
  */
 function redactToken(token, detail) {
-  return token ? String(detail || '').split(token).join('[redacted]') : String(detail || '')
+  return redactSensitiveText(detail, [token])
 }
 
 /** @param {unknown} payload */
@@ -122,11 +154,6 @@ function errorCodeForStatus(status, detail = '') {
   return 'runner_transport_error'
 }
 
-/** @param {number} status */
-function retryableStatus(status) {
-  return status === 408 || status === 409 || status === 425 || status === 429 || status >= 500
-}
-
 /** @param {NetlifyApiClientOptions} [options] */
 function createNetlifyApiClient({
   fetch: fetchImpl = globalThis.fetch,
@@ -137,51 +164,106 @@ function createNetlifyApiClient({
   timeoutMs = 30000,
   retryAttempts = 1,
   sleep = async () => {},
+  home,
+  platform,
+  userAgent = DEFAULT_USER_AGENT,
+  onTelemetry,
+  onRequestFailure,
 } = {}) {
-  const authToken = token || env.NETLIFY_AUTH_TOKEN || ''
   const defaultSiteId = siteId || env.NETLIFY_SITE_ID || ''
-  if (!fetchImpl) throw new Error('fetch is required to use the Netlify API client.')
+  const authenticated = createAuthenticatedNetlifyClient({
+    fetch: fetchImpl,
+    token,
+    env,
+    ...(home === undefined ? {} : { home }),
+    ...(platform === undefined ? {} : { platform }),
+    baseUrl,
+    timeoutMs,
+    retryAttempts,
+    sleep,
+    userAgent,
+    onTelemetry: (event) => {
+      try {
+        onTelemetry?.(event)
+      } catch {
+        // SDK telemetry observers never alter request behavior.
+      }
+      if (!onRequestFailure) return
+      try {
+        onRequestFailure(event.kind === 'httpFailure'
+          ? {
+              kind: 'http_failure',
+              method: event.method,
+              apiPath: event.pathname,
+              status: event.status,
+              attempt: event.attempt,
+              maxAttempts: event.maxAttempts,
+              retrying: event.retrying,
+            }
+          : {
+              kind: 'network_error',
+              method: event.method,
+              apiPath: event.pathname,
+              attempt: event.attempt,
+              maxAttempts: event.maxAttempts,
+              retrying: false,
+              errorName: event.errorName,
+            })
+      } catch {
+        // Legacy observers have the same non-disruptive contract.
+      }
+    },
+  })
 
   /**
    * @param {string} method
    * @param {string} path
-   * @param {{ body?: Record<string, unknown>, signal?: AbortSignal }} [options]
+   * @param {{ body?: Record<string, unknown>, signal?: AbortSignal, token?: string, operation?: string }} [options]
+   * @returns {Promise<NetlifyApiResponse>}
+   */
+  async function requestResponse(method, path, options = {}) {
+    try {
+      const response = await authenticated.requestResponse(method, path, options)
+      return {
+        ...response,
+        apiPath: response.pathname,
+      }
+    } catch (error) {
+      if (isAgentRunnerSdkError(error, 'auth-missing')) {
+        throw requestError('runner_auth_failed', 'Netlify API token is required.')
+      }
+      throw error
+    }
+  }
+
+  /**
+   * @param {string} method
+   * @param {string} path
+   * @param {{ body?: Record<string, unknown>, signal?: AbortSignal, token?: string, operation?: string }} [options]
    */
   async function request(method, path, options = {}) {
-    if (!authToken) {
-      const error = /** @type {Error & { code?: string }} */ (new Error('Netlify API token is required.'))
-      error.code = 'runner_auth_failed'
-      throw error
+    const response = await requestResponse(method, path, options)
+    if (response.ok) return response.payload
+    const authToken = options.token || authenticated.auth.token
+    const detail = redactSensitiveText(
+      response.text || response.statusText,
+      [authToken, options.body],
+    )
+    const error = /** @type {Error & {
+     *   statusCode?: number,
+     *   code?: string,
+     *   payload?: unknown,
+     *   requestMeta?: { method: string, apiPath: string, attempts: number },
+     * }} */ (new Error(`Netlify API request failed (${response.status}): ${detail}`))
+    error.statusCode = response.status
+    error.code = errorCodeForStatus(response.status, detail)
+    error.payload = response.payload
+    error.requestMeta = {
+      method: response.method,
+      apiPath: response.apiPath,
+      attempts: response.attempts,
     }
-    const url = `${trimTrailingSlash(baseUrl)}/${trimLeadingSlash(path)}`
-    const headers = {
-      authorization: `Bearer ${authToken}`,
-      accept: 'application/json',
-      ...(options.body ? { 'content-type': 'application/json' } : {}),
-    }
-    let attempt = 0
-    while (true) {
-      attempt += 1
-      const response = await fetchImpl(url, {
-        method,
-        headers,
-        body: options.body ? JSON.stringify(options.body) : undefined,
-        signal: options.signal || AbortSignal.timeout(timeoutMs),
-      })
-      const text = await response.text()
-      const payload = text ? safeJson(text) : null
-      if (response.ok) return payload
-      const detail = redactToken(authToken, text || response.statusText)
-      if (attempt < retryAttempts && retryableStatus(response.status)) {
-        await sleep(Math.min(1000 * attempt, 5000))
-        continue
-      }
-      const error = /** @type {Error & { statusCode?: number, code?: string, payload?: unknown }} */ (new Error(`Netlify API request failed (${response.status}): ${detail}`))
-      error.statusCode = response.status
-      error.code = errorCodeForStatus(response.status, detail)
-      error.payload = payload
-      throw error
-    }
+    throw error
   }
 
   /** @param {string} path @param {Record<string, string>} params */
@@ -246,16 +328,8 @@ function createNetlifyApiClient({
       if (!runnerId) throw requestError('runner_validation_failed', 'Agent Runner ID is required to archive a run.')
       return normalizeAgentRunner(await request('POST', endpoint('/agent-runners/:runnerId/archive', { runnerId })))
     },
+    requestResponse,
     request,
-  }
-}
-
-/** @param {string} text */
-function safeJson(text) {
-  try {
-    return JSON.parse(text)
-  } catch (_err) {
-    return { text }
   }
 }
 
@@ -271,6 +345,7 @@ function requestError(code, message) {
 
 module.exports = {
   DEFAULT_BASE_URL,
+  DEFAULT_USER_AGENT,
   createNetlifyApiClient,
   errorCodeForStatus,
   normalizeAgentRunner,

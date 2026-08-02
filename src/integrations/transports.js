@@ -1,7 +1,8 @@
 const fs = require('fs')
 const path = require('path')
 const { spawnSync } = require('child_process')
-const { readLinkedSiteId, readNetlifyCliToken } = require('./netlify/init')
+const { readLinkedSiteId } = require('./netlify/init')
+const { readNetlifyCliToken } = require('./netlify/auth')
 
 const NETLIFY_API_TRANSPORT = 'netlify-api'
 /** @typedef {'github' | typeof NETLIFY_API_TRANSPORT} TransportId */

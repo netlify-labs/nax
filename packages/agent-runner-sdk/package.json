@@ -1,0 +1,50 @@
+{
+  "name": "agent-runner-sdk",
+  "version": "0.1.0",
+  "description": "Typed, resumable client and engine for Netlify Agent Runner.",
+  "license": "MIT",
+  "type": "module",
+  "engines": {
+    "node": ">=18"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/netlify-labs/nax.git",
+    "directory": "packages/agent-runner-sdk"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "CHANGELOG.md"
+  ],
+  "sideEffects": false,
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "require": "./dist/index.cjs"
+    }
+  },
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "scripts": {
+    "build": "npm run build:js && npm run build:types",
+    "build:js": "tsup src/index.ts --format esm,cjs --clean --sourcemap --target node18",
+    "build:types": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "node --import tsx --test test/*.test.ts",
+    "example:check": "tsc -p examples/tsconfig.json --noEmit",
+    "pack:smoke": "node scripts/pack-smoke.mjs",
+    "ci": "npm run typecheck && npm run test && npm run build && npm run example:check && npm run pack:smoke",
+    "release:patch": "npm version patch --tag-version-prefix=agent-runner-sdk-v && npm publish",
+    "release:minor": "npm version minor --tag-version-prefix=agent-runner-sdk-v && npm publish",
+    "release:major": "npm version major --tag-version-prefix=agent-runner-sdk-v && npm publish"
+  },
+  "devDependencies": {
+    "@types/node": "^22.19.0",
+    "tsup": "^8.5.0",
+    "tsx": "^4.22.0",
+    "typescript": "^5.9.3"
+  }
+}

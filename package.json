@@ -3,6 +3,9 @@
   "version": "1.0.5",
   "description": "Run multi step Netlify agent workflows using the world's leading AI models.",
   "type": "commonjs",
+  "workspaces": [
+    "packages/*"
+  ],
   "bin": {
     "nax": "src/cli/nax.js"
   },
@@ -23,6 +26,11 @@
     "check:import-direction": "node scripts/check-import-direction.js",
     "check:jsdoc-types": "node scripts/check-jsdoc-types.js",
     "typecheck": "tsc -p tsconfig.json",
+    "sdk:build": "npm run build --workspace agent-runner-sdk",
+    "sdk:typecheck": "npm run typecheck --workspace agent-runner-sdk",
+    "sdk:test": "npm run test --workspace agent-runner-sdk",
+    "sdk:ci": "npm run ci --workspace agent-runner-sdk",
+    "sdk:pack-smoke": "npm run pack:smoke --workspace agent-runner-sdk",
     "dry-run": "node src/cli/nax.js issue review --dry --force",
     "try:multiline": "node scripts/try-multiline.js",
     "docs:workflows": "md-magic --file workflows/README.md --config ./.github/markdown.config.js",

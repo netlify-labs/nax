@@ -4,6 +4,8 @@ const fs = require('fs')
 const path = require('path')
 
 const PROJECT_ROOT = process.env.NAX_BOUNDARY_ROOT || process.cwd()
+const PACKAGES_ROOT = path.join(PROJECT_ROOT, 'packages')
+const SDK_ROOT = path.join(PACKAGES_ROOT, 'agent-runner-sdk')
 
 const NODE_BUILTINS = new Set([
   'assert',
@@ -213,6 +215,26 @@ function checkCore(filePath, imports, findings) {
   }
 }
 
+/**
+ * The independently-published SDK may use platform/runtime dependencies, but
+ * it must never reach back into nax application source.
+ * @param {string} filePath
+ * @param {ImportReference[]} imports
+ * @param {BoundaryFinding[]} findings
+ */
+function checkAgentRunnerSdk(filePath, imports, findings) {
+  if (!isUnder(filePath, SDK_ROOT)) return
+  for (const ref of imports) {
+    if (
+      importsPath(ref, ['src']) ||
+      ref.specifier === 'netlify-agent-executor' ||
+      ref.specifier.startsWith('netlify-agent-executor/')
+    ) {
+      addFinding(findings, filePath, 'sdk-imports-nax-application', ref.resolvedPath)
+    }
+  }
+}
+
 /** @param {BoundaryFinding[]} findings */
 function checkTopLevelSrcInventory(findings) {
   const srcDir = path.join(PROJECT_ROOT, 'src')
@@ -255,6 +277,12 @@ for (const filePath of listSourceFiles(path.join(PROJECT_ROOT, 'src'))) {
   checkDashboardApi(filePath, imports, findings)
   checkDashboardWeb(filePath, imports, findings)
   checkCore(filePath, imports, findings)
+}
+
+for (const filePath of listSourceFiles(PACKAGES_ROOT)) {
+  const source = fs.readFileSync(filePath, 'utf8')
+  const imports = importsForSource(toProjectPath(filePath), source)
+  checkAgentRunnerSdk(filePath, imports, findings)
 }
 
 checkTopLevelSrcInventory(findings)

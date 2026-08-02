@@ -1,0 +1,45 @@
+name: Agent Runner SDK
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/agent-runner-sdk.yml"
+      - "package.json"
+      - "package-lock.json"
+      - "packages/agent-runner-sdk/**"
+      - "scripts/check-import-direction.js"
+      - "tests/unit/import-direction.test.js"
+  push:
+    branches:
+      - master
+    paths:
+      - ".github/workflows/agent-runner-sdk.yml"
+      - "package.json"
+      - "package-lock.json"
+      - "packages/agent-runner-sdk/**"
+      - "scripts/check-import-direction.js"
+      - "tests/unit/import-direction.test.js"
+
+permissions:
+  contents: read
+
+jobs:
+  package:
+    name: Node ${{ matrix.node }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        node:
+          - 18
+          - 20
+          - 22
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+      - run: npm ci --ignore-scripts
+      - run: npm run check:import-direction
+      - run: npm run sdk:ci

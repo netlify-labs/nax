@@ -14,6 +14,7 @@
   },
   "files": [
     "dist",
+    "examples",
     "README.md",
     "CHANGELOG.md"
   ],
@@ -43,6 +44,7 @@
     "pack:smoke": "node scripts/pack-smoke.mjs",
     "ci": "npm run typecheck && npm run test && npm run build && npm run example:check && npm run pack:smoke",
     "version": "node scripts/sync-version.mjs",
+    "release:next": "npm run ci && npm publish --tag next",
     "release:patch": "npm version patch --tag-version-prefix=agent-runner-sdk-v && npm publish",
     "release:minor": "npm version minor --tag-version-prefix=agent-runner-sdk-v && npm publish",
     "release:major": "npm version major --tag-version-prefix=agent-runner-sdk-v && npm publish"

@@ -8,6 +8,12 @@ import { fileURLToPath } from 'node:url'
 const packageRoot = resolve(fileURLToPath(new URL('..', import.meta.url)))
 const scratchRoot = mkdtempSync(join(tmpdir(), 'agent-runner-sdk-pack-'))
 const packRoot = join(scratchRoot, 'pack')
+const tsc = join(
+  packageRoot,
+  'node_modules',
+  '.bin',
+  process.platform === 'win32' ? 'tsc.cmd' : 'tsc',
+)
 mkdirSync(packRoot)
 
 try {
@@ -22,6 +28,19 @@ try {
     packed.files.some((file) => file.path === 'dist/index.d.cts'),
     true,
   )
+  for (const path of [
+    'README.md',
+    'CHANGELOG.md',
+    'examples/eventbridge-resume.ts',
+    'examples/run-outcome.ts',
+    'examples/tsconfig.json',
+  ]) {
+    assert.equal(
+      packed.files.some((file) => file.path === path),
+      true,
+      `${path} must be included in the npm artifact`,
+    )
+  }
   const tarball = join(packRoot, packed.filename)
 
   for (const moduleType of ['module', 'commonjs']) {
@@ -42,6 +61,20 @@ try {
     const entrypoint = join(consumerRoot, 'smoke.js')
     writeFileSync(entrypoint, source)
     execFileSync(process.execPath, [entrypoint], { cwd: consumerRoot, stdio: 'pipe' })
+
+    if (moduleType === 'module') {
+      const installedExamples = join(
+        consumerRoot,
+        'node_modules',
+        'agent-runner-sdk',
+        'examples',
+        'tsconfig.json',
+      )
+      execFileSync(tsc, ['-p', installedExamples], {
+        cwd: consumerRoot,
+        stdio: 'pipe',
+      })
+    }
   }
 
   const manifest = JSON.parse(readFileSync(join(packageRoot, 'package.json'), 'utf8'))

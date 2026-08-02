@@ -281,7 +281,7 @@ function normalizeUsage(value: unknown): Usage | null {
     'totalCreditsCost',
     'bb-api',
   ))
-  return usage
+  return Object.keys(usage).length === 0 ? null : usage
 }
 
 export function normalizeRunner(

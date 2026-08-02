@@ -187,6 +187,25 @@ test('HTTP transport paginates sessions and preserves oldest-first order', async
   assert.equal(fake.calls[4]?.options.method, 'DELETE')
 })
 
+test('empty usage payloads normalize to null without invented values', async () => {
+  const fake = fakeFetch([{
+    body: {
+      ...session(),
+      usage: {},
+    },
+  }])
+  const transport = createHttpTransport({
+    fetch: fake.fetch,
+    token: 'token',
+    baseUrl: 'https://api.example.test/api/v1',
+  })
+
+  assert.equal(
+    (await transport.getSession('runner-1', 'session-1')).usage,
+    null,
+  )
+})
+
 test('HTTP transport creates sessions with the exact follow-up body', async () => {
   const fake = fakeFetch([{ body: session('session-2') }])
   const transport = createHttpTransport({

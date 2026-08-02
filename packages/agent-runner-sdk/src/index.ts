@@ -22,6 +22,14 @@ export {
   isAgentRunnerSdkError,
 } from './errors.js'
 export {
+  DEFAULT_AGENT,
+  DEFAULT_DEADLINE_MS,
+  DEFAULT_LANDING,
+  DEFAULT_POLL_INTERVAL_MS,
+  classifyFailure,
+  createAgentRunnerSdk,
+} from './engine.js'
+export {
   AGENT_RUNNER_SDK_HANDLE_VERSION,
   parseHandle,
   serializeHandle,
@@ -30,10 +38,22 @@ export {
   requestMarkerOverheadBytes,
 } from './operations.js'
 export {
+  detectRuntime,
+} from './runtime.js'
+export {
   DEFAULT_BB_API_URL,
   createHttpTransport,
 } from './transport/index.js'
 
+export type {
+  AgentRunnerSdk,
+  AgentRunnerSdkOptions,
+  LandingContext,
+  LandingHandler,
+  LandingResult,
+  RunOptions,
+  WaitForOptions,
+} from './engine.js'
 export type {
   AuthTelemetryEvent,
   AuthenticatedNetlifyClient,
@@ -47,6 +67,10 @@ export type {
   NetlifyTokenResult,
   ResolveNetlifyTokenOptions,
 } from './auth/index.js'
+export type {
+  AgentRuntime,
+  RuntimeEnvironment,
+} from './runtime.js'
 export type {
   BlobRef,
   BlobStore,

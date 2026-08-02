@@ -186,9 +186,9 @@ function genericOutcomePreservesHandle(
 }
 
 function memberInputChecks(): void {
-  const commit: MemberInput<'commit'> = { sessionId: 'session-1' }
+  const commit: MemberInput<'commit'> = { targetBranch: 'agent-change' }
   const archive: MemberInput<'archive'> = {}
-  // @ts-expect-error Commit attribution always names its session.
+  // @ts-expect-error Commit landing always names its target branch.
   const invalidCommit: MemberInput<'commit'> = {}
   // @ts-expect-error Archive accepts no action-specific values.
   const invalidArchive: MemberInput<'archive'> = { sessionId: 'session-1' }

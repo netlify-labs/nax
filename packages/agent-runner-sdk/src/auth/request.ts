@@ -1,4 +1,7 @@
-import { BasicAgentRunnerSdkError } from '../errors.js'
+import {
+  BasicAgentRunnerSdkError,
+  NetlifyNetworkError,
+} from '../errors.js'
 import {
   resolveNetlifyToken,
 } from './token.js'
@@ -41,6 +44,14 @@ export interface AuthenticatedRequestOptions {
   body?: unknown
   signal?: AbortSignal
   operation?: string
+  retry?: boolean
+}
+
+export interface SafeResponseHeaders {
+  contentType?: string
+  link?: string
+  retryAfter?: string
+  total?: string
 }
 
 export interface AuthenticatedResponse {
@@ -52,6 +63,7 @@ export interface AuthenticatedResponse {
   method: string
   pathname: string
   attempts: number
+  headers: SafeResponseHeaders
 }
 
 export interface AuthenticatedNetlifyClientOptions
@@ -117,12 +129,52 @@ function statusErrorCode(status: number) {
   return 'http-error' as const
 }
 
-function safeNetworkError(error: unknown): Error {
-  const safe = new Error(
-    'Netlify API request failed before receiving a response.',
+function systemCode(error: unknown): string | undefined {
+  if (!error || typeof error !== 'object') return undefined
+  const direct = Reflect.get(error, 'code')
+  if (typeof direct === 'string') return direct
+  const cause = Reflect.get(error, 'cause')
+  if (!cause || typeof cause !== 'object') return undefined
+  const nested = Reflect.get(cause, 'code')
+  return typeof nested === 'string' ? nested : undefined
+}
+
+function safeNetworkError(
+  error: unknown,
+  phase: 'request' | 'response-body',
+): NetlifyNetworkError {
+  const code = systemCode(error)
+  const errorName = error instanceof Error ? error.name : ''
+  const timedOut = errorName === 'TimeoutError'
+    || errorName === 'AbortError'
+    || code === 'UND_ERR_CONNECT_TIMEOUT'
+    || code === 'UND_ERR_HEADERS_TIMEOUT'
+    || code === 'UND_ERR_BODY_TIMEOUT'
+  const preTransmission = phase === 'request' && (
+    code === 'ENOTFOUND'
+    || code === 'EAI_AGAIN'
+    || code === 'ECONNREFUSED'
+    || code === 'UND_ERR_CONNECT_TIMEOUT'
   )
-  if (error instanceof Error && error.name) safe.name = error.name
-  return safe
+  return new NetlifyNetworkError({
+    phase,
+    preTransmission,
+    timedOut,
+    ...(code === undefined ? {} : { systemCode: code }),
+  })
+}
+
+function safeHeaders(headers: Headers): SafeResponseHeaders {
+  const values: SafeResponseHeaders = {}
+  const contentType = headers.get('content-type')
+  const link = headers.get('link')
+  const retryAfter = headers.get('retry-after')
+  const total = headers.get('total')
+  if (contentType !== null) values.contentType = contentType
+  if (link !== null) values.link = link
+  if (retryAfter !== null) values.retryAfter = retryAfter
+  if (total !== null) values.total = total
+  return values
 }
 
 function emitTelemetry(
@@ -225,7 +277,7 @@ export function createAuthenticatedNetlifyClient({
           durationMs: Math.max(0, Date.now() - startedAt),
           errorName: error instanceof Error ? error.name : 'Error',
         })
-        throw safeNetworkError(error)
+        throw safeNetworkError(error, 'request')
       }
 
       let text: string
@@ -245,7 +297,7 @@ export function createAuthenticatedNetlifyClient({
           durationMs: Math.max(0, Date.now() - startedAt),
           errorName: error instanceof Error ? error.name : 'Error',
         })
-        throw safeNetworkError(error)
+        throw safeNetworkError(error, 'response-body')
       }
       const payload = safeJson(text)
       if (response.ok) {
@@ -258,10 +310,12 @@ export function createAuthenticatedNetlifyClient({
           method: resolvedMethod,
           pathname,
           attempts: attempt,
+          headers: safeHeaders(response.headers),
         }
       }
 
       const retrying = attempt < maxAttempts
+        && options.retry !== false
         && retryableStatus(response.status)
       emitTelemetry(onTelemetry, {
         kind: 'httpFailure',
@@ -289,6 +343,7 @@ export function createAuthenticatedNetlifyClient({
         method: resolvedMethod,
         pathname,
         attempts: attempt,
+        headers: safeHeaders(response.headers),
       }
     }
 

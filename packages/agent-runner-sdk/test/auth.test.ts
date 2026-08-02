@@ -10,6 +10,7 @@ import test from 'node:test'
 
 import {
   DEFAULT_USER_AGENT,
+  NetlifyNetworkError,
   createAuthenticatedNetlifyClient,
   isAgentRunnerSdkError,
   netlifyCliConfigCandidates,
@@ -408,7 +409,11 @@ test('network failures are immediate, redacted, and telemetry-safe', async () =>
   await assert.rejects(
     () => client.request('GET', '/user?query-secret'),
     (error: unknown) => {
-      assert.equal(error instanceof Error && error.name, 'TypeError')
+      assert.equal(error instanceof NetlifyNetworkError, true)
+      assert.equal(
+        error instanceof NetlifyNetworkError && error.phase,
+        'request',
+      )
       assert.doesNotMatch(
         error instanceof Error ? error.message : String(error),
         /token-secret|error-secret/,

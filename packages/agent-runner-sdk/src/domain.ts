@@ -68,6 +68,10 @@ export interface OriginInfo {
 
 export interface Usage {
   totalTokens?: number
+  totalInputTokens?: number
+  totalOutputTokens?: number
+  totalCachedInputTokens?: number
+  totalCachedOutputTokens?: number
   totalCreditsCost?: number
   stepsCount?: number
   creditLimitExceeded?: boolean
@@ -138,25 +142,86 @@ export interface RequestWindow {
   failedAt: number
 }
 
+export interface Runner {
+  runnerId: string
+  state: string
+  siteId?: string
+  siteName?: string
+  branch?: string
+  title?: string
+  codeOrigin?: string
+  createdAt?: number
+  updatedAt?: number
+  doneAt?: number
+  lastSessionCreatedAt?: number
+  activeSessionCreatedAt?: number
+  currentTask?: string
+  latestSessionState?: string
+  latestSessionMode?: string
+  latestSessionIsPublished?: boolean
+  hasResultDiff?: boolean
+  needsGitSync?: boolean
+  mergeTargetAvailable?: boolean
+  prUrl?: string
+  prNumber?: number
+  prBranch?: string
+  prState?: string
+  prError?: string
+  prIsBeingCreated?: boolean
+  mergeCommitSha?: string
+  mergeCommitError?: string
+  mergeCommitIsBeingCreated?: boolean
+}
+
+export interface Session {
+  sessionId: string
+  runnerId: string
+  state: string
+  prompt?: string
+  resultText?: string
+  title?: string
+  agent?: string
+  model?: string
+  mode?: string
+  createdAt?: number
+  updatedAt?: number
+  doneAt?: number
+  currentTask?: string
+  commitSha?: string
+  deployId?: string
+  deployUrl?: string
+  hasResultDiff?: boolean
+  hasCumulativeDiff?: boolean
+  isPublished?: boolean
+  isDiscarded?: boolean
+  creditLimitExceeded?: boolean
+  creditLimitExceededMessage?: string
+  usage: Usage | null
+}
+
+export interface RunnerPage {
+  items: Runner[]
+  nextPage?: number
+  total?: number
+}
+
 export type EmptyMemberInput = Record<PropertyKey, never>
 
 export interface MemberActionInputMap {
   archive: EmptyMemberInput
-  pull_request: {
-    title?: string
-    body?: string
-  }
+  pull_request: EmptyMemberInput
   commit: {
-    sessionId: string
-    message?: string
+    targetBranch: string
   }
   merge_target: EmptyMemberInput
   sync_git_origin: EmptyMemberInput
   diff: {
-    sessionId?: string
+    page?: number
+    perPage?: number
+    stripBinary?: boolean
   }
   revert: {
-    sessionId?: string
+    sessionId: string
   }
   rebase: EmptyMemberInput
   publish_to_production: EmptyMemberInput
@@ -169,15 +234,15 @@ export interface MemberAccepted {
 }
 
 export interface MemberActionResultMap {
-  archive: MemberAccepted
-  pull_request: MemberAccepted & { prUrl?: string }
-  commit: MemberAccepted & { commitSha?: string }
-  merge_target: MemberAccepted
-  sync_git_origin: MemberAccepted
+  archive: void
+  pull_request: Runner
+  commit: Runner
+  merge_target: Session
+  sync_git_origin: Runner
   diff: { diff: DiffRef | null }
-  revert: MemberAccepted
-  rebase: MemberAccepted
-  publish_to_production: MemberAccepted & { deployUrl?: string }
+  revert: Runner
+  rebase: Session
+  publish_to_production: Runner
 }
 
 export type MemberInput<A extends MemberAction> = MemberActionInputMap[A]

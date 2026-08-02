@@ -19,6 +19,10 @@ export type AgentRunnerSdkErrorCode =
   | 'auth-invalid'
   | 'auth-expired'
   | 'auth-permission'
+  | 'not-found'
+  | 'rate-limited'
+  | 'network-error'
+  | 'request-timeout'
   | 'http-error'
   | 'validation-error'
   | 'capacity-exhausted'
@@ -56,6 +60,62 @@ export class BasicAgentRunnerSdkError<
 > extends AgentRunnerSdkError<C> {
   constructor(code: C, message: string, options?: ErrorOptions) {
     super(code, message, options)
+  }
+}
+
+export type HttpResponseErrorCode =
+  | 'auth-invalid'
+  | 'auth-permission'
+  | 'not-found'
+  | 'rate-limited'
+  | 'http-error'
+  | 'validation-error'
+
+export class HttpResponseError<
+  C extends HttpResponseErrorCode = HttpResponseErrorCode,
+> extends AgentRunnerSdkError<C> {
+  readonly status: number
+  readonly endpoint: string
+
+  constructor(
+    code: C,
+    status: number,
+    endpoint: string,
+    options?: ErrorOptions,
+  ) {
+    super(
+      code,
+      `Agent Runner API request to ${endpoint} failed with status ${status}.`,
+      options,
+    )
+    this.status = status
+    this.endpoint = endpoint
+  }
+}
+
+export class NetlifyNetworkError extends Error {
+  readonly phase: 'request' | 'response-body'
+  readonly preTransmission: boolean
+  readonly timedOut: boolean
+  readonly systemCode?: string
+
+  constructor({
+    phase,
+    preTransmission,
+    timedOut,
+    systemCode,
+  }: {
+    phase: 'request' | 'response-body'
+    preTransmission: boolean
+    timedOut: boolean
+    systemCode?: string
+  }) {
+    super('Netlify API request failed before receiving a complete response.')
+    this.name = 'NetlifyNetworkError'
+    this.phase = phase
+    this.preTransmission = preTransmission
+    this.timedOut = timedOut
+    if (systemCode !== undefined) this.systemCode = systemCode
   }
 }
 
@@ -157,6 +217,7 @@ type BasicErrorUnion = {
 
 export type AnyAgentRunnerSdkError =
   | BasicErrorUnion
+  | HttpResponseError
   | InvalidApiShapeError
   | CreateAmbiguousError
   | SessionCreateAmbiguousError

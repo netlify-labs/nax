@@ -22,6 +22,7 @@ export type {
   AuthenticatedNetlifyClientOptions,
   AuthenticatedRequestOptions,
   AuthenticatedResponse,
+  SafeResponseHeaders,
 } from './request.js'
 export type {
   NetlifyPreflightOptions,

@@ -13,7 +13,9 @@ export {
   AgentRunnerSdkError,
   BasicAgentRunnerSdkError,
   CreateAmbiguousError,
+  HttpResponseError,
   InvalidApiShapeError,
+  NetlifyNetworkError,
   PrHeadChangedError,
   SessionAlreadyActiveError,
   SessionCreateAmbiguousError,
@@ -24,6 +26,10 @@ export {
   parseHandle,
   serializeHandle,
 } from './handles.js'
+export {
+  DEFAULT_BB_API_URL,
+  createHttpTransport,
+} from './transport/index.js'
 
 export type {
   AuthTelemetryEvent,
@@ -31,6 +37,7 @@ export type {
   AuthenticatedNetlifyClientOptions,
   AuthenticatedRequestOptions,
   AuthenticatedResponse,
+  SafeResponseHeaders,
   NetlifyCliConfigOptions,
   NetlifyPreflightOptions,
   NetlifyPreflightResult,
@@ -58,7 +65,10 @@ export type {
   ProgressEvent,
   PromptInput,
   RequestWindow,
+  Runner,
+  RunnerPage,
   RunnerMode,
+  Session,
   StartInput,
   Usage,
   WithRequestId,
@@ -68,6 +78,7 @@ export type {
   AgentRunnerSdkErrorForCode,
   AnyAgentRunnerSdkError,
   BasicAgentRunnerSdkErrorCode,
+  HttpResponseErrorCode,
 } from './errors.js'
 export type {
   BaseHandle,
@@ -86,3 +97,12 @@ export type {
   RunResult,
   RunSnapshot,
 } from './result.js'
+export type {
+  AccountRunnerListQuery,
+  AgentRunnerApiStyle,
+  HttpTransportOptions,
+  RunnerListQuery,
+  Transport,
+  TransportRequestOptions,
+  TransportTelemetryEvent,
+} from './transport/index.js'

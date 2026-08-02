@@ -50,6 +50,8 @@ import type {
   ReconcileSessionOptions,
 } from './reconciliation.js'
 import { createBackendLandingHandler } from './landing/backend.js'
+import { createGithubLandingHandler } from './landing/github.js'
+import type { GithubMergeMethod } from './github/mergePr.js'
 import { detectRuntime } from './runtime.js'
 import type { AgentRuntime } from './runtime.js'
 import {
@@ -76,6 +78,8 @@ export interface LandingContext {
   requestOptions?: TransportRequestOptions
   now: () => number
   sleep: (ms: number) => Promise<unknown>
+  checkpoint: (handle: Handle) => Promise<void>
+  classifyFailure: typeof classifyFailure
 }
 
 export interface LandingResult<H extends Handle = Handle> {
@@ -100,6 +104,10 @@ export interface AgentRunnerSdkOptions
   landingHandler?: LandingHandler
   clockSkewAllowanceMs?: number
   promptRefDelivery?: (ref: BlobRef) => string | Promise<string>
+  githubToken?: string
+  githubApiUrl?: string
+  githubMergeMethod?: GithubMergeMethod
+  onLandingCheckpoint?: (handle: Handle) => void | Promise<void>
 }
 
 export interface WaitForOptions extends TransportRequestOptions {
@@ -397,6 +405,10 @@ export function createAgentRunnerSdk(
     landingHandler: configuredLandingHandler,
     clockSkewAllowanceMs,
     promptRefDelivery,
+    githubToken,
+    githubApiUrl,
+    githubMergeMethod,
+    onLandingCheckpoint,
     now = Date.now,
     ...httpOptions
   } = options
@@ -409,8 +421,16 @@ export function createAgentRunnerSdk(
     'pollIntervalMs',
   )
   const landingHandler = configuredLandingHandler
-    ?? createBackendLandingHandler({
-      pollIntervalMs: resolvedPollIntervalMs,
+    ?? createGithubLandingHandler({
+      backend: createBackendLandingHandler({
+        pollIntervalMs: resolvedPollIntervalMs,
+      }),
+      ...(githubToken === undefined ? {} : { githubToken }),
+      ...(githubApiUrl === undefined ? {} : { githubApiUrl }),
+      ...(githubMergeMethod === undefined ? {} : { githubMergeMethod }),
+      ...(httpOptions.fetch === undefined
+        ? {}
+        : { fetch: httpOptions.fetch }),
     })
   const transport = configuredTransport === 'http'
     ? createHttpTransport({
@@ -713,6 +733,13 @@ export function createAgentRunnerSdk(
         ...(requestOptions === undefined ? {} : { requestOptions }),
         now,
         sleep,
+        checkpoint: async (checkpointHandle) => {
+          const parsed = parseHandle(checkpointHandle)
+          if (onLandingCheckpoint !== undefined) {
+            await onLandingCheckpoint(parsed)
+          }
+        },
+        classifyFailure,
       })
       const updated = parseHandle(landed.handle)
       if (

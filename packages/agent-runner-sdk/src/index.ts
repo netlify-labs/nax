@@ -38,6 +38,10 @@ export {
   createBackendLandingHandler,
 } from './landing/backend.js'
 export {
+  DEFAULT_GITHUB_API_URL,
+  createGithubMergeClient,
+} from './github/mergePr.js'
+export {
   requestMarkerOverheadBytes,
 } from './operations.js'
 export {
@@ -131,6 +135,13 @@ export type {
   BackendLandingOptions,
   BackendLandingResult,
 } from './landing/backend.js'
+export type {
+  GithubMergeClient,
+  GithubMergeClientOptions,
+  GithubMergeMethod,
+  GithubMergeResult,
+  GithubPullRequest,
+} from './github/mergePr.js'
 export type {
   LandingOutcome,
   ReconciliationCandidate,

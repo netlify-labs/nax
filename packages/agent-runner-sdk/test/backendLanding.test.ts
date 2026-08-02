@@ -350,7 +350,7 @@ test('committedSessionIds makes follow-up landing idempotent', async () => {
   )
 })
 
-test('merge preparation waits for backend PR and target-sync flags to settle', async () => {
+test('merge-capable landing waits for backend PR and target-sync flags to settle', async () => {
   let runnerReads = 0
   let sleeps = 0
   const sdk = createAgentRunnerSdk({
@@ -371,7 +371,7 @@ test('merge preparation waits for backend PR and target-sync flags to settle', a
       sleeps += 1
     },
   })
-  const handle = runHandle('merge', {
+  const handle = runHandle('auto', {
     landing: {
       prUrl: PR_URL,
       committedSessionIds: ['session-1'],

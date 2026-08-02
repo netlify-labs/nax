@@ -22,6 +22,7 @@ export interface BackendLandingContext {
   requestOptions?: TransportRequestOptions
   now: () => number
   sleep: (ms: number) => Promise<unknown>
+  checkpoint: (handle: Handle) => Promise<void>
 }
 
 export interface BackendLandingResult<H extends Handle = Handle> {
@@ -408,11 +409,17 @@ export function createBackendLandingHandler({
       }
       handle = withLanding(handle, { prUrl: settled.prUrl })
       handle = markSessionCommitted(handle, handle.currentSessionId)
+      await context.checkpoint(handle)
     } else {
       const prUrl = observation.runner.prUrl ?? persistedPrUrl
+      const shouldCheckpointPr = (
+        prUrl !== undefined
+        && handle.landing?.prUrl !== prUrl
+      )
       handle = withLanding(handle, {
         ...(prUrl === undefined ? {} : { prUrl }),
       })
+      if (shouldCheckpointPr) await context.checkpoint(handle)
       if (observation.runner.prError) {
         return {
           handle,
@@ -434,6 +441,7 @@ export function createBackendLandingHandler({
           session: observation.session,
         }
         handle = withLanding(handle, { prUrl: settled.prUrl })
+        await context.checkpoint(handle)
       }
     }
 
@@ -453,6 +461,7 @@ export function createBackendLandingHandler({
         observation = committed
       }
       handle = markSessionCommitted(handle, handle.currentSessionId)
+      await context.checkpoint(handle)
     }
 
     if (

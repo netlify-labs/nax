@@ -183,6 +183,7 @@ export interface Session {
   agent?: string
   model?: string
   mode?: string
+  fileKeys?: string[]
   createdAt?: number
   updatedAt?: number
   doneAt?: number

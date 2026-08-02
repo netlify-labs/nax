@@ -207,6 +207,20 @@ function optionalNumber(
     : undefined
 }
 
+function optionalStringArray(
+  value: Record<string, unknown>,
+  snake: string,
+  camel: string,
+  apiStyle: AgentRunnerApiStyle,
+): string[] | undefined {
+  const selected = field(value, snake, camel, apiStyle)
+  if (!Array.isArray(selected)) return undefined
+  const strings = selected.filter(
+    (item): item is string => typeof item === 'string' && item.length > 0,
+  )
+  return strings.length === selected.length ? strings : undefined
+}
+
 function timestamp(
   value: Record<string, unknown>,
   snake: string,
@@ -405,6 +419,12 @@ export function normalizeSession(
     addOptional(session, 'model', optionalString(agentConfig, 'model', 'model', style))
   }
   addOptional(session, 'mode', optionalString(source, 'mode', 'mode', style))
+  addOptional(session, 'fileKeys', optionalStringArray(
+    source,
+    'attached_file_keys',
+    'attachedFileKeys',
+    style,
+  ))
   addOptional(session, 'createdAt', timestamp(source, 'created_at', 'createdAt', style))
   addOptional(session, 'updatedAt', timestamp(source, 'updated_at', 'updatedAt', style))
   addOptional(session, 'doneAt', timestamp(source, 'done_at', 'doneAt', style))

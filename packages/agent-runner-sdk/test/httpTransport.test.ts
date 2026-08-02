@@ -191,6 +191,7 @@ test('empty usage payloads normalize to null without invented values', async () 
   const fake = fakeFetch([{
     body: {
       ...session(),
+      attached_file_keys: ['context.md'],
       usage: {},
     },
   }])
@@ -200,10 +201,9 @@ test('empty usage payloads normalize to null without invented values', async () 
     baseUrl: 'https://api.example.test/api/v1',
   })
 
-  assert.equal(
-    (await transport.getSession('runner-1', 'session-1')).usage,
-    null,
-  )
+  const normalized = await transport.getSession('runner-1', 'session-1')
+  assert.equal(normalized.usage, null)
+  assert.deepEqual(normalized.fileKeys, ['context.md'])
 })
 
 test('HTTP transport creates sessions with the exact follow-up body', async () => {

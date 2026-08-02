@@ -38,6 +38,9 @@ export {
   requestMarkerOverheadBytes,
 } from './operations.js'
 export {
+  DEFAULT_CLOCK_SKEW_ALLOWANCE_MS,
+} from './reconciliation.js'
+export {
   detectRuntime,
 } from './runtime.js'
 export {
@@ -45,6 +48,11 @@ export {
   createHttpTransport,
 } from './transport/index.js'
 
+export type {
+  ReconcileSessionOptions,
+  Reconciler,
+  ReconcilerOptions,
+} from './reconciliation.js'
 export type {
   AgentRunnerSdk,
   AgentRunnerSdkOptions,

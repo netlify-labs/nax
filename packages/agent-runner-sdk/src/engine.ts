@@ -1,6 +1,9 @@
 import type {
+  EffectiveFollowUpInput,
+  EffectiveStartInput,
   FailureClassification,
   ProgressEvent,
+  RequestWindow,
   Runner,
   Session,
   StartInput,
@@ -20,6 +23,7 @@ import {
 import type {
   Handle,
   RunHandle,
+  SessionHandle,
 } from './handles.js'
 import {
   hasRequestMarker,
@@ -29,10 +33,17 @@ import {
 } from './operations.js'
 import type {
   LandingOutcome,
+  ReconciliationResult,
   RunOutcome,
   RunResult,
   RunSnapshot,
 } from './result.js'
+import {
+  createReconciler,
+} from './reconciliation.js'
+import type {
+  ReconcileSessionOptions,
+} from './reconciliation.js'
 import { detectRuntime } from './runtime.js'
 import type { AgentRuntime } from './runtime.js'
 import {
@@ -81,6 +92,7 @@ export interface AgentRunnerSdkOptions
   defaultDeadlineMs?: number
   pollIntervalMs?: number
   landingHandler?: LandingHandler
+  clockSkewAllowanceMs?: number
 }
 
 export interface WaitForOptions extends TransportRequestOptions {
@@ -120,6 +132,17 @@ export interface AgentRunnerSdk {
     failure: FailureClassification,
   ): boolean
   classifyFailure(error: unknown): FailureClassification
+  reconcileCreate(
+    input: EffectiveStartInput,
+    window: RequestWindow,
+    options?: TransportRequestOptions,
+  ): Promise<ReconciliationResult<RunHandle>>
+  reconcileSession(
+    handle: Handle,
+    input: EffectiveFollowUpInput,
+    window: RequestWindow,
+    options?: ReconcileSessionOptions,
+  ): Promise<ReconciliationResult<SessionHandle>>
   parseHandle(value: string | unknown): Handle
   serializeHandle(handle: Handle): string
 }
@@ -351,6 +374,7 @@ export function createAgentRunnerSdk(
     defaultDeadlineMs = DEFAULT_DEADLINE_MS,
     pollIntervalMs = DEFAULT_POLL_INTERVAL_MS,
     landingHandler,
+    clockSkewAllowanceMs,
     now = Date.now,
     ...httpOptions
   } = options
@@ -369,6 +393,15 @@ export function createAgentRunnerSdk(
         sleep,
       })
     : configuredTransport
+  const reconciler = createReconciler({
+    transport,
+    defaultAgent: DEFAULT_AGENT,
+    defaultDeadlineMs: resolvedDefaultDeadlineMs,
+    defaultLanding: DEFAULT_LANDING,
+    ...(clockSkewAllowanceMs === undefined
+      ? {}
+      : { clockSkewAllowanceMs }),
+  })
 
   async function observe(
     handle: Handle,
@@ -706,6 +739,18 @@ export function createAgentRunnerSdk(
       && handle.retries.capacity < handle.policy.retryBudget.capacity
     ),
     classifyFailure,
+    reconcileCreate: reconciler.reconcileCreate,
+    reconcileSession: (
+      handle,
+      input,
+      window,
+      reconcileOptions,
+    ) => reconciler.reconcileSession(
+      parseHandle(handle),
+      input,
+      window,
+      reconcileOptions,
+    ),
     parseHandle,
     serializeHandle,
   }

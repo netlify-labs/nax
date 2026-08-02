@@ -315,6 +315,42 @@ test('a persisted expected head refuses live drift before the merge call', async
   }
 })
 
+test('restart after expected-head persistence reuses it without re-observation', async () => {
+  const fake = fakeFetch([
+    { body: githubPull() },
+    { body: { merged: true, sha: MERGE_SHA } },
+  ])
+  const checkpoints: Handle[] = []
+  const sdk = createAgentRunnerSdk({
+    transport: fakeTransport(),
+    fetch: fake.fetch,
+    githubToken: GITHUB_TOKEN,
+    onLandingCheckpoint: (checkpoint) => {
+      checkpoints.push(checkpoint)
+    },
+  })
+  const resumed = handle('merge', {
+    landing: {
+      prUrl: PR_URL,
+      committedSessionIds: ['session-1'],
+      expectedPrHeadSha: EXPECTED_HEAD,
+    },
+  })
+
+  const landed = await sdk.land(
+    sdk.parseHandle(sdk.serializeHandle(resumed)) as RunHandle,
+  )
+
+  assert.equal(fake.calls.length, 2)
+  assert.deepEqual(jsonBody(fake.calls[1] as FetchCall), {
+    merge_method: 'squash',
+    sha: EXPECTED_HEAD,
+  })
+  assert.equal(checkpoints.length, 1)
+  assert.equal(checkpoints[0]?.landing?.mergedSha, MERGE_SHA)
+  assert.equal(landed.landing.kind, 'merged')
+})
+
 test('a lost merge response reconciles merged state without replay', async () => {
   const fake = fakeFetch([
     { body: githubPull() },

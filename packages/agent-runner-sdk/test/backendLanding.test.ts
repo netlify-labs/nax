@@ -125,6 +125,7 @@ function sessionHandle(
 test('first GitHub landing invokes pull_request and returns resumable prOpen state', async () => {
   let memberCalls = 0
   let runnerReads = 0
+  const checkpoints: RunHandle[] = []
   const transport = fakeTransport({
     getRunner: async () => {
       runnerReads += 1
@@ -153,6 +154,10 @@ test('first GitHub landing invokes pull_request and returns resumable prOpen sta
     pollIntervalMs: 5,
     now: () => 0,
     sleep: async () => {},
+    onLandingCheckpoint: (checkpoint) => {
+      assert.equal(checkpoint.kind, 'run')
+      checkpoints.push(checkpoint as RunHandle)
+    },
   })
 
   const landed = await sdk.land(runHandle('pr'))
@@ -168,6 +173,14 @@ test('first GitHub landing invokes pull_request and returns resumable prOpen sta
     landed.handle.landing?.committedSessionIds,
     ['session-1'],
   )
+  assert.equal(checkpoints.length, 1)
+  assert.equal(checkpoints[0]?.landing?.prUrl, PR_URL)
+
+  const resumed = await sdk.land(
+    sdk.parseHandle(sdk.serializeHandle(landed.handle)) as RunHandle,
+  )
+  assert.equal(resumed.landing.kind, 'prOpen')
+  assert.equal(memberCalls, 1)
 })
 
 test('follow-up landing commits the exact current session and ignores a stale runner SHA', async () => {
@@ -431,6 +444,49 @@ test('backend landing surfaces PR and current-session commit failures', async ()
   })
 })
 
+test('PR polling errors and missing settled URLs fail without replay', async () => {
+  for (const settled of [
+    runner({
+      prIsBeingCreated: false,
+      prError: 'GitHub rejected the pull request',
+    }),
+    runner({ prIsBeingCreated: false }),
+  ]) {
+    let runnerReads = 0
+    let memberCalls = 0
+    const sdk = createAgentRunnerSdk({
+      transport: fakeTransport({
+        getRunner: async () => {
+          runnerReads += 1
+          return runnerReads === 1
+            ? runner({ prIsBeingCreated: true })
+            : settled
+        },
+        getSession: async () => session(),
+        member: async <A extends MemberAction>(
+          _runnerId: string,
+          _action: A,
+          _input: MemberInput<A>,
+        ): Promise<MemberResult<A>> => {
+          memberCalls += 1
+          return runner() as MemberResult<A>
+        },
+      }),
+      pollIntervalMs: 5,
+      now: () => 0,
+      sleep: async () => {},
+    })
+
+    const landed = await sdk.land(runHandle('pr'))
+
+    assert.equal(landed.landing.kind, 'failed')
+    if (landed.landing.kind === 'failed') {
+      assert.equal(landed.landing.step, 'pr')
+    }
+    assert.equal(memberCalls, 0)
+  }
+})
+
 test('landing never targets main and reports unsupported and skipped origins', async () => {
   let memberCalls = 0
   const mainSdk = createAgentRunnerSdk({
@@ -458,17 +514,19 @@ test('landing never targets main and reports unsupported and skipped origins', a
   }
   assert.equal(memberCalls, 0)
 
-  const zipSdk = createAgentRunnerSdk({
-    transport: fakeTransport({
-      getRunner: async () => runner({ codeOrigin: 'zip' }),
-      getSession: async () => session(),
-    }),
-  })
-  const unsupported = await zipSdk.land(runHandle('pr'))
-  assert.deepEqual(unsupported.landing, {
-    kind: 'unsupported',
-    reason: 'Landing is not implemented for zip runners.',
-  })
+  for (const origin of ['zip', 'drop', 'netlify-git']) {
+    const originSdk = createAgentRunnerSdk({
+      transport: fakeTransport({
+        getRunner: async () => runner({ codeOrigin: origin }),
+        getSession: async () => session(),
+      }),
+    })
+    const unsupported = await originSdk.land(runHandle('pr'))
+    assert.deepEqual(unsupported.landing, {
+      kind: 'unsupported',
+      reason: `Landing is not implemented for ${origin} runners.`,
+    })
+  }
 
   const skipped = await createAgentRunnerSdk({
     transport: fakeTransport(),

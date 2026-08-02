@@ -1,0 +1,367 @@
+{
+  "schemaVersion": 1,
+  "recordedAt": "2026-08-02T21:52:00Z",
+  "purpose": "Sanitized live contract evidence for the Agent Runner SDK v1 HTTP transport and GitHub landing boundary.",
+  "resources": {
+    "netlifyTeam": "netliclaw",
+    "site": "agent-sdk-canary",
+    "siteId": "{siteId}",
+    "githubRepository": "netlify-labs/agent-sdk-canary",
+    "defaultBranch": "main",
+    "codingInstallation": {
+      "present": true,
+      "valueType": "integer",
+      "repositorySelection": "all"
+    }
+  },
+  "redaction": {
+    "identifiers": "Site, account, runner, session, request, and commit identifiers are stable placeholders.",
+    "omitted": [
+      "authorization headers",
+      "Netlify tokens",
+      "GitHub tokens",
+      "prompt and result prose",
+      "full response headers"
+    ],
+    "markerShape": "<!-- agent-runner-sdk-request-id:{uuid} -->"
+  },
+  "runnerCreate": {
+    "request": {
+      "method": "POST",
+      "path": "/api/v1/agent_runners",
+      "query": {
+        "site_id": "{siteId}"
+      },
+      "bodyFields": [
+        "agent",
+        "branch",
+        "prompt"
+      ]
+    },
+    "response": {
+      "status": 200,
+      "runnerId": "{runnerA}",
+      "state": "running",
+      "branch": "main",
+      "code_origin": "github",
+      "siteIdMatched": true,
+      "fieldNames": [
+        "active_session_created_at",
+        "attached_file_keys",
+        "base_deploy_id",
+        "branch",
+        "code_origin",
+        "contributors",
+        "created_at",
+        "current_task",
+        "done_at",
+        "has_result_diff",
+        "id",
+        "last_session_created_at",
+        "latest_session_is_published",
+        "latest_session_mode",
+        "latest_session_state",
+        "merge_commit_error",
+        "merge_commit_is_being_created",
+        "merge_commit_sha",
+        "merge_target_available",
+        "needs_git_sync",
+        "parent_agent_runner_id",
+        "pr_branch",
+        "pr_error",
+        "pr_is_being_created",
+        "pr_number",
+        "pr_state",
+        "pr_url",
+        "rebase_available",
+        "result_branch",
+        "sha",
+        "site_id",
+        "site_name",
+        "state",
+        "title",
+        "updated_at",
+        "user"
+      ]
+    }
+  },
+  "runnerGet": {
+    "request": {
+      "method": "GET",
+      "path": "/api/v1/agent_runners/{runnerId}"
+    },
+    "response": {
+      "status": 200,
+      "runnerIdMatched": true,
+      "code_origin": "github",
+      "git_hostFieldPresent": false
+    }
+  },
+  "siteRunnerList": {
+    "request": {
+      "method": "GET",
+      "path": "/api/v1/agent_runners",
+      "queryFields": [
+        "account_id",
+        "from",
+        "page",
+        "per_page",
+        "site_id",
+        "to"
+      ],
+      "timeUnit": "Unix seconds"
+    },
+    "response": {
+      "status": 200,
+      "totalHeader": "1",
+      "linkHeaderRelations": [
+        "last"
+      ],
+      "matchedBoundedRunner": true,
+      "pagePastEnd": {
+        "status": 200,
+        "count": 0,
+        "totalHeader": "1",
+        "linkHeaderRelations": [
+          "last",
+          "prev"
+        ]
+      },
+      "secondsWindowMatched": 2,
+      "sameNumericWindowAsMillisecondsMatched": 0
+    },
+    "orderingProof": {
+      "beforeFollowUp": [
+        "{runnerB}",
+        "{runnerA}"
+      ],
+      "afterFollowUp": [
+        "{runnerA}",
+        "{runnerB}"
+      ],
+      "fact": "The list is descending by last_session_created_at, so a follow-up moves an older runner ahead of a newer runner."
+    }
+  },
+  "accountRunnerList": {
+    "request": {
+      "method": "GET",
+      "path": "/api/v1/{account_slug}/agent_runners",
+      "maxPerPage": 100
+    },
+    "enabledAccountResponse": {
+      "status": 200,
+      "requestedPerPage": 101,
+      "returnedCount": 100,
+      "headers": [
+        "Link",
+        "Total"
+      ],
+      "fieldNames": [
+        "contributors",
+        "created_at",
+        "current_task",
+        "id",
+        "latest_session_is_published",
+        "merge_commit_error",
+        "merge_commit_is_being_created",
+        "merge_commit_sha",
+        "pr_state",
+        "pr_url",
+        "site_git_provider",
+        "site_id",
+        "site_name",
+        "state",
+        "title",
+        "updated_at",
+        "user"
+      ]
+    },
+    "featureGatedAccountResponse": {
+      "account": "netliclaw",
+      "status": 404,
+      "fact": "The account-level endpoint is feature-gated independently of site-scoped Agent Runner access."
+    }
+  },
+  "runnerCancel": {
+    "request": {
+      "method": "DELETE",
+      "path": "/api/v1/agent_runners/{runnerId}"
+    },
+    "response": {
+      "status": 202,
+      "bodyBytes": 0
+    }
+  },
+  "sessionCreate": {
+    "request": {
+      "method": "POST",
+      "path": "/api/v1/agent_runners/{runnerId}/sessions",
+      "bodyFields": [
+        "agent",
+        "prompt"
+      ]
+    },
+    "response": {
+      "status": 200,
+      "sessionId": "{sessionA2}",
+      "state": "running",
+      "agentRunnerIdMatched": true
+    },
+    "activeSessionConflict": {
+      "status": 409,
+      "error_code": "active_session_exists"
+    }
+  },
+  "sessionGetAndList": {
+    "getPath": "/api/v1/agent_runners/{runnerId}/sessions/{sessionId}",
+    "listPath": "/api/v1/agent_runners/{runnerId}/sessions",
+    "response": {
+      "status": 200,
+      "requestMarkerPreservedExactlyOnce": true,
+      "commit_shaFieldPresent": true,
+      "merge_commit_errorFieldPresent": false,
+      "fieldNames": [
+        "agent_config",
+        "agent_runner_id",
+        "attached_file_keys",
+        "base_sha",
+        "commit_sha",
+        "created_at",
+        "credit_limit_exceeded",
+        "credit_limit_exceeded_message",
+        "current_task",
+        "deploy_id",
+        "deploy_url",
+        "dev_server_id",
+        "done_at",
+        "duration",
+        "has_cumulative_diff",
+        "has_result_diff",
+        "id",
+        "is_discarded",
+        "is_published",
+        "mode",
+        "prompt",
+        "result",
+        "result_zip_file_name",
+        "state",
+        "steps",
+        "steps_count",
+        "title",
+        "updated_at",
+        "usage",
+        "user"
+      ]
+    },
+    "ordering": {
+      "default": "oldest-first",
+      "order_by=asc": "oldest-first",
+      "order_by=desc": "newest-first"
+    }
+  },
+  "sessionCancel": {
+    "request": {
+      "method": "DELETE",
+      "path": "/api/v1/agent_runners/{runnerId}/sessions/{sessionId}"
+    },
+    "response": {
+      "status": 202,
+      "bodyBytes": 0,
+      "terminalState": "cancelled"
+    }
+  },
+  "pullRequest": {
+    "request": {
+      "method": "POST",
+      "path": "/api/v1/agent_runners/{runnerId}/pull_request"
+    },
+    "response": {
+      "status": 200,
+      "initial": {
+        "pr_is_being_created": true,
+        "pr_url": null,
+        "pr_error": null
+      },
+      "settled": {
+        "pr_is_being_created": false,
+        "pr_url": "https://github.com/netlify-labs/agent-sdk-canary/pull/1",
+        "pr_number": 1,
+        "pr_state": "open",
+        "pr_branch": "{prBranch}",
+        "pr_error": null
+      }
+    }
+  },
+  "followUpCommit": {
+    "request": {
+      "method": "POST",
+      "path": "/api/v1/agent_runners/{runnerId}/commit",
+      "body": {
+        "target_branch": "{prBranch}"
+      }
+    },
+    "response": {
+      "status": 200,
+      "initial": {
+        "merge_commit_is_being_created": true,
+        "merge_commit_error": null
+      },
+      "settled": {
+        "currentSessionCommitShaPresent": true,
+        "runnerMergeCommitShaPresent": true,
+        "sessionCommitMatchedRunnerAtSettlement": true
+      }
+    },
+    "staleRunnerRegression": {
+      "previousSessionCommitSha": "{commitA2}",
+      "currentSessionCommitShaBeforeLanding": null,
+      "runnerMergeCommitSha": "{commitA2}",
+      "fact": "A runner-level SHA from the previous session remains while the current session is uncommitted."
+    }
+  },
+  "githubCompareAndSwap": {
+    "identityDerivedFrom": [
+      "runner.pr_url",
+      "runner.pr_number",
+      "runner.pr_branch",
+      "site.build_settings.repo_path",
+      "site.build_settings.provider"
+    ],
+    "mismatchedHead": {
+      "method": "PUT",
+      "path": "/repos/netlify-labs/agent-sdk-canary/pulls/1/merge",
+      "requestFields": [
+        "merge_method",
+        "sha"
+      ],
+      "status": 409,
+      "messageCategory": "head-modified",
+      "mergedAfterRequest": false,
+      "headUnchanged": true
+    },
+    "expectedHead": {
+      "status": 200,
+      "merged": true,
+      "mergedStateVerified": true
+    }
+  },
+  "originContract": {
+    "runnerField": "code_origin",
+    "siteField": "build_settings.provider",
+    "accountListField": "site_git_provider",
+    "runnerGitHostFieldPresent": false
+  },
+  "cleanup": {
+    "runnerAState": "archived",
+    "runnerBState": "archived",
+    "pullRequestState": "merged",
+    "probeBranchDeleted": true,
+    "defaultBranchFixtureReset": true,
+    "siteAndRepositoryRetainedForCanaries": true
+  },
+  "liveCorrectionsToSpecV8": [
+    "GitHub expected-head mismatch returned 409 Conflict, not 422.",
+    "merge_commit_error and merge_commit_is_being_created are runner-level fields; sessions serialize commit_sha but not merge_commit_error.",
+    "Runner payloads serialize code_origin but not git_host; provider identity comes from the site or account-list projection."
+  ]
+}

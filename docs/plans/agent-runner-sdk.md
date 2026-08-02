@@ -53,7 +53,7 @@ type BaseHandle = {
   runnerId: string
   siteId: string
   agent: string
-  origin?: OriginInfo                // code_origin/git_host once known
+  origin?: OriginInfo                // runner code_origin + site/account provider once known
   input: EffectiveStartInput         // FULL effective input, including the generated correlation requestId
   policy: { landing: LandingMode; deadlineAt: number; retryBudget: { capacity: number } }
   retries: { capacity: number }
@@ -303,11 +303,11 @@ Backend facts: runners don't create result branches (`result_branch` legacy); `c
 `land(handle) → { handle, landing }`:
 - **`githubPr`** (GitHub origin):
   1. **First landing** (no `pr_url`): `pull_request` member action directly — poll `pr_url`/`pr_is_being_created`/`pr_error`.
-  2. **Follow-up landing** (PR exists): `commit` member action; **track completion via the CURRENT session** — `handle.currentSessionId` (and, for `SessionHandle`, the equal `sessionId`) → that session's `commit_sha`. Runner-level `merge_commit_sha` is never used to decide whether *this* session's commit finished. Poll session `commit_sha` (+ `merge_commit_error`), then record the session ID in `landing.committedSessionIds`.
+  2. **Follow-up landing** (PR exists): `commit` member action; **track completion via the CURRENT session** — `handle.currentSessionId` (and, for `SessionHandle`, the equal `sessionId`) → that session's `commit_sha`. Runner-level `merge_commit_sha` is never used to decide whether *this* session's commit finished. Poll the session's `commit_sha` while reading `merge_commit_error` and `merge_commit_is_being_created` from the runner (the sessions API does not serialize those runner-level fields), then record the session ID in `landing.committedSessionIds`.
   3. **Merge** (`'merge'`, or `'auto'`+token): via `github/mergePr.ts` with `githubToken`, using an expected-head compare-and-swap:
      - Read the PR. If already merged, return `merged`.
      - Wait until the current session's `commit_sha` exists and backend PR/target-sync flags are settled. Then read the live PR `head.sha` and persist it as `landing.expectedPrHeadSha` **before** the merge call. Do not equate the session commit SHA with the PR head: the backend may legitimately merge a newer target branch into the PR branch after PR creation.
-     - Call GitHub's merge endpoint with `sha: landing.expectedPrHeadSha`. A head mismatch / GitHub `422` becomes typed `pr-head-changed`; it never retries or merges a newer head implicitly.
+     - Call GitHub's merge endpoint with `sha: landing.expectedPrHeadSha`. A head mismatch / GitHub `409` becomes typed `pr-head-changed`; it never retries or merges a newer head implicitly. Keep `422` in the general validation mapping, but do not classify every `422` as head drift.
      - Crash resume reuses the persisted expected SHA; a lost successful response is reconciled by re-reading the PR's merged state.
      - No token → `github-token-required` (or `prOpen` for `'auto'`).
 - **`netlifyGitPublish`**: `publish_to_production` (atomic; already-in-progress surfaced as in-flight, re-polled).
@@ -376,7 +376,7 @@ interface BlobStore {
 
 - **Transport contract tests** — exact snake paths/verbs/bodies for every op + members; `bb-api` variant; paginated list behavior without assuming `created_at` ordering; per-op retry (create-POST never replayed post-write; ambiguity classification; session-409); per-call token; token-precedence characterization (per-call > ctor > env > CLI config); telemetry value-free assertion; token redaction.
 - **Engine/Handle tests** — serde round-trip incl. version-stamp migration; deadline (in-process auto-cancel; out-of-band via `deadlineAt`; **preserved across `retry` and reconciliation**); `shouldRetry`/`retry` budget; every retry rotates `requestId` while preserving semantic input/promptRef; `prompt-ref-expired`; full-fidelity `RunHandle → SessionHandle` transition (policy/input/retries/landing preserved; `sessionId === currentSessionId`); SessionHandle attribution; `RunResult` invariants; `RunOutcome` landing propagation.
-- **Landing tests** — all strategies from stubbed origin payloads; **first-landing = direct PR**; **follow-up commit tracked via the session's `commit_sha`, explicitly NOT runner-level `merge_commit_sha`** (stale runner-level SHA regression); GitHub merge passes the persisted expected head SHA; a legitimate backend target-branch merge may make PR `head.sha` differ from the session commit and is captured before CAS; subsequent head change / `422` → `pr-head-changed` and no merge; lost merge response + already-merged resume; `github-token-required`; **crash-recovery** between every step; missing-Coding-installation → typed failure.
+- **Landing tests** — all strategies from stubbed origin payloads; **first-landing = direct PR**; **follow-up commit tracked via the session's `commit_sha`, explicitly NOT runner-level `merge_commit_sha`** (stale runner-level SHA regression); runner-level `merge_commit_error`/in-progress handling; GitHub merge passes the persisted expected head SHA; a legitimate backend target-branch merge may make PR `head.sha` differ from the session commit and is captured before CAS; subsequent head change / `409` → `pr-head-changed` and no merge; lost merge response + already-merged resume; `github-token-required`; **crash-recovery** between every step; missing-Coding-installation → typed failure.
 - **Reconciliation tests** — marker generated before transmission and preserved in the effective input; marker survives inline and blob-wrapper delivery; `create-ambiguous` → `reconcileCreate` (`matched` keeps ORIGINAL policy/deadline; `none`; `ambiguous` exposes safe candidates); identical prompt/agent/branch with a different marker is never adopted, even inside the window; lower/upper clock-skew bounds and all-page traversal; `reconcileSession` incl. 409-adopt-only-on-exact-marker-match.
 - **Drift tests** — additive unknown fields tolerated; missing `runnerId`/`state` → `invalid-api-shape`.
 - **Failure-taxonomy tests** — ported from the GH action (every core category has a profile; GitHub extension separate) + nax `failure-guidance` signatures folded in.
@@ -398,10 +398,10 @@ interface BlobStore {
 
 ## 11. Phase-0 verifications (no open decisions)
 
-1. **Landing fields end-to-end:** origin detection (`code_origin`, `git_host`) on runner/site payloads; PR polling fields; **session `commit_sha` visibility via the sessions API** (it exists on the model — confirm it's serialized).
+1. **Landing fields end-to-end:** origin detection from runner `code_origin` plus site `build_settings.provider` / account-list `site_git_provider` (runner payloads do not serialize `git_host`); PR polling fields; **session `commit_sha` visibility via the sessions API**; runner-level `merge_commit_error` and `merge_commit_is_being_created`.
 2. **D23 smoke:** `installation_coding_id` present on a fresh vended netlify-labs repo.
 3. **Reconciliation queries:** `GET /agent_runners?site_id=&from=&to=` filters, pagination headers/limits, and exact request-marker preservation/readability through the sessions API. Do not expect `created_at` ordering: backend source sorts `last_session_created_at`.
-4. **GitHub merge mechanics:** PR number/repo derivable from the runner payload; merge with the netlify-labs org token on a vended repo while passing the expected head `sha`; verify a mismatched head returns `422` without merging.
+4. **GitHub merge mechanics:** PR number/repo derivable from the runner and site payloads; merge with the netlify-labs org token on a vended repo while passing the expected head `sha`; verify a mismatched head returns `409` without merging.
 5. `file_keys`/attachments — deferred (API accepts; runner FS doesn't materialize them per verified memory).
 6. RE AI-usage accounting — separate RE-side plan (persists `usage` to RE's AI-usage entity).
 

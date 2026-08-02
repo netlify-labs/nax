@@ -13,9 +13,11 @@ import type {
 } from './domain.js'
 import {
   BasicAgentRunnerSdkError,
+  CreateAmbiguousError,
   HttpResponseError,
   InvalidApiShapeError,
   SessionAlreadyActiveError,
+  SessionCreateAmbiguousError,
   isAgentRunnerSdkError,
 } from './errors.js'
 import {
@@ -553,10 +555,22 @@ export function createAgentRunnerSdk(
         : { randomUUID: generateRequestId }),
       ...delivery,
     })
-    const submitted = await submitStartOperation(
-      prepared,
-      (wireInput) => transport.createRunner(wireInput, requestOptions),
-    )
+    let submitted
+    try {
+      submitted = await submitStartOperation(
+        prepared,
+        (wireInput) => transport.createRunner(wireInput, requestOptions),
+      )
+    } catch (error: unknown) {
+      if (!(error instanceof CreateAmbiguousError)) throw error
+      const reconciled = await reconciler.reconcileCreate(
+        error.effectiveInput,
+        error.window,
+        requestOptions,
+      )
+      if (reconciled.kind === 'matched') return reconciled.handle
+      throw error
+    }
     const runner = submitted.value
     const initialSession = await initialSessionFor(
       runner,
@@ -838,14 +852,19 @@ export function createAgentRunnerSdk(
         sessionInput: submitted.effectiveInput,
       }
     } catch (error: unknown) {
-      if (!(error instanceof SessionAlreadyActiveError)) throw error
+      if (
+        !(error instanceof SessionAlreadyActiveError)
+        && !(error instanceof SessionCreateAmbiguousError)
+      ) throw error
       const reconciled = await reconciler.reconcileSession(
         handle,
         error.effectiveInput,
         error.window,
         {
           ...requestOptions,
-          conflict: error,
+          ...(error instanceof SessionAlreadyActiveError
+            ? { conflict: error }
+            : {}),
         },
       )
       if (reconciled.kind === 'matched') return reconciled.handle

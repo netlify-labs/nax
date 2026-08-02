@@ -3,6 +3,7 @@ import test from 'node:test'
 
 import {
   AGENT_RUNNER_SDK_HANDLE_VERSION,
+  CreateAmbiguousError,
   SessionAlreadyActiveError,
   createAgentRunnerSdk,
   isAgentRunnerSdkError,
@@ -108,6 +109,39 @@ const requestWindow = {
   sentAt: 10_500,
   failedAt: 11_500,
 }
+
+test('start reconciles an ambiguous create without replaying it', async () => {
+  let creates = 0
+  const sdk = createAgentRunnerSdk({
+    transport: fakeTransport({
+      createRunner: async (input) => {
+        creates += 1
+        throw new CreateAmbiguousError(
+          input,
+          { sentAt: 10_500, failedAt: 11_500 },
+        )
+      },
+      listRunners: async () => ({
+        items: [runner('runner-recovered', 11_000)],
+      }),
+      listSessions: async () => [
+        session('runner-recovered', 'session-recovered', CREATE_ID, 11_001),
+      ],
+    }),
+    generateRequestId: () => CREATE_ID,
+    clockSkewAllowanceMs: 0,
+  })
+
+  const recovered = await sdk.start({
+    ...startInput,
+    requestId: undefined,
+  })
+
+  assert.equal(creates, 1)
+  assert.equal(recovered.runnerId, 'runner-recovered')
+  assert.equal(recovered.currentSessionId, 'session-recovered')
+  assert.equal(recovered.input.prompt, 'same prompt')
+})
 
 function baseHandle(): RunHandle {
   return {

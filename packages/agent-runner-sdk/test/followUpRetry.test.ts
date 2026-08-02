@@ -5,6 +5,7 @@ import {
   AGENT_RUNNER_SDK_HANDLE_VERSION,
   CreateAmbiguousError,
   SessionAlreadyActiveError,
+  SessionCreateAmbiguousError,
   createAgentRunnerSdk,
   isAgentRunnerSdkError,
 } from '../src/index.js'
@@ -225,6 +226,34 @@ test('followUp reconciles a 409 only to the exact active session', async () => {
       && error.activeSessionId === 'someone-elses-session'
     ),
   )
+})
+
+test('followUp reconciles an ambiguous create without replaying it', async () => {
+  let creates = 0
+  const sdk = createAgentRunnerSdk({
+    transport: fakeTransport({
+      createSession: async (_runnerId, input) => {
+        creates += 1
+        throw new SessionCreateAmbiguousError(
+          input,
+          { sentAt: 100, failedAt: 120 },
+        )
+      },
+      listSessions: async () => [
+        session('session-recovered', FOLLOW_UP_ID, { createdAt: 110 }),
+      ],
+    }),
+    now: () => 100,
+    generateRequestId: () => FOLLOW_UP_ID,
+  })
+
+  const recovered = await sdk.followUp(runHandle(), {
+    prompt: 'follow up',
+  })
+
+  assert.equal(creates, 1)
+  assert.equal(recovered.sessionId, 'session-recovered')
+  assert.equal(recovered.sessionInput.prompt, 'follow up')
 })
 
 test('retry replaces a runner while preserving semantic input and policy', async () => {

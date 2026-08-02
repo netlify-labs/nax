@@ -669,6 +669,27 @@ test('non-create member POSTs are not replayed after failure', async () => {
   assert.equal(fake.calls.length, 1)
 })
 
+test('member actions type a missing GitHub Coding installation', async () => {
+  const fake = fakeFetch([{
+    status: 500,
+    body: { error: 'GitHub Coding installation not configured' },
+  }])
+  const transport = createHttpTransport({
+    fetch: fake.fetch,
+    token: 'token',
+    baseUrl: 'https://api.example.test/api/v1',
+  })
+
+  await assert.rejects(
+    () => transport.member('runner-1', 'pull_request', {}),
+    (error: unknown) => isAgentRunnerSdkError(
+      error,
+      'missing-coding-installation',
+    ),
+  )
+  assert.equal(fake.calls.length, 1)
+})
+
 test('HTTP statuses have stable typed mappings', async () => {
   const cases = [
     [401, 'auth-invalid'],

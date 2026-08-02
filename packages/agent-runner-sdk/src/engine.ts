@@ -49,6 +49,7 @@ import {
 import type {
   ReconcileSessionOptions,
 } from './reconciliation.js'
+import { createBackendLandingHandler } from './landing/backend.js'
 import { detectRuntime } from './runtime.js'
 import type { AgentRuntime } from './runtime.js'
 import {
@@ -349,6 +350,7 @@ export function classifyFailure(error: unknown): FailureClassification {
       || code === 'invalid-handle'
       || code === 'unsupported-handle-version'
     ) category = 'validation'
+    else if (code === 'missing-coding-installation') category = 'permission'
     else if (code === 'capacity-exhausted') category = 'capacity'
     else if (code === 'rate-limited') category = 'rate-limit'
     else if (code === 'network-error') category = 'network'
@@ -392,7 +394,7 @@ export function createAgentRunnerSdk(
     generateRequestId,
     defaultDeadlineMs = DEFAULT_DEADLINE_MS,
     pollIntervalMs = DEFAULT_POLL_INTERVAL_MS,
-    landingHandler,
+    landingHandler: configuredLandingHandler,
     clockSkewAllowanceMs,
     promptRefDelivery,
     now = Date.now,
@@ -406,6 +408,10 @@ export function createAgentRunnerSdk(
     pollIntervalMs,
     'pollIntervalMs',
   )
+  const landingHandler = configuredLandingHandler
+    ?? createBackendLandingHandler({
+      pollIntervalMs: resolvedPollIntervalMs,
+    })
   const transport = configuredTransport === 'http'
     ? createHttpTransport({
         ...httpOptions,
@@ -700,15 +706,6 @@ export function createAgentRunnerSdk(
     const handle = parseHandle(handleValue) as H
     if (handle.policy.landing === 'none') {
       return { handle, landing: { kind: 'skipped' } }
-    }
-    if (!landingHandler) {
-      return {
-        handle,
-        landing: {
-          kind: 'unsupported',
-          reason: 'No landing strategy is configured for this origin.',
-        },
-      }
     }
     try {
       const landed = await landingHandler(handle, {

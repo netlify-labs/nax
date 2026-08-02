@@ -373,7 +373,19 @@ export function createHttpTransport(
         ...(body === undefined ? {} : { body }),
         operation: 'agent-runner-member',
       })
-      if (!response.ok) throw errorForResponse(response)
+      if (!response.ok) {
+        const payload = record(response.payload)
+        const backendMessage = typeof payload?.error === 'string'
+          ? payload.error
+          : ''
+        if (/coding installation/i.test(backendMessage)) {
+          throw new BasicAgentRunnerSdkError(
+            'missing-coding-installation',
+            'The site repository is not covered by the GitHub Coding installation.',
+          )
+        }
+        throw errorForResponse(response)
+      }
       return response
     } catch (error: unknown) {
       if (error instanceof NetlifyNetworkError) throw networkError(error)

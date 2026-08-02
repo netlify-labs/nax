@@ -35,6 +35,9 @@ export {
   serializeHandle,
 } from './handles.js'
 export {
+  createBackendLandingHandler,
+} from './landing/backend.js'
+export {
   requestMarkerOverheadBytes,
 } from './operations.js'
 export {
@@ -123,6 +126,11 @@ export type {
   RunHandle,
   SessionHandle,
 } from './handles.js'
+export type {
+  BackendLandingContext,
+  BackendLandingOptions,
+  BackendLandingResult,
+} from './landing/backend.js'
 export type {
   LandingOutcome,
   ReconciliationCandidate,

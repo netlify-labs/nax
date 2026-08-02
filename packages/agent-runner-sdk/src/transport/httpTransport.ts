@@ -403,10 +403,9 @@ export function createHttpTransport(
     optionsForRequest?: TransportRequestOptions,
   ): Promise<AuthenticatedResponse> {
     let attempt = 0
-    let sentAt = now()
     while (attempt < maxAttempts) {
       attempt += 1
-      sentAt = now()
+      const sentAt = now()
       let response: AuthenticatedResponse
       try {
         response = await authenticated.requestResponse('POST', path, {

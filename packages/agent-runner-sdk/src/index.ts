@@ -27,6 +27,9 @@ export {
   serializeHandle,
 } from './handles.js'
 export {
+  requestMarkerOverheadBytes,
+} from './operations.js'
+export {
   DEFAULT_BB_API_URL,
   createHttpTransport,
 } from './transport/index.js'

@@ -310,9 +310,10 @@ test('create retries only pre-transmission failures and surfaces ambiguity', asy
   await assert.rejects(
     () => transport.createRunner(input),
     (error: unknown) => {
-      assert.equal(isAgentRunnerSdkError(error, 'create-ambiguous'), true)
+      if (!isAgentRunnerSdkError(error, 'create-ambiguous')) return false
+      assert.deepEqual(error.window, { sentAt: 1_030, failedAt: 1_040 })
       assert.doesNotMatch(
-        error instanceof Error ? error.message : String(error),
+        error.message,
         /sensitive prompt|reset/,
       )
       return true

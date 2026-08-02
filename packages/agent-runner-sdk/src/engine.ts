@@ -1,7 +1,9 @@
 import type {
+  BlobRef,
   EffectiveFollowUpInput,
   EffectiveStartInput,
   FailureClassification,
+  FollowUpInput,
   ProgressEvent,
   RequestWindow,
   Runner,
@@ -13,6 +15,7 @@ import {
   BasicAgentRunnerSdkError,
   HttpResponseError,
   InvalidApiShapeError,
+  SessionAlreadyActiveError,
   isAgentRunnerSdkError,
 } from './errors.js'
 import {
@@ -27,8 +30,10 @@ import type {
 } from './handles.js'
 import {
   hasRequestMarker,
+  prepareFollowUpOperation,
   prepareStartOperation,
   stripRequestMarkers,
+  submitFollowUpOperation,
   submitStartOperation,
 } from './operations.js'
 import type {
@@ -93,6 +98,7 @@ export interface AgentRunnerSdkOptions
   pollIntervalMs?: number
   landingHandler?: LandingHandler
   clockSkewAllowanceMs?: number
+  promptRefDelivery?: (ref: BlobRef) => string | Promise<string>
 }
 
 export interface WaitForOptions extends TransportRequestOptions {
@@ -127,6 +133,19 @@ export interface AgentRunnerSdk {
     options?: TransportRequestOptions,
   ): Promise<LandingResult<H>>
   run(input: StartInput, options?: RunOptions): Promise<RunOutcome<RunHandle>>
+  followUp(
+    handle: Handle,
+    input: FollowUpInput,
+    options?: TransportRequestOptions,
+  ): Promise<SessionHandle>
+  retry(
+    handle: RunHandle,
+    options?: TransportRequestOptions,
+  ): Promise<RunHandle>
+  retry(
+    handle: SessionHandle,
+    options?: TransportRequestOptions,
+  ): Promise<SessionHandle>
   shouldRetry(
     handle: Handle,
     failure: FailureClassification,
@@ -375,6 +394,7 @@ export function createAgentRunnerSdk(
     pollIntervalMs = DEFAULT_POLL_INTERVAL_MS,
     landingHandler,
     clockSkewAllowanceMs,
+    promptRefDelivery,
     now = Date.now,
     ...httpOptions
   } = options
@@ -402,6 +422,56 @@ export function createAgentRunnerSdk(
       ? {}
       : { clockSkewAllowanceMs }),
   })
+
+  async function deliveryOptions(
+    input: StartInput | FollowUpInput,
+  ): Promise<{ deliveredPrompt?: string }> {
+    if (input.promptRef === undefined) return {}
+    if (input.promptRef.expiresAt <= now()) {
+      throw new BasicAgentRunnerSdkError(
+        'prompt-ref-expired',
+        'The Agent Runner prompt reference has expired.',
+      )
+    }
+    if (!promptRefDelivery) {
+      throw new BasicAgentRunnerSdkError(
+        'validation-error',
+        'Prompt-reference delivery is not configured.',
+      )
+    }
+    return {
+      deliveredPrompt: await promptRefDelivery(input.promptRef),
+    }
+  }
+
+  async function initialSessionFor(
+    runner: Runner,
+    requestId: string,
+    requestOptions?: TransportRequestOptions,
+  ): Promise<Session> {
+    const sessions = await transport.listSessions(
+      runner.runnerId,
+      requestOptions,
+    )
+    const matching = sessions.filter((session) => (
+      session.prompt !== undefined
+      && hasRequestMarker(session.prompt, requestId)
+    ))
+    if (matching.length !== 1) {
+      throw new InvalidApiShapeError(
+        `/agent_runners/${runner.runnerId}/sessions`,
+        'initial_session_request_marker',
+      )
+    }
+    const initialSession = matching[0] as Session
+    if (initialSession.runnerId !== runner.runnerId) {
+      throw new InvalidApiShapeError(
+        `/agent_runners/${runner.runnerId}/sessions`,
+        'agent_runner_id',
+      )
+    }
+    return initialSession
+  }
 
   async function observe(
     handle: Handle,
@@ -450,40 +520,23 @@ export function createAgentRunnerSdk(
       deadlineMs,
       retryBudget: { capacity: retryCapacity },
     }
+    const delivery = await deliveryOptions(resolvedInput)
     const prepared = prepareStartOperation(resolvedInput, {
       ...(generateRequestId === undefined
         ? {}
         : { randomUUID: generateRequestId }),
+      ...delivery,
     })
     const submitted = await submitStartOperation(
       prepared,
       (wireInput) => transport.createRunner(wireInput, requestOptions),
     )
     const runner = submitted.value
-    const sessions = await transport.listSessions(
-      runner.runnerId,
+    const initialSession = await initialSessionFor(
+      runner,
+      submitted.effectiveInput.requestId,
       requestOptions,
     )
-    const matching = sessions.filter((session) => (
-      session.prompt !== undefined
-      && hasRequestMarker(
-        session.prompt,
-        submitted.effectiveInput.requestId,
-      )
-    ))
-    if (matching.length !== 1) {
-      throw new InvalidApiShapeError(
-        `/agent_runners/${runner.runnerId}/sessions`,
-        'initial_session_request_marker',
-      )
-    }
-    const initialSession = matching[0] as Session
-    if (initialSession.runnerId !== runner.runnerId) {
-      throw new InvalidApiShapeError(
-        `/agent_runners/${runner.runnerId}/sessions`,
-        'agent_runner_id',
-      )
-    }
     const codeOrigin = runner.codeOrigin
     return {
       v: AGENT_RUNNER_SDK_HANDLE_VERSION,
@@ -724,6 +777,145 @@ export function createAgentRunnerSdk(
     }
   }
 
+  async function createFollowUp(
+    handle: Handle,
+    input: FollowUpInput,
+    requestOptions?: TransportRequestOptions,
+    rotateRequestId = false,
+  ): Promise<SessionHandle> {
+    const delivery = await deliveryOptions(input)
+    const prepared = prepareFollowUpOperation(input, {
+      ...(generateRequestId === undefined
+        ? {}
+        : { randomUUID: generateRequestId }),
+      ...delivery,
+      ...(rotateRequestId ? { rotateRequestId: true } : {}),
+    })
+    try {
+      const submitted = await submitFollowUpOperation(
+        prepared,
+        (wireInput) => transport.createSession(
+          handle.runnerId,
+          wireInput,
+          requestOptions,
+        ),
+      )
+      if (submitted.value.runnerId !== handle.runnerId) {
+        throw new InvalidApiShapeError(
+          `/agent_runners/${handle.runnerId}/sessions`,
+          'agent_runner_id',
+        )
+      }
+      return {
+        ...handle,
+        kind: 'session',
+        currentSessionId: submitted.value.sessionId,
+        sessionId: submitted.value.sessionId,
+        sessionInput: submitted.effectiveInput,
+      }
+    } catch (error: unknown) {
+      if (!(error instanceof SessionAlreadyActiveError)) throw error
+      const reconciled = await reconciler.reconcileSession(
+        handle,
+        error.effectiveInput,
+        error.window,
+        {
+          ...requestOptions,
+          conflict: error,
+        },
+      )
+      if (reconciled.kind === 'matched') return reconciled.handle
+      throw error
+    }
+  }
+
+  async function followUp(
+    handleValue: Handle,
+    input: FollowUpInput,
+    requestOptions?: TransportRequestOptions,
+  ): Promise<SessionHandle> {
+    const handle = parseHandle(handleValue)
+    return createFollowUp(handle, input, requestOptions)
+  }
+
+  async function retry(
+    handleValue: RunHandle,
+    requestOptions?: TransportRequestOptions,
+  ): Promise<RunHandle>
+  async function retry(
+    handleValue: SessionHandle,
+    requestOptions?: TransportRequestOptions,
+  ): Promise<SessionHandle>
+  async function retry(
+    handleValue: Handle,
+    requestOptions?: TransportRequestOptions,
+  ): Promise<Handle> {
+    const handle = parseHandle(handleValue)
+    if (
+      handle.retries.capacity
+      >= handle.policy.retryBudget.capacity
+    ) {
+      throw new BasicAgentRunnerSdkError(
+        'capacity-exhausted',
+        'The Agent Runner retry budget is exhausted.',
+      )
+    }
+    if (handle.kind === 'session') {
+      const retried = await createFollowUp(
+        handle,
+        handle.sessionInput,
+        requestOptions,
+        true,
+      )
+      return {
+        ...retried,
+        retries: {
+          capacity: handle.retries.capacity + 1,
+        },
+      }
+    }
+
+    const delivery = await deliveryOptions(handle.input)
+    const prepared = prepareStartOperation(handle.input, {
+      ...(generateRequestId === undefined
+        ? {}
+        : { randomUUID: generateRequestId }),
+      ...delivery,
+      rotateRequestId: true,
+    })
+    const submitted = await submitStartOperation(
+      prepared,
+      (wireInput) => transport.createRunner(wireInput, requestOptions),
+    )
+    const runner = submitted.value
+    const initialSession = await initialSessionFor(
+      runner,
+      submitted.effectiveInput.requestId,
+      requestOptions,
+    )
+    return {
+      ...handle,
+      kind: 'run',
+      runnerId: runner.runnerId,
+      agent: submitted.effectiveInput.agent ?? handle.agent,
+      ...(runner.codeOrigin === undefined
+        ? {}
+        : {
+            origin: {
+              codeOrigin: runner.codeOrigin,
+              ...(runner.branch === undefined
+                ? {}
+                : { branch: runner.branch }),
+            },
+          }),
+      input: submitted.effectiveInput,
+      retries: {
+        capacity: handle.retries.capacity + 1,
+      },
+      currentSessionId: initialSession.sessionId,
+    }
+  }
+
   return {
     runtime: detectRuntime(),
     transport,
@@ -734,6 +926,8 @@ export function createAgentRunnerSdk(
     stop,
     land,
     run,
+    followUp,
+    retry,
     shouldRetry: (handle, failure) => (
       failure.retryable
       && handle.retries.capacity < handle.policy.retryBudget.capacity

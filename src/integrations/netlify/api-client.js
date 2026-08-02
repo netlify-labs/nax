@@ -1,27 +1,20 @@
 const {
   DEFAULT_NETLIFY_API_URL,
   DEFAULT_USER_AGENT,
+  classifyFailure,
+  createAgentRunnerSdk,
   createAuthenticatedNetlifyClient,
   isAgentRunnerSdkError,
   redactSensitiveText,
 } = require('agent-runner-sdk')
+const {
+  parsePersistedHandle,
+  resolveRunHandle,
+  runnerArtifactPayload,
+  sessionArtifactPayload,
+} = require('./agent-runner-sdk')
 
 const DEFAULT_BASE_URL = DEFAULT_NETLIFY_API_URL
-
-/**
- * Provisional Agent Runner endpoints used by the hosted dashboard transport.
- *
- * Required API surface:
- * - POST /sites/:siteId/agent-runners creates a fresh runner.
- * - POST /agent-runners/:runnerId/sessions creates a follow-up session.
- * - GET /agent-runners/:runnerId reads runner status and latest session.
- * - GET /agent-runners/:runnerId/sessions lists sessions/artifacts.
- * - POST /agent-runners/:runnerId/cancel cancels active work.
- * - POST /agent-runners/:runnerId/archive archives completed work.
- *
- * These paths are intentionally centralized here so the hosted dashboard
- * transport can change endpoint names without route-layer churn.
- */
 
 /**
  * @typedef {{
@@ -87,6 +80,7 @@ const DEFAULT_BASE_URL = DEFAULT_NETLIFY_API_URL
  *   status: string,
  *   links: Record<string, unknown>,
  *   raw: NetlifyAgentRunnerPayload,
+ *   sdkHandle?: import('agent-runner-sdk').Handle,
  * }} NormalizedAgentRunner
  */
 
@@ -101,18 +95,6 @@ function stringValue(value) {
 }
 
 /**
- * @param {string} path
- * @param {Record<string, string>} params
- */
-function pathWithParams(path, params) {
-  let out = path
-  for (const [key, value] of Object.entries(params)) {
-    out = out.replace(`:${key}`, encodeURIComponent(value))
-  }
-  return out
-}
-
-/**
  * @param {string} token
  * @param {string} detail
  */
@@ -124,7 +106,7 @@ function redactToken(token, detail) {
 function normalizeAgentRunner(payload) {
   const raw = /** @type {NetlifyAgentRunnerPayload} */ (objectValue(payload))
   const latest = objectValue(raw.latest_session)
-  const runnerId = stringValue(raw.id || raw.runner_id || raw.runnerId)
+  const runnerId = stringValue(raw.agent_runner_id || raw.runner_id || raw.runnerId || raw.id)
   const sessionId = stringValue(raw.session_id || raw.sessionId || latest.id || (!raw.runner_id && !raw.runnerId ? raw.id : ''))
   const state = stringValue(raw.state || raw.status || raw.latest_session_state || latest.state || latest.status)
   const links = objectValue(raw.links)
@@ -154,6 +136,27 @@ function errorCodeForStatus(status, detail = '') {
   return 'runner_transport_error'
 }
 
+/** @param {unknown} error */
+function legacyRunnerError(error) {
+  if (!isAgentRunnerSdkError(error)) return error
+  const failure = classifyFailure(error)
+  let code = 'runner_transport_error'
+  if (failure.category === 'authentication') code = 'runner_auth_failed'
+  else if (failure.category === 'permission') code = 'runner_permission_denied'
+  else if (failure.category === 'validation') code = 'runner_validation_failed'
+  else if (failure.category === 'rate-limit') code = 'runner_rate_limited'
+  else if (failure.code === 'not-found') code = 'runner_not_found'
+  const legacy = /** @type {Error & {
+   *   code?: string,
+   *   statusCode?: number,
+   *   cause?: unknown,
+   * }} */ (new Error(failure.message))
+  legacy.code = code
+  if (failure.status !== undefined) legacy.statusCode = failure.status
+  legacy.cause = error
+  return legacy
+}
+
 /** @param {NetlifyApiClientOptions} [options] */
 function createNetlifyApiClient({
   fetch: fetchImpl = globalThis.fetch,
@@ -171,6 +174,39 @@ function createNetlifyApiClient({
   onRequestFailure,
 } = {}) {
   const defaultSiteId = siteId || env.NETLIFY_SITE_ID || ''
+  const emitTelemetry = (event) => {
+    try {
+      onTelemetry?.(event)
+    } catch {
+      // SDK telemetry observers never alter request behavior.
+    }
+    if (!onRequestFailure || event.kind === 'apiDrift') return
+    try {
+      if (event.kind === 'httpFailure') {
+        onRequestFailure({
+            kind: 'http_failure',
+            method: event.method,
+            apiPath: event.pathname,
+            status: event.status,
+            attempt: event.attempt,
+            maxAttempts: event.maxAttempts,
+            retrying: event.retrying,
+        })
+      } else {
+        onRequestFailure({
+            kind: 'network_error',
+            method: event.method,
+            apiPath: event.pathname,
+            attempt: event.attempt,
+            maxAttempts: event.maxAttempts,
+            retrying: false,
+            errorName: event.errorName,
+        })
+      }
+    } catch {
+      // Legacy observers have the same non-disruptive contract.
+    }
+  }
   const authenticated = createAuthenticatedNetlifyClient({
     fetch: fetchImpl,
     token,
@@ -182,37 +218,20 @@ function createNetlifyApiClient({
     retryAttempts,
     sleep,
     userAgent,
-    onTelemetry: (event) => {
-      try {
-        onTelemetry?.(event)
-      } catch {
-        // SDK telemetry observers never alter request behavior.
-      }
-      if (!onRequestFailure) return
-      try {
-        onRequestFailure(event.kind === 'httpFailure'
-          ? {
-              kind: 'http_failure',
-              method: event.method,
-              apiPath: event.pathname,
-              status: event.status,
-              attempt: event.attempt,
-              maxAttempts: event.maxAttempts,
-              retrying: event.retrying,
-            }
-          : {
-              kind: 'network_error',
-              method: event.method,
-              apiPath: event.pathname,
-              attempt: event.attempt,
-              maxAttempts: event.maxAttempts,
-              retrying: false,
-              errorName: event.errorName,
-            })
-      } catch {
-        // Legacy observers have the same non-disruptive contract.
-      }
-    },
+    onTelemetry: emitTelemetry,
+  })
+  const runnerSdk = createAgentRunnerSdk({
+    fetch: fetchImpl,
+    token,
+    env,
+    ...(home === undefined ? {} : { home }),
+    ...(platform === undefined ? {} : { platform }),
+    baseUrl,
+    timeoutMs,
+    retryAttempts,
+    sleep,
+    userAgent,
+    onTelemetry: emitTelemetry,
   })
 
   /**
@@ -266,9 +285,25 @@ function createNetlifyApiClient({
     throw error
   }
 
-  /** @param {string} path @param {Record<string, string>} params */
-  function endpoint(path, params = {}) {
-    return pathWithParams(path, params)
+  /** @param {import('agent-runner-sdk').Runner} runner @param {import('agent-runner-sdk').Session | null} session @param {import('agent-runner-sdk').Handle | null} handle */
+  function normalizedSdkRunner(runner, session = null, handle = null) {
+    const raw = {
+      ...runnerArtifactPayload(runner),
+      ...(session ? { latest_session: sessionArtifactPayload(session) } : {}),
+    }
+    return {
+      ...normalizeAgentRunner(raw),
+      ...(handle ? { sdkHandle: handle } : {}),
+    }
+  }
+
+  /** @template T @param {() => Promise<T>} operation @returns {Promise<T>} */
+  async function runnerOperation(operation) {
+    try {
+      return await operation()
+    } catch (error) {
+      throw legacyRunnerError(error)
+    }
   }
 
   return {
@@ -276,57 +311,94 @@ function createNetlifyApiClient({
     async createAgentRunner(input = {}) {
       const resolvedSiteId = input.siteId || defaultSiteId
       if (!resolvedSiteId) throw requestError('runner_validation_failed', 'Netlify site ID is required to create an Agent Runner.')
-      const payload = await request('POST', endpoint('/sites/:siteId/agent-runners', { siteId: resolvedSiteId }), {
-        body: {
+      return runnerOperation(async () => {
+        const handle = await runnerSdk.start({
+          siteId: resolvedSiteId,
           prompt: input.promptText || '',
-          agent: input.agent || '',
-          branch: input.branch || '',
-          source: input.source || {},
-        },
+          agent: input.agent || 'claude',
+          ...(input.branch ? { branch: input.branch } : {}),
+          land: 'none',
+        })
+        const [runner, session] = await Promise.all([
+          runnerSdk.transport.getRunner(handle.runnerId),
+          runnerSdk.transport.getSession(handle.runnerId, handle.currentSessionId),
+        ])
+        return normalizedSdkRunner(runner, session, handle)
       })
-      return normalizeAgentRunner(payload)
     },
-    /** @param {{ runnerId?: string, promptText?: string, agent?: string }} input */
+    /** @param {{ runnerId?: string, promptText?: string, agent?: string, siteId?: string, sdkHandle?: import('agent-runner-sdk').Handle }} input */
     async createAgentSession(input = {}) {
       const runnerId = input.runnerId || ''
       if (!runnerId) throw requestError('runner_validation_failed', 'Agent Runner ID is required to create a follow-up session.')
-      const payload = await request('POST', endpoint('/agent-runners/:runnerId/sessions', { runnerId }), {
-        body: {
+      return runnerOperation(async () => {
+        const base = await resolveRunHandle({
+          sdk: runnerSdk,
+          run: {
+            runnerId,
+            sdkHandle: input.sdkHandle,
+            netlifySiteId: input.siteId || defaultSiteId,
+            agent: input.agent,
+            promptText: input.promptText,
+          },
+          siteId: input.siteId || defaultSiteId,
+        })
+        const handle = await runnerSdk.followUp(base, {
           prompt: input.promptText || '',
-          agent: input.agent || '',
-        },
+          agent: input.agent || base.agent,
+        })
+        const [runner, session] = await Promise.all([
+          runnerSdk.transport.getRunner(handle.runnerId),
+          runnerSdk.transport.getSession(handle.runnerId, handle.currentSessionId),
+        ])
+        return normalizedSdkRunner(runner, session, handle)
       })
-      return normalizeAgentRunner(payload)
     },
-    /** @param {{ runnerId?: string }} input */
+    /** @param {{ runnerId?: string, sdkHandle?: import('agent-runner-sdk').Handle }} input */
     async getAgentRunner(input = {}) {
       const runnerId = input.runnerId || ''
       if (!runnerId) throw requestError('runner_validation_failed', 'Agent Runner ID is required.')
-      return normalizeAgentRunner(await request('GET', endpoint('/agent-runners/:runnerId', { runnerId })))
+      return runnerOperation(async () => {
+        const handle = parsePersistedHandle(input.sdkHandle)
+        if (handle?.runnerId === runnerId) {
+          const [runner, session] = await Promise.all([
+            runnerSdk.transport.getRunner(runnerId),
+            runnerSdk.transport.getSession(runnerId, handle.currentSessionId),
+          ])
+          return normalizedSdkRunner(runner, session, handle)
+        }
+        const [runner, sessions] = await Promise.all([
+          runnerSdk.transport.getRunner(runnerId),
+          runnerSdk.transport.listSessions(runnerId),
+        ])
+        return normalizedSdkRunner(runner, sessions[sessions.length - 1] || null)
+      })
     },
     /** @param {{ runnerId?: string }} input */
     async listAgentSessions(input = {}) {
       const runnerId = input.runnerId || ''
       if (!runnerId) throw requestError('runner_validation_failed', 'Agent Runner ID is required.')
-      const payload = await request('GET', endpoint('/agent-runners/:runnerId/sessions', { runnerId }))
-      const data = objectValue(payload)
-      return Array.isArray(payload)
-        ? payload.map(normalizeAgentRunner)
-        : Array.isArray(data.sessions)
-          ? data.sessions.map(normalizeAgentRunner)
-          : []
+      return runnerOperation(async () => {
+        const sessions = await runnerSdk.transport.listSessions(runnerId)
+        return sessions.map((session) => normalizeAgentRunner(sessionArtifactPayload(session)))
+      })
     },
     /** @param {{ runnerId?: string }} input */
     async cancelAgentRunner(input = {}) {
       const runnerId = input.runnerId || ''
       if (!runnerId) throw requestError('runner_validation_failed', 'Agent Runner ID is required to cancel a run.')
-      return normalizeAgentRunner(await request('POST', endpoint('/agent-runners/:runnerId/cancel', { runnerId })))
+      return runnerOperation(async () => {
+        await runnerSdk.transport.cancelRunner(runnerId)
+        return normalizeAgentRunner({ id: runnerId, state: 'cancelled' })
+      })
     },
     /** @param {{ runnerId?: string }} input */
     async archiveAgentRunner(input = {}) {
       const runnerId = input.runnerId || ''
       if (!runnerId) throw requestError('runner_validation_failed', 'Agent Runner ID is required to archive a run.')
-      return normalizeAgentRunner(await request('POST', endpoint('/agent-runners/:runnerId/archive', { runnerId })))
+      return runnerOperation(async () => {
+        await runnerSdk.transport.member(runnerId, 'archive', {})
+        return normalizeAgentRunner({ id: runnerId, state: 'archived' })
+      })
     },
     requestResponse,
     request,

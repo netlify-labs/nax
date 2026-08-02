@@ -145,7 +145,7 @@ test('local run store returns graph and details from durable state fallback flow
   writeRunState(projectRoot, 'run-1', { title: 'Stored Flow' })
   const store = createLocalRunStore({ projectRoot })
 
-  const run = store.getRun('run-1')
+  const run = await store.getRun('run-1')
   assert.equal(run.runId, 'run-1')
 
   const graph = await store.getRunGraph('run-1')
@@ -165,7 +165,7 @@ test('local run store resolves active runtime ids to durable run state ids', asy
     resolveRunStateId: (id) => (id === 'active-1' ? 'run-1' : ''),
   })
 
-  const run = store.getRun('active-1')
+  const run = await store.getRun('active-1')
   assert.equal(run.runId, 'run-1')
 
   const graph = await store.getRunGraph('active-1')
@@ -176,7 +176,7 @@ test('local run store resolves active runtime ids to durable run state ids', asy
   assert.equal(details.run.runId, 'run-1')
 })
 
-test('local run store refreshes contradictory detail state through bounded follow-up sync', () => {
+test('local run store refreshes contradictory detail state through bounded follow-up sync', async () => {
   const projectRoot = tmpRoot()
   writeActiveFollowupRunState(projectRoot)
   let calls = 0
@@ -197,7 +197,7 @@ test('local run store refreshes contradictory detail state through bounded follo
     },
   })
 
-  const run = store.getRun('followup-run')
+  const run = await store.getRun('followup-run')
 
   assert.equal(calls, 1)
   assert.equal(run.status, 'completed')
@@ -269,7 +269,7 @@ test('local run store rejects invalid opaque cursors', () => {
   })
 })
 
-test('local run store upgrades stale active run records from terminal step artifacts', () => {
+test('local run store upgrades stale active run records from terminal step artifacts', async () => {
   const projectRoot = tmpRoot()
   writeProjectFlow(projectRoot)
   const runId = 'run-stale-artifacts'
@@ -312,7 +312,7 @@ test('local run store upgrades stale active run records from terminal step artif
   assert.equal(listed?.steps?.[0]?.status, 'completed')
   assert.equal(listed?.steps?.[0]?.runs?.[0]?.status, 'completed')
 
-  const detail = store.getRun(runId)
+  const detail = await store.getRun(runId)
   assert.equal(detail?.status, 'completed')
 })
 
@@ -388,7 +388,7 @@ test('local run store flags quiet active runs as stalled', () => {
   assert.equal(completed?.stalled, undefined)
 })
 
-test('local run store rolls up usage totals from step run records', () => {
+test('local run store rolls up usage totals from step run records', async () => {
   const projectRoot = tmpRoot()
   writeProjectFlow(projectRoot)
   const runId = 'run-with-usage'
@@ -422,7 +422,7 @@ test('local run store rolls up usage totals from step run records', () => {
   assert.equal(listed?.usageTotals?.totalCreditsCost, 7.5)
   assert.equal(listed?.usageTotals?.totalTokens, 2150)
 
-  const detail = store.getRun(runId)
+  const detail = await store.getRun(runId)
   assert.equal(detail?.usageTotals?.totalCreditsCost, 7.5)
 })
 

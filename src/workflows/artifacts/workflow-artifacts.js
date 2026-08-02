@@ -168,6 +168,7 @@ function buildAgentJson({ runState = {}, step = {}, run = {}, attemptNumber = nu
     status: run.status || '',
     runnerId: run.runnerId || '',
     sessionId: run.sessionId || '',
+    sdkHandle: run.sdkHandle || run.raw?.sdkHandle || null,
     attemptOf: attemptNumber ? (run.agent || '') : null,
     attemptNumber,
     usage: run.usage || null,

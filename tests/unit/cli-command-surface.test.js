@@ -37,6 +37,7 @@ function makeProgram() {
     collectOption,
     handlers: {
       clean: (target, options) => record('clean', target, options),
+      costs: (options) => record('costs', options),
       ci: (commandParts, options) => {
         record('ci', commandParts, options)
         return { skipped: true, status: 0 }

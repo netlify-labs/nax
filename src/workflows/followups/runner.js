@@ -112,6 +112,7 @@ function persistSubmittedArtifacts({
       source,
       createdAt: timestamp,
       updatedAt: run.updatedAt || timestamp,
+      sdkHandle: run.sdkHandle || run.raw?.sdkHandle || null,
     })
     runnerArtifact = persistRunner({
       projectRoot,
@@ -124,6 +125,7 @@ function persistSubmittedArtifacts({
       links: run.links || {},
       createdAt: timestamp,
       updatedAt: run.updatedAt || timestamp,
+      sdkHandle: run.sdkHandle || run.raw?.sdkHandle || null,
     })
   } catch (error) {
     warnings.push(error?.message || String(error))

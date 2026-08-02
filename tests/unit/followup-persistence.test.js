@@ -67,6 +67,30 @@ test('freshAgentFlow creates a one-step dashboard flow definition', () => {
 test('persistFreshPseudoWorkflow writes a renderable one-step workflow state', () => {
   const projectRoot = tmpRoot()
   const now = new Date('2026-06-20T20:00:00.000Z')
+  /** @type {import('agent-runner-sdk').RunHandle} */
+  const handle = {
+    v: 1,
+    kind: 'run',
+    runnerId: 'runner-1',
+    siteId: 'site-1',
+    agent: 'codex',
+    input: {
+      siteId: 'site-1',
+      prompt: 'Check the fix.',
+      agent: 'codex',
+      land: 'none',
+      deadlineMs: 60_000,
+      retryBudget: { capacity: 0 },
+      requestId: '22222222-2222-4222-8222-222222222222',
+    },
+    policy: {
+      landing: 'none',
+      deadlineAt: now.getTime() + 60_000,
+      retryBudget: { capacity: 0 },
+    },
+    retries: { capacity: 0 },
+    currentSessionId: 'session-1',
+  }
   const state = persistFreshPseudoWorkflow({
     projectRoot,
     now,
@@ -85,6 +109,7 @@ test('persistFreshPseudoWorkflow writes a renderable one-step workflow state', (
         status: 'submitted',
         runnerId: 'runner-1',
         sessionId: 'session-1',
+        sdkHandle: handle,
         issueUrl: 'https://app.netlify.com/projects/site/agent-runs/runner-1?session=session-1',
         links: { runner: 'https://app.netlify.com/projects/site/agent-runs/runner-1?session=session-1' },
       },
@@ -97,11 +122,13 @@ test('persistFreshPseudoWorkflow writes a renderable one-step workflow state', (
   assert.equal(state.steps[0].status, 'submitted')
   assert.deepEqual(state.steps[0].agents, ['codex'])
   assert.equal(state.steps[0].runs[0].runnerId, 'runner-1')
+  assert.deepEqual(state.steps[0].runs[0].sdkHandle, handle)
 
   assert.equal(fs.existsSync(workflowStatePath(state.dir)), true)
   const listed = listRunStates(projectRoot)
   assert.equal(listed.length, 1)
   assert.equal(listed[0].runId, state.runId)
+  assert.deepEqual(listed[0].steps[0].runs[0].sdkHandle, handle)
 
   const graph = flowToGraph({ flow: state.flow, runState: state })
   assert.equal(graph.nodes.length, 1)
@@ -160,7 +187,7 @@ test('appendFollowupRunsToWorkflow numbers repeated follow-ups without duplicati
   ])
 })
 
-test('syncSubmittedFollowupRunsToWorkflow merges completed remote sessions into workflow state', () => {
+test('syncSubmittedFollowupRunsToWorkflow merges completed remote sessions into workflow state', async () => {
   const projectRoot = tmpRoot()
   const runDir = path.join(projectRoot, '.nax', 'workflows', 'source-run')
   fs.mkdirSync(runDir, { recursive: true })
@@ -193,7 +220,7 @@ test('syncSubmittedFollowupRunsToWorkflow merges completed remote sessions into 
     runs: [{ agent: 'codex', status: 'submitted', runnerId: 'runner-1', sessionId: 'session-2' }],
   })
 
-  const synced = syncSubmittedFollowupRunsToWorkflow({
+  const synced = await syncSubmittedFollowupRunsToWorkflow({
     runState: submitted,
     projectRoot,
     syncRunner: () => ({
@@ -217,7 +244,7 @@ test('syncSubmittedFollowupRunsToWorkflow merges completed remote sessions into 
   assert.equal(listRunStates(projectRoot)[0].steps[1].runs[0].status, 'completed')
 })
 
-test('syncSubmittedFollowupRunsToWorkflow does not use runner-wide latest session without a run session id', () => {
+test('syncSubmittedFollowupRunsToWorkflow does not use runner-wide latest session without a run session id', async () => {
   const projectRoot = tmpRoot()
   const runDir = path.join(projectRoot, '.nax', 'workflows', 'source-run')
   fs.mkdirSync(runDir, { recursive: true })
@@ -250,7 +277,7 @@ test('syncSubmittedFollowupRunsToWorkflow does not use runner-wide latest sessio
     runs: [{ agent: 'codex', status: 'submitted', runnerId: 'runner-1', sessionId: '' }],
   })
 
-  const synced = syncSubmittedFollowupRunsToWorkflow({
+  const synced = await syncSubmittedFollowupRunsToWorkflow({
     runState: submitted,
     projectRoot,
     syncRunner: () => ({
@@ -270,7 +297,7 @@ test('syncSubmittedFollowupRunsToWorkflow does not use runner-wide latest sessio
   assert.equal(synced.runState.steps[1].runs[0].resultText, '')
 })
 
-test('syncSubmittedFollowupRunsToWorkflow renumbers existing completed follow-up titles', () => {
+test('syncSubmittedFollowupRunsToWorkflow renumbers existing completed follow-up titles', async () => {
   const projectRoot = tmpRoot()
   const runDir = path.join(projectRoot, '.nax', 'workflows', 'source-run')
   fs.mkdirSync(runDir, { recursive: true })
@@ -311,7 +338,7 @@ test('syncSubmittedFollowupRunsToWorkflow renumbers existing completed follow-up
     ],
   }
 
-  const synced = syncSubmittedFollowupRunsToWorkflow({ runState: state, projectRoot })
+  const synced = await syncSubmittedFollowupRunsToWorkflow({ runState: state, projectRoot })
 
   assert.equal(synced.changed, true)
   assert.deepEqual(synced.runState.steps.slice(1).map((step) => step.title), [

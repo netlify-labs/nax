@@ -1,12 +1,10 @@
 // Checks that the resolved Netlify auth token can access the linked site.
 // Returns verdict objects; never throws, so callers decide to warn or block.
 const { readLinkedSiteId } = require('./init')
-const { readNetlifyCliToken } = require('./auth')
 const {
-  DEFAULT_BASE_URL,
-  createNetlifyApiClient,
-  redactToken,
-} = require('./api-client')
+  DEFAULT_NETLIFY_API_URL,
+  preflightNetlifyAccess,
+} = require('agent-runner-sdk')
 
 /**
  * @typedef {{
@@ -54,80 +52,90 @@ async function checkNetlifyAccess({
   env = process.env,
   home,
   fetch: fetchImpl = globalThis.fetch,
-  baseUrl = DEFAULT_BASE_URL,
+  baseUrl = DEFAULT_NETLIFY_API_URL,
   timeoutMs = 5000,
   userAgent,
   onTelemetry,
   onRequestFailure,
 } = {}) {
-  const { token } = readNetlifyCliToken({
-    env,
-    ...(home === undefined ? {} : { home }),
-  })
-  if (!token) {
-    return verdict('no_token', 'No Netlify auth token found. Run `netlify login` or set NETLIFY_AUTH_TOKEN.')
-  }
   const siteId = String(requestedSiteId || readLinkedSiteId(projectRoot, env)).trim()
   if (!siteId) {
     return verdict('no_site', 'No linked Netlify site found. Run `nax init` or set NETLIFY_SITE_ID.')
   }
 
-  const client = createNetlifyApiClient({
+  const result = await preflightNetlifyAccess({
     fetch: fetchImpl,
-    token,
     env,
+    siteId,
     baseUrl,
     timeoutMs,
-    retryAttempts: 1,
     ...(home === undefined ? {} : { home }),
     ...(userAgent === undefined ? {} : { userAgent }),
-    onTelemetry,
-    onRequestFailure,
+    onTelemetry: (event) => {
+      onTelemetry?.(event)
+      if (!onRequestFailure) return
+      if (event.kind === 'httpFailure') {
+        onRequestFailure({
+          kind: 'http_failure',
+          method: event.method,
+          apiPath: event.pathname,
+          status: event.status,
+          attempt: event.attempt,
+          maxAttempts: event.maxAttempts,
+          retrying: event.retrying,
+        })
+      } else if (event.kind === 'networkError') {
+        onRequestFailure({
+          kind: 'network_error',
+          method: event.method,
+          apiPath: event.pathname,
+          attempt: event.attempt,
+          maxAttempts: event.maxAttempts,
+          retrying: false,
+          errorName: event.errorName,
+        })
+      }
+    },
   })
-
-  try {
-    const user = await client.requestResponse('GET', '/user', {
-      operation: 'preflight-user',
-    })
-    if (user.status === 401) {
-      return verdict('bad_token', 'Netlify auth token is invalid or expired. Run `netlify login`.')
-    }
-    const userBody = objectValue(user.payload)
-    const email = user.ok ? String(userBody.email || '') : ''
-    const account = email ? { email } : null
-
-    const site = await client.requestResponse('GET', `/sites/${encodeURIComponent(siteId)}`, {
-      operation: 'preflight-site',
-    })
-    if (site.status === 404 || site.status === 403) {
-      return { ...verdict('no_access', accessDeniedMessage({ email, siteId })), account }
-    }
-    if (!site.ok) {
-      return { ...verdict('network_error', `Could not verify access to site ${siteId} (Netlify API returned ${site.status}).`), account }
-    }
-    const siteBody = objectValue(site.payload)
+  if (result.ok) {
+    const account = result.accountEmail ? { email: result.accountEmail } : null
     return {
       ok: true,
       code: 'ok',
-      message: email ? `Logged in as ${email} with access to site ${String(siteBody.name || siteId)}.` : `Netlify token has access to site ${String(siteBody.name || siteId)}.`,
+      message: result.accountEmail
+        ? `Logged in as ${result.accountEmail} with access to site ${result.site.name || siteId}.`
+        : `Netlify token has access to site ${result.site.name || siteId}.`,
       account,
       site: {
         id: siteId,
-        name: String(siteBody.name || ''),
-        accountSlug: String(siteBody.account_slug || ''),
+        name: result.site.name,
+        accountSlug: result.site.accountSlug,
       },
     }
-  } catch (error) {
-    const detail = redactToken(token, error?.message || String(error))
-    return verdict('network_error', `Could not reach the Netlify API to verify access (${detail}). Continuing without verification.`)
   }
-}
-
-/** @param {unknown} value @returns {Record<string, unknown>} */
-function objectValue(value) {
-  return value && typeof value === 'object' && !Array.isArray(value)
-    ? /** @type {Record<string, unknown>} */ (value)
-    : {}
+  if (result.code === 'missing-token') {
+    return verdict('no_token', 'No Netlify auth token found. Run `netlify login` or set NETLIFY_AUTH_TOKEN.')
+  }
+  if (result.code === 'invalid-token' || result.code === 'expired-token') {
+    return verdict('bad_token', 'Netlify auth token is invalid or expired. Run `netlify login`.')
+  }
+  if (result.code === 'under-scoped') {
+    const account = result.accountEmail ? { email: result.accountEmail } : null
+    return {
+      ...verdict('no_access', accessDeniedMessage({
+        email: result.accountEmail,
+        siteId,
+      })),
+      account,
+    }
+  }
+  const failureStatus = 'status' in result ? result.status : undefined
+  return verdict(
+    'network_error',
+    failureStatus === undefined
+      ? `Could not reach the Netlify API to verify access to site ${siteId}. Continuing without verification.`
+      : `Could not verify access to site ${siteId}; the Netlify API returned ${failureStatus}. Continuing without verification.`,
+  )
 }
 
 /**

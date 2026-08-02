@@ -4,7 +4,7 @@ const crypto = require('crypto')
  * @typedef {{
  *   createAgentRunner: (input: { siteId?: string, promptText?: string, agent?: string, branch?: string, source?: Record<string, unknown> }) => Promise<import('../../integrations/netlify/api-client').NormalizedAgentRunner>,
  *   cancelAgentRunner: (input: { runnerId?: string }) => Promise<import('../../integrations/netlify/api-client').NormalizedAgentRunner>,
- *   getAgentRunner: (input: { runnerId?: string }) => Promise<import('../../integrations/netlify/api-client').NormalizedAgentRunner>,
+ *   getAgentRunner: (input: { runnerId?: string, sdkHandle?: import('agent-runner-sdk').Handle }) => Promise<import('../../integrations/netlify/api-client').NormalizedAgentRunner>,
  * }} HostedNetlifyApiClient
  *
  * @typedef {{
@@ -342,8 +342,12 @@ function hostedRunDto(remote) {
     cancellable: !['completed', 'failed', 'cancelled'].includes(status),
     runnerId: remote.runnerId,
     sessionId: remote.sessionId,
+    sdkHandle: remote.sdkHandle || null,
     links: remote.links,
-    raw: remote.raw,
+    raw: /** @type {Record<string, unknown>} */ ({
+      ...remote.raw,
+      ...(remote.sdkHandle ? { sdkHandle: remote.sdkHandle } : {}),
+    }),
   }
 }
 
@@ -414,6 +418,15 @@ function createHostedNetlifyApiTransport({ client, siteId = '', initialRunnerIds
       registeredAt: new Date().toISOString(),
     })
     return run
+  }
+
+  /** @param {string} runnerId */
+  function getRemoteRunner(runnerId) {
+    const existing = runsById.get(runnerId)
+    return client.getAgentRunner({
+      runnerId,
+      ...(existing?.sdkHandle ? { sdkHandle: existing.sdkHandle } : {}),
+    })
   }
 
   /** @param {string} runnerId */
@@ -539,7 +552,7 @@ function createHostedNetlifyApiTransport({ client, siteId = '', initialRunnerIds
     /** @param {string} runnerId */
     async getRun(runnerId) {
       const registeredRunnerId = assertRegisteredRunner(runnerId)
-      const remote = await client.getAgentRunner({ runnerId: registeredRunnerId })
+      const remote = await getRemoteRunner(registeredRunnerId)
       assertRemoteRunnerScope(remote)
       const run = hostedRunDto(remote)
       registerRun(run, 'read')
@@ -549,7 +562,7 @@ function createHostedNetlifyApiTransport({ client, siteId = '', initialRunnerIds
     /** @param {string} runnerId */
     async getRunGraph(runnerId) {
       const registeredRunnerId = assertRegisteredRunner(runnerId)
-      const remote = await client.getAgentRunner({ runnerId: registeredRunnerId })
+      const remote = await getRemoteRunner(registeredRunnerId)
       assertRemoteRunnerScope(remote)
       const graph = hostedRunGraph(remote)
       registerRun(graph.run, 'graph')
@@ -559,7 +572,7 @@ function createHostedNetlifyApiTransport({ client, siteId = '', initialRunnerIds
     /** @param {string} runnerId */
     async getRunDetails(runnerId) {
       const registeredRunnerId = assertRegisteredRunner(runnerId)
-      const remote = await client.getAgentRunner({ runnerId: registeredRunnerId })
+      const remote = await getRemoteRunner(registeredRunnerId)
       assertRemoteRunnerScope(remote)
       const run = hostedRunDto(remote)
       const details = hostedRunDetails(remote)
@@ -573,7 +586,7 @@ function createHostedNetlifyApiTransport({ client, siteId = '', initialRunnerIds
      */
     async listEvents({ runId = '', since = 0 } = {}) {
       const registeredRunnerId = assertRegisteredRunner(runId)
-      const remote = await client.getAgentRunner({ runnerId: registeredRunnerId })
+      const remote = await getRemoteRunner(registeredRunnerId)
       assertRemoteRunnerScope(remote)
       const run = hostedRunDto(remote)
       registerRun(run, 'events')

@@ -11,18 +11,27 @@ const {
   redactToken,
 } = require('../../src/integrations/netlify/api-client')
 
-/** @param {Array<{ status?: number, body?: unknown, ok?: boolean }>} responses */
+/**
+ * @param {Array<{
+ *   status?: number,
+ *   body?: unknown | ((call: { url: string, options: RequestInit, calls: Array<{ url: string, options: RequestInit }> }) => unknown),
+ * }>} responses
+ */
 function fakeFetch(responses) {
   const calls = []
   const fetchImpl = async (url, options = {}) => {
-    calls.push({ url: String(url), options })
+    const call = { url: String(url), options }
+    calls.push(call)
     const next = responses.shift() || { status: 200, body: {} }
     const status = next.status ?? 200
+    const responseBody = typeof next.body === 'function'
+      ? next.body({ ...call, calls })
+      : next.body
     const body = status === 204
       ? null
-      : (typeof next.body === 'string'
-          ? next.body
-          : JSON.stringify(next.body ?? {}))
+      : (typeof responseBody === 'string'
+          ? responseBody
+          : JSON.stringify(responseBody ?? {}))
     return new Response(body, { status })
   }
   return {
@@ -32,7 +41,31 @@ function fakeFetch(responses) {
 }
 
 test('Netlify API client constructs authenticated create runner requests', async () => {
-  const fake = fakeFetch([{ body: { id: 'runner-1', state: 'submitted', latest_session: { id: 'session-1' }, links: { app: 'url' } } }])
+  const fake = fakeFetch([
+    { body: { id: 'runner-1', state: 'submitted' } },
+    {
+      body: ({ calls }) => {
+        const request = JSON.parse(String(calls[0].options.body))
+        return [{
+          id: 'session-1',
+          agent_runner_id: 'runner-1',
+          state: 'submitted',
+          prompt: request.prompt,
+          usage: null,
+        }]
+      },
+    },
+    { body: { id: 'runner-1', state: 'submitted' } },
+    {
+      body: {
+        id: 'session-1',
+        agent_runner_id: 'runner-1',
+        state: 'submitted',
+        prompt: 'Do work',
+        usage: null,
+      },
+    },
+  ])
   const client = createNetlifyApiClient({
     fetch: fake.fetch,
     token: 'secret-token',
@@ -46,16 +79,21 @@ test('Netlify API client constructs authenticated create runner requests', async
     branch: 'main',
   })
 
-  assert.equal(fake.calls[0].url, 'https://api.example.test/api/v1/sites/site-1/agent-runners')
+  assert.equal(fake.calls[0].url, 'https://api.example.test/api/v1/agent_runners?site_id=site-1')
   assert.equal(fake.calls[0].options.method, 'POST')
   assert.equal(fake.calls[0].options.headers.authorization, 'Bearer secret-token')
   assert.equal(fake.calls[0].options.headers['user-agent'], DEFAULT_USER_AGENT)
-  assert.deepEqual(JSON.parse(String(fake.calls[0].options.body)), {
-    prompt: 'Do work',
+  const body = JSON.parse(String(fake.calls[0].options.body))
+  assert.match(body.prompt, /^Do work\n\n<!-- agent-runner-sdk-request-id:/)
+  assert.deepEqual(body, {
+    prompt: body.prompt,
     agent: 'codex',
     branch: 'main',
-    source: {},
   })
+  assert.equal(
+    fake.calls[1].url,
+    'https://api.example.test/api/v1/agent_runners/runner-1/sessions?page=1&per_page=100&order_by=asc',
+  )
   assert.equal(run.runnerId, 'runner-1')
   assert.equal(run.sessionId, 'session-1')
   assert.equal(run.status, 'submitted')
@@ -72,10 +110,20 @@ test('Netlify API client normalizes session lists and runner links', async () =>
   assert.equal(normalized.sessionId, 'session-1')
   assert.equal(normalized.links.url, 'https://app.netlify.com/runner-1')
 
-  const fake = fakeFetch([{ body: { sessions: [{ id: 'session-2', state: 'completed' }] } }])
+  const fake = fakeFetch([{
+    body: [{
+      id: 'session-2',
+      agent_runner_id: 'runner-1',
+      state: 'completed',
+      usage: null,
+    }],
+  }])
   const client = createNetlifyApiClient({ fetch: fake.fetch, token: 'token' })
   const sessions = await client.listAgentSessions({ runnerId: 'runner-1' })
-  assert.equal(fake.calls[0].url, 'https://api.netlify.com/api/v1/agent-runners/runner-1/sessions')
+  assert.equal(
+    fake.calls[0].url,
+    'https://api.netlify.com/api/v1/agent_runners/runner-1/sessions?page=1&per_page=100&order_by=asc',
+  )
   assert.equal(sessions[0].sessionId, 'session-2')
 })
 
@@ -103,6 +151,27 @@ test('Netlify API client validates token, site id, and runner id', async () => {
 test('Netlify API client preserves token/site precedence and response normalization', async () => {
   const fake = fakeFetch([
     { body: { id: 'runner-1', state: 'running' } },
+    {
+      body: ({ calls }) => {
+        const request = JSON.parse(String(calls[0].options.body))
+        return [{
+          id: 'session-1',
+          agent_runner_id: 'runner-1',
+          state: 'running',
+          prompt: request.prompt,
+          usage: null,
+        }]
+      },
+    },
+    { body: { id: 'runner-1', state: 'running' } },
+    {
+      body: {
+        id: 'session-1',
+        agent_runner_id: 'runner-1',
+        state: 'running',
+        usage: null,
+      },
+    },
     { body: 'plain response' },
     { status: 204 },
   ])
@@ -129,7 +198,7 @@ test('Netlify API client preserves token/site precedence and response normalizat
     'Bearer constructor-token',
   )
   assert.equal(
-    fake.calls[1].options.headers.authorization,
+    fake.calls[4].options.headers.authorization,
     'Bearer operation-token',
   )
   assert.deepEqual(text, { text: 'plain response' })
@@ -210,8 +279,8 @@ test('Netlify API client maps API errors, retries retryable statuses, and redact
     sleep: async () => {},
   })
 
-  const run = await client.getAgentRunner({ runnerId: 'runner-1' })
-  assert.equal(run.runnerId, 'runner-1')
+  const run = await client.request('GET', '/runner')
+  assert.equal(/** @type {{ id?: string }} */ (run).id, 'runner-1')
   assert.equal(fake.calls.length, 2)
 
   const failing = createNetlifyApiClient({
@@ -219,7 +288,7 @@ test('Netlify API client maps API errors, retries retryable statuses, and redact
     token: 'secret-token',
   })
   await assert.rejects(
-    () => failing.getAgentRunner({ runnerId: 'runner-2' }),
+    () => failing.request('GET', '/runner-2'),
     (error) => {
       const typed = /** @type {{ code?: string, message?: string }} */ (error)
       assert.equal(typed.code, 'runner_auth_failed')

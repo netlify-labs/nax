@@ -35,7 +35,7 @@ const { listAgentSessions } = require('../../integrations/netlify/local-runner')
  *   projectRoot?: string,
  *   runner?: import('../../types').AgentRunner,
  *   env?: NodeJS.ProcessEnv,
- *   runCommand?: import('../../types').RunCommand,
+ *   sdk?: import('agent-runner-sdk').AgentRunnerSdk,
  * }} SyncAgentRunnerInput
  */
 
@@ -102,14 +102,14 @@ function persistRemoteSession({ projectRoot, runner, session, source }) {
 }
 
 /** @param {SyncAgentRunnerInput} param0 */
-function syncAgentRunner({ projectRoot, runner, env, runCommand } = {}) {
+async function syncAgentRunner({ projectRoot, runner, env, sdk } = {}) {
   if (!projectRoot) throw new Error('Project root is required to sync Agent Runner artifacts.')
   if (!runner?.runnerId) throw new Error('Agent Runner ID is required to sync remote sessions.')
-  const remote = listAgentSessions({
+  const remote = await listAgentSessions({
     projectRoot,
     runnerId: runner.runnerId,
     env,
-    runCommand,
+    sdk,
   })
   if (remote.commandError) {
     throw new Error(`Could not sync Agent Runner ${runner.runnerId}: ${remote.error || 'Netlify API request failed.'}`)
@@ -146,13 +146,13 @@ function syncAgentRunner({ projectRoot, runner, env, runCommand } = {}) {
   }
 }
 
-/** @param {{ projectRoot?: string, env?: NodeJS.ProcessEnv, runCommand?: import('../../types').RunCommand }} param0 */
-function syncLastAgentRunner({ projectRoot, env, runCommand } = {}) {
+/** @param {{ projectRoot?: string, env?: NodeJS.ProcessEnv, sdk?: import('agent-runner-sdk').AgentRunnerSdk }} param0 */
+async function syncLastAgentRunner({ projectRoot, env, sdk } = {}) {
   const [runner] = listAgentRunnerArtifacts(projectRoot)
   if (!runner) {
     throw new Error(`No local Agent Runner artifacts found under ${projectRoot}/.nax/agent-runners.`)
   }
-  return syncAgentRunner({ projectRoot, runner, env, runCommand })
+  return syncAgentRunner({ projectRoot, runner, env, sdk })
 }
 
 module.exports = {

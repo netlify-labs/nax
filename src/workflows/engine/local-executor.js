@@ -477,11 +477,11 @@ function applyArchiveResultToRunner(runState, runnerId, archiveResult) {
  *   options?: LocalExecutorOptions,
  *   projectRoot?: string,
  *   netlify?: import('../../types').JsonMap & { env?: NodeJS.ProcessEnv },
- *   archiveRun?: (input: { projectRoot?: string, runnerId?: string, env?: NodeJS.ProcessEnv }) => RunnerControlResult,
+ *   archiveRun?: (input: { projectRoot?: string, runnerId?: string, env?: NodeJS.ProcessEnv }) => RunnerControlResult | Promise<RunnerControlResult>,
  * }} input
- * @returns {void}
+ * @returns {Promise<void>}
  */
-function archiveEligibleCompletedLocalRuns({ runState, flowSteps, currentStepIndex, options = {}, projectRoot, netlify, archiveRun = archiveAgentRun }) {
+async function archiveEligibleCompletedLocalRuns({ runState, flowSteps, currentStepIndex, options = {}, projectRoot, netlify, archiveRun = archiveAgentRun }) {
   const archivedThisPass = new Set()
   const stepById = new Map((flowSteps || []).map((step) => [step.id, step]))
   for (const stepState of runState.steps || []) {
@@ -495,7 +495,7 @@ function archiveEligibleCompletedLocalRuns({ runState, flowSteps, currentStepInd
       if (archivedThisPass.has(run.runnerId)) continue
       archivedThisPass.add(run.runnerId)
 
-      const archiveResult = archiveRun({
+      const archiveResult = await archiveRun({
         projectRoot,
         runnerId: run.runnerId,
         env: netlify.env,
@@ -739,6 +739,7 @@ async function executeLocalFlow({ flow, steps, options, runState, projectRoot, c
         prUrl: '',
         deployUrl: '',
         existingRunnerId: followUpRun?.runnerId || '',
+        ...(followUpRun?.sdkHandle ? { sdkHandle: followUpRun.sdkHandle } : {}),
         raw: {
           stepId: step.id,
           promptName: prompt.name,
@@ -796,6 +797,7 @@ async function executeLocalFlow({ flow, steps, options, runState, projectRoot, c
             siteId: netlify.siteId,
             netlifyFilter: netlifyFilter.filter,
             env: netlify.env,
+            timeoutMinutes: Number(options.timeoutMinutes || 25),
             onRetry: ({ error, nextAttempt, attempts, delayMs }) => {
               const delaySeconds = Math.round(delayMs / 1000)
               runtimeEvents?.agentStatus('retrying', run, stepState, step, {
@@ -863,7 +865,7 @@ async function executeLocalFlow({ flow, steps, options, runState, projectRoot, c
     }
 
     await completeLocalStep({ runState, stepState, step, options, projectRoot, netlify, netlifyFilter: netlifyFilter.filter, runtimeEvents })
-    archiveEligibleCompletedLocalRuns({
+    await archiveEligibleCompletedLocalRuns({
       runState,
       flowSteps: steps,
       currentStepIndex: stepIndex,
@@ -930,7 +932,7 @@ async function resumeLocalFlow({ flow, runState, projectRoot }) {
     console.log(`State: ${workflowStatePath(runState.dir)}`)
     console.log(`Repair and continue: ${step.title}`)
     await completeLocalStep({ runState, stepState, step, options: runState.options, projectRoot, netlify, netlifyFilter: netlify.filter, initialDelayMs: 0 })
-    archiveEligibleCompletedLocalRuns({
+    await archiveEligibleCompletedLocalRuns({
       runState,
       flowSteps: flow.steps,
       currentStepIndex: startIndex,

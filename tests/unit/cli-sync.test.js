@@ -85,10 +85,9 @@ function fakeGithubRunner(calls) {
   }
 }
 
-test('handleSync syncs the latest Netlify Agent Runner artifact', () => {
+test('handleSync syncs the latest Netlify Agent Runner artifact', async () => {
   const projectRoot = tmpRoot()
   const logs = []
-  const calls = []
   const first = persistAgentSessionArtifact({
     projectRoot,
     runnerId: 'runner-1',
@@ -110,27 +109,24 @@ test('handleSync syncs the latest Netlify Agent Runner artifact', () => {
     updatedAt: '2026-05-29T01:01:00.000Z',
   })
 
-  const result = handleSync('last', { projectRoot }, {
+  const result = await handleSync('last', { projectRoot }, {
     env: {
       NETLIFY_SITE_ID: 'site-1',
       NETLIFY_AUTH_TOKEN: 'token-1',
     },
-    runCommand(command, args, options) {
-      calls.push({ command, args, options })
-      return {
-        status: 0,
-        stdout: JSON.stringify({
-          sessions: [{
-            id: 'session-1',
-            state: 'completed',
-            result: 'Initial result',
-            created_at: '2026-05-29T01:00:00.000Z',
-            updated_at: '2026-05-29T01:01:00.000Z',
-          }],
-        }),
-        stderr: '',
-      }
-    },
+    sdk: /** @type {import('agent-runner-sdk').AgentRunnerSdk} */ (/** @type {unknown} */ ({
+      transport: {
+        listSessions: async () => [{
+          sessionId: 'session-1',
+          runnerId: 'runner-1',
+          state: 'completed',
+          resultText: 'Initial result',
+          usage: null,
+          createdAt: Date.parse('2026-05-29T01:00:00.000Z'),
+          updatedAt: Date.parse('2026-05-29T01:01:00.000Z'),
+        }],
+      },
+    })),
     log(message) {
       logs.push(message)
     },
@@ -138,19 +134,13 @@ test('handleSync syncs the latest Netlify Agent Runner artifact', () => {
 
   assert.equal(result.runnerId, 'runner-1')
   assert.match(logs[0], /Synced Agent Runner runner-1/)
-  assert.deepEqual(calls[0].args, [
-    'api',
-    'listAgentRunnerSessions',
-    '--data',
-    '{"agent_runner_id":"runner-1"}',
-  ])
 })
 
-test('handleSync syncs numeric GitHub Actions run ids', () => {
+test('handleSync syncs numeric GitHub Actions run ids', async () => {
   const projectRoot = tmpRoot()
   const calls = []
   const logs = []
-  const result = handleSync('27068396571', {
+  const result = await handleSync('27068396571', {
     projectRoot,
     repo: 'netlify-labs/revenue-engine',
   }, {
@@ -166,10 +156,10 @@ test('handleSync syncs numeric GitHub Actions run ids', () => {
   assert.deepEqual(calls[0].args.slice(0, 2), ['api', 'repos/netlify-labs/revenue-engine/actions/runs/27068396571/artifacts'])
 })
 
-test('handleSync syncs GitHub Actions run URLs and uses the URL repo', () => {
+test('handleSync syncs GitHub Actions run URLs and uses the URL repo', async () => {
   const projectRoot = tmpRoot()
   const calls = []
-  const result = handleSync('https://github.com/netlify-labs/revenue-engine/actions/runs/27068396571', {
+  const result = await handleSync('https://github.com/netlify-labs/revenue-engine/actions/runs/27068396571', {
     projectRoot,
   }, {
     runCommand: fakeGithubRunner(calls),
@@ -180,8 +170,8 @@ test('handleSync syncs GitHub Actions run URLs and uses the URL repo', () => {
   assert.equal(calls[0].args[1], 'repos/netlify-labs/revenue-engine/actions/runs/27068396571/artifacts')
 })
 
-test('handleSync rejects unsupported targets', () => {
-  assert.throws(
+test('handleSync rejects unsupported targets', async () => {
+  await assert.rejects(
     () => handleSync('remote', { projectRoot: tmpRoot() }, { log() {} }),
     /Expected `nax admin sync last`/,
   )

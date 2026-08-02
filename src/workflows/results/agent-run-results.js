@@ -399,6 +399,7 @@ function buildAgentSessionJson(input = {}) {
   return {
     ...artifactMeta(),
     sessionId,
+    sdkHandle: input.sdkHandle || run.sdkHandle || run.raw?.sdkHandle || null,
     runnerId: input.runnerId || run.runnerId || '',
     netlifySiteId: input.netlifySiteId || siteIdAlias(input) || run.netlifySiteId || run.rawResult?.runner?.site_id || run.rawResult?.runner?.siteId || '',
     agent: input.agent || run.agent || '',
@@ -487,6 +488,7 @@ function buildAgentRunnerJson(input = {}) {
     createdAt: input.createdAt || sessions[0]?.createdAt || '',
     updatedAt: input.updatedAt || latestSession?.updatedAt || '',
     latestSessionId: input.latestSessionId || latestSession?.sessionId || '',
+    sdkHandle: input.sdkHandle || latestSession?.sdkHandle || null,
     sessionIds: sessions.map((session) => session.sessionId).filter(Boolean),
     source: input.source || latestSession?.source || null,
     usage,

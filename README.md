@@ -444,7 +444,7 @@ nax admin sync 123456789 --repo OWNER/REPO
 
 `nax admin sync last` reconciles the latest local `.nax/agent-runners/<id>` artifact with remote Netlify Agent Runner sessions. Use it when a follow-up happened out of band in the Netlify UI or another process and the local `.nax` cache is missing the newer session.
 
-The command fetches remote sessions with the Netlify CLI, writes missing or changed sessions under `.nax/agent-sessions/`, and rebuilds the runner rollup under `.nax/agent-runners/`.
+The command fetches remote sessions through `agent-runner-sdk`, writes missing or changed sessions under `.nax/agent-sessions/`, and rebuilds the runner rollup under `.nax/agent-runners/`.
 
 When the target is a GitHub Actions run URL or run ID, `nax admin sync` downloads the uploaded `nax-<flow>-<run_id>` artifact with `gh`, merges its workflow, runner, and session artifacts into local `.nax/`, localizes the workflow metadata for this checkout, and rebuilds the `latest` symlinks. This is the handoff path for workflows run through `.github/workflows/run-nax.yml`.
 

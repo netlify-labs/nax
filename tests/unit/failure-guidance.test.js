@@ -52,7 +52,7 @@ test('explainFailure returns null for unknown detail', () => {
 
 test('wrapFailure prepends guidance and preserves the original detail', () => {
   const original = new Error('netlify agents:create --json failed: Not Found (404)')
-  const wrapped = wrapFailure(original, { siteId: 'site-9' })
+  const wrapped = /** @type {Error} */ (wrapFailure(original, { siteId: 'site-9' }))
   assert.notEqual(wrapped, original)
   assert.match(wrapped.message, /wrong Netlify account/)
   assert.match(wrapped.message, /Not Found \(404\)/)

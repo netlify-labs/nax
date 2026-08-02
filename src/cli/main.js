@@ -562,7 +562,7 @@ async function handleList(options = {}) {
 
 /** @param {import('../types').JsonMap} [options] */
 async function handleCosts(options = {}) {
-  const projectRoot = resolveProjectRoot(options.projectRoot, { cwd: process.cwd() })
+  const projectRoot = resolveProjectRoot(String(options.projectRoot || ''), { cwd: process.cwd() })
   const limit = Number.parseInt(String(options.limit || ''), 10)
   const report = buildCostsReport(listRunStates(projectRoot), {
     limit: Number.isFinite(limit) && limit > 0 ? limit : 20,
@@ -1905,10 +1905,10 @@ function cancellableLocalRunnerIds(runState = {}) {
  *   projectRoot?: string,
  *   options?: AdHocRunOptions,
  *   reason?: string,
- *   stopRun?: (input: { projectRoot?: string, runnerId?: string, env?: NodeJS.ProcessEnv }) => RunnerControlResult,
+ *   stopRun?: (input: { projectRoot?: string, runnerId?: string, env?: NodeJS.ProcessEnv }) => RunnerControlResult | Promise<RunnerControlResult>,
  * }} input
  */
-function cancelLocalWorkflowRunnersForInterrupt({ runState, projectRoot, options = {}, reason = 'interrupted workflow', stopRun = stopAgentRun } = {}) {
+async function cancelLocalWorkflowRunnersForInterrupt({ runState, projectRoot, options = {}, reason = 'interrupted workflow', stopRun = stopAgentRun } = {}) {
   if (!isNetlifyApiTransport(runState?.transport)) return { runnerIds: [], stopped: [], warnings: [] }
   const runnerIds = cancellableLocalRunnerIds(runState)
   if (runnerIds.length === 0) return { runnerIds, stopped: [], warnings: [] }
@@ -1928,7 +1928,7 @@ function cancelLocalWorkflowRunnersForInterrupt({ runState, projectRoot, options
   const warnings = []
   for (const runnerId of runnerIds) {
     try {
-      const result = stopRun({ projectRoot, runnerId, env })
+      const result = await stopRun({ projectRoot, runnerId, env })
       if (result?.stopped === true) stopped.push(runnerId)
       else warnings.push(`${runnerId}: ${result?.error || 'stop request did not report success'}`)
     } catch (error) {
@@ -2396,14 +2396,14 @@ async function handleRunEngine(flowId, options) {
     },
   })
   trackRunState(runState, {
-    onInterrupt: ({ runState: activeRunState, reason }) => {
+    onInterrupt: async ({ runState: activeRunState, reason }) => {
       cleanupWorkflowBlobsForRun({
         runState: activeRunState,
         projectRoot,
         options: configuredOptions,
         reason: `interrupted workflow (${reason})`,
       })
-      cancelLocalWorkflowRunnersForInterrupt({
+      await cancelLocalWorkflowRunnersForInterrupt({
         runState: activeRunState,
         projectRoot,
         options: configuredOptions,

@@ -6,7 +6,7 @@ const {
   createAuthenticatedNetlifyClient,
   isAgentRunnerSdkError,
   redactSensitiveText,
-} = require('agent-runner-sdk')
+} = require('nax-agent-runner-sdk')
 const {
   parsePersistedHandle,
   resolveRunHandle,
@@ -29,7 +29,7 @@ const DEFAULT_BASE_URL = DEFAULT_NETLIFY_API_URL
  *   home?: string,
  *   platform?: NodeJS.Platform,
  *   userAgent?: string,
- *   onTelemetry?: (event: import('agent-runner-sdk').AuthTelemetryEvent) => void,
+ *   onTelemetry?: (event: import('nax-agent-runner-sdk').AuthTelemetryEvent) => void,
  *   onRequestFailure?: (event: NetlifyRequestFailureEvent) => void,
  * }} NetlifyApiClientOptions
  *
@@ -80,7 +80,7 @@ const DEFAULT_BASE_URL = DEFAULT_NETLIFY_API_URL
  *   status: string,
  *   links: Record<string, unknown>,
  *   raw: NetlifyAgentRunnerPayload,
- *   sdkHandle?: import('agent-runner-sdk').Handle,
+ *   sdkHandle?: import('nax-agent-runner-sdk').Handle,
  * }} NormalizedAgentRunner
  */
 
@@ -285,7 +285,7 @@ function createNetlifyApiClient({
     throw error
   }
 
-  /** @param {import('agent-runner-sdk').Runner} runner @param {import('agent-runner-sdk').Session | null} session @param {import('agent-runner-sdk').Handle | null} handle */
+  /** @param {import('nax-agent-runner-sdk').Runner} runner @param {import('nax-agent-runner-sdk').Session | null} session @param {import('nax-agent-runner-sdk').Handle | null} handle */
   function normalizedSdkRunner(runner, session = null, handle = null) {
     const raw = {
       ...runnerArtifactPayload(runner),
@@ -326,7 +326,7 @@ function createNetlifyApiClient({
         return normalizedSdkRunner(runner, session, handle)
       })
     },
-    /** @param {{ runnerId?: string, promptText?: string, agent?: string, siteId?: string, sdkHandle?: import('agent-runner-sdk').Handle }} input */
+    /** @param {{ runnerId?: string, promptText?: string, agent?: string, siteId?: string, sdkHandle?: import('nax-agent-runner-sdk').Handle }} input */
     async createAgentSession(input = {}) {
       const runnerId = input.runnerId || ''
       if (!runnerId) throw requestError('runner_validation_failed', 'Agent Runner ID is required to create a follow-up session.')
@@ -353,7 +353,7 @@ function createNetlifyApiClient({
         return normalizedSdkRunner(runner, session, handle)
       })
     },
-    /** @param {{ runnerId?: string, sdkHandle?: import('agent-runner-sdk').Handle }} input */
+    /** @param {{ runnerId?: string, sdkHandle?: import('nax-agent-runner-sdk').Handle }} input */
     async getAgentRunner(input = {}) {
       const runnerId = input.runnerId || ''
       if (!runnerId) throw requestError('runner_validation_failed', 'Agent Runner ID is required.')

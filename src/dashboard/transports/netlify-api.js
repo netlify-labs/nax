@@ -4,7 +4,7 @@ const crypto = require('crypto')
  * @typedef {{
  *   createAgentRunner: (input: { siteId?: string, promptText?: string, agent?: string, branch?: string, source?: Record<string, unknown> }) => Promise<import('../../integrations/netlify/api-client').NormalizedAgentRunner>,
  *   cancelAgentRunner: (input: { runnerId?: string }) => Promise<import('../../integrations/netlify/api-client').NormalizedAgentRunner>,
- *   getAgentRunner: (input: { runnerId?: string, sdkHandle?: import('agent-runner-sdk').Handle }) => Promise<import('../../integrations/netlify/api-client').NormalizedAgentRunner>,
+ *   getAgentRunner: (input: { runnerId?: string, sdkHandle?: import('nax-agent-runner-sdk').Handle }) => Promise<import('../../integrations/netlify/api-client').NormalizedAgentRunner>,
  * }} HostedNetlifyApiClient
  *
  * @typedef {{

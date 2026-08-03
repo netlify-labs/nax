@@ -3,17 +3,17 @@ const {
   AGENT_RUNNER_SDK_HANDLE_VERSION,
   createAgentRunnerSdk,
   parseHandle,
-} = require('agent-runner-sdk')
+} = require('nax-agent-runner-sdk')
 
 const DEFAULT_DEADLINE_MS = 25 * 60 * 1000
 const DEFAULT_RETRY_ATTEMPTS = 5
 const DEFAULT_RETRY_DELAY_MS = 5000
 
 /**
- * @typedef {import('agent-runner-sdk').AgentRunnerSdk} AgentRunnerSdk
- * @typedef {import('agent-runner-sdk').Handle} Handle
- * @typedef {import('agent-runner-sdk').Runner} Runner
- * @typedef {import('agent-runner-sdk').Session} Session
+ * @typedef {import('nax-agent-runner-sdk').AgentRunnerSdk} AgentRunnerSdk
+ * @typedef {import('nax-agent-runner-sdk').Handle} Handle
+ * @typedef {import('nax-agent-runner-sdk').Runner} Runner
+ * @typedef {import('nax-agent-runner-sdk').Session} Session
  *
  * @typedef {{
  *   sdk?: AgentRunnerSdk,

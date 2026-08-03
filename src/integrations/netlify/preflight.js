@@ -4,7 +4,7 @@ const { readLinkedSiteId } = require('./init')
 const {
   DEFAULT_NETLIFY_API_URL,
   preflightNetlifyAccess,
-} = require('agent-runner-sdk')
+} = require('nax-agent-runner-sdk')
 
 /**
  * @typedef {{
@@ -32,7 +32,7 @@ function accessDeniedMessage({ email, siteId } = {}) {
  *   baseUrl?: string,
  *   timeoutMs?: number,
  *   userAgent?: string,
- *   onTelemetry?: (event: import('agent-runner-sdk').AuthTelemetryEvent) => void,
+ *   onTelemetry?: (event: import('nax-agent-runner-sdk').AuthTelemetryEvent) => void,
  *   onRequestFailure?: (event: {
  *     kind: 'http_failure'|'network_error',
  *     method: string,

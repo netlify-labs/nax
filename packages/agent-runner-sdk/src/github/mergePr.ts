@@ -6,7 +6,7 @@ import {
 
 export const DEFAULT_GITHUB_API_URL = 'https://api.github.com'
 const DEFAULT_GITHUB_API_VERSION = '2022-11-28'
-const DEFAULT_GITHUB_USER_AGENT = 'agent-runner-sdk'
+const DEFAULT_GITHUB_USER_AGENT = 'nax-agent-runner-sdk'
 
 export type GithubMergeMethod = 'merge' | 'squash' | 'rebase'
 

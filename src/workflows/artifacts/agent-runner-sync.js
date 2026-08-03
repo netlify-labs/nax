@@ -35,7 +35,7 @@ const { listAgentSessions } = require('../../integrations/netlify/local-runner')
  *   projectRoot?: string,
  *   runner?: import('../../types').AgentRunner,
  *   env?: NodeJS.ProcessEnv,
- *   sdk?: import('agent-runner-sdk').AgentRunnerSdk,
+ *   sdk?: import('nax-agent-runner-sdk').AgentRunnerSdk,
  * }} SyncAgentRunnerInput
  */
 
@@ -146,7 +146,7 @@ async function syncAgentRunner({ projectRoot, runner, env, sdk } = {}) {
   }
 }
 
-/** @param {{ projectRoot?: string, env?: NodeJS.ProcessEnv, sdk?: import('agent-runner-sdk').AgentRunnerSdk }} param0 */
+/** @param {{ projectRoot?: string, env?: NodeJS.ProcessEnv, sdk?: import('nax-agent-runner-sdk').AgentRunnerSdk }} param0 */
 async function syncLastAgentRunner({ projectRoot, env, sdk } = {}) {
   const [runner] = listAgentRunnerArtifacts(projectRoot)
   if (!runner) {

@@ -21,7 +21,7 @@ const {
 const REQUEST_ID = '11111111-1111-4111-8111-111111111111'
 const FOLLOWUP_ID = '22222222-2222-4222-8222-222222222222'
 
-/** @returns {import('agent-runner-sdk').RunHandle} */
+/** @returns {import('nax-agent-runner-sdk').RunHandle} */
 function handle(overrides = {}) {
   return {
     v: 1,

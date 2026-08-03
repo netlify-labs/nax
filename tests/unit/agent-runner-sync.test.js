@@ -53,7 +53,7 @@ test('syncLastAgentRunner persists out-of-band remote sessions and rebuilds runn
   const result = await syncLastAgentRunner({
     projectRoot,
     env: {},
-    sdk: /** @type {import('agent-runner-sdk').AgentRunnerSdk} */ (/** @type {unknown} */ ({
+    sdk: /** @type {import('nax-agent-runner-sdk').AgentRunnerSdk} */ (/** @type {unknown} */ ({
       transport: {
         listSessions: async () => [
           {

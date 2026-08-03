@@ -1,7 +1,7 @@
 # Agent Runner SDK — Specification
 
 **Status:** SPEC v8 (2026-08-02) — discovery + two requirements interviews + **five review rounds** integrated, every backend claim code-verified against `platform/bitballoon`. Self-contained (no references to prior versions). **Bead-ready**; §11 = Phase-0 verifications only.
-**Package:** **`agent-runner-sdk`** (unscoped; npm-available, checked 2026-08-02) — standalone workspace package in this repo (`github.com/netlify-labs/nax`), published independently. nax depends on it; so do Revenue Engine (RE) and the GitHub Action.
+**Package:** **`nax-agent-runner-sdk`** (unscoped; npm-available, checked 2026-08-02) — standalone workspace package in this repo (`github.com/netlify-labs/nax`), published independently. nax depends on it; so do Revenue Engine (RE) and the GitHub Action.
 **Mission:** *"Centralize the agent runner calls into this one package"* — one SDK used by RE, nax, and the GitHub Action; one place changes when the runner API moves.
 **Repository checkpoint:** Add and commit this specification before converting it to beads. Until that happens the file is untracked and its review history exists only in conversation context, which is not an implementation dependency.
 
@@ -92,7 +92,7 @@ type LandingProgress = {
 | # | Decision | Choice |
 |---|---|---|
 | D1 | Run model | All async; handles as above. |
-| D2 | Packaging & source | Workspace pkg `packages/agent-runner-sdk`, npm **`agent-runner-sdk`**. **TypeScript source** → CJS + ESM + `.d.ts`; `engines.node >= 18`; nax consumes built CJS (the auth plan's CJS/JSDoc constraint is amended to the artifact level). |
+| D2 | Packaging & source | Workspace pkg `packages/agent-runner-sdk`, npm **`nax-agent-runner-sdk`**. **TypeScript source** → CJS + ESM + `.d.ts`; `engines.node >= 18`; nax consumes built CJS (the auth plan's CJS/JSDoc constraint is amended to the artifact level). |
 | D3 | Transport | HTTP (default) + opt-in CLI (`netlify` binary, zero-config, never an npm dep; min-version gate §3.2) behind one `Transport`. |
 | D4 | Auth | Netlify service PAT for all runner ops. **GitHub token OPTIONAL — only for `land:'merge'`** (PR auto-merge via the GitHub API). RE supplies its netlify-labs org token (already in SSM); nax + GH Action are PR-only. Token precedence (matches the auth plan): **per-call `opts.token` > constructor `token` > env `NETLIFY_AUTH_TOKEN` > CLI-config discovery**. The `NETLIFY_AGENT_RUNNER_TOKEN` alias is deliberately absent — the auth plan's sole-env-token contract stands; RE passes its token explicitly. |
 | D5 | Large prompts | Blob-offload (Phase 2); `BlobStore` contract §7; hard max-size ceiling. |
@@ -110,7 +110,7 @@ type LandingProgress = {
 | D17 | Per-op retry | Operation-specific (§3.1). Create POSTs replayed **only on provably-pre-transmission failure**; post-write ambiguity → typed `create-ambiguous` / `session-create-ambiguous` carrying the effective input + bounded request window for reconciliation (§6.7); session 409 → typed `session-already-active` (adopt only on exact request-marker match). |
 | D18 | Result shape | `RunResult` discriminated union + **`RunOutcome<H extends Handle> { result, landing?, handle: H }`** as `run()`'s return. Landing outcomes have a home: `merged:false`, unsupported, PR/merge failures. Reconciliation returns a discriminated union (`matched` / `none` / `ambiguous`), never nullable handles. Typed member action/input map. |
 | D19 | BlobStore | Contract + lifecycle §7; retain-until-TTL on `failed`; typed `prompt-ref-expired`. |
-| D20 | Build/CI | tsup/tsc build with package-local **`strict: true`, `noImplicitAny: true`, `useUnknownInCatchVariables: true`**; node:test via tsx; public examples typechecked; `check-import-direction.js` extended to `packages/`; `npm pack` smoke (CJS + ESM import); Node 18/20/22 matrix; **manual releases** with package-specific git tags (`agent-runner-sdk-vX.Y.Z`) so independent SDK semver cannot collide with nax's root `vX.Y.Z` tags. |
+| D20 | Build/CI | tsup/tsc build with package-local **`strict: true`, `noImplicitAny: true`, `useUnknownInCatchVariables: true`**; node:test via tsx; public examples typechecked; `check-import-direction.js` extended to `packages/`; `npm pack` smoke (CJS + ESM import); Node 18/20/22 matrix; **manual releases** with package-specific git tags (`nax-agent-runner-sdk-vX.Y.Z`) so independent SDK semver cannot collide with nax's root `vX.Y.Z` tags. |
 | D21 | Auth-consolidation | The plan (`docs/ai/plans/nax-authenticated-request-consolidation.md`, FINAL v3, never implemented) is **implemented directly inside the SDK package, in TS**; its behavior contracts + characterization tests carry over; the plan doc gets a home amendment (incl. the D4 env-alias note). nax imports the core back. |
 | D22 | Migration proof | nax migrates in Phase 1 — **ALL runner call-sites** (local-runner path, hosted-dashboard `netlify-api` transport, preflight). **nax's existing prompt-prep/offload/cleanup layer stays wrapped around the SDK during Phase 1** (no prompt-size regression); swaps to SDK prompt-delivery in Phase 2. |
 | D23 | Coding installation | **Org-wide on netlify-labs** → vended repos auto-covered; Phase-0 smoke assert only. |
@@ -129,7 +129,7 @@ nax "works fine" because its runs go `netlify-api` transport → `local-runner.j
 ## 3. Architecture
 
 ```
-agent-runner-sdk  (packages/agent-runner-sdk; TypeScript → CJS + ESM + .d.ts)
+nax-agent-runner-sdk  (packages/agent-runner-sdk; TypeScript → CJS + ESM + .d.ts)
 ├── auth/                   # auth-consolidation core in TS (D21): token discovery (per-call > ctor > env > CLI config),
 │                           #   preflight, user-agent, value-free telemetry hook
 ├── transport/{httpTransport,cliTransport}.ts
@@ -178,8 +178,8 @@ interface Transport {
 ## 4. Public API
 
 ```ts
-import { createAgentRunnerSdk, isAgentRunnerSdkError } from 'agent-runner-sdk'
-import type { SessionHandle } from 'agent-runner-sdk'
+import { createAgentRunnerSdk, isAgentRunnerSdkError } from 'nax-agent-runner-sdk'
+import type { SessionHandle } from 'nax-agent-runner-sdk'
 
 const sdk = createAgentRunnerSdk({
   token,
@@ -368,7 +368,7 @@ interface BlobStore {
 - `scripts/check-import-direction.js` extended to scan `packages/` — the SDK imports no `cli`/`dashboard`/heavy deps.
 - Tests: node:test via tsx. CI: strict typecheck, tests, a compiled public-API example, `npm pack` smoke (install tarball in a scratch project; import from CJS and ESM), Node 18/20/22 matrix.
 - Public docs: package-local README for npm plus the canonical user-facing SDK guide under `site/content/`; both document token precedence, landing modes, handle persistence/versioning, request-marker reconciliation, and failure/result unions. Examples share the compiled source fixture so docs cannot drift from the exported types.
-- Releases: manual `npm version <semver> --tag-version-prefix=agent-runner-sdk-v && npm publish` from the package dir. Independent semver; SDK tags cannot collide with nax's root `vX.Y.Z` tags.
+- Releases: manual `npm version <semver> --tag-version-prefix=nax-agent-runner-sdk-v && npm publish` from the package dir. Independent semver; SDK tags cannot collide with nax's root `vX.Y.Z` tags.
 
 ---
 
@@ -389,7 +389,7 @@ interface BlobStore {
 ## 10. Phasing (vertical slices, prove early)
 
 - **Phase 0 — facts + auth core + transport:** §11 verifications; implement the auth-consolidation core in-package (TS, contracts + characterization tests preserved); strict package tsconfig; `Transport` + `httpTransport` + paginated list + per-op retry + ambiguity classification carrying effective inputs/windows + contract tests. **Unblocks RE (`revenue-engine/docs/plans/create-flow-ux.md` §10.5).**
-- **Phase 1 — engine + PROVE with nax:** engine ops + full-fidelity Run/Session handles + Handle serde + `result.ts`/`RunOutcome`/reconciliation unions + session-aware resumable `land` (githubPr incl. expected-head merge + unsupported) + marker-based `reconcileCreate`/`reconcileSession` + `runtime.ts`; packaging/CI + compiled public example + package README/canonical `site/content` guide. **Migrate ALL nax runner call-sites** (local-runner, dashboard `netlify-api` transport, preflight) with nax's prompt-prep layer retained around the SDK. Publish `agent-runner-sdk@next`. *(RE needs Phase 0 + this.)*
+- **Phase 1 — engine + PROVE with nax:** engine ops + full-fidelity Run/Session handles + Handle serde + `result.ts`/`RunOutcome`/reconciliation unions + session-aware resumable `land` (githubPr incl. expected-head merge + unsupported) + marker-based `reconcileCreate`/`reconcileSession` + `runtime.ts`; packaging/CI + compiled public example + package README/canonical `site/content` guide. **Migrate ALL nax runner call-sites** (local-runner, dashboard `netlify-api` transport, preflight) with nax's prompt-prep layer retained around the SDK. Publish `nax-agent-runner-sdk@next`. *(RE needs Phase 0 + this.)*
 - **Phase 2 — resilience + delivery:** SDK `prompt-delivery/` + BlobStore (+ default Netlify-Blobs store; nax swaps onto it); `failures/core`; capacity auto-retry; full-lifecycle canary. **Migrate the GH Action** (PR-only).
 - **Phase 3 — extensions:** `failures/github`; `recovery`; presenters; `cliTransport`; `netlifyGitPublish`. **Migrate RE's site adapter** (`land:'merge'`).
 - **Phase 4 — opportunistic:** netlifactory / orchestrator.

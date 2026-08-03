@@ -1,6 +1,6 @@
 # Changelog
 
-All notable changes to `agent-runner-sdk` are recorded here.
+All notable changes to `nax-agent-runner-sdk` are recorded here.
 
 ## 0.1.0 - 2026-08-02
 

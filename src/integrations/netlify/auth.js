@@ -3,7 +3,7 @@ const {
   netlifyCliConfigCandidates,
   readNetlifyCliToken,
   resolveNetlifyToken,
-} = require('agent-runner-sdk')
+} = require('nax-agent-runner-sdk')
 
 module.exports = {
   netlifyCliConfigCandidates,

@@ -33,7 +33,7 @@ explicit option `siteId`, then `env.NETLIFY_SITE_ID`. Missing auth maps to
 `runner_auth_failed`; missing site/runner IDs map to
 `runner_validation_failed`.
 
-Every direct request carries `agent-runner-sdk/<version>` as its user agent.
+Every direct request carries `nax-agent-runner-sdk/<version>` as its user agent.
 CLI token discovery is owned by the SDK and re-exported through
 `src/integrations/netlify/auth.js`; the permanent `init.js` compatibility
 export remains available.

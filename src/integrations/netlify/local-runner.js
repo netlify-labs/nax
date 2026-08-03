@@ -167,7 +167,7 @@ const NETLIFY_CONFIG_SCAN_SKIP_DIRS = new Set([
  *   netlifyFilter?: string,
  *   env?: NodeJS.ProcessEnv,
  *   runCommand?: AsyncRunCommand,
- *   sdk?: import('agent-runner-sdk').AgentRunnerSdk,
+ *   sdk?: import('nax-agent-runner-sdk').AgentRunnerSdk,
  *   timeoutMinutes?: number,
  * }} SubmitLocalAgentRunOptions
  *
@@ -179,7 +179,7 @@ const NETLIFY_CONFIG_SCAN_SKIP_DIRS = new Set([
  *   netlifyFilter?: string,
  *   env?: NodeJS.ProcessEnv,
  *   runCommand?: SyncRunCommand,
- *   sdk?: import('agent-runner-sdk').AgentRunnerSdk,
+ *   sdk?: import('nax-agent-runner-sdk').AgentRunnerSdk,
  * }} ShowAgentRunOptions
  *
  * Agent Runner session list command options.
@@ -188,8 +188,8 @@ const NETLIFY_CONFIG_SCAN_SKIP_DIRS = new Set([
  *   runnerId?: string,
  *   env?: NodeJS.ProcessEnv,
  *   runCommand?: SyncRunCommand,
- *   sdk?: import('agent-runner-sdk').AgentRunnerSdk,
- *   sdkHandle?: import('agent-runner-sdk').Handle,
+ *   sdk?: import('nax-agent-runner-sdk').AgentRunnerSdk,
+ *   sdkHandle?: import('nax-agent-runner-sdk').Handle,
  * }} AgentRunnerCommandOptions
  *
  * Poll response normalized from an SDK runner snapshot.
@@ -229,7 +229,7 @@ const NETLIFY_CONFIG_SCAN_SKIP_DIRS = new Set([
  *   onTerminalRun?: (run: import('../../types').AgentRun) => void,
  *   refreshRuns?: () => import('../../types').AgentRun[],
  *   runCommand?: SyncRunCommand,
- *   sdk?: import('agent-runner-sdk').AgentRunnerSdk,
+ *   sdk?: import('nax-agent-runner-sdk').AgentRunnerSdk,
  * }} WaitForLocalAgentRunsOptions
  *
  * Polling progress event for Agent Runner execution.

@@ -161,7 +161,7 @@
  *   resultText?: string,
  *   runnerId?: string,
  *   sessionId?: string,
- *   sdkHandle?: import('agent-runner-sdk').Handle,
+ *   sdkHandle?: import('nax-agent-runner-sdk').Handle,
  *   netlifySiteId?: string,
  *   issueNumber?: number,
  *   issueUrl?: string,
@@ -205,7 +205,7 @@
  * Materialized Netlify Agent Runner session artifact.
  * @typedef {{
  *   sessionId?: string,
- *   sdkHandle?: import('agent-runner-sdk').Handle,
+ *   sdkHandle?: import('nax-agent-runner-sdk').Handle,
  *   runnerId?: string,
  *   netlifySiteId?: string,
  *   agent?: string,
@@ -229,7 +229,7 @@
  *   agent?: string,
  *   status?: string,
  *   latestSessionId?: string,
- *   sdkHandle?: import('agent-runner-sdk').Handle,
+ *   sdkHandle?: import('nax-agent-runner-sdk').Handle,
  *   sessionIds?: string[],
  *   sessions?: AgentSession[],
  *   usage?: UsageSummary,

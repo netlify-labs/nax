@@ -13,7 +13,7 @@ import type {
 
 export const AGENT_RUNNER_SDK_VERSION = '0.1.0' as const
 export const DEFAULT_USER_AGENT =
-  `agent-runner-sdk/${AGENT_RUNNER_SDK_VERSION}` as const
+  `nax-agent-runner-sdk/${AGENT_RUNNER_SDK_VERSION}` as const
 export const DEFAULT_NETLIFY_API_URL = 'https://api.netlify.com/api/v1'
 
 export type AuthTelemetryEvent =

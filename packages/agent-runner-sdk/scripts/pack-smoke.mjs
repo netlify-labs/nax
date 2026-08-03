@@ -8,7 +8,7 @@ import { fileURLToPath } from 'node:url'
 import { smokePackageSpec } from './consumer-smoke.mjs'
 
 const packageRoot = resolve(fileURLToPath(new URL('..', import.meta.url)))
-const scratchRoot = mkdtempSync(join(tmpdir(), 'agent-runner-sdk-pack-'))
+const scratchRoot = mkdtempSync(join(tmpdir(), 'nax-agent-runner-sdk-pack-'))
 const packRoot = join(scratchRoot, 'pack')
 mkdirSync(packRoot)
 
@@ -40,7 +40,7 @@ try {
   const tarball = join(packRoot, packed.filename)
 
   const manifest = JSON.parse(readFileSync(join(packageRoot, 'package.json'), 'utf8'))
-  assert.equal(manifest.name, 'agent-runner-sdk')
+  assert.equal(manifest.name, 'nax-agent-runner-sdk')
   assert.equal(manifest.engines.node, '>=18')
   smokePackageSpec(tarball, { expectedVersion: manifest.version })
 } finally {

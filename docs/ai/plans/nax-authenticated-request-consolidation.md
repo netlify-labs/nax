@@ -4,7 +4,7 @@
 > behavior while adding OS-correct Netlify CLI credential discovery, a Nax user
 > agent, and value-free failure telemetry.
 
-Status: **IMPLEMENTED IN `agent-runner-sdk`** (2026-08-02). This document is
+Status: **IMPLEMENTED IN `nax-agent-runner-sdk`** (2026-08-02). This document is
 the retained characterization and migration record; the implementation home
 is `packages/agent-runner-sdk/src/auth/`. Nax's CommonJS modules consume the
 package's built CJS export through
@@ -17,12 +17,12 @@ Netlify credentials users configure.
 Implementation deltas required by the Agent Runner SDK specification:
 
 - The shared core is strict TypeScript in the independently published
-  `agent-runner-sdk`, rather than a nax-only CommonJS module.
+  `nax-agent-runner-sdk`, rather than a nax-only CommonJS module.
 - Token precedence is per-operation `token`, SDK-constructor `token`,
   `NETLIFY_AUTH_TOKEN`, then Netlify CLI config discovery.
 - `NETLIFY_AUTH_TOKEN` is the sole environment-token contract.
   `NETLIFY_AGENT_RUNNER_TOKEN` is deliberately unsupported.
-- Direct requests identify as `agent-runner-sdk/<version>`. The nax adapter
+- Direct requests identify as `nax-agent-runner-sdk/<version>`. The nax adapter
   retains its legacy error/verdict surface while delegating auth, request,
   retry, redaction, and telemetry mechanics to the SDK.
 - The package-level callback is `onTelemetry`; the nax compatibility adapter
@@ -97,7 +97,7 @@ candidate.
 Direct requests identify themselves as:
 
 ```text
-agent-runner-sdk/<package-version>
+nax-agent-runner-sdk/<package-version>
 ```
 
 Failures can be observed through a structured callback without exposing the
@@ -392,7 +392,7 @@ request path.
 Add and export:
 
 ```text
-DEFAULT_USER_AGENT = agent-runner-sdk/<package-version>
+DEFAULT_USER_AGENT = nax-agent-runner-sdk/<package-version>
 ```
 
 The value is derived from the root `package.json` rather than duplicated.

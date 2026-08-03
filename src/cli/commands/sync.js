@@ -18,7 +18,7 @@ const { resolveProjectRoot } = require('../../integrations/netlify/project-selec
  *   cwd?: string,
  *   env?: NodeJS.ProcessEnv,
  *   runCommand?: SyncRunCommand,
- *   sdk?: import('agent-runner-sdk').AgentRunnerSdk,
+ *   sdk?: import('nax-agent-runner-sdk').AgentRunnerSdk,
  *   log?: (message: string) => void,
  * }} SyncDependencies
  *

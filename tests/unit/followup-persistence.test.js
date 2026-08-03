@@ -67,7 +67,7 @@ test('freshAgentFlow creates a one-step dashboard flow definition', () => {
 test('persistFreshPseudoWorkflow writes a renderable one-step workflow state', () => {
   const projectRoot = tmpRoot()
   const now = new Date('2026-06-20T20:00:00.000Z')
-  /** @type {import('agent-runner-sdk').RunHandle} */
+  /** @type {import('nax-agent-runner-sdk').RunHandle} */
   const handle = {
     v: 1,
     kind: 'run',

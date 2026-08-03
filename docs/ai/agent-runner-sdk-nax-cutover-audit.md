@@ -3,7 +3,7 @@
 Date: 2026-08-02
 
 This audit records the Phase 1 nax migration from direct Netlify CLI and
-provisional HTTP lifecycle calls to the built `agent-runner-sdk` package.
+provisional HTTP lifecycle calls to the built `nax-agent-runner-sdk` package.
 Historical design documents and test strings are not runtime call sites.
 
 ## Runtime call-site mapping

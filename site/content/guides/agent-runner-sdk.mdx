@@ -7,7 +7,7 @@ import { Callout } from 'nextra/components'
 
 # Use the Agent Runner SDK
 
-`agent-runner-sdk` is the shared Node.js lifecycle client for Netlify Agent
+`nax-agent-runner-sdk` is the shared Node.js lifecycle client for Netlify Agent
 Runner. Use it when a service, worker, CLI, or GitHub Action needs typed
 submission, exact-session polling, durable recovery, bounded retry, and safe
 landing.
@@ -18,11 +18,11 @@ versioned and published independently.
 ## Install and authenticate
 
 ```sh
-npm install agent-runner-sdk
+npm install nax-agent-runner-sdk
 ```
 
 ```ts copy
-import { createAgentRunnerSdk } from 'agent-runner-sdk'
+import { createAgentRunnerSdk } from 'nax-agent-runner-sdk'
 
 const sdk = createAgentRunnerSdk({
   token: process.env.NETLIFY_AUTH_TOKEN,
@@ -328,7 +328,7 @@ write throws `session-create-ambiguous`; a session 409 throws
 match cannot be proven, catch the typed error and reconcile later:
 
 ```ts copy
-import { isAgentRunnerSdkError } from 'agent-runner-sdk'
+import { isAgentRunnerSdkError } from 'nax-agent-runner-sdk'
 
 try {
   const handle = await sdk.start(input)
@@ -481,14 +481,14 @@ data.
 - Node.js 18, 20, and 22
 - ESM and CommonJS entry points
 - Strict `.d.ts` and `.d.cts` declarations
-- Package-specific Git tags: `agent-runner-sdk-vX.Y.Z`
+- Package-specific Git tags: `nax-agent-runner-sdk-vX.Y.Z`
 - Prerelease distribution tag: `next`
 
 The release gate builds and typechecks the package, runs the deterministic
 suite, compiles public examples, creates the exact npm tarball, and installs
 that tarball into clean ESM and CommonJS consumers. After an authorized
 publication, `npm run published:smoke` repeats those consumer checks against
-`agent-runner-sdk@next` from the registry. Publication remains a manual,
+`nax-agent-runner-sdk@next` from the registry. Publication remains a manual,
 explicitly authorized step.
 
 ## See also

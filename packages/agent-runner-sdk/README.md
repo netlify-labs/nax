@@ -1,15 +1,15 @@
-# agent-runner-sdk
+# nax-agent-runner-sdk
 
 Typed, resumable access to Netlify Agent Runner.
 
-`agent-runner-sdk` provides a stateless execution engine, an HTTP transport,
+`nax-agent-runner-sdk` provides a stateless execution engine, an HTTP transport,
 versioned durable handles, ambiguity reconciliation, and safe GitHub landing.
 It supports Node.js 18 and newer, ESM, CommonJS, and strict TypeScript.
 
 ## Install
 
 ```sh
-npm install agent-runner-sdk
+npm install nax-agent-runner-sdk
 ```
 
 The package is unscoped. It is developed in the
@@ -19,7 +19,7 @@ independent versions and releases.
 ## Quick start
 
 ```ts
-import { createAgentRunnerSdk } from 'agent-runner-sdk'
+import { createAgentRunnerSdk } from 'nax-agent-runner-sdk'
 
 const sdk = createAgentRunnerSdk({
   token: process.env.NETLIFY_AUTH_TOKEN,
@@ -84,7 +84,7 @@ request markers.
 ## Construct the SDK
 
 ```ts
-import { createAgentRunnerSdk } from 'agent-runner-sdk'
+import { createAgentRunnerSdk } from 'nax-agent-runner-sdk'
 
 const sdk = createAgentRunnerSdk({
   transport: 'http',
@@ -309,7 +309,7 @@ typed create error so the caller can reconcile later:
 import {
   createAgentRunnerSdk,
   isAgentRunnerSdkError,
-} from 'agent-runner-sdk'
+} from 'nax-agent-runner-sdk'
 
 try {
   const handle = await sdk.start(input)
@@ -439,14 +439,14 @@ for exhaustive result/landing narrowing.
 ## Release process
 
 Releases are manual and run from `packages/agent-runner-sdk`. Git tags use the
-package-specific prefix `agent-runner-sdk-vX.Y.Z`, separate from nax CLI tags.
+package-specific prefix `nax-agent-runner-sdk-vX.Y.Z`, separate from nax CLI tags.
 
 For an authorized prerelease:
 
 ```sh
 npm run ci
 npm version 0.1.0 --allow-same-version \
-  --tag-version-prefix=agent-runner-sdk-v
+  --tag-version-prefix=nax-agent-runner-sdk-v
 npm run release:next
 ```
 

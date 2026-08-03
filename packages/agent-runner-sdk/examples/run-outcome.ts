@@ -2,7 +2,7 @@ import type {
   LandingOutcome,
   RunOutcome,
   RunResult,
-} from 'agent-runner-sdk'
+} from 'nax-agent-runner-sdk'
 
 export function successfulResultText(
   result: RunResult,

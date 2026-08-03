@@ -1,7 +1,7 @@
 import {
   createAgentRunnerSdk,
   isAgentRunnerSdkError,
-} from 'agent-runner-sdk'
+} from 'nax-agent-runner-sdk'
 import type {
   AgentRunnerSdkOptions,
   EffectiveFollowUpInput,
@@ -12,7 +12,7 @@ import type {
   RequestWindow,
   RunResult,
   StartInput,
-} from 'agent-runner-sdk'
+} from 'nax-agent-runner-sdk'
 
 export interface DurableJobStore {
   loadHandle(jobId: string): Promise<string>

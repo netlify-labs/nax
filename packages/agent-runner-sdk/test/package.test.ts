@@ -17,5 +17,5 @@ test('request metadata version matches the package release version', () => {
     readFileSync(new URL('../package.json', import.meta.url), 'utf8'),
   ) as { version: string }
   assert.equal(AGENT_RUNNER_SDK_VERSION, manifest.version)
-  assert.equal(DEFAULT_USER_AGENT, `agent-runner-sdk/${manifest.version}`)
+  assert.equal(DEFAULT_USER_AGENT, `nax-agent-runner-sdk/${manifest.version}`)
 })

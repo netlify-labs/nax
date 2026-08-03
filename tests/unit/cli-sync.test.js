@@ -114,7 +114,7 @@ test('handleSync syncs the latest Netlify Agent Runner artifact', async () => {
       NETLIFY_SITE_ID: 'site-1',
       NETLIFY_AUTH_TOKEN: 'token-1',
     },
-    sdk: /** @type {import('agent-runner-sdk').AgentRunnerSdk} */ (/** @type {unknown} */ ({
+    sdk: /** @type {import('nax-agent-runner-sdk').AgentRunnerSdk} */ (/** @type {unknown} */ ({
       transport: {
         listSessions: async () => [{
           sessionId: 'session-1',

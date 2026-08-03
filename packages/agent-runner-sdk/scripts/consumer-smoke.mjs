@@ -24,7 +24,7 @@ export function smokePackageSpec(
   packageSpec,
   {
     expectedVersion,
-    scratchPrefix = 'agent-runner-sdk-consumer-',
+    scratchPrefix = 'nax-agent-runner-sdk-consumer-',
   },
 ) {
   const scratchRoot = mkdtempSync(join(tmpdir(), scratchPrefix))
@@ -50,8 +50,8 @@ export function smokePackageSpec(
       )
 
       const source = moduleType === 'module'
-        ? "import { AGENT_RUNNER_SDK_HANDLE_VERSION } from 'agent-runner-sdk'\nif (AGENT_RUNNER_SDK_HANDLE_VERSION !== 1) process.exit(1)\n"
-        : "const { AGENT_RUNNER_SDK_HANDLE_VERSION } = require('agent-runner-sdk')\nif (AGENT_RUNNER_SDK_HANDLE_VERSION !== 1) process.exit(1)\n"
+        ? "import { AGENT_RUNNER_SDK_HANDLE_VERSION } from 'nax-agent-runner-sdk'\nif (AGENT_RUNNER_SDK_HANDLE_VERSION !== 1) process.exit(1)\n"
+        : "const { AGENT_RUNNER_SDK_HANDLE_VERSION } = require('nax-agent-runner-sdk')\nif (AGENT_RUNNER_SDK_HANDLE_VERSION !== 1) process.exit(1)\n"
       const entrypoint = join(consumerRoot, 'smoke.js')
       writeFileSync(entrypoint, source)
       execFileSync(process.execPath, [entrypoint], {
@@ -64,12 +64,12 @@ export function smokePackageSpec(
       const installedRoot = join(
         consumerRoot,
         'node_modules',
-        'agent-runner-sdk',
+        'nax-agent-runner-sdk',
       )
       const installedManifest = JSON.parse(
         readFileSync(join(installedRoot, 'package.json'), 'utf8'),
       )
-      assert.equal(installedManifest.name, 'agent-runner-sdk')
+      assert.equal(installedManifest.name, 'nax-agent-runner-sdk')
       assert.equal(installedManifest.version, expectedVersion)
       assert.equal(installedManifest.engines.node, '>=18')
 

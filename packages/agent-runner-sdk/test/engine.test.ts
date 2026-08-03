@@ -245,12 +245,59 @@ test('snapshots attribute the exact handle session and normalize success', async
     sessionId: 'session-2',
     state: 'completed',
     resultText: 'Follow-up done',
+    hasResultDiff: false,
   })
   const followUpResult = await sdk.getResult(
     sdk.parseHandle(sdk.serializeHandle(followUp)),
   )
   assert.equal(followUpResult.sessionId, 'session-2')
   assert.equal(requestedSessions.at(-1), 'session-2')
+})
+
+test('successful changed results fetch and expose the terminal diff', async () => {
+  const memberCalls: Array<{
+    runnerId: string
+    action: MemberAction
+  }> = []
+  const sdk = createAgentRunnerSdk({
+    transport: fakeTransport({
+      getRunner: async () => runner({ hasResultDiff: true }),
+      getSession: async () => session({
+        state: 'completed',
+        resultText: 'Changed the fixture',
+        hasResultDiff: true,
+      }),
+      member: async <A extends MemberAction>(
+        runnerId: string,
+        action: A,
+        _input: MemberInput<A>,
+      ): Promise<MemberResult<A>> => {
+        memberCalls.push({ runnerId, action })
+        assert.equal(action, 'diff')
+        return {
+          diff: {
+            kind: 'inline',
+            text: 'diff --git a/fixture.txt b/fixture.txt',
+          },
+        } as MemberResult<A>
+      },
+    }),
+  })
+
+  const result = await sdk.getResult(runHandle())
+
+  assert.equal(result.status, 'succeeded')
+  if (result.status === 'succeeded') {
+    assert.equal(result.changes, 'changed')
+    assert.deepEqual(result.diff, {
+      kind: 'inline',
+      text: 'diff --git a/fixture.txt b/fixture.txt',
+    })
+  }
+  assert.deepEqual(memberCalls, [{
+    runnerId: 'runner-1',
+    action: 'diff',
+  }])
 })
 
 test('terminal snapshots cover failure, cancellation, timeout, and unknown changes', async () => {
@@ -399,6 +446,19 @@ test('run keeps execution success separate from landing outcomes', async () => {
       resultText: 'Implemented',
       hasResultDiff: true,
     }),
+    member: async <A extends MemberAction>(
+      _runnerId: string,
+      action: A,
+      _input: MemberInput<A>,
+    ): Promise<MemberResult<A>> => {
+      assert.equal(action, 'diff')
+      return {
+        diff: {
+          kind: 'inline',
+          text: 'diff --git a/fixture.txt b/fixture.txt',
+        },
+      } as MemberResult<A>
+    },
   })
   const sdk = createAgentRunnerSdk({
     transport,

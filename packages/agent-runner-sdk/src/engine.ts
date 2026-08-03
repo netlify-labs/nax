@@ -748,14 +748,31 @@ export function createAgentRunnerSdk(
   ): Promise<RunSnapshot> {
     const handle = parseHandle(handleValue)
     const observed = await observe(handle, requestOptions)
-    const result = toRunResult(handle, observed)
+    let result = toRunResult(handle, observed)
     if (result !== undefined) {
-      if (
-        result.status === 'succeeded'
-        || result.status === 'cancelled'
-        || result.status === 'timedOut'
-      ) {
-        await cleanupPromptRef(handle, result.status)
+      try {
+        if (
+          result.status === 'succeeded'
+          && result.changes === 'changed'
+        ) {
+          const terminalDiff = await transport.member(
+            handle.runnerId,
+            'diff',
+            {},
+            requestOptions,
+          )
+          if (terminalDiff.diff !== null) {
+            result = { ...result, diff: terminalDiff.diff }
+          }
+        }
+      } finally {
+        if (
+          result.status === 'succeeded'
+          || result.status === 'cancelled'
+          || result.status === 'timedOut'
+        ) {
+          await cleanupPromptRef(handle, result.status)
+        }
       }
       return { kind: 'terminal', result }
     }

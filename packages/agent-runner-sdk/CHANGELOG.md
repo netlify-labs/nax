@@ -4,6 +4,11 @@ All notable changes to `nax-agent-runner-sdk` are recorded here.
 
 ## Unreleased
 
+## 0.2.0-next.1 - 2026-08-03
+
+- Fetch the terminal runner diff when the service reports a changed successful
+  session, so `RunResult.diff` reflects the public result contract.
+
 ## 0.2.0-next.0 - 2026-08-03
 
 - Added stable core and separate GitHub failure profiles with safe,

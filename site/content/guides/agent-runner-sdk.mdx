@@ -298,16 +298,23 @@ The `LandingOutcome` union includes:
 | `failed` | `commit`, `pr`, `merge`, or `publish` failed with a classification. |
 | `skipped` | Landing policy was `none`. |
 
-Phase 1's default handler supports GitHub `pr`, `merge`, `auto`, and `none`.
-For follow-ups it commits the exact current session; stale runner-level commit
-state from an earlier session cannot short-circuit the current one. Merge
-persists the live PR head and sends it as a compare-and-swap guard. Head drift
-fails closed.
+The default handler supports GitHub `pr`, `merge`, and `auto`. For follow-ups
+it commits the exact current session; stale runner-level commit state from an
+earlier session cannot short-circuit the current one. Merge persists the live
+PR head and sends it as a compare-and-swap guard. Head drift fails closed.
 
 `merge` requires `githubToken`. GitHub `auto` merges only when that token is
-configured; otherwise it returns `prOpen`. Netlify Git publishing is added in
-Phase 3, so non-GitHub origins are `unsupported` in Phase 1. An injected custom
-`landingHandler` may return any valid outcome.
+configured; otherwise it returns `prOpen`.
+
+For Netlify Git, `publish` and `auto` call `publish_to_production`. The handle
+checkpoints an accepted/in-progress request before polling and checkpoints
+completion only when the exact current session reports `is_published: true`.
+A stale runner-level merge SHA or successful execution is not publication
+proof. Restarts resume polling without duplicating an accepted action. The
+published deploy URL is included when the session exposes one.
+
+Zip/drop and incompatible origin/mode combinations return `unsupported`. An
+injected custom `landingHandler` may return any valid outcome.
 
 Landing failures are values, not thrown exceptions. Always inspect them
 separately:

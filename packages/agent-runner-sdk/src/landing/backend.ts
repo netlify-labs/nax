@@ -38,7 +38,7 @@ export interface BackendLandingOptions {
 
 type LandingStep = 'commit' | 'pr' | 'merge' | 'publish'
 
-interface GithubObservation {
+interface BackendObservation {
   runner: Runner
   session: Session
 }
@@ -71,7 +71,11 @@ function errorFromBackend(
   }
   return backendFailure(
     step,
-    step === 'pr' ? 'pr-creation-failed' : 'commit-to-pr-failed',
+    step === 'pr'
+      ? 'pr-creation-failed'
+      : step === 'publish'
+        ? 'publish-to-production-failed'
+        : 'commit-to-pr-failed',
     message,
   )
 }
@@ -162,7 +166,7 @@ async function pause(
 async function observe(
   handle: Handle,
   context: BackendLandingContext,
-): Promise<GithubObservation> {
+): Promise<BackendObservation> {
   const [runner, session] = await Promise.all([
     context.transport.getRunner(
       handle.runnerId,
@@ -217,10 +221,10 @@ async function waitForPullRequest(
 
 async function ensureCurrentSessionCommitted<H extends Handle>(
   handle: H,
-  initial: GithubObservation,
+  initial: BackendObservation,
   context: BackendLandingContext,
   pollIntervalMs: number,
-): Promise<BackendLandingResult<H> | GithubObservation> {
+): Promise<BackendLandingResult<H> | BackendObservation> {
   const sessionId = handle.currentSessionId
   if (isCommitted(handle, sessionId) || initial.session.commitSha) {
     return {
@@ -307,11 +311,11 @@ async function ensureCurrentSessionCommitted<H extends Handle>(
 
 async function waitForBackendSettlement(
   handle: Handle,
-  initial: GithubObservation,
+  initial: BackendObservation,
   context: BackendLandingContext,
   pollIntervalMs: number,
   requireSessionCommit: boolean,
-): Promise<GithubObservation | LandingOutcome> {
+): Promise<BackendObservation | LandingOutcome> {
   let observation = initial
   while (
     observation.runner.prIsBeingCreated === true
@@ -337,6 +341,131 @@ async function waitForBackendSettlement(
   return observation
 }
 
+function publishFailure(error: unknown): LandingOutcome {
+  return {
+    kind: 'failed',
+    step: 'publish',
+    failure: classifyCoreFailure(error, { stage: 'landing' }),
+  }
+}
+
+function isPublishInFlight(error: unknown): boolean {
+  return (
+    error instanceof BasicAgentRunnerSdkError
+    && error.code === 'publish-in-progress'
+  )
+}
+
+function publishedOutcome(
+  observation: BackendObservation,
+): LandingOutcome {
+  return {
+    kind: 'published',
+    ...(observation.session.deployUrl === undefined
+      ? {}
+      : { deployUrl: observation.session.deployUrl }),
+  }
+}
+
+async function publishToProduction<H extends Handle>(
+  originalHandle: H,
+  initial: BackendObservation,
+  context: BackendLandingContext,
+  pollIntervalMs: number,
+): Promise<BackendLandingResult<H>> {
+  let handle = originalHandle
+  let observation = initial
+
+  if (
+    handle.landing?.published === true
+    || observation.session.isPublished === true
+  ) {
+    if (handle.landing?.published !== true) {
+      handle = withLanding(handle, {
+        publishRequested: true,
+        published: true,
+      })
+      try {
+        await context.checkpoint(handle)
+      } catch (error: unknown) {
+        return { handle, landing: publishFailure(error) }
+      }
+    }
+    return { handle, landing: publishedOutcome(observation) }
+  }
+  if (observation.runner.mergeCommitError) {
+    return {
+      handle,
+      landing: errorFromBackend(
+        'publish',
+        observation.runner.mergeCommitError,
+      ),
+    }
+  }
+
+  if (handle.landing?.publishRequested !== true) {
+    try {
+      ensureTimeRemaining(handle, context)
+      const actionRunner = await context.transport.member(
+        handle.runnerId,
+        'publish_to_production',
+        {},
+        context.requestOptions,
+      )
+      if (actionRunner.runnerId !== handle.runnerId) {
+        throw new InvalidApiShapeError(
+          `/agent_runners/${handle.runnerId}/publish_to_production`,
+          'id',
+        )
+      }
+      observation = {
+        runner: actionRunner,
+        session: observation.session,
+      }
+    } catch (error: unknown) {
+      if (!isPublishInFlight(error)) {
+        return { handle, landing: publishFailure(error) }
+      }
+    }
+
+    handle = withLanding(handle, { publishRequested: true })
+    try {
+      await context.checkpoint(handle)
+    } catch (error: unknown) {
+      return { handle, landing: publishFailure(error) }
+    }
+  }
+
+  try {
+    while (observation.session.isPublished !== true) {
+      if (observation.runner.mergeCommitError) {
+        return {
+          handle,
+          landing: errorFromBackend(
+            'publish',
+            observation.runner.mergeCommitError,
+          ),
+        }
+      }
+      await pause(handle, context, pollIntervalMs)
+      observation = await observe(handle, context)
+    }
+  } catch (error: unknown) {
+    return { handle, landing: publishFailure(error) }
+  }
+
+  handle = withLanding(handle, {
+    publishRequested: true,
+    published: true,
+  })
+  try {
+    await context.checkpoint(handle)
+  } catch (error: unknown) {
+    return { handle, landing: publishFailure(error) }
+  }
+  return { handle, landing: publishedOutcome(observation) }
+}
+
 export function createBackendLandingHandler({
   pollIntervalMs,
 }: BackendLandingOptions) {
@@ -349,6 +478,24 @@ export function createBackendLandingHandler({
     let observation = await observe(handle, context)
     handle = withOrigin(handle, observation.runner)
     const origin = codeOrigin(handle, observation.runner)
+    const mode = handle.policy.landing
+    if (origin === 'netlify-git') {
+      if (mode === 'publish' || mode === 'auto') {
+        return publishToProduction(
+          handle,
+          observation,
+          context,
+          pollIntervalMs,
+        )
+      }
+      return {
+        handle,
+        landing: {
+          kind: 'unsupported',
+          reason: `Landing mode ${mode} is unsupported for netlify-git runners.`,
+        },
+      }
+    }
     if (origin !== 'github') {
       return {
         handle,
@@ -357,6 +504,15 @@ export function createBackendLandingHandler({
           reason: origin === ''
             ? 'The Agent Runner code origin is unknown.'
             : `Landing is not implemented for ${origin} runners.`,
+        },
+      }
+    }
+    if (mode === 'publish') {
+      return {
+        handle,
+        landing: {
+          kind: 'unsupported',
+          reason: 'Publish landing is unsupported for github runners.',
         },
       }
     }

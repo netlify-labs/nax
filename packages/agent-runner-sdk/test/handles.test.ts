@@ -37,6 +37,15 @@ const runHandle: RunHandle = {
 test('run handles round-trip through the versioned serializer', () => {
   const serialized = serializeHandle(runHandle)
   assert.deepEqual(parseHandle(serialized), runHandle)
+
+  const publishing: RunHandle = {
+    ...runHandle,
+    landing: {
+      publishRequested: true,
+      published: true,
+    },
+  }
+  assert.deepEqual(parseHandle(serializeHandle(publishing)), publishing)
 })
 
 test('retry metadata round-trips and must agree with the persisted budget count', () => {

@@ -46,6 +46,27 @@ and `main` was restored to the original canary content.
   session's SHA, proving that runner-level state cannot short-circuit current
   session landing.
 
+## Netlify Git publish source contract
+
+The production-publish boundary was verified on 2026-08-03 against
+`netlify/bitballoon` `origin/main` at
+[`cf79de11`](https://github.com/netlify/bitballoon/tree/cf79de118d63b2d2b98d01a1612d4de5100c9997):
+
+- `POST /api/v1/agent_runners/{id}/publish_to_production` returns the reloaded
+  runner with HTTP `200` after enqueue.
+- The model admits only `code_origin == "netlify-git"` with a resolved diff
+  and uses an atomic `merge_commit_is_being_created` guard.
+- An already-active publish returns HTTP `400` with the exact backend error
+  `Publish to production already in progress`. The HTTP transport normalizes
+  only that message to `publish-in-progress`; unrelated `400` responses remain
+  landing failures.
+- The publish worker pushes the production branch and a ready production
+  deploy marks the attributable Agent Runner session `is_published: true`.
+  That exact current-session field is the SDK completion proof. Runner
+  `merge_commit_sha` is linkage/state, not publication proof.
+- A session `deploy_url` is optional, so `LandingOutcome` includes it only
+  when the session serializer exposes one.
+
 ## Corrections to the reviewed plan
 
 Three previously assumed wire details differed from the live services:

@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs'
 import test from 'node:test'
 
 import {
+  BasicAgentRunnerSdkError,
   DEFAULT_BB_API_URL,
   HttpResponseError,
   createHttpTransport,
@@ -718,6 +719,30 @@ test('member actions type a missing GitHub Coding installation', async () => {
     ),
   )
   assert.equal(fake.calls.length, 1)
+})
+
+test('publish member actions type the backend atomic in-progress response', async () => {
+  const transport = createHttpTransport({
+    token: 'token',
+    fetch: async () => new Response(JSON.stringify({
+      error: 'Publish to production already in progress',
+    }), {
+      status: 400,
+      headers: { 'content-type': 'application/json' },
+    }),
+  })
+
+  await assert.rejects(
+    () => transport.member(
+      'runner-1',
+      'publish_to_production',
+      {},
+    ),
+    (error: unknown) => (
+      error instanceof BasicAgentRunnerSdkError
+      && error.code === 'publish-in-progress'
+    ),
+  )
 })
 
 test('HTTP statuses have stable typed mappings', async () => {

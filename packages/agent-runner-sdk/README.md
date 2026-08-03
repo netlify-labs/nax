@@ -3,8 +3,9 @@
 Typed, resumable access to Netlify Agent Runner.
 
 `nax-agent-runner-sdk` provides a stateless execution engine, an HTTP transport,
-versioned durable handles, ambiguity reconciliation, and safe GitHub landing.
-It supports Node.js 18 and newer, ESM, CommonJS, and strict TypeScript.
+versioned durable handles, ambiguity reconciliation, safe GitHub landing, and
+Netlify Git production publishing. It supports Node.js 18 and newer, ESM,
+CommonJS, and strict TypeScript.
 
 ## Install
 
@@ -271,14 +272,17 @@ independently.
 
 ## Landing
 
-Phase 1's default handler supports GitHub-origin runners:
+The default handler resolves landing by origin:
 
 - `none` returns `skipped`.
-- `pr` creates or resumes a pull request and returns `prOpen`.
-- `merge` creates/resumes the PR and uses `githubToken` to compare-and-swap
-  merge the exact observed head.
-- `auto` merges when a GitHub token is configured and otherwise returns the
-  open PR.
+- For GitHub, `pr` creates or resumes a pull request and returns `prOpen`;
+  `merge` compare-and-swap merges the exact observed head with `githubToken`;
+  and `auto` merges when that token exists or otherwise returns the open PR.
+- For Netlify Git, `publish` and `auto` invoke
+  `publish_to_production`, resume the backend's atomic in-progress response,
+  and return `published` only after the exact current session reports
+  `is_published: true`.
+- Zip/drop and incompatible origin/mode combinations return `unsupported`.
 
 Follow-up landing commits the exact `handle.currentSessionId`; a stale
 runner-level merge SHA from an earlier session is never accepted. GitHub merge
@@ -301,9 +305,11 @@ type LandingOutcome =
   | { kind: 'skipped' }
 ```
 
-Netlify Git publishing is a Phase 3 implementation. In Phase 1, non-GitHub
-origins return `unsupported`; `published` remains part of the stable result
-contract and may also be returned by an injected `landingHandler`.
+Netlify Git publishing checkpoints `landing.publishRequested` after the
+backend accepts or reports an already-active publish, then checkpoints
+`landing.published` after current-session verification. A restart skips
+accepted and completed work. Runner-level `merge_commit_sha` and successful
+execution are never treated as publication proof.
 
 Landing failures are returned as data rather than thrown. Persist both the
 returned handle and every handle passed to `onLandingCheckpoint`. Retry

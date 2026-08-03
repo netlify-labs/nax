@@ -83,6 +83,7 @@ type LandingProgress = {
   committedSessionIds?: string[]
   expectedPrHeadSha?: string          // compare-and-swap guard for GitHub merge
   mergedSha?: string
+  publishRequested?: boolean
   published?: boolean
 }
 ```
@@ -335,7 +336,13 @@ Backend facts: runners don't create result branches (`result_branch` legacy); `c
      - Call GitHub's merge endpoint with `sha: landing.expectedPrHeadSha`. A head mismatch / GitHub `409` becomes typed `pr-head-changed`; it never retries or merges a newer head implicitly. Keep `422` in the general validation mapping, but do not classify every `422` as head drift.
      - Crash resume reuses the persisted expected SHA; a lost successful response is reconciled by re-reading the PR's merged state.
      - No token → `github-token-required` (or `prOpen` for `'auto'`).
-- **`netlifyGitPublish`**: `publish_to_production` (atomic; already-in-progress surfaced as in-flight, re-polled).
+- **`netlifyGitPublish`**: `publish_to_production` (atomic; the backend's exact
+  HTTP `400` “already in progress” response is normalized to
+  `publish-in-progress`, treated as in-flight, and re-polled). Persist
+  `publishRequested` after acceptance/in-flight adoption, then require the
+  exact current session's `is_published` before persisting `published`.
+  Runner `merge_commit_sha` and successful execution are not publication
+  proof.
 - **`unsupported`** (zip/drop): explicit outcome.
 - **Resumable:** each step consults live state (`pr_url`, `pr_state`, session `commit_sha`, in-progress flags, GitHub merged-state) and skips completed steps; progress recorded in `handle.landing`; crash-recovery tested (§9).
 - Consumers: RE = `'merge'`; nax + GH Action = `'pr'` (GH-action auto-merge = recorded future option).

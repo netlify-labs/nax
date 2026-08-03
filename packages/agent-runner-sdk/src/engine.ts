@@ -373,6 +373,10 @@ function landingStep(
   handle: Handle,
 ): 'commit' | 'pr' | 'merge' | 'publish' {
   if (handle.policy.landing === 'publish') return 'publish'
+  if (
+    handle.policy.landing === 'auto'
+    && handle.origin?.codeOrigin.trim().toLowerCase() === 'netlify-git'
+  ) return 'publish'
   if (handle.policy.landing === 'merge') return 'merge'
   return handle.kind === 'session' ? 'commit' : 'pr'
 }

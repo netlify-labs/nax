@@ -227,18 +227,29 @@ test('token resolution enforces operation, constructor, env, then CLI precedence
   }).token, '')
 })
 
-test('redaction removes tokens, request values, markers, and bearer headers', () => {
+test('redaction removes tokens, request values, markers, and authorization headers', () => {
   const marker =
     '<!-- agent-runner-sdk-request-id:44444444-4444-4444-8444-444444444444 -->'
   const redacted = redactSensitiveText(
-    `Bearer token-secret prompt-secret ${marker}`,
+    [
+      'Bearer token-secret',
+      'Authorization: token github-secret',
+      'Authorization: Basic basic-secret',
+      'Authorization=Bearer netlify-secret',
+      'Authorization: direct-secret',
+      `prompt-secret ${marker}`,
+    ].join(' '),
     ['token-secret', { prompt: 'prompt-secret' }],
   )
   assert.doesNotMatch(
     redacted,
-    /token-secret|prompt-secret|agent-runner-sdk-request-id/,
+    /token-secret|github-secret|basic-secret|netlify-secret|direct-secret|prompt-secret|agent-runner-sdk-request-id/,
   )
   assert.match(redacted, /Bearer \[redacted\]/)
+  assert.equal(
+    redacted.match(/Authorization=\[redacted\]/g)?.length,
+    4,
+  )
 })
 
 test('authenticated requests add metadata, normalize bodies, and constrain URLs', async () => {

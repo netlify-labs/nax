@@ -197,7 +197,7 @@ if (snapshot.kind === 'running') {
 </Callout>
 
 See the package's
-[`eventbridge-resume.ts`](https://github.com/netlify-labs/nax/blob/main/packages/agent-runner-sdk/examples/eventbridge-resume.ts)
+[`eventbridge-resume.ts`](https://github.com/netlify-labs/nax/blob/master/packages/agent-runner-sdk/examples/eventbridge-resume.ts)
 for a complete typechecked worker.
 
 ## Method reference
@@ -592,13 +592,20 @@ side effect of the comment presenter or core execution.
 - Strict `.d.ts` and `.d.cts` declarations
 - Package-specific Git tags: `nax-agent-runner-sdk-vX.Y.Z`
 - Prerelease distribution tag: `next`
+- Stable distribution tag: `latest`
 
 The release gate builds and typechecks the package, runs the deterministic
 suite, compiles public examples, creates the exact npm tarball, and installs
 that tarball into clean ESM and CommonJS consumers. After an authorized
 publication, `npm run published:smoke` repeats those consumer checks against
-`nax-agent-runner-sdk@next` from the registry. Publication remains a manual,
-explicitly authorized step.
+`nax-agent-runner-sdk@next` for a prerelease or the exact stable version from
+the package manifest. Publication remains a manual, explicitly authorized
+step.
+
+Roll back consumers by restoring their prior exact version pins and
+redeploying them. If npm's default must also be rolled back, restore `latest`
+to the prior stable version with `npm dist-tag add`; do not delete the failed
+version or the retained `next` artifacts.
 
 ## See also
 

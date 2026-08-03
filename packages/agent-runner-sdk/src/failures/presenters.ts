@@ -76,8 +76,24 @@ export interface GithubFailureLabelAdapter {
   ensureLabel(label: GithubFailureLabel): Promise<void>
 }
 
+const GITHUB_FAILURE_TEXT_LIMIT = 60_000
+const GITHUB_CHECK_TITLE_LIMIT = 255
+const GITHUB_TRUNCATION_NOTICE =
+  '\n\n_Output truncated to fit GitHub limits._'
 const SECRET_ASSIGNMENT_PATTERN =
-  /\b(authorization|github_token|netlify_auth_token|token)\s*[:=]\s*[^\s,;]+/gi
+  /\b(authorization|github_token|netlify_auth_token|token)\s*[:=]\s*(?:(?:bearer|basic|token)\s+)?[^\s,;]+/gi
+
+function truncateGithubText(
+  value: string,
+  limit: number,
+  suffix = GITHUB_TRUNCATION_NOTICE,
+): string {
+  if (value.length <= limit) return value
+  return [
+    value.slice(0, limit - suffix.length),
+    suffix,
+  ].join('')
+}
 
 function handleSensitiveValues(handle: Handle): unknown[] {
   return [
@@ -231,7 +247,10 @@ function renderGithubFailure(
 export function renderGithubFailureComment(
   input: GithubFailurePresentation,
 ): string {
-  return renderGithubFailure(input, true).body
+  return truncateGithubText(
+    renderGithubFailure(input, true).body,
+    GITHUB_FAILURE_TEXT_LIMIT,
+  )
 }
 
 export async function upsertGithubFailureComment(
@@ -280,9 +299,16 @@ export async function upsertGithubFailureCheck(
     name: 'Netlify Agent Runner',
     status: 'completed',
     conclusion: 'failure',
-    title: safeText(input.failure.title, rendered.handle)
-      || 'Agent Runner failure',
-    summary: rendered.body,
+    title: truncateGithubText(
+      safeText(input.failure.title, rendered.handle)
+        || 'Agent Runner failure',
+      GITHUB_CHECK_TITLE_LIMIT,
+      '…',
+    ),
+    summary: truncateGithubText(
+      rendered.body,
+      GITHUB_FAILURE_TEXT_LIMIT,
+    ),
     ...(rendered.runnerUrl === undefined
       ? {}
       : { detailsUrl: rendered.runnerUrl }),

@@ -570,13 +570,36 @@ For an authorized prerelease:
 
 ```sh
 npm run ci
-npm version 0.2.0-next.1 --allow-same-version \
-  --tag-version-prefix=nax-agent-runner-sdk-v
+npm version 0.2.0-next.2 --no-git-tag-version
 npm run release:next
 ```
 
-Use the intended package version in place of `0.2.0-next.1`. `release:next` publishes
+Use the intended package version in place of `0.2.0-next.2`. `release:next` publishes
 with the `next` distribution tag, then installs that registry artifact in clean
 ESM and CommonJS projects and compiles its shipped examples. `npm run
 pack:smoke` performs the equivalent check against the exact local tarball
 before publication.
+
+For an authorized stable release, commit and merge the version/changelog
+candidate first. From that exact clean commit:
+
+```sh
+npm run release:stable
+git tag -a nax-agent-runner-sdk-v0.2.0 -m "nax-agent-runner-sdk 0.2.0"
+git push origin refs/tags/nax-agent-runner-sdk-v0.2.0
+```
+
+`release:stable` publishes with npm's `latest` tag and installs the exact
+version from the registry in the same clean ESM/CommonJS consumers. Verify
+`npm view nax-agent-runner-sdk dist-tags version --json` after publication.
+
+Rollback is consumer-first: restore the mandatory consumers to their prior
+exact package pin and redeploy them. If the registry default must also move
+back, explicitly restore the prior stable tag, for example:
+
+```sh
+npm dist-tag add nax-agent-runner-sdk@0.1.0 latest
+```
+
+Do not delete the stable version or the prior `next` artifacts; keeping them
+available makes rollback reproducible and preserves release evidence.

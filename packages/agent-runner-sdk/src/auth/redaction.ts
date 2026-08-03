@@ -1,5 +1,7 @@
 const REQUEST_MARKER_PATTERN =
   /<!--\s*agent-runner-sdk-request-id:[^>]*-->/gi
+const AUTHORIZATION_PATTERN =
+  /\bAuthorization\s*[:=]\s*(?:(?:Bearer|Basic|token)\s+)?[^\s,;]+/gi
 const BEARER_PATTERN = /\bBearer\s+[^\s,;]+/gi
 
 function collectStrings(
@@ -52,5 +54,6 @@ export function redactSensitiveText(
   }
   return text
     .replace(REQUEST_MARKER_PATTERN, '[redacted request marker]')
+    .replace(AUTHORIZATION_PATTERN, 'Authorization=[redacted]')
     .replace(BEARER_PATTERN, 'Bearer [redacted]')
 }

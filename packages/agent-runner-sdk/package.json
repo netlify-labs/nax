@@ -1,6 +1,6 @@
 {
   "name": "nax-agent-runner-sdk",
-  "version": "0.2.0-next.2",
+  "version": "0.2.0",
   "description": "Typed, resumable client and engine for Netlify Agent Runner.",
   "license": "MIT",
   "type": "module",
@@ -46,6 +46,7 @@
     "ci": "npm run typecheck && npm run test && npm run build && npm run example:check && npm run pack:smoke",
     "version": "node scripts/sync-version.mjs",
     "release:next": "npm run ci && npm publish --tag next && npm run published:smoke",
+    "release:stable": "npm run ci && npm publish && npm run published:smoke",
     "release:patch": "npm version patch --tag-version-prefix=nax-agent-runner-sdk-v && npm publish",
     "release:minor": "npm version minor --tag-version-prefix=nax-agent-runner-sdk-v && npm publish",
     "release:major": "npm version major --tag-version-prefix=nax-agent-runner-sdk-v && npm publish"

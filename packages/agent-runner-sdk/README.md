@@ -116,7 +116,10 @@ Important constructor options include:
 | `pollIntervalMs` | Default polling interval; 15 seconds. |
 | `retryAttempts` | Transport attempts for retry-safe operations. |
 | `clockSkewAllowanceMs` | Reconciliation-window allowance; 5 seconds. |
-| `promptRefDelivery` | Phase 1 adapter that turns a `BlobRef` into a runner fetch wrapper. |
+| `blobStore` | `BlobStore` used for prompt-reference delivery and terminal cleanup. |
+| `promptDelivery` | Final-byte budget, compactor, blob TTL, and tenant/key policy. |
+| `promptRefDelivery` | Compatibility override that turns a `BlobRef` into a runner fetch wrapper. |
+| `onBlobCleanupError` | Receives a value-free cleanup failure event; cleanup never changes the run result. |
 | `onLandingCheckpoint` | Persists irreversible landing progress before the next mutation. |
 | `onRetryCheckpoint` | Persists consumed retry capacity and safe reason/timing metadata before replacement I/O. |
 | `onTelemetry` | Receives redacted auth/transport events. |
@@ -393,29 +396,77 @@ authentication, permission, validation, argv-too-long, terminal failures,
 prompt/blob failures, API drift, ambiguous creates/session conflicts, and
 GitHub head drift never create automatic replacement attempts.
 
-## Phase 1 prompt-reference adapter
+## BlobStore and prompt references
 
-The public `BlobRef` and `BlobStore` contracts are available, but the default
-Netlify Blobs delivery/lifecycle implementation arrives in Phase 2. During
-Phase 1, callers that already offload prompts provide `promptRefDelivery`:
+The package ships a Netlify Blobs adapter with tenant-scoped,
+collision-resistant keys, mandatory TTLs, and hard size/lifetime ceilings:
 
 ```ts
+import {
+  compactPromptByBytes,
+  createAgentRunnerSdk,
+  createNetlifyBlobStore,
+} from 'nax-agent-runner-sdk'
+
+const blobStore = createNetlifyBlobStore({
+  siteId: process.env.NETLIFY_SITE_ID!,
+  token: process.env.NETLIFY_AUTH_TOKEN!,
+})
+
 const sdk = createAgentRunnerSdk({
-  promptRefDelivery: (ref) => [
-    `Fetch ${ref.key} from ${ref.store} for tenant ${ref.tenant}.`,
-    'Verify the configured sentinel before following its contents.',
-  ].join('\n'),
+  blobStore,
+  promptDelivery: {
+    // Defaults to NAX_SAFE_PROMPT_BYTES, then 16 KiB.
+    safeBytes: 16 * 1_024,
+    tenant: ({ siteId }) => `${siteId}/art_123`,
+    key: 'artifact-art_123',
+    // Optional: compactPromptByBytes or a deterministic domain compactor.
+    compact: compactPromptByBytes,
+  },
+})
+
+const handle = await sdk.start({
+  siteId: process.env.NETLIFY_SITE_ID!,
+  prompt: largePrompt,
 })
 ```
 
-The adapter returns the text submitted to the runner. The SDK validates
-`expiresAt`, appends its request marker to the wrapper, and preserves the
-original `promptRef` in the handle. The caller still owns blob creation,
-cleanup, tenant isolation, TTL, and wrapper authentication.
+Raw prompts are measured after request-marker decoration. The SDK submits
+inline when the final UTF-8 payload fits, optionally compacts and remeasures,
+then uses `blobStore` as the fallback. Blob fallback stores the original
+semantic prompt and changes the effective handle input to the resulting
+`promptRef`, so retry reuses the same logical input. Inline and compact
+delivery keep the original semantic `prompt` in the handle. The submitted
+representation and exact byte counts live in `handle.promptDelivery`.
 
-Reserve `requestMarkerOverheadBytes` when enforcing a submitted-prompt byte
-limit. An expired reference fails with `prompt-ref-expired`; do not extend it
-silently.
+The adapter stores a sentinel with the semantic prompt. Its runner instruction
+uses the runner's own site-scoped `netlify blobs:get` authorization and never
+embeds the caller token. The SDK validates `expiresAt`, appends its request
+marker, and preserves the original `promptRef` in the handle.
+
+Terminal success, cancellation, and timeout delete the current attempt's blob.
+Failed attempts retain it until TTL so `retry(handle)` can reuse the exact
+reference. Cleanup is idempotent and best-effort; failures emit only the
+value-free `onBlobCleanupError` event. A restored handle performs the same
+cleanup when its terminal result is observed.
+
+`DEFAULT_PROMPT_BLOB_TTL_SECONDS` is one day. The built-in hard ceilings are
+`MAX_PROMPT_BLOB_TTL_SECONDS` (seven days) and
+`MAX_PROMPT_BLOB_BYTES` (5 MiB); callers may configure lower limits. A delete
+must match the adapter's full store, tenant, and key identity.
+
+Existing stores can implement the `BlobStore` interface. The older
+`promptRefDelivery` option remains available as a delivery-only override; when
+it is used without `blobStore`, the caller continues to own cleanup.
+
+`requestMarkerOverheadBytes` is exported for adapters that must pre-budget
+content. The SDK itself always measures after decoration, including at exact
+below/at/above boundaries and for multi-byte UTF-8 input. An expired reference
+fails with `prompt-ref-expired`; it is never silently re-uploaded.
+
+`classifySentinelEvidence` normalizes runner proof to `confirmed`, `failed`,
+`probable`, or `suspect` without returning the sentinel value. Use
+`blobOnlyNeedles` only for facts that cannot appear in the inline wrapper.
 
 ## Migrating a direct client
 
@@ -442,8 +493,8 @@ Migration requirements:
 4. Remove duplicate auth, retry, response normalization, and create replay
    logic.
 5. Use only `NETLIFY_AUTH_TOKEN`, or pass a token explicitly.
-6. Keep existing prompt offload wrapped around `promptRefDelivery` until the
-   Phase 2 BlobStore migration.
+6. Configure `blobStore` and `promptDelivery`, then remove consumer-owned
+   sizing, offload, sentinel, and cleanup branches.
 
 See
 [`examples/eventbridge-resume.ts`](./examples/eventbridge-resume.ts) for a
@@ -459,12 +510,12 @@ For an authorized prerelease:
 
 ```sh
 npm run ci
-npm version 0.1.0 --allow-same-version \
+npm version 0.2.0-next.0 --allow-same-version \
   --tag-version-prefix=nax-agent-runner-sdk-v
 npm run release:next
 ```
 
-Use the intended package version in place of `0.1.0`. `release:next` publishes
+Use the intended package version in place of `0.2.0-next.0`. `release:next` publishes
 with the `next` distribution tag, then installs that registry artifact in clean
 ESM and CommonJS projects and compiles its shipped examples. `npm run
 pack:smoke` performs the equivalent check against the exact local tarball

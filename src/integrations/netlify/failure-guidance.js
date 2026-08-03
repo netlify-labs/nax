@@ -71,6 +71,30 @@ function explainFailure(detail, ctx = {}) {
  */
 function wrapFailure(error, ctx = {}) {
   const detail = error instanceof Error ? error.message : ''
+  const code = error && typeof error === 'object' && 'code' in error
+    ? String(error.code || '')
+    : ''
+  if (code === 'prompt-too-large') {
+    const wrapped = /** @type {Error & { code?: string }} */ (new Error(
+      `The step prompt cannot fit the configured inline or blob delivery limits. Shrink the prompt or enable Netlify Blob delivery. (${detail})`,
+    ))
+    wrapped.code = 'prompt_too_large'
+    return wrapped
+  }
+  if (code === 'prompt-ref-expired') {
+    const wrapped = /** @type {Error & { code?: string }} */ (new Error(
+      `The retained prompt reference expired before this run could resume. Start a fresh run so nax can upload it again. (${detail})`,
+    ))
+    wrapped.code = 'prompt_ref_expired'
+    return wrapped
+  }
+  if (code === 'blob-write-failed' || code === 'blob-read-failed') {
+    const wrapped = /** @type {Error & { code?: string }} */ (new Error(
+      `Netlify Blob prompt delivery failed. Confirm the selected site and NETLIFY_AUTH_TOKEN access, then retry. (${detail})`,
+    ))
+    wrapped.code = 'blob_delivery_failed'
+    return wrapped
+  }
   const explained = explainFailure(detail, ctx)
   if (!explained) return error
   const wrapped = /** @type {Error & { code?: string }} */ (new Error(`${explained.message} (${detail})`))

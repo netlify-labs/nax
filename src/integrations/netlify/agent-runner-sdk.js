@@ -2,6 +2,8 @@ const { randomUUID } = require('crypto')
 const {
   AGENT_RUNNER_SDK_HANDLE_VERSION,
   createAgentRunnerSdk,
+  createNetlifyBlobStore,
+  compactPromptByBytes,
   parseHandle,
 } = require('nax-agent-runner-sdk')
 
@@ -17,7 +19,14 @@ const DEFAULT_RETRY_DELAY_MS = 5000
  *
  * @typedef {{
  *   sdk?: AgentRunnerSdk,
+ *   transport?: import('nax-agent-runner-sdk').Transport,
+ *   blobStore?: import('nax-agent-runner-sdk').BlobStore,
  *   env?: NodeJS.ProcessEnv,
+ *   siteId?: string,
+ *   promptTenant?: string,
+ *   compactPromptText?: string,
+ *   safePromptBytes?: number,
+ *   promptBlobDisable?: boolean,
  *   retryAttempts?: number,
  *   retryDelayMs?: number,
  *   sleepFn?: (ms: number) => Promise<unknown>,
@@ -34,7 +43,14 @@ const DEFAULT_RETRY_DELAY_MS = 5000
 /** @param {NaxAgentRunnerSdkOptions} [options] @returns {AgentRunnerSdk} */
 function createNaxAgentRunnerSdk({
   sdk,
+  transport,
+  blobStore: configuredBlobStore,
   env = process.env,
+  siteId,
+  promptTenant,
+  compactPromptText = '',
+  safePromptBytes,
+  promptBlobDisable = false,
   retryAttempts = DEFAULT_RETRY_ATTEMPTS,
   retryDelayMs = DEFAULT_RETRY_DELAY_MS,
   sleepFn,
@@ -43,11 +59,35 @@ function createNaxAgentRunnerSdk({
   if (sdk) return sdk
   const attempts = Math.max(1, Math.floor(Number(retryAttempts) || DEFAULT_RETRY_ATTEMPTS))
   const delayMs = Math.max(0, Math.floor(Number(retryDelayMs) || DEFAULT_RETRY_DELAY_MS))
+  const token = String(env.NETLIFY_AUTH_TOKEN || '').trim()
+  const resolvedSiteId = String(siteId || env.NETLIFY_SITE_ID || '').trim()
+  const blobStore = configuredBlobStore || (
+    !promptBlobDisable && resolvedSiteId && token
+      ? createNetlifyBlobStore({
+          siteId: resolvedSiteId,
+          token,
+        })
+      : undefined
+  )
+  const compact = compactPromptText
+    ? (_prompt, { maxBytes }) => compactPromptByBytes(
+        compactPromptText,
+        { maxBytes },
+      )
+    : undefined
   return createAgentRunnerSdk({
     env,
+    ...(transport ? { transport } : {}),
     retryAttempts: attempts,
     baseRetryDelayMs: delayMs,
     maxRetryDelayMs: delayMs,
+    ...(blobStore ? { blobStore } : {}),
+    promptDelivery: {
+      env,
+      ...(safePromptBytes === undefined ? {} : { safeBytes: safePromptBytes }),
+      ...(promptTenant ? { tenant: promptTenant } : {}),
+      ...(compact ? { compact } : {}),
+    },
     ...(sleepFn ? { sleep: sleepFn } : {}),
     onTelemetry: (event) => {
       if (event.kind !== 'httpFailure' || event.retrying !== true) return
@@ -60,6 +100,38 @@ function createNaxAgentRunnerSdk({
       })
     },
   })
+}
+
+/**
+ * Safe delivery metadata copied from an SDK handle into nax artifacts.
+ * Fetch commands and credentials intentionally remain SDK-private.
+ *
+ * @param {Handle} handle
+ * @returns {import('../../types').AgentRun['promptDelivery']}
+ */
+function promptDeliveryArtifact(handle) {
+  const delivery = handle.promptDelivery
+  if (!delivery) return undefined
+  const promptRef = delivery.promptRef
+  return {
+    mode: delivery.kind,
+    safePromptBytes: delivery.safeBytes,
+    promptBytes: delivery.semanticBytes || 0,
+    submittedPromptBytes: delivery.submittedBytes,
+    ...(promptRef
+      ? {
+          blobRef: {
+            store: promptRef.store,
+            key: promptRef.key,
+            tenant: promptRef.tenant,
+            expiresAt: promptRef.expiresAt,
+            sentinel: delivery.sentinel || '',
+            owner: 'nax-agent-runner-sdk',
+            status: 'active',
+          },
+        }
+      : {}),
+  }
 }
 
 /** @param {unknown} value @returns {Handle | null} */
@@ -202,6 +274,7 @@ function sessionArtifactPayload(session) {
 module.exports = {
   createNaxAgentRunnerSdk,
   parsePersistedHandle,
+  promptDeliveryArtifact,
   resolveRunHandle,
   runnerArtifactPayload,
   sessionArtifactPayload,

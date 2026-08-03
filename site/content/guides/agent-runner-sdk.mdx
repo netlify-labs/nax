@@ -411,7 +411,7 @@ ambiguous creates, unmatched session conflicts, and GitHub head drift never
 create automatic replacement attempts. Transport keeps its own
 operation-specific retry rules.
 
-## Phase 1 prompt delivery
+## Prompt delivery and BlobStore
 
 `StartInput` and `FollowUpInput` accept a `BlobRef`, and the package exports:
 
@@ -437,18 +437,49 @@ interface BlobStore {
 }
 ```
 
-The default Netlify Blobs store and its cleanup lifecycle arrive in Phase 2.
-During Phase 1, existing consumers keep their offload layer and pass
-`promptRefDelivery(ref)`, which returns the fetch wrapper submitted to the
-runner. The SDK:
+Use the built-in Netlify adapter and delivery policy:
 
-- Refuses expired references with `prompt-ref-expired`
-- Adds the private request marker to the wrapper
-- Keeps the original `promptRef` on the durable handle
+```ts copy
+import {
+  compactPromptByBytes,
+  createAgentRunnerSdk,
+  createNetlifyBlobStore,
+} from 'nax-agent-runner-sdk'
 
-The caller still owns the blob put/delete lifecycle, TTL, tenant isolation,
-fetch authorization, and sentinel verification. Reserve the exported
-`requestMarkerOverheadBytes` when calculating the final submitted byte limit.
+const blobStore = createNetlifyBlobStore({
+  siteId,
+  token: netlifyToken,
+})
+
+const sdk = createAgentRunnerSdk({
+  token: netlifyToken,
+  blobStore,
+  promptDelivery: {
+    safeBytes: 16 * 1_024,
+    tenant: ({ siteId }) => `${siteId}/${artifactId}`,
+    key: `artifact-${artifactId}`,
+    compact: compactPromptByBytes,
+  },
+})
+```
+
+The SDK measures the final UTF-8 wire prompt after adding the request marker.
+It sends inline when safe, optionally compacts and remeasures, then offloads
+the original semantic prompt when a `BlobStore` is available. The final
+delivery mode and byte counts are serialized under `handle.promptDelivery`.
+
+The Netlify adapter uses tenant-scoped collision-resistant keys, one-day
+default TTL, a seven-day lifetime ceiling, and a 5 MiB size ceiling. Runner
+fetches use site-scoped `netlify blobs:get`; the caller token never enters the
+instruction. Success, cancellation, and timeout delete the ref. Failed runs
+retain it until TTL for exact retry reuse. Cleanup faults are best-effort and
+emit only a value-free `onBlobCleanupError` event.
+
+`NAX_SAFE_PROMPT_BYTES` changes the default 16 KiB final-wire budget.
+`requestMarkerOverheadBytes` remains exported for compatibility adapters.
+Expired refs fail with `prompt-ref-expired`; they are never silently replaced.
+Use `classifySentinelEvidence` to normalize fetch proof to `confirmed`,
+`failed`, `probable`, or `suspect`.
 
 ## Migrate a direct Agent Runner client
 
@@ -473,7 +504,8 @@ During migration:
 3. Preserve the handle's original absolute deadline.
 4. Remove duplicate auth, retry, response normalization, and create replay.
 5. Use only `NETLIFY_AUTH_TOKEN` or an explicitly passed token.
-6. Retain existing prompt offload around `promptRefDelivery` until Phase 2.
+6. Configure SDK `blobStore`/`promptDelivery` and remove duplicate consumer
+   sizing, offload, sentinel, and cleanup logic.
 7. Persist usage from every terminal result.
 
 ## Errors

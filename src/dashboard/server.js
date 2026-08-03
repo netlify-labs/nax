@@ -14,7 +14,6 @@ const { appendEventLog, eventLogPathForRunState, readEventLog } = require('../wo
 const { formatAgentRunUrl } = require('../workflows/results/agent-run-results')
 const { findReviewStep } = require('../workflows/human-review')
 const { archiveAgentRun, stopAgentRun } = require('../integrations/netlify/local-runner')
-const { setBlob } = require('../integrations/netlify/blobs')
 const { readLinkedSiteId } = require('../integrations/netlify/init')
 const { isTerminalRunStatus } = require('../core/status')
 const { errorPayload, requestError } = require('./api/errors')
@@ -454,37 +453,6 @@ function followupId(sourceRunId = '') {
   return `followup-${String(sourceRunId || 'run')}-${Date.now().toString(36)}`
 }
 
-/**
- * Follow-up blob write callback.
- * @callback FollowupBlobWriter
- * @param {{ ref: import('../types').BlobRef, payload: string }} input
- * @returns {unknown}
- *
- * Options for creating a follow-up blob writer.
- * @typedef {{
- *   projectRoot?: string,
- *   siteId?: string,
- *   env?: NodeJS.ProcessEnv,
- *   writeBlob?: FollowupBlobWriter | null,
- *   setBlobCommand?: typeof setBlob,
- * }} MakeFollowupBlobWriterInput
- */
-
-/** @param {MakeFollowupBlobWriterInput} [input] */
-function makeFollowupBlobWriter({ projectRoot, siteId, env = process.env, writeBlob, setBlobCommand = setBlob } = {}) {
-  if (typeof writeBlob === 'function') return writeBlob
-  if (!siteId) return null
-  return async ({ ref, payload }) => setBlobCommand({
-    store: ref.store,
-    key: ref.key,
-    value: payload,
-    siteId,
-    token: env.NETLIFY_AUTH_TOKEN,
-    cwd: projectRoot,
-    env,
-  })
-}
-
 /** @param {{ projectRoot?: string, siteId?: string, env?: NodeJS.ProcessEnv }} [input] */
 function resolveFollowupSiteId({ projectRoot, siteId = '', env = process.env } = {}) {
   return siteId || env.NETLIFY_SITE_ID || readLinkedSiteId(projectRoot, env) || ''
@@ -738,7 +706,9 @@ function cancellableWorkflowRunnerIds(runState = {}) {
  * @typedef {{
  *   projectRoot?: string,
  *   runnerId?: string,
+ *   siteId?: string,
  *   env?: NodeJS.ProcessEnv,
+ *   sdkHandle?: import('nax-agent-runner-sdk').Handle,
  * }} StopWorkflowRunnerInput
  *
  * Stop-runner callback used by dashboard cancellation.
@@ -762,7 +732,16 @@ async function stopWorkflowRunners({ runState, projectRoot, env, stopRun = stopA
   const warnings = []
   for (const runnerId of runnerIds) {
     try {
-      const result = await stopRun({ projectRoot, runnerId, env })
+      const run = (runState.steps || [])
+        .flatMap((step) => Array.isArray(step.runs) ? step.runs : [])
+        .find((item) => String(item.runnerId || '').trim() === runnerId)
+      const result = await stopRun({
+        projectRoot,
+        runnerId,
+        siteId: String(run?.netlifySiteId || runState.options?.netlifySiteId || ''),
+        env,
+        ...(run?.sdkHandle ? { sdkHandle: run.sdkHandle } : {}),
+      })
       if (result?.stopped === true) {
         stopped.push(runnerId)
       } else if (result?.error) {
@@ -930,8 +909,6 @@ function createRequestHandler(options = {}) {
   const followupSiteName = options.siteName || env.NETLIFY_SITE_NAME || ''
   const followupNetlifyFilter = options.netlifyFilter || ''
   const followupSubmitRun = options.followupSubmitRun
-  const followupWriteBlob = options.followupWriteBlob
-  const followupSetBlob = options.followupSetBlob || setBlob
   const followupStopRun = options.followupStopRun || stopAgentRun
   const cancelStopRun = options.cancelStopRun || stopAgentRun
   const followupSyncRunner = options.followupSyncRunner
@@ -1107,10 +1084,7 @@ function createRequestHandler(options = {}) {
               followupSiteName,
               followupNetlifyFilter,
               followupSubmitRun,
-              writeBlob: followupWriteBlob,
               normalizeFollowupRequest,
-              makeBlobWriter: makeFollowupBlobWriter,
-              setBlobCommand: followupSetBlob,
               linkSubmittedRun: linkSubmittedRunFactory,
               followupId,
               freshFollowupTitle,
@@ -1852,10 +1826,7 @@ function createRequestHandler(options = {}) {
             followupSiteName,
             followupNetlifyFilter,
             followupSubmitRun,
-            writeBlob: followupWriteBlob,
             normalizeFollowupRequest,
-            makeBlobWriter: makeFollowupBlobWriter,
-            setBlobCommand: followupSetBlob,
             linkSubmittedRun: linkSubmittedRunFactory,
             followupId,
             freshFollowupTitle,

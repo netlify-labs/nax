@@ -112,7 +112,7 @@ function tmpRoot() {
 }
 
 /**
- * @typedef {{ mode?: string, kind?: string, fallbackReason?: string, fallbackError?: string }} PromptDeliveryForTest
+ * @typedef {{ mode?: string, kind?: string, fallbackReason?: string, fallbackError?: string, safePromptBytes?: number }} PromptDeliveryForTest
  */
 
 /** @param {unknown} value @returns {PromptDeliveryForTest} */
@@ -223,7 +223,7 @@ test('sourceRunsForStep dedupes within a single input step', () => {
   ])
 })
 
-test('prepareLocalPromptDelivery offloads unsafe fan-in prompts before first submit', () => {
+test('prepareLocalPromptDelivery leaves unsafe fan-in delivery to the SDK', () => {
   const projectRoot = tmpRoot()
   const sourceRuns = [
     { agent: 'codex', runnerId: 'r1', sourceStep: 'review', resultText: `Codex full prose ${'A'.repeat(9000)} codex-tail` },
@@ -248,17 +248,15 @@ test('prepareLocalPromptDelivery offloads unsafe fan-in prompts before first sub
     dryRun: true,
   })
 
-  assert.equal(delivery.promptDelivery.mode, 'blob')
-  assert.ok(Buffer.byteLength(delivery.promptText, 'utf8') <= 9000)
-  assert.match(delivery.promptText, /\/opt\/buildhome\/node-deps\/node_modules\/\.bin\/netlify blobs:get nax-run-blob synthesize-prior-results/)
-  assert.match(delivery.promptText, /NAX-CONTEXT-LOADED/)
-  assert.equal(delivery.promptText.includes(delivery.blobRef.sentinel), false)
-  assert.equal(delivery.promptText.includes(sourceRuns[0].resultText), false)
-  assert.equal(runState.blobRefs.length, 1)
-  assert.equal(stepState.promptBlobRef.key, 'synthesize-prior-results')
+  assert.equal(delivery.promptDelivery.mode, 'sdk')
+  assert.equal(delivery.promptDelivery.safePromptBytes, 9000)
+  assert.equal(delivery.promptText.includes(sourceRuns[0].resultText), true)
+  assert.equal(delivery.compactPromptText.includes(sourceRuns[0].resultText), false)
+  assert.equal(runState.blobRefs, undefined)
+  assert.equal(stepState.promptBlobRef, undefined)
 })
 
-test('prepareLocalPromptDelivery falls back to compact prompt when blob offload is disabled', () => {
+test('prepareLocalPromptDelivery gives the SDK a compact candidate when blobs are disabled', () => {
   const sourceRuns = [
     { agent: 'codex', runnerId: 'r1', sourceStep: 'review', resultText: `Codex full prose ${'A'.repeat(9000)} codex-tail` },
   ]
@@ -279,13 +277,14 @@ test('prepareLocalPromptDelivery falls back to compact prompt when blob offload 
     dryRun: true,
   })
 
-  assert.equal(delivery.promptDelivery.mode, 'compact')
-  assert.equal(promptDeliveryForTest(delivery.promptDelivery).fallbackReason, 'blob-offload-disabled')
-  assert.ok(Buffer.byteLength(delivery.promptText, 'utf8') <= 9000)
-  assert.equal(delivery.promptText.includes(sourceRuns[0].resultText), false)
+  assert.equal(delivery.promptDelivery.mode, 'sdk')
+  assert.equal(delivery.promptDelivery.blobDisabled, true)
+  assert.ok(Buffer.byteLength(delivery.compactPromptText, 'utf8') <= 9000)
+  assert.equal(delivery.promptText.includes(sourceRuns[0].resultText), true)
+  assert.equal(delivery.compactPromptText.includes(sourceRuns[0].resultText), false)
 })
 
-test('prepareLocalPromptDelivery falls back to compact prompt when blob auth context is missing', () => {
+test('prepareLocalPromptDelivery does not duplicate the SDK auth or fallback decision', () => {
   const sourceRuns = [
     { agent: 'codex', runnerId: 'r1', sourceStep: 'review', resultText: `Codex full prose ${'A'.repeat(9000)} codex-tail` },
   ]
@@ -306,13 +305,14 @@ test('prepareLocalPromptDelivery falls back to compact prompt when blob auth con
     dryRun: false,
   })
 
-  assert.equal(delivery.promptDelivery.mode, 'compact')
-  assert.equal(promptDeliveryForTest(delivery.promptDelivery).fallbackReason, 'blob-context-missing')
-  assert.match(promptDeliveryForTest(delivery.promptDelivery).fallbackError || '', /NETLIFY_AUTH_TOKEN/)
-  assert.ok(Buffer.byteLength(delivery.promptText, 'utf8') <= 9000)
+  assert.equal(delivery.promptDelivery.mode, 'sdk')
+  assert.equal(delivery.promptDelivery.blobDisabled, false)
+  assert.equal(promptDeliveryForTest(delivery.promptDelivery).fallbackError, undefined)
+  assert.equal(delivery.promptText.includes(sourceRuns[0].resultText), true)
+  assert.ok(Buffer.byteLength(delivery.compactPromptText, 'utf8') <= 9000)
 })
 
-test('prepareLocalPromptDelivery offloads an oversized first-step prompt with no prior results', () => {
+test('prepareLocalPromptDelivery preserves an oversized semantic first-step prompt for the SDK', () => {
   const projectRoot = tmpRoot()
   const largeBody = `Generate ideas from this complete brief. ${'A'.repeat(12000)} brief-tail`
   const runState = { runId: 'run-full-prompt', projectRoot }
@@ -334,15 +334,13 @@ test('prepareLocalPromptDelivery offloads an oversized first-step prompt with no
   })
 
   const promptDelivery = promptDeliveryForTest(delivery.promptDelivery)
-  assert.equal(promptDelivery.mode, 'blob')
-  assert.equal(promptDelivery.kind, 'full-prompt')
-  assert.ok(Buffer.byteLength(delivery.promptText, 'utf8') <= 5000)
-  assert.match(delivery.promptText, /\/opt\/buildhome\/node-deps\/node_modules\/\.bin\/netlify blobs:get nax-run-full-prompt ideate-claude-full-prompt/)
-  assert.match(delivery.promptText, /Full prompt \(offloaded\)/)
-  assert.equal(delivery.promptText.includes('brief-tail'), false)
-  assert.equal(delivery.promptText.includes(delivery.blobRef.sentinel), false)
-  assert.equal(runState.blobRefs.length, 1)
-  assert.equal(stepState.promptBlobRef.key, 'ideate-claude-full-prompt')
+  assert.equal(promptDelivery.mode, 'sdk')
+  assert.equal(promptDelivery.safePromptBytes, 5000)
+  assert.equal(delivery.promptText.includes('brief-tail'), true)
+  assert.ok(Buffer.byteLength(delivery.promptText, 'utf8') > 5000)
+  assert.ok(Buffer.byteLength(delivery.compactPromptText, 'utf8') <= 5000)
+  assert.equal(runState.blobRefs, undefined)
+  assert.equal(stepState.promptBlobRef, undefined)
 })
 
 test('applyContextFetchClassification records confidence without requiring rerun on missing marker', () => {

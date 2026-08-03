@@ -8,6 +8,7 @@ import type {
   RunnerMode,
 } from './domain.js'
 import { BasicAgentRunnerSdkError } from './errors.js'
+import type { PromptDeliveryAttempt } from './prompts/delivery.js'
 
 export const AGENT_RUNNER_SDK_HANDLE_VERSION = 1 as const
 
@@ -49,6 +50,7 @@ export interface BaseHandle {
   input: EffectiveStartInput
   policy: HandlePolicy
   retries: RetryProgress
+  promptDelivery?: PromptDeliveryAttempt
   landing?: LandingProgress
   currentSessionId: string
 }
@@ -163,6 +165,101 @@ function parseBlobRef(value: unknown, field: string): BlobRef {
     key: stringValue(record.key, `${field}.key`),
     tenant: stringValue(record.tenant, `${field}.tenant`),
     expiresAt: finiteNumber(record.expiresAt, `${field}.expiresAt`),
+  }
+}
+
+const PROMPT_DELIVERY_KINDS = new Set([
+  'inline',
+  'compact',
+  'blob',
+])
+
+function parsePromptDelivery(
+  value: unknown,
+): PromptDeliveryAttempt | undefined {
+  if (value === undefined) return undefined
+  const record = recordValue(value, 'promptDelivery')
+  if (
+    typeof record.kind !== 'string'
+    || !PROMPT_DELIVERY_KINDS.has(record.kind)
+  ) {
+    invalidHandle('promptDelivery.kind is invalid.')
+  }
+  const semanticBytes = record.semanticBytes === undefined
+    ? undefined
+    : nonNegativeInteger(
+        record.semanticBytes,
+        'promptDelivery.semanticBytes',
+      )
+  const promptRef = record.promptRef === undefined
+    ? undefined
+    : parseBlobRef(record.promptRef, 'promptDelivery.promptRef')
+  const sentinel = optionalString(
+    record.sentinel,
+    'promptDelivery.sentinel',
+  )
+  if (record.kind === 'blob' && promptRef === undefined) {
+    invalidHandle('blob prompt delivery requires promptDelivery.promptRef.')
+  }
+  if (
+    record.kind !== 'blob'
+    && (promptRef !== undefined || sentinel !== undefined)
+  ) {
+    invalidHandle(
+      'inline and compact prompt delivery cannot contain blob metadata.',
+    )
+  }
+  return {
+    kind: record.kind as PromptDeliveryAttempt['kind'],
+    safeBytes: nonNegativeInteger(
+      record.safeBytes,
+      'promptDelivery.safeBytes',
+    ),
+    ...(semanticBytes === undefined ? {} : { semanticBytes }),
+    submittedBytes: nonNegativeInteger(
+      record.submittedBytes,
+      'promptDelivery.submittedBytes',
+    ),
+    ...(promptRef === undefined ? {} : { promptRef }),
+    ...(sentinel === undefined ? {} : { sentinel }),
+  }
+}
+
+function sameBlobRef(left: BlobRef, right: BlobRef): boolean {
+  return (
+    left.store === right.store
+    && left.key === right.key
+    && left.tenant === right.tenant
+    && left.expiresAt === right.expiresAt
+  )
+}
+
+function validatePromptDelivery(
+  delivery: PromptDeliveryAttempt | undefined,
+  input: EffectiveStartInput | EffectiveFollowUpInput,
+): void {
+  if (delivery === undefined) return
+  if (delivery.submittedBytes > delivery.safeBytes) {
+    invalidHandle(
+      'promptDelivery.submittedBytes cannot exceed promptDelivery.safeBytes.',
+    )
+  }
+  if (delivery.kind === 'blob') {
+    if (
+      input.promptRef === undefined
+      || delivery.promptRef === undefined
+      || !sameBlobRef(input.promptRef, delivery.promptRef)
+    ) {
+      invalidHandle(
+        'blob prompt delivery must match the effective input promptRef.',
+      )
+    }
+    return
+  }
+  if (input.prompt === undefined) {
+    invalidHandle(
+      'inline and compact prompt delivery require a semantic prompt.',
+    )
   }
 }
 
@@ -384,6 +481,7 @@ function parseCurrentHandle(value: Record<string, unknown>): Handle {
   )
   const origin = parseOrigin(value.origin)
   const landing = parseLandingProgress(value.landing)
+  const promptDelivery = parsePromptDelivery(value.promptDelivery)
   const base: BaseHandle = {
     v: AGENT_RUNNER_SDK_HANDLE_VERSION,
     runnerId: stringValue(value.runnerId, 'runnerId'),
@@ -407,6 +505,7 @@ function parseCurrentHandle(value: Record<string, unknown>): Handle {
         ? {}
         : { lastAttempt: lastRetryAttempt }),
     },
+    ...(promptDelivery === undefined ? {} : { promptDelivery }),
     ...(landing === undefined ? {} : { landing }),
     currentSessionId: stringValue(
       value.currentSessionId,
@@ -417,7 +516,10 @@ function parseCurrentHandle(value: Record<string, unknown>): Handle {
   if (base.input.siteId !== base.siteId) {
     invalidHandle('input.siteId must equal siteId.')
   }
-  if (value.kind === 'run') return { ...base, kind: 'run' }
+  if (value.kind === 'run') {
+    validatePromptDelivery(promptDelivery, base.input)
+    return { ...base, kind: 'run' }
+  }
   if (value.kind !== 'session') {
     invalidHandle('kind must be run or session.')
   }
@@ -425,11 +527,13 @@ function parseCurrentHandle(value: Record<string, unknown>): Handle {
   if (sessionId !== base.currentSessionId) {
     invalidHandle('sessionId must equal currentSessionId.')
   }
+  const sessionInput = parseEffectiveFollowUpInput(value.sessionInput)
+  validatePromptDelivery(promptDelivery, sessionInput)
   return {
     ...base,
     kind: 'session',
     sessionId,
-    sessionInput: parseEffectiveFollowUpInput(value.sessionInput),
+    sessionInput,
   }
 }
 

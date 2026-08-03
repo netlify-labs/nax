@@ -33,10 +33,10 @@ Project config files may be `nax.config.yml`, `nax.config.yaml`, `nax.config.jso
 
 | Variable | Default | Purpose |
 | --- | --- | --- |
-| `NAX_SAFE_PROMPT_BYTES` | `16384` | Target maximum bytes for submitted prompts. |
-| `NAX_PROMPT_BLOB_DISABLE` | unset | Set to `1` or `true` to disable blob offload. |
-| `NAX_BLOB_RETRY_ATTEMPTS` | `3` | Attempts for blob set/get/delete commands. |
-| `NAX_BLOB_CLEANUP_TTL_HOURS` | `24` | Age after which stale refs are eligible for cleanup. |
+| `NAX_SAFE_PROMPT_BYTES` | `16384` | Maximum final decorated UTF-8 bytes submitted by the SDK. |
+| `NAX_PROMPT_BLOB_DISABLE` | unset | Set to `1` or `true` to limit SDK delivery to inline/compact and disable compatibility-path blob offload. |
+| `NAX_BLOB_RETRY_ATTEMPTS` | `3` | Attempts for legacy GitHub issue/comment blob commands. |
+| `NAX_BLOB_CLEANUP_TTL_HOURS` | `24` | Age after which legacy registry refs are eligible for cleanup. |
 | `NAX_OUTPUT_BUDGET` | unset | Appends response-size guidance when truthy. |
 | `NAX_OUTPUT_BUDGET_BYTES` | `64000` | Target output size when guidance is enabled. |
 
@@ -61,7 +61,9 @@ Project config files may be `nax.config.yml`, `nax.config.yaml`, `nax.config.jso
 | `NAX_INCLUDE_COST` | Includes estimated USD cost beside Netlify credit usage. |
 
 <Callout type="warning">
-  Disabling blob offload is risky for synthesis-heavy workflows. If the compact prompt is still too large, submission fails before the agent starts.
+  Disabling blob offload is risky for synthesis-heavy workflows. If the SDK's
+  compact prompt still exceeds the final decorated byte budget, submission
+  fails with `prompt-too-large` before the agent starts.
 </Callout>
 
 ## See also

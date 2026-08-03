@@ -538,9 +538,9 @@ For JavaScript workspaces, `nax` uses `@netlify/build-info` to decide whether a 
 
 This is a temporary workaround for a Netlify platform limitation: hosted Agent Runner currently receives prompts through a constrained argv path, so large fan-in prompts can fail before the agent starts.
 
-For Netlify Agent Runner prompt delivery (`netlify-api` plus GitHub Actions issue/comment flows), if a step's full prompt is larger than `NAX_SAFE_PROMPT_BYTES`, `nax` writes oversized content to a temporary Netlify Blob with retrying `netlify blobs:set --input <tempfile>`. Fan-in steps offload complete prior results while keeping bounded essentials inline. If the base prompt itself is too large, `nax` offloads the full prompt and submits a small fetch wrapper instead. Both paths use a full-path `/opt/buildhome/node-deps/node_modules/.bin/netlify blobs:get` instruction and verification markers. If blob offload is disabled or upload fails, `nax` falls back to the compact prompt only when that compact prompt is still inside the safe byte budget; otherwise it fails before submission with exact size details.
+For `netlify-api` prompt delivery, `nax-agent-runner-sdk` owns the decision. It measures the final request-marker-decorated UTF-8 prompt and tries inline delivery, deterministic compaction, then a site-scoped Netlify Blob. The SDK persists the effective prompt or safe blob reference in its handle, reuses that exact reference for capacity retry, and never stores the caller token or fetch command in artifacts. `prompt-too-large` means no configured path fits; `prompt-ref-expired` requires a fresh run so the SDK can upload a new reference.
 
-Blob refs are recorded in `.nax/blob-refs.jsonl`, and every offloaded payload is mirrored locally under `.nax/workflows/<run-id>/blobs/<blob-key>.md` with adjacent metadata JSON for debugging. Remote blobs are cleaned up at flow completion with retrying deletes, but the local debug copies stay in the workflow artifact directory. Cleanup is based on recorded blob refs, not on the selected transport, so it applies to both `netlify-api` and GitHub Actions issue/comment flows. If `nax` itself is running inside GitHub Actions, the job needs Netlify CLI plus `NETLIFY_AUTH_TOKEN`/site context. Interrupted cleanup leaves refs marked for later sweep:
+SDK-owned blobs are deleted after success, cancellation, or timeout. Failed-run blobs are retained until their reference expiry for diagnosis and safe retry. GitHub Actions issue/comment workflow delivery remains a compatibility path: its refs are recorded in `.nax/blob-refs.jsonl`, and payloads are mirrored under `.nax/workflows/<run-id>/blobs/<blob-key>.md` with adjacent metadata JSON. Its interrupted cleanup leaves refs for the legacy sweep:
 
 ```bash
 nax admin clean blobs          # dry-run stale/pending blob cleanup
@@ -551,10 +551,10 @@ Relevant environment knobs:
 
 | Name | Default | Meaning |
 |---|---|---|
-| `NAX_SAFE_PROMPT_BYTES` | `16384` | Maximum target bytes for submitted Netlify Agent Runner prompts. |
-| `NAX_PROMPT_BLOB_DISABLE` | unset | Disable blob offload and use compact-only fallback. |
-| `NAX_BLOB_RETRY_ATTEMPTS` | `3` | Attempts for blob set/get/delete CLI operations. |
-| `NAX_BLOB_CLEANUP_TTL_HOURS` | `24` | Age after which pending registry refs are eligible for `nax admin clean blobs`. |
+| `NAX_SAFE_PROMPT_BYTES` | `16384` | Maximum final decorated UTF-8 bytes submitted by the SDK. |
+| `NAX_PROMPT_BLOB_DISABLE` | unset | Disable SDK and compatibility-path blob offload; SDK delivery becomes inline/compact only. |
+| `NAX_BLOB_RETRY_ATTEMPTS` | `3` | Attempts for compatibility-path blob set/get/delete operations. |
+| `NAX_BLOB_CLEANUP_TTL_HOURS` | `24` | Age after which legacy registry refs are eligible for `nax admin clean blobs`. |
 | `NAX_OUTPUT_BUDGET` | unset | Set to `1`/`true` to append optional response-size guidance to chained prompts. |
 | `NAX_OUTPUT_BUDGET_BYTES` | `64000` | Target response size when output-budget guidance is enabled. |
 

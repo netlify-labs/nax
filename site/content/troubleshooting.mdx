@@ -57,7 +57,23 @@ unset NAX_PROMPT_BLOB_DISABLE
 NAX_SAFE_PROMPT_BYTES=32768 nax run review
 ```
 
-Use local blob mirrors under `.nax/workflows/<run-id>/blobs/` to debug what was submitted.
+For `netlify-api` runs, `nax-agent-runner-sdk` measures the final
+request-marker-decorated UTF-8 prompt. It tries inline delivery, then
+deterministic compaction, then a site-scoped Netlify Blob. The SDK returns
+`prompt-too-large` only when none of those paths fits. Confirm that the selected
+site is correct and that `NETLIFY_AUTH_TOKEN` can access it before increasing
+the budget.
+
+`prompt-ref-expired` means a retained failed-run reference reached its expiry
+before a resume or retry. Start a fresh run so the SDK can upload a new prompt;
+never edit the serialized handle or reuse the expired key.
+
+SDK-owned blobs are deleted after success, cancellation, or timeout. A failed
+run retains its blob for diagnosis and safe retry until the reference expires.
+Run artifacts contain the store/key/tenant/expiry and sentinel, but never the
+token or fetch command. Local mirrors under
+`.nax/workflows/<run-id>/blobs/` apply to the GitHub issue/comment compatibility
+transport.
 
 ## Resume or sync state
 

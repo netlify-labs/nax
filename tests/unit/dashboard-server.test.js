@@ -1176,7 +1176,7 @@ test('dashboard follow-up endpoint submits matching runner and fresh additional 
     assert.equal(response.payload.followup.status, 'submitted')
     assert.equal(response.payload.followup.sourceWorkflowRunId, runId)
     assert.equal(response.payload.followup.context.artifactCount, 1)
-    assert.equal(response.payload.followup.context.delivery, 'inline')
+    assert.equal(response.payload.followup.context.delivery, 'sdk')
     assert.deepEqual(response.payload.followup.plan.summary, [
       'Codex: follow-up session',
       'Gemini: fresh runner',
@@ -1275,7 +1275,7 @@ test('dashboard run graph syncs completed remote follow-up sessions', async () =
   }
 })
 
-test('dashboard follow-up endpoint offloads oversized context using linked site state', async () => {
+test('dashboard follow-up endpoint delegates oversized context to SDK delivery', async () => {
   const projectRoot = tmpRoot()
   fs.mkdirSync(path.join(projectRoot, '.netlify'), { recursive: true })
   fs.writeFileSync(path.join(projectRoot, '.netlify', 'state.json'), JSON.stringify({ siteId: 'linked-site-id' }))
@@ -1295,8 +1295,9 @@ test('dashboard follow-up endpoint offloads oversized context using linked site 
       blobWrites.push({ ...input })
       return { status: 'ok' }
     },
-    followupSubmitRun: async ({ run }) => {
-      submissions.push({ ...run })
+    followupSubmitRun: async (input) => {
+      const { run } = input
+      submissions.push({ ...input, run: { ...run } })
       return {
         ...run,
         status: 'submitted',
@@ -1315,13 +1316,12 @@ test('dashboard follow-up endpoint offloads oversized context using linked site 
     })
 
     assert.equal(response.statusCode, 202, response.payload?.error?.message)
-    assert.equal(response.payload.followup.context.delivery, 'blob')
-    assert.equal(blobWrites.length, 1)
-    assert.equal(blobWrites[0].siteId, 'linked-site-id')
-    assert.match(blobWrites[0].value, /prior result detail/)
+    assert.equal(response.payload.followup.context.delivery, 'sdk')
+    assert.equal(blobWrites.length, 0)
     assert.equal(submissions.length, 1)
-    assert.match(submissions[0].promptText, /blobs:get/)
-    assert.doesNotMatch(submissions[0].promptText, /prior result detail/)
+    assert.equal(submissions[0].siteId, 'linked-site-id')
+    assert.match(submissions[0].run.promptText, /prior result detail/)
+    assert.doesNotMatch(submissions[0].run.promptText, /blobs:get/)
   } finally {
     await server.close()
   }

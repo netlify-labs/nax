@@ -125,8 +125,15 @@ Important constructor options include:
 | `onTelemetry` | Receives redacted auth/transport events. |
 
 `fetch`, `sleep`, `now`, `random`, and `generateRequestId` can be injected for
-tests. HTTP is the only built-in Phase 1 transport; the public `Transport`
-interface supports other implementations.
+tests. HTTP is the only built-in transport; the public `Transport` interface
+supports other implementations.
+
+There is no built-in Netlify CLI transport. Source verification against both
+the Action-pinned CLI `24.8.1` and stable CLI `27.0.2` found no complete
+machine-readable contract for follow-up sessions, session cancellation,
+pagination, reconciliation, or landing member actions. The SDK will not
+expose a partial adapter or infer identity from human output. See the
+[CLI transport evidence](https://github.com/netlify-labs/nax/blob/master/docs/ai/agent-runner-sdk-cli-transport-evidence.md).
 
 ### HTTP API styles
 

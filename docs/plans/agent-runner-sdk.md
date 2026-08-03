@@ -180,7 +180,23 @@ interface Transport {
 - Create POSTs → replay only on provably-pre-transmission failure (DNS failure, ECONNREFUSED, connect-phase timeout). Post-write resets/read-timeouts/ambiguous statuses → typed ambiguity carrying `{ effectiveInput, sentAt, failedAt }` (§6.7).
 - Token redaction on every error detail; `errorCodeForStatus` (401→auth, 403→permission, 404→not_found, 400/422→validation, 429→rate_limited); `onTelemetry` value-free (method, pathname, status only — per the auth plan).
 
-### 3.2 cliTransport — `netlify --version` gate on first use: below tested minimum → typed `cli-transport-incompatible`; binary absent → `cli-transport-unavailable`. (The GH action pins `netlify-cli@24.8.1` for exactly this reason.)
+### 3.2 cliTransport
+
+**Verification result (2026-08-03): intentionally unsupported.** The Action-pinned
+Netlify CLI `24.8.1` and current stable `27.0.2` expose only
+`agents:create`, `agents:list`, `agents:show`, and `agents:stop`. They do not
+provide a complete machine-readable contract for follow-up sessions, exact
+session lookup/listing and cancellation, caller-controlled pagination, or
+landing member actions. Therefore there is no proven minimum version and the
+SDK does not expose `transport:'cli'`. HTTP remains the default built-in
+transport. See
+[`docs/ai/agent-runner-sdk-cli-transport-evidence.md`](../ai/agent-runner-sdk-cli-transport-evidence.md).
+
+If a future CLI release supplies the complete contract, gate its first use
+with `netlify --version`: a missing binary throws
+`cli-transport-unavailable`, and a version below the tested minimum throws
+`cli-transport-incompatible` before mutation. Until then, never infer identity
+from timestamps or human-readable output.
 
 ---
 

@@ -72,6 +72,14 @@ the same `Runner` and `Session` types.
 You may inject a custom object implementing `Transport`. Tests can also inject
 `fetch`, `sleep`, `now`, `random`, and `generateRequestId`.
 
+<Callout type="info">
+  There is no built-in Netlify CLI transport. CLI versions 24.8.1 and 27.0.2
+  do not expose complete machine-readable follow-up, session cancellation,
+  pagination, reconciliation, or landing operations. HTTP remains the safe
+  built-in transport; the SDK does not infer session identity from CLI prose
+  or timestamps.
+</Callout>
+
 `onTelemetry` receives value-free request metadata and API-drift events.
 Tokens, prompts, response bodies, and private request markers are redacted.
 

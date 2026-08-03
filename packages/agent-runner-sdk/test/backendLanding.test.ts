@@ -185,6 +185,28 @@ test('first GitHub landing invokes pull_request and returns resumable prOpen sta
   assert.equal(memberCalls, 1)
 })
 
+test('unchanged GitHub landing skips PR creation when no PR exists', async () => {
+  let memberCalls = 0
+  const transport = fakeTransport({
+    getRunner: async () => runner(),
+    getSession: async () => session({ hasResultDiff: false }),
+    member: async <A extends MemberAction>(
+      _runnerId: string,
+      _action: A,
+      _input: MemberInput<A>,
+    ): Promise<MemberResult<A>> => {
+      memberCalls += 1
+      throw new Error('unchanged landing must not invoke a member action')
+    },
+  })
+  const sdk = createAgentRunnerSdk({ transport })
+
+  const landed = await sdk.land(runHandle('merge'))
+
+  assert.deepEqual(landed.landing, { kind: 'skipped' })
+  assert.equal(memberCalls, 0)
+})
+
 test('follow-up landing commits the exact current session and ignores a stale runner SHA', async () => {
   const actions: Array<{
     action: MemberAction

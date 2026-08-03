@@ -521,6 +521,15 @@ export function createBackendLandingHandler({
     const hadPullRequest = Boolean(
       observation.runner.prUrl ?? persistedPrUrl,
     )
+    if (
+      !hadPullRequest
+      && observation.session.hasResultDiff === false
+    ) {
+      return {
+        handle,
+        landing: { kind: 'skipped' },
+      }
+    }
     if (!hadPullRequest) {
       if (observation.runner.prError) {
         return {

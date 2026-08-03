@@ -37,7 +37,7 @@ jobs:
     timeout-minutes: 180
     permissions:
       contents: read
-      pull-requests: read
+      pull-requests: write
       issues: write
     env:
       NETLIFY_AUTH_TOKEN: ${{ secrets.NETLIFY_AUTH_TOKEN }}

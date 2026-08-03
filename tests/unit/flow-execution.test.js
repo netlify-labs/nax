@@ -240,12 +240,7 @@ test('prepareLocalPromptDelivery leaves unsafe fan-in delivery to the SDK', () =
     sourceRuns,
     roundResults,
     stepContext: '',
-    runState,
-    stepState,
-    projectRoot,
-    netlify: { siteId: 'site-1', env: { NETLIFY_AUTH_TOKEN: 'token-1' } },
     options: { safePromptBytes: 9000 },
-    dryRun: true,
   })
 
   assert.equal(delivery.promptDelivery.mode, 'sdk')
@@ -269,12 +264,7 @@ test('prepareLocalPromptDelivery gives the SDK a compact candidate when blobs ar
     sourceRuns,
     roundResults,
     stepContext: '',
-    runState: { runId: 'run-compact' },
-    stepState: { id: 'synthesize' },
-    projectRoot: tmpRoot(),
-    netlify: { siteId: 'site-1', env: { NETLIFY_AUTH_TOKEN: 'token-1' } },
     options: { safePromptBytes: 9000, promptBlobDisable: true },
-    dryRun: true,
   })
 
   assert.equal(delivery.promptDelivery.mode, 'sdk')
@@ -297,12 +287,7 @@ test('prepareLocalPromptDelivery does not duplicate the SDK auth or fallback dec
     sourceRuns,
     roundResults,
     stepContext: '',
-    runState: { runId: 'run-compact-missing-token' },
-    stepState: { id: 'synthesize' },
-    projectRoot: tmpRoot(),
-    netlify: { siteId: 'site-1', env: {} },
     options: { safePromptBytes: 9000 },
-    dryRun: false,
   })
 
   assert.equal(delivery.promptDelivery.mode, 'sdk')
@@ -325,12 +310,7 @@ test('prepareLocalPromptDelivery preserves an oversized semantic first-step prom
     sourceRuns: [],
     roundResults: '',
     stepContext: '',
-    runState,
-    stepState,
-    projectRoot,
-    netlify: { siteId: 'site-1', env: { NETLIFY_AUTH_TOKEN: 'token-1' } },
     options: { safePromptBytes: 5000 },
-    dryRun: true,
   })
 
   const promptDelivery = promptDeliveryForTest(delivery.promptDelivery)

@@ -113,8 +113,10 @@ For `netlify-api` runs, the serialized SDK handle and agent artifact record safe
 delivery metadata: delivery kind, byte counts, and—when used—the blob
 store/key/tenant/expiry plus sentinel. They never record `NETLIFY_AUTH_TOKEN` or
 the runner fetch command. SDK-owned blobs are removed after success,
-cancellation, or timeout and retained after failure until expiry so a safe retry
-can reuse the exact reference.
+cancellation, or timeout and retained after failure until logical expiry so a
+safe retry can reuse the exact reference. That expiry is enforced by the SDK;
+Netlify Blobs does not automatically delete the stored object, so consumers
+that can abandon failed handles must sweep expired SDK entries separately.
 
 The GitHub issue/comment compatibility transport still mirrors its offloaded
 payloads locally under `.nax/workflows/<run-id>/blobs/` and tracks those legacy
@@ -132,7 +134,7 @@ nax admin clean blobs --force
 - Treating `.nax` as disposable cache before the run has been handed off.
 - Looking only at terminal output after a failed synthesis. Inspect the SDK
   delivery metadata and saved workflow inputs; failed-run blob refs remain
-  available until expiry.
+  reusable until logical expiry.
 - Assuming SDK cleanup and `nax admin clean blobs` manage the same refs. The SDK
   owns `netlify-api` refs; the admin command sweeps the legacy local registry.
 

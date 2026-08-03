@@ -101,7 +101,26 @@ test('nax SDK adapter owns blob delivery and exposes only safe artifact metadata
     owner: 'nax-agent-runner-sdk',
     status: 'active',
   })
+  assert.equal(artifact?.promptBytes, Buffer.byteLength(semanticPrompt, 'utf8'))
   assert.equal(JSON.stringify(artifact).includes('blobs:get'), false)
+})
+
+test('nax SDK adapter omits unknown prompt bytes when reusing a blob ref', () => {
+  const artifact = promptDeliveryArtifact({
+    promptDelivery: {
+      kind: 'blob',
+      safeBytes: 1_024,
+      submittedBytes: 300,
+      promptRef: {
+        store: 'nax-agent-runner-prompts',
+        key: 'tenants/hash/prompt-uuid',
+        tenant: 'site-1/workflow-1',
+        expiresAt: Date.now() + 60_000,
+      },
+    },
+  })
+
+  assert.equal(Object.hasOwn(artifact || {}, 'promptBytes'), false)
 })
 
 test('nax SDK adapter gives deterministic compaction precedence over blob upload', async () => {

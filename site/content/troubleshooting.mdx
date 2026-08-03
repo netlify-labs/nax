@@ -69,7 +69,9 @@ before a resume or retry. Start a fresh run so the SDK can upload a new prompt;
 never edit the serialized handle or reuse the expired key.
 
 SDK-owned blobs are deleted after success, cancellation, or timeout. A failed
-run retains its blob for diagnosis and safe retry until the reference expires.
+run retains its blob for diagnosis and safe retry until the reference's logical
+expiry. Netlify Blobs does not delete it automatically at that time; consumers
+that may abandon failed handles must sweep expired SDK entries separately.
 Run artifacts contain the store/key/tenant/expiry and sentinel, but never the
 token or fetch command. Local mirrors under
 `.nax/workflows/<run-id>/blobs/` apply to the GitHub issue/comment compatibility

@@ -14,6 +14,7 @@ import {
 import { requestMarkerOverheadBytes } from '../operations.js'
 
 export const DEFAULT_SAFE_PROMPT_BYTES = 16 * 1_024
+const MIN_SUBSTANTIVE_RESULT_BYTES = 1_200
 
 export type PromptDeliveryKind = 'inline' | 'compact' | 'blob'
 export type SentinelVerdict =
@@ -432,9 +433,9 @@ export function classifySentinelEvidence(
   }
   const failureText = String(
     evidence.fetchError
-      ?? evidence.commandOutput
-      ?? evidence.transcript
-      ?? '',
+      || evidence.commandOutput
+      || evidence.transcript
+      || '',
   )
   if (
     (
@@ -442,7 +443,7 @@ export function classifySentinelEvidence(
       && evidence.fetchExitCode !== undefined
       && evidence.fetchExitCode !== 0
     )
-    || /(?:blobs:get|blob).*(?:failed|error|forbidden|unauthori[sz]ed|not found)|permission denied/i.test(
+    || /(?:blobs:get|blob).*(?:failed|error|forbidden|unauthori[sz]ed|not found)|permission denied/is.test(
       failureText,
     )
   ) {
@@ -467,7 +468,8 @@ export function classifySentinelEvidence(
     /not enough context|missing context|no prior results|cannot access|unable to fetch|need the full/i.test(
       resultText,
     )
-    || byteLength(resultText.trim()) < 1_200
+    // Short results without a sentinel are too weak to prove blob retrieval.
+    || byteLength(resultText.trim()) < MIN_SUBSTANTIVE_RESULT_BYTES
   ) {
     return {
       verdict: 'suspect',

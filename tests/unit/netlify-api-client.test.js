@@ -136,7 +136,11 @@ test('Netlify API client validates token, site id, and runner id', async () => {
   })
   await assert.rejects(() => client.getAgentRunner({ runnerId: 'runner-1' }), /token is required/)
 
-  const authed = createNetlifyApiClient({ fetch: fakeFetch([]).fetch, token: 'token' })
+  const authed = createNetlifyApiClient({
+    fetch: fakeFetch([]).fetch,
+    token: 'token',
+    env: {},
+  })
   await assert.rejects(
     () => authed.createAgentRunner({ promptText: 'x' }),
     (error) => {

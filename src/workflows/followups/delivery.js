@@ -12,13 +12,9 @@ function promptIntro() {
 /**
  * @param {{
  *   contextPackage?: { markdown?: string, artifactCount?: number },
- *   runId?: string,
- *   stepId?: string,
- *   options?: import('../../types').JsonMap,
- *   writeBlob?: (input: { ref: import('../../types').BlobRef, payload: string }) => Promise<unknown> | unknown,
  * }} [input]
  */
-async function prepareFollowupContextDelivery({
+function prepareFollowupContextDelivery({
   contextPackage = {},
 } = {}) {
   const markdown = String(contextPackage.markdown || '').trim()

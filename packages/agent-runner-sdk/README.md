@@ -399,7 +399,8 @@ GitHub head drift never create automatic replacement attempts.
 ## BlobStore and prompt references
 
 The package ships a Netlify Blobs adapter with tenant-scoped,
-collision-resistant keys, mandatory TTLs, and hard size/lifetime ceilings:
+collision-resistant keys, mandatory logical expiries, and hard size/lifetime
+ceilings:
 
 ```ts
 import {
@@ -445,15 +446,19 @@ embeds the caller token. The SDK validates `expiresAt`, appends its request
 marker, and preserves the original `promptRef` in the handle.
 
 Terminal success, cancellation, and timeout delete the current attempt's blob.
-Failed attempts retain it until TTL so `retry(handle)` can reuse the exact
-reference. Cleanup is idempotent and best-effort; failures emit only the
-value-free `onBlobCleanupError` event. A restored handle performs the same
-cleanup when its terminal result is observed.
+Failed attempts retain the reference until its logical expiry so
+`retry(handle)` can reuse the exact input. Cleanup is idempotent and
+best-effort; failures emit only the value-free `onBlobCleanupError` event. A
+restored handle performs the same cleanup when its terminal result is observed.
 
 `DEFAULT_PROMPT_BLOB_TTL_SECONDS` is one day. The built-in hard ceilings are
 `MAX_PROMPT_BLOB_TTL_SECONDS` (seven days) and
 `MAX_PROMPT_BLOB_BYTES` (5 MiB); callers may configure lower limits. A delete
-must match the adapter's full store, tenant, and key identity.
+must match the adapter's full store, tenant, and key identity. `expiresAt` is
+an SDK-enforced retry boundary stored in blob metadata; Netlify Blobs does not
+automatically delete the object at that time. Consumers that can abandon
+failed handles must separately sweep expired entries from the configured
+store.
 
 Existing stores can implement the `BlobStore` interface. The older
 `promptRefDelivery` option remains available as a delivery-only override; when

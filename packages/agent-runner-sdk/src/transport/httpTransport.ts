@@ -63,6 +63,16 @@ export interface HttpTransportOptions
 export type TransportTelemetryEvent =
   | AuthTelemetryEvent
   | {
+      kind: 'transportRetry'
+      method: 'GET' | 'DELETE' | 'POST'
+      pathname: string
+      attempt: number
+      maxAttempts: number
+      delayMs: number
+      reason: 'network' | 'http'
+      status?: number
+    }
+  | {
       kind: 'apiDrift'
       entity: 'runner' | 'session'
       field: string
@@ -314,8 +324,12 @@ export function createHttpTransport(
   }
 
   async function waitBeforeRetry(
+    method: 'GET' | 'DELETE' | 'POST',
+    pathname: string,
     attempt: number,
     retryAfter: string | undefined,
+    reason: 'network' | 'http',
+    status?: number,
   ): Promise<void> {
     const serverDelay = retryAfterMs(retryAfter, now)
     const jittered = boundedRetryDelayMs(attempt, {
@@ -323,7 +337,24 @@ export function createHttpTransport(
       maxDelayMs: maxRetryDelayMs,
       random,
     })
-    await sleep(Math.min(maxRetryDelayMs, serverDelay ?? jittered))
+    const delayMs = Math.min(maxRetryDelayMs, serverDelay ?? jittered)
+    if (onTelemetry) {
+      try {
+        onTelemetry({
+          kind: 'transportRetry',
+          method,
+          pathname,
+          attempt,
+          maxAttempts,
+          delayMs,
+          reason,
+          ...(status === undefined ? {} : { status }),
+        })
+      } catch {
+        // Telemetry observers cannot change transport behavior.
+      }
+    }
+    await sleep(delayMs)
   }
 
   async function safeRequest(
@@ -345,14 +376,27 @@ export function createHttpTransport(
         if (optionsForRequest?.signal?.aborted || attempt >= maxAttempts) {
           throw networkError(error)
         }
-        await waitBeforeRetry(attempt, undefined)
+        await waitBeforeRetry(
+          method,
+          path,
+          attempt,
+          undefined,
+          'network',
+        )
         continue
       }
       if (response.ok) return response
       if (!isRetryableStatus(response.status) || attempt >= maxAttempts) {
         throw errorForResponse(response)
       }
-      await waitBeforeRetry(attempt, response.headers.retryAfter)
+      await waitBeforeRetry(
+        method,
+        path,
+        attempt,
+        response.headers.retryAfter,
+        'http',
+        response.status,
+      )
     }
     throw new BasicAgentRunnerSdkError(
       'http-error',
@@ -433,7 +477,13 @@ export function createHttpTransport(
           && !optionsForRequest?.signal?.aborted
           && attempt < maxAttempts
         ) {
-          await waitBeforeRetry(attempt, undefined)
+          await waitBeforeRetry(
+            'POST',
+            path,
+            attempt,
+            undefined,
+            'network',
+          )
           continue
         }
         if (error.preTransmission) throw networkError(error)

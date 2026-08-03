@@ -69,4 +69,3 @@ CLI version exposes all required identities and operations as documented
 machine-readable output. At that point the SDK must record that exact minimum
 version and pass the shared transport conformance suite before exposing
 `transport: 'cli'`.
-

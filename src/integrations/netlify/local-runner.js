@@ -10,6 +10,7 @@ const { wrapFailure } = require('./failure-guidance')
 const {
   createNaxAgentRunnerSdk,
   parsePersistedHandle,
+  promptDeliveryArtifact,
   resolveRunHandle,
   runnerArtifactPayload,
   sessionArtifactPayload,
@@ -189,6 +190,7 @@ const NETLIFY_CONFIG_SCAN_SKIP_DIRS = new Set([
  * @typedef {{
  *   projectRoot?: string,
  *   runnerId?: string,
+ *   siteId?: string,
  *   env?: NodeJS.ProcessEnv,
  *   runCommand?: SyncRunCommand,
  *   sdk?: import('nax-agent-runner-sdk').AgentRunnerSdk,
@@ -797,9 +799,25 @@ async function submitLocalAgentRun({
   sleepFn,
 }) {
   const deadlineMs = Math.max(0, Number(timeoutMinutes) || 25) * 60 * 1000
+  const resolvedSiteId = siteId || run.netlifySiteId
+  const configuredDelivery = run.promptDelivery || {}
+  const safePromptBytes = Number(configuredDelivery.safePromptBytes || 0) || undefined
+  const disableValue = String(
+    configuredDelivery.blobDisabled
+      ?? env?.NAX_PROMPT_BLOB_DISABLE
+      ?? '',
+  ).trim().toLowerCase()
   const client = createNaxAgentRunnerSdk({
     sdk,
     env,
+    siteId: resolvedSiteId,
+    promptTenant: [
+      resolvedSiteId,
+      run.raw?.workflowRunId || run.raw?.stepId || 'nax',
+    ].filter(Boolean).join('/'),
+    compactPromptText: run.compactPromptText,
+    safePromptBytes,
+    promptBlobDisable: ['1', 'true', 'yes', 'on'].includes(disableValue),
     retryAttempts,
     retryDelayMs,
     onRetry,
@@ -813,7 +831,7 @@ async function submitLocalAgentRun({
             run: {
               ...run,
               runnerId: run.existingRunnerId,
-              netlifySiteId: siteId || run.netlifySiteId,
+              netlifySiteId: resolvedSiteId,
             },
             branch,
             deadlineMs,
@@ -824,7 +842,7 @@ async function submitLocalAgentRun({
           },
         )
       : await client.start({
-          siteId: siteId || run.netlifySiteId,
+          siteId: resolvedSiteId,
           prompt: run.promptText,
           agent: run.agent,
           ...(branch ? { branch } : {}),
@@ -838,13 +856,20 @@ async function submitLocalAgentRun({
     ])
     const rawRunner = runnerArtifactPayload(runner)
     const rawSession = sessionArtifactPayload(session)
+    const sdkPromptDelivery = promptDeliveryArtifact(handle)
+    const promptDelivery = sdkPromptDelivery
+      ? { ...configuredDelivery, ...sdkPromptDelivery }
+      : undefined
+    const blobRef = promptDelivery?.blobRef
     return {
       ...run,
       status: 'submitted',
       runnerId: handle.runnerId,
       sessionId: handle.currentSessionId,
       sdkHandle: handle,
-      ...(siteId || run.netlifySiteId ? { netlifySiteId: siteId || run.netlifySiteId } : {}),
+      ...(resolvedSiteId ? { netlifySiteId: resolvedSiteId } : {}),
+      ...(promptDelivery ? { promptDelivery } : {}),
+      ...(blobRef ? { blobRef } : {}),
       raw: {
         ...run.raw,
         sdkHandle: handle,
@@ -854,7 +879,7 @@ async function submitLocalAgentRun({
       },
     }
   } catch (error) {
-    throw wrapFailure(error, { siteId, attempts: retryAttempts })
+    throw wrapFailure(error, { siteId: resolvedSiteId, attempts: retryAttempts })
   }
 }
 
@@ -903,11 +928,15 @@ async function listAgentSessions({ runnerId, env, sdk } = {}) {
 }
 
 /** @param {AgentRunnerCommandOptions} param0 */
-async function stopAgentRun({ runnerId, env, sdk, sdkHandle } = {}) {
+async function stopAgentRun({ runnerId, siteId, env, sdk, sdkHandle } = {}) {
   if (!runnerId) throw new Error('Netlify agent runner ID is required to stop a run.')
-  const client = createNaxAgentRunnerSdk({ sdk, env })
   try {
     const handle = parsePersistedHandle(sdkHandle)
+    const client = createNaxAgentRunnerSdk({
+      sdk,
+      env,
+      siteId: siteId || handle?.siteId,
+    })
     if (handle) await client.stop(handle)
     else await client.transport.cancelRunner(runnerId)
     return {
@@ -1016,13 +1045,33 @@ async function waitForLocalAgentRuns({
   sdk,
 } = {}) {
   const deadline = Date.now() + timeoutMinutes * 60 * 1000
-  const client = createNaxAgentRunnerSdk({ sdk, env })
+  const client = createNaxAgentRunnerSdk({ sdk, env, siteId })
   let trackedRuns = Array.isArray(runs) ? runs : []
   const pending = new Map(trackedRuns.map((item) => [item.runnerId, item]))
   const completed = new Map()
   const handles = new Map()
-  const capacityRetryCounts = new Map(trackedRuns.map((item) => [item.runnerId, Number(item.autoRetryCount || 0)]))
   const promptShrinkRetryCounts = new Map(trackedRuns.map((item) => [item.runnerId, Number(item.promptShrinkRetryCount || 0)]))
+  const deliveryClientFor = (runState) => {
+    const delivery = runState.promptDelivery || {}
+    const disableValue = String(
+      delivery.blobDisabled
+        ?? env?.NAX_PROMPT_BLOB_DISABLE
+        ?? '',
+    ).trim().toLowerCase()
+    const resolvedSiteId = runState.netlifySiteId || siteId
+    return createNaxAgentRunnerSdk({
+      sdk,
+      env,
+      siteId: resolvedSiteId,
+      promptTenant: [
+        resolvedSiteId,
+        runState.raw?.workflowRunId || runState.raw?.stepId || 'nax',
+      ].filter(Boolean).join('/'),
+      compactPromptText: runState.compactPromptText,
+      safePromptBytes: Number(delivery.safePromptBytes || 0) || undefined,
+      promptBlobDisable: ['1', 'true', 'yes', 'on'].includes(disableValue),
+    })
+  }
   const isTerminalStoredStatus = (status) => {
     const normalized = String(status || '').trim().toLowerCase()
     return TERMINAL_SUCCESS_STATES.has(normalized) || TERMINAL_FAILURE_STATES.has(normalized) || normalized === 'timeout'
@@ -1049,7 +1098,6 @@ async function waitForLocalAgentRuns({
       }
       const refreshedHandle = parsePersistedHandle(refreshedRun.sdkHandle || refreshedRun.raw?.sdkHandle)
       if (refreshedHandle) handles.set(runnerId, refreshedHandle)
-      if (!capacityRetryCounts.has(runnerId)) capacityRetryCounts.set(runnerId, Number(refreshedRun.autoRetryCount || 0))
       if (!promptShrinkRetryCounts.has(runnerId)) promptShrinkRetryCounts.set(runnerId, Number(refreshedRun.promptShrinkRetryCount || 0))
     }
     trackedRuns = refreshed
@@ -1066,18 +1114,29 @@ async function waitForLocalAgentRuns({
     handles.set(runState.runnerId, handle)
     return handle
   }
-  const retryFailedRun = async (runState, failedRun, handle) => {
-    const capacityRetryCount = capacityRetryCounts.get(runState.runnerId) || 0
+  const retryFailedRun = async (runState, failedRun, handle, sdkFailure) => {
+    const retryClient = deliveryClientFor(runState)
     const promptShrinkRetryCount = promptShrinkRetryCounts.get(runState.runnerId) || 0
     let promptText = ''
     let message = ''
     let retryMetadata = {}
+    const classifiedCapacityFailure = sdkFailure?.category === 'capacity'
+      ? sdkFailure
+      : isRetryableCapacityFailure(failedRun)
+        ? classifySdkFailure({
+            code: 'model-capacity',
+            message: failedRun.resultText || 'The model is currently at capacity.',
+          })
+        : null
 
-    if (isRetryableCapacityFailure(failedRun) && capacityRetryCount < 1) {
+    if (
+      classifiedCapacityFailure
+      && retryClient.shouldRetry(handle, classifiedCapacityFailure)
+    ) {
       promptText = runState.promptText
       message = `${runState.agent} ${runState.runnerId}: retrying once after transient capacity error`
       retryMetadata = {
-        autoRetryCount: capacityRetryCount + 1,
+        autoRetryCount: handle.retries.capacity + 1,
         retryReason: 'capacity',
       }
     } else if (isRetryableArgumentLimitFailure(failedRun) && promptShrinkRetryCount < 1) {
@@ -1092,14 +1151,6 @@ async function waitForLocalAgentRuns({
       return false
     }
 
-    if (
-      retryMetadata.retryReason === 'capacity'
-      && !client.shouldRetry(handle, classifySdkFailure({
-        code: 'model-capacity',
-        message: failedRun.resultText || 'The model is currently at capacity.',
-      }))
-    ) return false
-
     onProgress({
       message,
       run: runState,
@@ -1110,22 +1161,21 @@ async function waitForLocalAgentRuns({
       retry: true,
       retryReason: retryMetadata.retryReason,
     })
-    const followed = await client.followUp(handle, {
-      prompt: promptText,
-      agent: runState.agent,
-    })
-    const retriedHandle = retryMetadata.retryReason === 'capacity'
-      ? {
-          ...followed,
-          retries: {
-            capacity: handle.retries.capacity + 1,
-          },
-        }
-      : followed
-    const retriedSession = await client.transport.getSession(
+    const retriedHandle = classifiedCapacityFailure
+      ? await retryClient.retry(handle, { failure: classifiedCapacityFailure })
+      : await retryClient.followUp(handle, {
+          prompt: promptText,
+          agent: runState.agent,
+        })
+    const retriedSession = await retryClient.transport.getSession(
       retriedHandle.runnerId,
       retriedHandle.currentSessionId,
     )
+    const sdkPromptDelivery = promptDeliveryArtifact(retriedHandle)
+    const promptDelivery = sdkPromptDelivery
+      ? { ...(runState.promptDelivery || {}), ...sdkPromptDelivery }
+      : undefined
+    const blobRef = promptDelivery?.blobRef
     const retriedRun = {
       ...appendAutoRetryMetadata(runState, sessionArtifactPayload(retriedSession), {
         ...retryMetadata,
@@ -1134,6 +1184,8 @@ async function waitForLocalAgentRuns({
       runnerId: retriedHandle.runnerId,
       sessionId: retriedHandle.currentSessionId,
       sdkHandle: retriedHandle,
+      ...(promptDelivery ? { promptDelivery } : {}),
+      ...(blobRef ? { blobRef } : {}),
       raw: {
         ...runState.raw,
         sdkHandle: retriedHandle,
@@ -1148,14 +1200,16 @@ async function waitForLocalAgentRuns({
         ],
       },
     }
-    handles.set(runState.runnerId, retriedHandle)
-    if (retryMetadata.autoRetryCount !== undefined) {
-      capacityRetryCounts.set(runState.runnerId, retryMetadata.autoRetryCount)
+    handles.delete(runState.runnerId)
+    handles.set(retriedHandle.runnerId, retriedHandle)
+    if (retriedHandle.runnerId !== runState.runnerId) {
+      pending.delete(runState.runnerId)
+      promptShrinkRetryCounts.delete(runState.runnerId)
     }
     if (retryMetadata.promptShrinkRetryCount !== undefined) {
-      promptShrinkRetryCounts.set(runState.runnerId, retryMetadata.promptShrinkRetryCount)
+      promptShrinkRetryCounts.set(retriedHandle.runnerId, retryMetadata.promptShrinkRetryCount)
     }
-    pending.set(runState.runnerId, retriedRun)
+    pending.set(retriedHandle.runnerId, retriedRun)
     onProgress({
       message: `${runState.agent} ${runState.runnerId}: retry submitted`,
       run: retriedRun,
@@ -1195,11 +1249,22 @@ async function waitForLocalAgentRuns({
       error: result.status === 'failed' ? result.failure.message : '',
       commandError: false,
     }
+    const sdkPromptDelivery = promptDeliveryArtifact(handle)
+    const promptDelivery = sdkPromptDelivery
+      ? { ...(runState.promptDelivery || {}), ...sdkPromptDelivery }
+      : undefined
+    if (promptDelivery?.blobRef) {
+      promptDelivery.blobRef.status = result.status === 'failed'
+        ? 'retained-failure'
+        : 'cleaned'
+    }
     const withHandle = {
       ...runState,
       runnerId: handle.runnerId,
       sessionId: handle.currentSessionId,
       sdkHandle: handle,
+      ...(promptDelivery ? { promptDelivery } : {}),
+      ...(promptDelivery?.blobRef ? { blobRef: promptDelivery.blobRef } : {}),
       raw: {
         ...runState.raw,
         sdkHandle: handle,
@@ -1312,7 +1377,15 @@ async function waitForLocalAgentRuns({
         terminalFailure: !terminalSuccess,
       })
       onTerminalRun(normalized)
-      if (!terminalSuccess && await retryFailedRun(runState, normalized, handle)) continue
+      if (
+        !terminalSuccess
+        && await retryFailedRun(
+          runState,
+          normalized,
+          handle,
+          result.status === 'failed' ? result.failure : undefined,
+        )
+      ) continue
       completed.set(runState.runnerId, normalized)
       pending.delete(runState.runnerId)
     }

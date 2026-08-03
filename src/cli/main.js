@@ -170,29 +170,8 @@ const {
   resumeGithubFlow,
 } = require('../workflows/engine/github-executor')
 const {
-  applyContextFetchClassification,
-  blobOffloadDisabled,
-  buildFullPromptWrapper,
-  buildGithubFullPromptWrapper,
-  buildLocalAgentPrompt,
-  buildOffloadedRoundResults,
-  buildSafeCompactLocalPrompt,
-  cleanupLocalWorkflowBlobs,
   cleanupWorkflowBlobsForRun,
-  compactLocalTextByBytes,
-  compactTextForRetry,
-  ensureFullPromptBlobOffload,
-  ensureGithubIssueFullPromptBlobOffload,
-  ensureGithubPlanBlobOffload,
-  ensureStepBlobOffload,
-  formatCompactLocalRunResults,
-  formatLocalRunResults,
-  githubIssueDeliveryKey,
-  localPromptByteMetrics,
   localSafePromptBytes,
-  optionalNetlifyForBlobOffload,
-  prepareLocalPromptDelivery,
-  renderStructuredForLocalEssentials,
 } = require('../workflows/engine/prompt-delivery')
 const {
   MUTED_COLOR,
@@ -215,23 +194,11 @@ const {
   stepResultsSummaryPath,
   workflowSummaryDisplayPath,
 } = require('../workflows/engine/resume')
-const { setBlob, deleteBlob } = require('../integrations/netlify/blobs')
+const { deleteBlob } = require('../integrations/netlify/blobs')
 const {
-  addRunBlobRef,
   compactBlobRefs,
-  cleanupRunBlobRefs,
   sweepBlobRefs,
 } = require('../storage/local/blob-ref-registry')
-const { writeLocalBlobDebugPayload } = require('../storage/local/blob-debug-cache')
-const {
-  blobRefForStep,
-  buildBlobPayload,
-  buildFetchInstruction,
-  buildInlineEssentials,
-  classifyContextFetch,
-  compactTextByBytes,
-  safePromptBytes,
-} = require('../workflows/prompts/offload')
 const {
   applyAgentSelection,
   assertValidAgentSelection,
@@ -1905,7 +1872,7 @@ function cancellableLocalRunnerIds(runState = {}) {
  *   projectRoot?: string,
  *   options?: AdHocRunOptions,
  *   reason?: string,
- *   stopRun?: (input: { projectRoot?: string, runnerId?: string, env?: NodeJS.ProcessEnv }) => RunnerControlResult | Promise<RunnerControlResult>,
+ *   stopRun?: (input: { projectRoot?: string, runnerId?: string, siteId?: string, env?: NodeJS.ProcessEnv, sdkHandle?: import('nax-agent-runner-sdk').Handle }) => RunnerControlResult | Promise<RunnerControlResult>,
  * }} input
  */
 async function cancelLocalWorkflowRunnersForInterrupt({ runState, projectRoot, options = {}, reason = 'interrupted workflow', stopRun = stopAgentRun } = {}) {
@@ -1928,7 +1895,16 @@ async function cancelLocalWorkflowRunnersForInterrupt({ runState, projectRoot, o
   const warnings = []
   for (const runnerId of runnerIds) {
     try {
-      const result = await stopRun({ projectRoot, runnerId, env })
+      const run = (runState.steps || [])
+        .flatMap((step) => Array.isArray(step.runs) ? step.runs : [])
+        .find((item) => String(item.runnerId || '').trim() === runnerId)
+      const result = await stopRun({
+        projectRoot,
+        runnerId,
+        siteId: run?.netlifySiteId || options.netlifySiteId,
+        env,
+        ...(run?.sdkHandle ? { sdkHandle: run.sdkHandle } : {}),
+      })
       if (result?.stopped === true) stopped.push(runnerId)
       else warnings.push(`${runnerId}: ${result?.error || 'stop request did not report success'}`)
     } catch (error) {

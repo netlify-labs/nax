@@ -2,7 +2,6 @@ const test = require('node:test')
 const assert = require('node:assert/strict')
 
 const {
-  FollowupDeliveryError,
   prepareFollowupContextDelivery,
 } = require('../../src/workflows/followups/delivery')
 
@@ -17,20 +16,20 @@ test('follow-up context delivery returns none for empty context', async () => {
   assert.equal(delivery.artifactCount, 0)
 })
 
-test('follow-up context delivery inlines small context', async () => {
+test('follow-up context delivery passes small context to SDK planning', async () => {
   const delivery = await prepareFollowupContextDelivery({
     contextPackage: { markdown: '## Artifact: Summary\n\nSmall result.', artifactCount: 1 },
     runId: 'run-1',
     options: { safePromptBytes: 2000 },
   })
 
-  assert.equal(delivery.delivery, 'inline')
+  assert.equal(delivery.delivery, 'sdk')
   assert.equal(delivery.artifactCount, 1)
   assert.match(delivery.promptContext, /Use the existing conversation context/)
   assert.match(delivery.promptContext, /Small result/)
 })
 
-test('follow-up context delivery offloads oversized context to blob', async () => {
+test('follow-up context delivery passes oversized semantic context to SDK planning', async () => {
   const writes = []
   const delivery = await prepareFollowupContextDelivery({
     contextPackage: {
@@ -43,34 +42,22 @@ test('follow-up context delivery offloads oversized context to blob', async () =
     writeBlob: (write) => writes.push(write),
   })
 
-  assert.equal(delivery.delivery, 'blob')
-  assert.equal(writes.length, 1)
-  assert.equal(writes[0].ref.store, 'nax-run-big')
-  assert.equal(writes[0].ref.key, 'followup-prior-results')
-  assert.match(writes[0].payload, /NAX-BLOB-SENTINEL/)
-  assert.match(writes[0].payload, /large context/)
-  assert.match(delivery.promptContext, /blobs:get nax-run-big followup-prior-results/)
-  assert.equal(delivery.promptContext.includes(writes[0].ref.sentinel), false)
-  assert.ok(delivery.offloadedBytes > delivery.bytes)
+  assert.equal(delivery.delivery, 'sdk')
+  assert.equal(writes.length, 0)
+  assert.match(delivery.promptContext, /large context/)
+  assert.equal(delivery.bytes, Buffer.byteLength(delivery.promptContext, 'utf8'))
 })
 
-test('follow-up context delivery fails oversized context without blob writer', async () => {
-  await assert.rejects(
-    () => prepareFollowupContextDelivery({
-      contextPackage: {
-        markdown: `## Artifact: Big\n\n${'large context '.repeat(200)}`,
-        artifactCount: 1,
-      },
-      runId: 'run-big',
-      options: { safePromptBytes: 500 },
-    }),
-    /** @param {unknown} error */
-    (error) => {
-      assert.equal(error instanceof FollowupDeliveryError, true)
-      if (!(error instanceof FollowupDeliveryError)) return false
-      assert.equal(error.code, 'context_too_large')
-      assert.match(error.message, /above the safe prompt budget/)
-      return true
+test('follow-up context delivery no longer requires a presentation-layer blob writer', async () => {
+  const delivery = await prepareFollowupContextDelivery({
+    contextPackage: {
+      markdown: `## Artifact: Big\n\n${'large context '.repeat(200)}`,
+      artifactCount: 1,
     },
-  )
+    runId: 'run-big',
+    options: { safePromptBytes: 500 },
+  })
+
+  assert.equal(delivery.delivery, 'sdk')
+  assert.match(delivery.promptContext, /large context/)
 })

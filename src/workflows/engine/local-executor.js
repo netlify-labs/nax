@@ -741,6 +741,7 @@ async function executeLocalFlow({ flow, steps, options, runState, projectRoot, c
         existingRunnerId: followUpRun?.runnerId || '',
         ...(followUpRun?.sdkHandle ? { sdkHandle: followUpRun.sdkHandle } : {}),
         raw: {
+          workflowRunId: runState.runId,
           stepId: step.id,
           promptName: prompt.name,
         },

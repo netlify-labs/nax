@@ -48,17 +48,12 @@ function cancelReviewGate({ runState, body = {} }) {
  *   followupSiteName: string,
  *   followupNetlifyFilter: string,
  *   followupSubmitRun?: import('../../workflows/followups/runner').HandoffSubmitRun,
- *   writeBlob: FollowupBlobWriter | null,
  *   normalizeFollowupRequest: (body: Record<string, unknown>, details: object, durable: Record<string, unknown>) => FollowupRequest,
- *   makeBlobWriter: (input: { projectRoot: string, siteId: string, env: NodeJS.ProcessEnv, writeBlob?: FollowupBlobWriter | null, setBlobCommand?: typeof import('../../integrations/netlify/blobs').setBlob }) => FollowupBlobWriter | null,
- *   setBlobCommand?: typeof import('../../integrations/netlify/blobs').setBlob,
  *   linkSubmittedRun: (input: { siteName: string }) => (run?: Record<string, unknown>) => Record<string, unknown>,
  *   followupId: (sourceRunId?: string) => string,
  *   freshFollowupTitle: (sourceRun: Record<string, unknown>, target: Record<string, unknown>, freshResults: Array<Record<string, unknown>>) => string,
  *   submissionResponseItem: (result?: Record<string, unknown>) => object,
  * }} SubmitFollowupInput
- *
- * @typedef {(input: { ref: import('../../types').BlobRef, payload: string }) => Promise<unknown> | unknown} FollowupBlobWriter
  *
  * @typedef {{
  *   prompt: string,
@@ -274,10 +269,7 @@ async function submitFollowup({
   followupSiteName,
   followupNetlifyFilter,
   followupSubmitRun,
-  writeBlob,
   normalizeFollowupRequest,
-  makeBlobWriter,
-  setBlobCommand,
   linkSubmittedRun,
   followupId,
   freshFollowupTitle,
@@ -295,16 +287,6 @@ async function submitFollowup({
   })
   const delivery = await prepareFollowupContextDelivery({
     contextPackage,
-    runId: sourceWorkflowRunId,
-    stepId: 'dashboard-followup',
-    options: durableOptions,
-    writeBlob: makeBlobWriter({
-      projectRoot,
-      siteId: followupSiteId,
-      env,
-      writeBlob,
-      setBlobCommand,
-    }),
   })
   const sourceArtifactIds = contextPackage.artifacts.map((artifact) => artifact.id)
   const plan = buildFollowupSubmissionPlan({

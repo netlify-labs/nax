@@ -109,7 +109,16 @@ The dashboard exposes the same idea through Run details and **Send to next agent
 
 ## Prompt blob artifacts
 
-When prompts are too large for the safe submission budget, `nax` mirrors offloaded payloads locally under `.nax/workflows/<run-id>/blobs/` and tracks remote refs in `.nax/blob-refs.jsonl`.
+For `netlify-api` runs, the serialized SDK handle and agent artifact record safe
+delivery metadata: delivery kind, byte counts, and—when used—the blob
+store/key/tenant/expiry plus sentinel. They never record `NETLIFY_AUTH_TOKEN` or
+the runner fetch command. SDK-owned blobs are removed after success,
+cancellation, or timeout and retained after failure until expiry so a safe retry
+can reuse the exact reference.
+
+The GitHub issue/comment compatibility transport still mirrors its offloaded
+payloads locally under `.nax/workflows/<run-id>/blobs/` and tracks those legacy
+remote refs in `.nax/blob-refs.jsonl`.
 
 Clean stale refs with:
 
@@ -121,8 +130,11 @@ nax admin clean blobs --force
 ## Common mistakes
 
 - Treating `.nax` as disposable cache before the run has been handed off.
-- Looking only at terminal output after a failed synthesis. The saved summaries and prompt blobs often contain the full fan-in context.
-- Assuming prompt blob cleanup deletes local debug mirrors. Remote blobs are cleaned up, but local copies stay available for inspection.
+- Looking only at terminal output after a failed synthesis. Inspect the SDK
+  delivery metadata and saved workflow inputs; failed-run blob refs remain
+  available until expiry.
+- Assuming SDK cleanup and `nax admin clean blobs` manage the same refs. The SDK
+  owns `netlify-api` refs; the admin command sweeps the legacy local registry.
 
 ## See also
 

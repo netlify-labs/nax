@@ -258,7 +258,7 @@ test('polling attributes completion to the handle current session', async () => 
   assert.equal(progress.at(-1).terminalSuccess, true)
 })
 
-test('capacity retry stays on the runner and advances the SDK handle once', async () => {
+test('capacity recovery delegates to SDK retry and advances the handle once', async () => {
   let currentSessionId = 'session-1'
   const initial = handle()
   const { sdk, calls } = sdkHarness({
@@ -318,17 +318,18 @@ test('capacity retry stays on the runner and advances the SDK handle once', asyn
             },
           },
       shouldRetry: () => true,
-      followUp: async (base, input) => {
-        calls.push(['followUp', base, input])
+      retry: async (base, input) => {
+        calls.push(['retry', base, input])
         currentSessionId = 'session-2'
         return {
           ...base,
           kind: 'session',
           currentSessionId,
           sessionId: currentSessionId,
+          retries: { capacity: base.retries.capacity + 1 },
           sessionInput: {
-            prompt: input.prompt,
-            agent: input.agent,
+            prompt: base.input.prompt,
+            agent: base.agent,
             requestId: FOLLOWUP_ID,
           },
         }
@@ -352,7 +353,8 @@ test('capacity retry stays on the runner and advances the SDK handle once', asyn
     sdk,
   })
 
-  assert.equal(calls.filter(([operation]) => operation === 'followUp').length, 1)
+  assert.equal(calls.filter(([operation]) => operation === 'retry').length, 1)
+  assert.equal(calls.filter(([operation]) => operation === 'followUp').length, 0)
   assert.equal(completed.status, 'completed')
   assert.equal(completed.resultText, 'Recovered')
   assert.equal(completed.autoRetryCount, 1)

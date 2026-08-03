@@ -1,5 +1,4 @@
 const { setBlob, deleteBlob } = require('../../integrations/netlify/blobs')
-const { requestMarkerOverheadBytes } = require('nax-agent-runner-sdk')
 const { addRunBlobRef, cleanupRunBlobRefs } = require('../../storage/local/blob-ref-registry')
 const { writeLocalBlobDebugPayload } = require('../../storage/local/blob-debug-cache')
 const {
@@ -165,20 +164,6 @@ const DEFAULT_LOCAL_SAFE_PROMPT_BYTES = 16384
  */
 
 /**
- * Options for offloading a complete local agent prompt.
- * @typedef {{
- *   agent?: string,
- *   promptText?: string,
- *   runState?: import('../../types').WorkflowRunState,
- *   stepState?: PromptWorkflowStep,
- *   step?: PromptWorkflowStep,
- *   projectRoot?: string,
- *   netlify?: PromptNetlifyContext,
- *   options?: PromptDeliveryOptions,
- *   dryRun?: boolean,
- *   onRetry?: BlobRetryHandler,
- * }} FullPromptBlobOffloadInput
- *
  * Options for preparing local prompt delivery.
  * @typedef {{
  *   agent?: string,
@@ -433,7 +418,7 @@ function localSafePromptBytes(options = {}) {
         : options.promptSafeBytes || process.env.NAX_SAFE_PROMPT_BYTES || DEFAULT_LOCAL_SAFE_PROMPT_BYTES,
     ),
   })
-  return Math.max(1, configured - requestMarkerOverheadBytes)
+  return configured
 }
 
 /** @param {unknown} text @param {number} limit @param {string} [label] */
@@ -658,36 +643,6 @@ function buildFullPromptWrapper({ blobRef }) {
   })
 }
 
-/** @param {FullPromptBlobOffloadInput} input */
-function ensureFullPromptBlobOffload({
-  agent,
-  promptText,
-  runState,
-  stepState,
-  step,
-  projectRoot,
-  netlify,
-  options = {},
-  dryRun = false,
-  onRetry = () => {},
-} = {}) {
-  return ensureStepBlobOffload({
-    sourceRuns: [],
-    roundResults: '',
-    payloadText: promptText,
-    refKind: 'full-prompt',
-    refStepId: [step?.id || 'step', agent || 'agent'].join('-'),
-    runState,
-    stepState,
-    step,
-    projectRoot,
-    netlify,
-    options,
-    dryRun,
-    onRetry,
-  })
-}
-
 /** @param {PrepareLocalPromptDeliveryInput} input */
 function prepareLocalPromptDelivery({
   agent,
@@ -696,12 +651,7 @@ function prepareLocalPromptDelivery({
   sourceRuns,
   roundResults,
   stepContext,
-  runState,
-  stepState,
-  projectRoot,
-  netlify,
   options = {},
-  dryRun = false,
 } = {}) {
   const safeBytes = localSafePromptBytes(options)
   const promptText = buildLocalAgentPrompt({
@@ -718,180 +668,17 @@ function prepareLocalPromptDelivery({
     safeBytes,
   })
   const metrics = localPromptByteMetrics(promptText, compactPromptText, safeBytes)
-  if (metrics.promptBytes <= safeBytes) {
-    return {
-      promptText,
-      compactPromptText: metrics.compactPromptBytes < metrics.promptBytes ? compactPromptText : '',
-      promptDelivery: { mode: 'inline', ...metrics },
-    }
-  }
-  if (blobOffloadDisabled(options)) {
-    if (metrics.compactPromptBytes <= safeBytes) {
-      return {
-        promptText: compactPromptText,
-        compactPromptText,
-        promptDelivery: {
-          mode: 'compact',
-          fallbackReason: 'blob-offload-disabled',
-          ...metrics,
-        },
-      }
-    }
-    throw new Error([
-      `Prompt for ${agent} ${step.id} is too large for Netlify runner argv and cannot be offloaded.`,
-      `Full prompt: ${metrics.promptBytes.toLocaleString()} bytes.`,
-      `Compact prompt: ${metrics.compactPromptBytes.toLocaleString()} bytes.`,
-      `Safe budget: ${safeBytes.toLocaleString()} bytes.`,
-      'Blob offload is disabled by NAX_PROMPT_BLOB_DISABLE.',
-    ].join(' '))
-  }
-  const contextError = dryRun ? '' : blobOffloadContextError(netlify)
-  if (contextError) {
-    if (metrics.compactPromptBytes <= safeBytes) {
-      return {
-        promptText: compactPromptText,
-        compactPromptText,
-        promptDelivery: {
-          mode: 'compact',
-          fallbackReason: 'blob-context-missing',
-          fallbackError: contextError,
-          ...metrics,
-        },
-      }
-    }
-    throw new Error([
-      `Prompt for ${agent} ${step.id} is too large for Netlify runner argv and cannot be offloaded.`,
-      `Full prompt: ${metrics.promptBytes.toLocaleString()} bytes.`,
-      `Compact prompt: ${metrics.compactPromptBytes.toLocaleString()} bytes.`,
-      `Safe budget: ${safeBytes.toLocaleString()} bytes.`,
-      contextError,
-    ].join(' '))
-  }
-  let blobRef
-  if (sourceRuns.length > 0) {
-    try {
-      blobRef = ensureStepBlobOffload({
-        sourceRuns,
-        roundResults,
-        runState,
-        stepState,
-        step,
-        projectRoot,
-        netlify,
-        options,
-        dryRun,
-        onRetry: ({ nextAttempt, attempts, delayMs, error, store, key }) => {
-          const delaySeconds = Math.round(delayMs / 1000)
-          console.log(`  Blob ${store}/${key}: retrying upload ${nextAttempt}/${attempts} in ${delaySeconds}s — ${error.message}`)
-        },
-      })
-      const offloadedRoundResults = buildOffloadedRoundResults({ sourceRuns, blobRef, safeBytes })
-      const offloadedContext = compactLocalTextByBytes(stepContext, Math.max(0, Math.floor(safeBytes * 0.2)), 'Additional Context')
-      const offloadedPromptText = buildLocalAgentPrompt({
-        model: agent,
-        prompt,
-        context: offloadedContext,
-        roundResults: offloadedRoundResults,
-      })
-      const offloadedBytes = utf8ByteLength(offloadedPromptText)
-      if (offloadedBytes <= safeBytes) {
-        return {
-          promptText: offloadedPromptText,
-          compactPromptText: compactPromptText && metrics.compactPromptBytes <= safeBytes ? compactPromptText : '',
-          promptDelivery: {
-            mode: 'blob',
-            kind: 'prior-results',
-            ...metrics,
-            offloadedPromptBytes: offloadedBytes,
-            blobRef,
-            contextFetchPolicy: options.contextFetchPolicy || step.contextFetchPolicy || 'optional',
-          },
-          blobRef,
-        }
-      }
-    } catch (error) {
-      if (metrics.compactPromptBytes <= safeBytes) {
-        return {
-          promptText: compactPromptText,
-          compactPromptText,
-          promptDelivery: {
-            mode: 'compact',
-            fallbackReason: 'blob-set-failed',
-            fallbackError: error?.message || String(error),
-            ...metrics,
-          },
-        }
-      }
-      throw new Error([
-        `Prompt for ${agent} ${step.id} is too large and blob offload failed.`,
-        `Full prompt: ${metrics.promptBytes.toLocaleString()} bytes.`,
-        `Compact prompt: ${metrics.compactPromptBytes.toLocaleString()} bytes.`,
-        `Safe budget: ${safeBytes.toLocaleString()} bytes.`,
-        `Blob: ${stepState.promptBlobRef?.store || 'unknown'}/${stepState.promptBlobRef?.key || 'unknown'}.`,
-        `Error: ${error?.message || String(error)}`,
-      ].join(' '))
-    }
-  }
-
-  try {
-    blobRef = ensureFullPromptBlobOffload({
-      agent,
-      promptText,
-      runState,
-      stepState,
-      step,
-      projectRoot,
-      netlify,
-      options,
-      dryRun,
-      onRetry: ({ nextAttempt, attempts, delayMs, error, store, key }) => {
-        const delaySeconds = Math.round(delayMs / 1000)
-        console.log(`  Blob ${store}/${key}: retrying upload ${nextAttempt}/${attempts} in ${delaySeconds}s — ${error.message}`)
-      },
-    })
-  } catch (error) {
-    if (metrics.compactPromptBytes <= safeBytes) {
-      return {
-        promptText: compactPromptText,
-        compactPromptText,
-        promptDelivery: {
-          mode: 'compact',
-          fallbackReason: 'blob-set-failed',
-          fallbackError: error?.message || String(error),
-          ...metrics,
-        },
-      }
-    }
-    throw new Error([
-      `Prompt for ${agent} ${step.id} is too large and full-prompt blob offload failed.`,
-      `Full prompt: ${metrics.promptBytes.toLocaleString()} bytes.`,
-      `Compact prompt: ${metrics.compactPromptBytes.toLocaleString()} bytes.`,
-      `Safe budget: ${safeBytes.toLocaleString()} bytes.`,
-      `Error: ${error?.message || String(error)}`,
-    ].join(' '))
-  }
-  const offloadedPromptText = buildFullPromptWrapper({ blobRef })
-  const offloadedBytes = utf8ByteLength(offloadedPromptText)
-  if (offloadedBytes > safeBytes) {
-    throw new Error([
-      `Full-prompt wrapper for ${agent} ${step.id} still exceeds the safe Netlify runner budget.`,
-      `Wrapper prompt: ${offloadedBytes.toLocaleString()} bytes.`,
-      `Safe budget: ${safeBytes.toLocaleString()} bytes.`,
-      `Blob: ${blobRef.store}/${blobRef.key}.`,
-    ].join(' '))
-  }
   return {
-    promptText: offloadedPromptText,
-    compactPromptText: compactPromptText && metrics.compactPromptBytes <= safeBytes ? compactPromptText : '',
+    promptText,
+    compactPromptText: metrics.compactPromptBytes < metrics.promptBytes
+      ? compactPromptText
+      : '',
     promptDelivery: {
-      mode: 'blob',
-      kind: 'full-prompt',
+      mode: 'sdk',
       ...metrics,
-      offloadedPromptBytes: offloadedBytes,
-      blobRef,
+      blobDisabled: blobOffloadDisabled(options),
       contextFetchPolicy: options.contextFetchPolicy || step.contextFetchPolicy || 'optional',
     },
-    blobRef,
   }
 }
 
@@ -1005,7 +792,6 @@ module.exports = {
   buildSafeCompactLocalPrompt,
   buildOffloadedRoundResults,
   buildFullPromptWrapper,
-  ensureFullPromptBlobOffload,
   prepareLocalPromptDelivery,
   applyContextFetchClassification,
   blobRefHasCompletedGithubConsumer,

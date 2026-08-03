@@ -63,6 +63,34 @@ test('wrapFailure returns unknown errors untouched', () => {
   assert.equal(wrapFailure(original, {}), original)
 })
 
+test('wrapFailure gives actionable SDK prompt and blob guidance without copying values', () => {
+  const promptError = Object.assign(
+    new Error('The prompt cannot be delivered within the configured byte ceiling.'),
+    { code: 'prompt-too-large' },
+  )
+  const expiredError = Object.assign(
+    new Error('The Agent Runner prompt reference has expired.'),
+    { code: 'prompt-ref-expired' },
+  )
+  const blobError = Object.assign(
+    new Error('The prompt blob could not be stored.'),
+    { code: 'blob-write-failed' },
+  )
+
+  const wrappedPrompt = wrapFailure(promptError)
+  const wrappedExpired = wrapFailure(expiredError)
+  const wrappedBlob = wrapFailure(blobError)
+  assert.ok(wrappedPrompt instanceof Error)
+  assert.ok(wrappedExpired instanceof Error)
+  assert.ok(wrappedBlob instanceof Error)
+  assert.match(wrappedPrompt.message, /inline or blob delivery limits/)
+  assert.equal(/** @type {Error & { code?: string }} */ (wrappedPrompt).code, 'prompt_too_large')
+  assert.match(wrappedExpired.message, /Start a fresh run/)
+  assert.equal(/** @type {Error & { code?: string }} */ (wrappedExpired).code, 'prompt_ref_expired')
+  assert.match(wrappedBlob.message, /selected site and NETLIFY_AUTH_TOKEN access/)
+  assert.equal(/** @type {Error & { code?: string }} */ (wrappedBlob).code, 'blob_delivery_failed')
+})
+
 test('describeRunFailure prepends guidance when matched and passes detail through otherwise', () => {
   const { describeRunFailure } = require('../../src/integrations/netlify/failure-guidance')
   const explained = describeRunFailure('The Codex model is currently at capacity. Retrying automatically...', {})

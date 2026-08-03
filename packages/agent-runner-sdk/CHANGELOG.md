@@ -4,6 +4,19 @@ All notable changes to `nax-agent-runner-sdk` are recorded here.
 
 ## Unreleased
 
+## 0.2.0-next.2 - 2026-08-03
+
+- Added attributable-session Netlify Git publishing with restart-safe
+  checkpoints and explicit `published`, `unsupported`, and typed failure
+  outcomes.
+- Added pure recovery recommendations and optional idempotent GitHub
+  comment, check-run, and label presenters with value-free redaction.
+- Kept the optional Netlify CLI transport fail-closed after source-level
+  verification found no released CLI with the complete SDK lifecycle
+  contract.
+- Skip GitHub PR creation when the exact current session explicitly has no
+  result diff and no pull request exists.
+
 ## 0.2.0-next.1 - 2026-08-03
 
 - Fetch the terminal runner diff when the service reports a changed successful

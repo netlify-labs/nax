@@ -427,6 +427,12 @@ export function createHttpTransport(
             'The site repository is not covered by the GitHub Coding installation.',
           )
         }
+        if (/publish to production already in progress/i.test(backendMessage)) {
+          throw new BasicAgentRunnerSdkError(
+            'publish-in-progress',
+            'Agent Runner production publishing is already in progress.',
+          )
+        }
         throw errorForResponse(response)
       }
       return response

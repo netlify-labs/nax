@@ -83,6 +83,7 @@ type LandingProgress = {
   committedSessionIds?: string[]
   expectedPrHeadSha?: string          // compare-and-swap guard for GitHub merge
   mergedSha?: string
+  publishRequested?: boolean
   published?: boolean
 }
 ```
@@ -180,7 +181,23 @@ interface Transport {
 - Create POSTs → replay only on provably-pre-transmission failure (DNS failure, ECONNREFUSED, connect-phase timeout). Post-write resets/read-timeouts/ambiguous statuses → typed ambiguity carrying `{ effectiveInput, sentAt, failedAt }` (§6.7).
 - Token redaction on every error detail; `errorCodeForStatus` (401→auth, 403→permission, 404→not_found, 400/422→validation, 429→rate_limited); `onTelemetry` value-free (method, pathname, status only — per the auth plan).
 
-### 3.2 cliTransport — `netlify --version` gate on first use: below tested minimum → typed `cli-transport-incompatible`; binary absent → `cli-transport-unavailable`. (The GH action pins `netlify-cli@24.8.1` for exactly this reason.)
+### 3.2 cliTransport
+
+**Verification result (2026-08-03): intentionally unsupported.** The Action-pinned
+Netlify CLI `24.8.1` and current stable `27.0.2` expose only
+`agents:create`, `agents:list`, `agents:show`, and `agents:stop`. They do not
+provide a complete machine-readable contract for follow-up sessions, exact
+session lookup/listing and cancellation, caller-controlled pagination, or
+landing member actions. Therefore there is no proven minimum version and the
+SDK does not expose `transport:'cli'`. HTTP remains the default built-in
+transport. See
+[`docs/ai/agent-runner-sdk-cli-transport-evidence.md`](../ai/agent-runner-sdk-cli-transport-evidence.md).
+
+If a future CLI release supplies the complete contract, gate its first use
+with `netlify --version`: a missing binary throws
+`cli-transport-unavailable`, and a version below the tested minimum throws
+`cli-transport-incompatible` before mutation. Until then, never infer identity
+from timestamps or human-readable output.
 
 ---
 
@@ -319,10 +336,31 @@ Backend facts: runners don't create result branches (`result_branch` legacy); `c
      - Call GitHub's merge endpoint with `sha: landing.expectedPrHeadSha`. A head mismatch / GitHub `409` becomes typed `pr-head-changed`; it never retries or merges a newer head implicitly. Keep `422` in the general validation mapping, but do not classify every `422` as head drift.
      - Crash resume reuses the persisted expected SHA; a lost successful response is reconciled by re-reading the PR's merged state.
      - No token → `github-token-required` (or `prOpen` for `'auto'`).
-- **`netlifyGitPublish`**: `publish_to_production` (atomic; already-in-progress surfaced as in-flight, re-polled).
+- **`netlifyGitPublish`**: `publish_to_production` (atomic; the backend's exact
+  HTTP `400` “already in progress” response is normalized to
+  `publish-in-progress`, treated as in-flight, and re-polled). Persist
+  `publishRequested` after acceptance/in-flight adoption, then require the
+  exact current session's `is_published` before persisting `published`.
+  Runner `merge_commit_sha` and successful execution are not publication
+  proof.
 - **`unsupported`** (zip/drop): explicit outcome.
 - **Resumable:** each step consults live state (`pr_url`, `pr_state`, session `commit_sha`, in-progress flags, GitHub merged-state) and skips completed steps; progress recorded in `handle.landing`; crash-recovery tested (§9).
 - Consumers: RE = `'merge'`; nax + GH Action = `'pr'` (GH-action auto-merge = recorded future option).
+
+### 6.1.1 Recovery and optional GitHub presentation
+
+`recommendRecovery` is advisory and consumes either ambiguity evidence or a
+serialized handle plus live runner/session/PR state. Its closed action union
+contains only exact result refresh, exact-marker reconciliation, persisted
+landing resume, deadline stop, changed-head escalation, manual review, or no
+action. It has no generic retry/new-head merge variant.
+
+The optional GitHub comment presenter uses a stable marker and explicit bot
+login to create once and update the same bot-owned comment after restart. It
+renders only safe failure metadata, sanitized links, handle version, and
+generated recovery/retry guidance; prompt/token/request-marker/blob values are
+redacted. Check-run upsert and label ensure adapters are exported as separate
+capabilities and are never engine or comment side effects.
 
 ### 6.2 Retry — capacity/rate-limit/platform-server auto-retry via `shouldRetry` + `retry(handle, { failure })`, bounded by `policy.retryBudget` and the original absolute deadline. `run()` applies the same allowlist in-process. `retry(RunHandle)` copies the semantic start input and creates a replacement runner; `retry(SessionHandle)` copies `sessionInput` and creates a replacement follow-up session on the same runner. Both use the injected exponential-jitter policy, generate a **new requestId for the new logical create attempt**, update the returned handle's effective input/current session, increment the retry counter, persist safe category/code/schedule metadata through `onRetryCheckpoint` before replacement I/O, and **preserve the original `deadlineAt`**. Replacement-run ambiguity is reconciled without resetting the original policy or consumed budget. Reusing a prior request marker across logical attempts is forbidden. A transport replay after a provably-pre-transmission failure remains the same logical attempt and keeps its marker. Auth, validation, argv-too-long, prompt/blob, API-drift, ambiguity/session-conflict, terminal, timeout/cancel, and GitHub head-drift failures never auto-retry.
 ### 6.3 Idempotency — caller-owned; handle = anchor; ambiguity → §6.7.

@@ -3,8 +3,9 @@
 Typed, resumable access to Netlify Agent Runner.
 
 `nax-agent-runner-sdk` provides a stateless execution engine, an HTTP transport,
-versioned durable handles, ambiguity reconciliation, and safe GitHub landing.
-It supports Node.js 18 and newer, ESM, CommonJS, and strict TypeScript.
+versioned durable handles, ambiguity reconciliation, safe GitHub landing, and
+Netlify Git production publishing. It supports Node.js 18 and newer, ESM,
+CommonJS, and strict TypeScript.
 
 ## Install
 
@@ -125,8 +126,15 @@ Important constructor options include:
 | `onTelemetry` | Receives redacted auth/transport events. |
 
 `fetch`, `sleep`, `now`, `random`, and `generateRequestId` can be injected for
-tests. HTTP is the only built-in Phase 1 transport; the public `Transport`
-interface supports other implementations.
+tests. HTTP is the only built-in transport; the public `Transport` interface
+supports other implementations.
+
+There is no built-in Netlify CLI transport. Source verification against both
+the Action-pinned CLI `24.8.1` and stable CLI `27.0.2` found no complete
+machine-readable contract for follow-up sessions, session cancellation,
+pagination, reconciliation, or landing member actions. The SDK will not
+expose a partial adapter or infer identity from human output. See the
+[CLI transport evidence](https://github.com/netlify-labs/nax/blob/master/docs/ai/agent-runner-sdk-cli-transport-evidence.md).
 
 ### HTTP API styles
 
@@ -264,14 +272,17 @@ independently.
 
 ## Landing
 
-Phase 1's default handler supports GitHub-origin runners:
+The default handler resolves landing by origin:
 
 - `none` returns `skipped`.
-- `pr` creates or resumes a pull request and returns `prOpen`.
-- `merge` creates/resumes the PR and uses `githubToken` to compare-and-swap
-  merge the exact observed head.
-- `auto` merges when a GitHub token is configured and otherwise returns the
-  open PR.
+- For GitHub, `pr` creates or resumes a pull request and returns `prOpen`;
+  `merge` compare-and-swap merges the exact observed head with `githubToken`;
+  and `auto` merges when that token exists or otherwise returns the open PR.
+- For Netlify Git, `publish` and `auto` invoke
+  `publish_to_production`, resume the backend's atomic in-progress response,
+  and return `published` only after the exact current session reports
+  `is_published: true`.
+- Zip/drop and incompatible origin/mode combinations return `unsupported`.
 
 Follow-up landing commits the exact `handle.currentSessionId`; a stale
 runner-level merge SHA from an earlier session is never accepted. GitHub merge
@@ -294,9 +305,11 @@ type LandingOutcome =
   | { kind: 'skipped' }
 ```
 
-Netlify Git publishing is a Phase 3 implementation. In Phase 1, non-GitHub
-origins return `unsupported`; `published` remains part of the stable result
-contract and may also be returned by an injected `landingHandler`.
+Netlify Git publishing checkpoints `landing.publishRequested` after the
+backend accepts or reports an already-active publish, then checkpoints
+`landing.published` after current-session verification. A restart skips
+accepted and completed work. Runner-level `merge_commit_sha` and successful
+execution are never treated as publication proof.
 
 Landing failures are returned as data rather than thrown. Persist both the
 returned handle and every handle passed to `onLandingCheckpoint`. Retry
@@ -395,6 +408,48 @@ Transport retry remains operation-specific. Network/request timeouts,
 authentication, permission, validation, argv-too-long, terminal failures,
 prompt/blob failures, API drift, ambiguous creates/session conflicts, and
 GitHub head drift never create automatic replacement attempts.
+
+## Recovery and GitHub presenters
+
+`recommendRecovery` is a pure advisory layer over a serialized handle and
+fresh runner/session/PR evidence:
+
+```ts
+import {
+  recommendRecovery,
+  upsertGithubFailureComment,
+} from 'nax-agent-runner-sdk'
+
+const recovery = recommendRecovery({
+  kind: 'live',
+  serializedHandle,
+  runner,
+  session,
+  pullRequest,
+})
+
+await upsertGithubFailureComment({
+  serializedHandle,
+  failure,
+  links: { runnerUrl, sessionUrl, prUrl },
+  recovery,
+}, commentAdapter)
+```
+
+Recovery actions are limited to exact snapshot/result refresh, bounded
+request-marker reconciliation, persisted landing resume, deadline stop,
+changed-head escalation, manual review, or no action. There is deliberately no
+generic retry action and no action that adopts or merges a newer PR head.
+
+GitHub failure comments use one stable marker and update only a comment owned
+by the configured bot login. The renderer includes safe category/code/stage,
+links without query strings, handle version, and bounded recovery/retry
+guidance. It redacts prompts, bearer/token assignments, request markers and
+IDs, and prompt/blob-delivery values.
+
+`upsertGithubFailureCheck` and `ensureGithubFailureLabel` are separate optional
+adapters. Calling the comment presenter never creates a check run or label;
+consumers opt into each capability independently.
 
 ## BlobStore and prompt references
 

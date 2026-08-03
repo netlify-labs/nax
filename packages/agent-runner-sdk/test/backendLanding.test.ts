@@ -3,7 +3,9 @@ import test from 'node:test'
 
 import {
   AGENT_RUNNER_SDK_HANDLE_VERSION,
+  BasicAgentRunnerSdkError,
   createAgentRunnerSdk,
+  HttpResponseError,
 } from '../src/index.js'
 import type {
   EffectiveStartInput,
@@ -181,6 +183,28 @@ test('first GitHub landing invokes pull_request and returns resumable prOpen sta
   )
   assert.equal(resumed.landing.kind, 'prOpen')
   assert.equal(memberCalls, 1)
+})
+
+test('unchanged GitHub landing skips PR creation when no PR exists', async () => {
+  let memberCalls = 0
+  const transport = fakeTransport({
+    getRunner: async () => runner(),
+    getSession: async () => session({ hasResultDiff: false }),
+    member: async <A extends MemberAction>(
+      _runnerId: string,
+      _action: A,
+      _input: MemberInput<A>,
+    ): Promise<MemberResult<A>> => {
+      memberCalls += 1
+      throw new Error('unchanged landing must not invoke a member action')
+    },
+  })
+  const sdk = createAgentRunnerSdk({ transport })
+
+  const landed = await sdk.land(runHandle('merge'))
+
+  assert.deepEqual(landed.landing, { kind: 'skipped' })
+  assert.equal(memberCalls, 0)
 })
 
 test('follow-up landing commits the exact current session and ignores a stale runner SHA', async () => {
@@ -515,7 +539,7 @@ test('landing never targets main and reports unsupported and skipped origins', a
   }
   assert.equal(memberCalls, 0)
 
-  for (const origin of ['zip', 'drop', 'netlify-git']) {
+  for (const origin of ['zip', 'drop']) {
     const originSdk = createAgentRunnerSdk({
       transport: fakeTransport({
         getRunner: async () => runner({ codeOrigin: origin }),
@@ -529,8 +553,310 @@ test('landing never targets main and reports unsupported and skipped origins', a
     })
   }
 
+  const netlifyGitPr = await createAgentRunnerSdk({
+    transport: fakeTransport({
+      getRunner: async () => runner({ codeOrigin: 'netlify-git' }),
+      getSession: async () => session(),
+    }),
+  }).land(runHandle('pr'))
+  assert.deepEqual(netlifyGitPr.landing, {
+    kind: 'unsupported',
+    reason: 'Landing mode pr is unsupported for netlify-git runners.',
+  })
+
+  const githubPublish = await createAgentRunnerSdk({
+    transport: fakeTransport({
+      getRunner: async () => runner(),
+      getSession: async () => session(),
+    }),
+  }).land(runHandle('publish'))
+  assert.deepEqual(githubPublish.landing, {
+    kind: 'unsupported',
+    reason: 'Publish landing is unsupported for github runners.',
+  })
+
   const skipped = await createAgentRunnerSdk({
     transport: fakeTransport(),
   }).land(runHandle('none'))
   assert.deepEqual(skipped.landing, { kind: 'skipped' })
+})
+
+test('netlify-git publish and auto use the current session publication state', async () => {
+  for (const mode of ['publish', 'auto'] as const) {
+    let memberCalls = 0
+    let sessionReads = 0
+    const checkpoints: RunHandle[] = []
+    const sdk = createAgentRunnerSdk({
+      transport: fakeTransport({
+        getRunner: async () => runner({
+          codeOrigin: 'netlify-git',
+          latestSessionIsPublished: true,
+        }),
+        getSession: async () => {
+          sessionReads += 1
+          return session({
+            isPublished: sessionReads > 1,
+            ...(sessionReads > 1
+              ? { deployUrl: 'https://published.example.test' }
+              : {}),
+          })
+        },
+        member: async <A extends MemberAction>(
+          _runnerId: string,
+          action: A,
+          _input: MemberInput<A>,
+        ): Promise<MemberResult<A>> => {
+          assert.equal(action, 'publish_to_production')
+          memberCalls += 1
+          return runner({
+            codeOrigin: 'netlify-git',
+            latestSessionIsPublished: true,
+          }) as MemberResult<A>
+        },
+      }),
+      pollIntervalMs: 5,
+      now: () => 0,
+      sleep: async () => {},
+      onLandingCheckpoint: (checkpoint) => {
+        checkpoints.push(checkpoint as RunHandle)
+      },
+    })
+
+    const landed = await sdk.land(runHandle(mode, {
+      origin: {
+        codeOrigin: 'netlify-git',
+        branch: 'feature/base',
+      },
+    }))
+
+    assert.deepEqual(landed.landing, {
+      kind: 'published',
+      deployUrl: 'https://published.example.test',
+    })
+    assert.equal(memberCalls, 1)
+    assert.equal(landed.handle.landing?.publishRequested, true)
+    assert.equal(landed.handle.landing?.published, true)
+    assert.equal(checkpoints.length, 2)
+    assert.equal(checkpoints[0]?.landing?.publishRequested, true)
+    assert.equal(checkpoints[0]?.landing?.published, undefined)
+    assert.equal(checkpoints[1]?.landing?.published, true)
+
+    const resumed = await sdk.land(
+      sdk.parseHandle(sdk.serializeHandle(landed.handle)) as RunHandle,
+    )
+    assert.equal(resumed.landing.kind, 'published')
+    assert.equal(memberCalls, 1)
+  }
+})
+
+test('netlify-git publish adopts an atomic in-progress conflict and resumes without replay', async () => {
+  for (const persistedRequest of [false, true]) {
+    let memberCalls = 0
+    let sessionReads = 0
+    const sdk = createAgentRunnerSdk({
+      transport: fakeTransport({
+        getRunner: async () => runner({ codeOrigin: 'netlify-git' }),
+        getSession: async () => {
+          sessionReads += 1
+          return session({
+            isPublished: sessionReads > 1,
+            ...(sessionReads > 1
+              ? { deployUrl: 'https://published.example.test' }
+              : {}),
+          })
+        },
+        member: async <A extends MemberAction>(
+          _runnerId: string,
+          action: A,
+          _input: MemberInput<A>,
+        ): Promise<MemberResult<A>> => {
+          assert.equal(action, 'publish_to_production')
+          memberCalls += 1
+          throw new BasicAgentRunnerSdkError(
+            'publish-in-progress',
+            'Agent Runner production publishing is already in progress.',
+          )
+        },
+      }),
+      pollIntervalMs: 5,
+      now: () => 0,
+      sleep: async () => {},
+    })
+    const handle = runHandle('publish', {
+      origin: { codeOrigin: 'netlify-git' },
+      ...(persistedRequest
+        ? { landing: { publishRequested: true } }
+        : {}),
+    })
+
+    const landed = await sdk.land(handle)
+
+    assert.equal(landed.landing.kind, 'published')
+    assert.equal(memberCalls, persistedRequest ? 0 : 1)
+    assert.equal(landed.handle.landing?.published, true)
+  }
+})
+
+test('netlify-git publish maps auth, conflict, and timeout failures with resumable state', async () => {
+  const auth = await createAgentRunnerSdk({
+    transport: fakeTransport({
+      getRunner: async () => runner({ codeOrigin: 'netlify-git' }),
+      getSession: async () => session({ isPublished: false }),
+      member: async () => {
+        throw new HttpResponseError(
+          'auth-invalid',
+          401,
+          '/agent_runners/runner-1/publish_to_production',
+        )
+      },
+    }),
+  }).land(runHandle('publish', {
+    origin: { codeOrigin: 'netlify-git' },
+  }))
+  assert.equal(auth.landing.kind, 'failed')
+  if (auth.landing.kind !== 'failed') {
+    assert.fail('expected an auth-classified publish failure')
+  }
+  assert.equal(auth.landing.step, 'publish')
+  assert.equal(auth.landing.failure.category, 'authentication')
+
+  const conflict = await createAgentRunnerSdk({
+    transport: fakeTransport({
+      getRunner: async () => runner({ codeOrigin: 'netlify-git' }),
+      getSession: async () => session({ isPublished: false }),
+      member: async () => {
+        throw new HttpResponseError(
+          'http-error',
+          409,
+          '/agent_runners/runner-1/publish_to_production',
+        )
+      },
+    }),
+  }).land(runHandle('publish', {
+    origin: { codeOrigin: 'netlify-git' },
+  }))
+  assert.equal(conflict.landing.kind, 'failed')
+  if (conflict.landing.kind !== 'failed') {
+    assert.fail('expected a conflict-classified publish failure')
+  }
+  assert.equal(conflict.landing.step, 'publish')
+  assert.equal(conflict.landing.failure.category, 'landing')
+  assert.equal(conflict.landing.failure.code, 'http-error')
+
+  let nowReads = 0
+  const timedOut = await createAgentRunnerSdk({
+    transport: fakeTransport({
+      getRunner: async () => runner({
+        codeOrigin: 'netlify-git',
+        latestSessionIsPublished: true,
+      }),
+      getSession: async () => session({ isPublished: false }),
+      member: async <A extends MemberAction>(
+        _runnerId: string,
+        action: A,
+        _input: MemberInput<A>,
+      ): Promise<MemberResult<A>> => {
+        assert.equal(action, 'publish_to_production')
+        return runner({
+          codeOrigin: 'netlify-git',
+          latestSessionIsPublished: true,
+        }) as MemberResult<A>
+      },
+    }),
+    pollIntervalMs: 5,
+    now: () => {
+      nowReads += 1
+      return nowReads < 3 ? 0 : 10
+    },
+    sleep: async () => {},
+  }).land(runHandle('auto', {
+    origin: { codeOrigin: 'netlify-git' },
+    policy: {
+      landing: 'auto',
+      deadlineAt: 10,
+      retryBudget: { capacity: 0 },
+    },
+  }))
+
+  assert.equal(timedOut.landing.kind, 'failed')
+  if (timedOut.landing.kind !== 'failed') {
+    assert.fail('expected a timeout-classified publish failure')
+  }
+  assert.equal(timedOut.landing.step, 'publish')
+  assert.equal(timedOut.landing.failure.category, 'timeout')
+  assert.equal(timedOut.handle.landing?.publishRequested, true)
+  assert.equal(timedOut.handle.landing?.published, undefined)
+})
+
+test('netlify-git publish surfaces backend worker failures without retrying', async () => {
+  let memberCalls = 0
+  let runnerReads = 0
+  const landed = await createAgentRunnerSdk({
+    transport: fakeTransport({
+      getRunner: async () => {
+        runnerReads += 1
+        return runner({
+          codeOrigin: 'netlify-git',
+          ...(runnerReads > 1
+            ? {
+                mergeCommitIsBeingCreated: false,
+                mergeCommitError: 'Cannot publish because production moved',
+              }
+            : { mergeCommitIsBeingCreated: true }),
+        })
+      },
+      getSession: async () => session({ isPublished: false }),
+      member: async <A extends MemberAction>(
+        _runnerId: string,
+        action: A,
+        _input: MemberInput<A>,
+      ): Promise<MemberResult<A>> => {
+        assert.equal(action, 'publish_to_production')
+        memberCalls += 1
+        return runner({
+          codeOrigin: 'netlify-git',
+          mergeCommitIsBeingCreated: true,
+        }) as MemberResult<A>
+      },
+    }),
+    pollIntervalMs: 5,
+    now: () => 0,
+    sleep: async () => {},
+  }).land(runHandle('publish', {
+    origin: { codeOrigin: 'netlify-git' },
+  }))
+
+  assert.equal(landed.landing.kind, 'failed')
+  if (landed.landing.kind !== 'failed') {
+    assert.fail('expected a backend publish failure')
+  }
+  assert.equal(landed.landing.step, 'publish')
+  assert.equal(
+    landed.landing.failure.code,
+    'publish-to-production-failed',
+  )
+  assert.equal(memberCalls, 1)
+  assert.equal(landed.handle.landing?.publishRequested, true)
+
+  const resumed = await createAgentRunnerSdk({
+    transport: fakeTransport({
+      getRunner: async () => runner({
+        codeOrigin: 'netlify-git',
+        mergeCommitIsBeingCreated: false,
+        mergeCommitError: 'Cannot publish because production moved',
+      }),
+      getSession: async () => session({ isPublished: false }),
+      member: async <A extends MemberAction>(
+        _runnerId: string,
+        _action: A,
+        _input: MemberInput<A>,
+      ): Promise<MemberResult<A>> => {
+        memberCalls += 1
+        return runner() as MemberResult<A>
+      },
+    }),
+  }).land(landed.handle)
+
+  assert.equal(resumed.landing.kind, 'failed')
+  assert.equal(memberCalls, 1)
 })

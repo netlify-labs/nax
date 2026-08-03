@@ -17,6 +17,7 @@ export interface LandingProgress {
   committedSessionIds?: string[]
   expectedPrHeadSha?: string
   mergedSha?: string
+  publishRequested?: boolean
   published?: boolean
 }
 
@@ -380,6 +381,12 @@ function parseLandingProgress(value: unknown): LandingProgress | undefined {
     'landing.expectedPrHeadSha',
   )
   const mergedSha = optionalString(record.mergedSha, 'landing.mergedSha')
+  if (
+    record.publishRequested !== undefined
+    && typeof record.publishRequested !== 'boolean'
+  ) {
+    invalidHandle('landing.publishRequested must be a boolean.')
+  }
   if (record.published !== undefined && typeof record.published !== 'boolean') {
     invalidHandle('landing.published must be a boolean.')
   }
@@ -389,6 +396,9 @@ function parseLandingProgress(value: unknown): LandingProgress | undefined {
     ...(committedSessionIds === undefined ? {} : { committedSessionIds }),
     ...(expectedPrHeadSha === undefined ? {} : { expectedPrHeadSha }),
     ...(mergedSha === undefined ? {} : { mergedSha }),
+    ...(record.publishRequested === undefined
+      ? {}
+      : { publishRequested: record.publishRequested }),
     ...(record.published === undefined
       ? {}
       : { published: record.published }),

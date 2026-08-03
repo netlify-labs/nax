@@ -72,6 +72,14 @@ the same `Runner` and `Session` types.
 You may inject a custom object implementing `Transport`. Tests can also inject
 `fetch`, `sleep`, `now`, `random`, and `generateRequestId`.
 
+<Callout type="info">
+  There is no built-in Netlify CLI transport. CLI versions 24.8.1 and 27.0.2
+  do not expose complete machine-readable follow-up, session cancellation,
+  pagination, reconciliation, or landing operations. HTTP remains the safe
+  built-in transport; the SDK does not infer session identity from CLI prose
+  or timestamps.
+</Callout>
+
 `onTelemetry` receives value-free request metadata and API-drift events.
 Tokens, prompts, response bodies, and private request markers are redacted.
 
@@ -290,16 +298,23 @@ The `LandingOutcome` union includes:
 | `failed` | `commit`, `pr`, `merge`, or `publish` failed with a classification. |
 | `skipped` | Landing policy was `none`. |
 
-Phase 1's default handler supports GitHub `pr`, `merge`, `auto`, and `none`.
-For follow-ups it commits the exact current session; stale runner-level commit
-state from an earlier session cannot short-circuit the current one. Merge
-persists the live PR head and sends it as a compare-and-swap guard. Head drift
-fails closed.
+The default handler supports GitHub `pr`, `merge`, and `auto`. For follow-ups
+it commits the exact current session; stale runner-level commit state from an
+earlier session cannot short-circuit the current one. Merge persists the live
+PR head and sends it as a compare-and-swap guard. Head drift fails closed.
 
 `merge` requires `githubToken`. GitHub `auto` merges only when that token is
-configured; otherwise it returns `prOpen`. Netlify Git publishing is added in
-Phase 3, so non-GitHub origins are `unsupported` in Phase 1. An injected custom
-`landingHandler` may return any valid outcome.
+configured; otherwise it returns `prOpen`.
+
+For Netlify Git, `publish` and `auto` call `publish_to_production`. The handle
+checkpoints an accepted/in-progress request before polling and checkpoints
+completion only when the exact current session reports `is_published: true`.
+A stale runner-level merge SHA or successful execution is not publication
+proof. Restarts resume polling without duplicating an accepted action. The
+published deploy URL is included when the session exposes one.
+
+Zip/drop and incompatible origin/mode combinations return `unsupported`. An
+injected custom `landingHandler` may return any valid outcome.
 
 Landing failures are values, not thrown exceptions. Always inspect them
 separately:
@@ -525,6 +540,50 @@ and unknown failures. GitHub profiles are exported separately.
 `FailureClassification` with title, message, remediation, severity,
 retryability, user-action, and stage metadata. It deliberately does not expose
 raw prompt, token, or backend error text.
+
+## Recover and present GitHub failures
+
+`recommendRecovery` accepts either an ambiguous create/session request or a
+serialized handle with fresh runner, session, and pull-request evidence:
+
+```ts copy
+import {
+  recommendRecovery,
+  upsertGithubFailureComment,
+} from 'nax-agent-runner-sdk'
+
+const recovery = recommendRecovery({
+  kind: 'live',
+  serializedHandle,
+  runner,
+  session,
+  pullRequest,
+  failure,
+})
+
+await upsertGithubFailureComment({
+  serializedHandle,
+  failure,
+  links: { runnerUrl, sessionUrl, prUrl },
+  recovery,
+}, commentAdapter)
+```
+
+The typed recovery action can refresh the exact result, reconcile an uncertain
+create with its bounded window and private request marker, resume a persisted
+landing step, stop the deadline target, or escalate a changed PR head. It
+never recommends prompt-similarity adoption, a forbidden generic retry, or
+merging a newer head.
+
+The comment presenter creates or updates one bot-owned comment identified by
+`GITHUB_FAILURE_COMMENT_MARKER`. It renders safe category/code/stage, sanitized
+links, handle version, and generated recovery/retry guidance. Prompts, token
+assignments, request markers/IDs, and blob-delivery values are redacted.
+
+Check runs and labels remain isolated opt-in capabilities:
+`upsertGithubFailureCheck` uses a stable external ID, while
+`ensureGithubFailureLabel` applies a bounded category label. Neither runs as a
+side effect of the comment presenter or core execution.
 
 ## Package compatibility and releases
 

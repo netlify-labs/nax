@@ -45,6 +45,16 @@ export {
   classifyGithubFailure,
 } from './failures/github.js'
 export {
+  recommendRecovery,
+} from './failures/recovery.js'
+export {
+  GITHUB_FAILURE_COMMENT_MARKER,
+  ensureGithubFailureLabel,
+  renderGithubFailureComment,
+  upsertGithubFailureCheck,
+  upsertGithubFailureComment,
+} from './failures/presenters.js'
+export {
   AGENT_RUNNER_SDK_HANDLE_VERSION,
   parseHandle,
   serializeHandle,
@@ -114,6 +124,24 @@ export type {
   FailureContext,
   FailureProfile,
 } from './failures/core.js'
+export type {
+  GithubRecoveryPullRequest,
+  RecoveryAction,
+  RecoveryConfidence,
+  RecoveryInput,
+  RecoveryRecommendation,
+} from './failures/recovery.js'
+export type {
+  GithubComment,
+  GithubFailureCheck,
+  GithubFailureCheckAdapter,
+  GithubFailureCommentAdapter,
+  GithubFailureCommentResult,
+  GithubFailureLabel,
+  GithubFailureLabelAdapter,
+  GithubFailureLinks,
+  GithubFailurePresentation,
+} from './failures/presenters.js'
 export type {
   AuthTelemetryEvent,
   AuthenticatedNetlifyClient,

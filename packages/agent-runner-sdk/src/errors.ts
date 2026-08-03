@@ -34,6 +34,7 @@ export type AgentRunnerSdkErrorCode =
   | 'capacity-exhausted'
   | 'argv-too-long'
   | 'missing-coding-installation'
+  | 'publish-in-progress'
   | 'invalid-handle'
   | 'unsupported-handle-version'
 

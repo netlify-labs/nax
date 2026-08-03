@@ -117,6 +117,7 @@ Important constructor options include:
 | `retryAttempts` | Transport attempts for retry-safe operations. |
 | `clockSkewAllowanceMs` | Reconciliation-window allowance; 5 seconds. |
 | `blobStore` | `BlobStore` used for prompt-reference delivery and terminal cleanup. |
+| `promptDelivery` | Final-byte budget, compactor, blob TTL, and tenant/key policy. |
 | `promptRefDelivery` | Compatibility override that turns a `BlobRef` into a runner fetch wrapper. |
 | `onBlobCleanupError` | Receives a value-free cleanup failure event; cleanup never changes the run result. |
 | `onLandingCheckpoint` | Persists irreversible landing progress before the next mutation. |
@@ -402,6 +403,7 @@ collision-resistant keys, mandatory TTLs, and hard size/lifetime ceilings:
 
 ```ts
 import {
+  compactPromptByBytes,
   createAgentRunnerSdk,
   createNetlifyBlobStore,
 } from 'nax-agent-runner-sdk'
@@ -411,24 +413,31 @@ const blobStore = createNetlifyBlobStore({
   token: process.env.NETLIFY_AUTH_TOKEN!,
 })
 
-const promptRef = await blobStore.put(
-  'artifact-art_123',
-  new TextEncoder().encode(largePrompt),
-  {
-    ttlSeconds: 24 * 60 * 60,
-    tenant: 'site_123/art_123',
-  },
-)
-
 const sdk = createAgentRunnerSdk({
   blobStore,
+  promptDelivery: {
+    // Defaults to NAX_SAFE_PROMPT_BYTES, then 16 KiB.
+    safeBytes: 16 * 1_024,
+    tenant: ({ siteId }) => `${siteId}/art_123`,
+    key: 'artifact-art_123',
+    // Optional: compactPromptByBytes or a deterministic domain compactor.
+    compact: compactPromptByBytes,
+  },
 })
 
 const handle = await sdk.start({
   siteId: process.env.NETLIFY_SITE_ID!,
-  promptRef,
+  prompt: largePrompt,
 })
 ```
+
+Raw prompts are measured after request-marker decoration. The SDK submits
+inline when the final UTF-8 payload fits, optionally compacts and remeasures,
+then uses `blobStore` as the fallback. Blob fallback stores the original
+semantic prompt and changes the effective handle input to the resulting
+`promptRef`, so retry reuses the same logical input. Inline and compact
+delivery keep the original semantic `prompt` in the handle. The submitted
+representation and exact byte counts live in `handle.promptDelivery`.
 
 The adapter stores a sentinel with the semantic prompt. Its runner instruction
 uses the runner's own site-scoped `netlify blobs:get` authorization and never
@@ -450,9 +459,14 @@ Existing stores can implement the `BlobStore` interface. The older
 `promptRefDelivery` option remains available as a delivery-only override; when
 it is used without `blobStore`, the caller continues to own cleanup.
 
-Reserve `requestMarkerOverheadBytes` when enforcing a submitted-prompt byte
-limit. An expired reference fails with `prompt-ref-expired`; do not extend it
-silently.
+`requestMarkerOverheadBytes` is exported for adapters that must pre-budget
+content. The SDK itself always measures after decoration, including at exact
+below/at/above boundaries and for multi-byte UTF-8 input. An expired reference
+fails with `prompt-ref-expired`; it is never silently re-uploaded.
+
+`classifySentinelEvidence` normalizes runner proof to `confirmed`, `failed`,
+`probable`, or `suspect` without returning the sentinel value. Use
+`blobOnlyNeedles` only for facts that cannot appear in the inline wrapper.
 
 ## Migrating a direct client
 
@@ -479,8 +493,8 @@ Migration requirements:
 4. Remove duplicate auth, retry, response normalization, and create replay
    logic.
 5. Use only `NETLIFY_AUTH_TOKEN`, or pass a token explicitly.
-6. Keep existing prompt offload wrapped around `promptRefDelivery` until the
-   Phase 2 BlobStore migration.
+6. Configure `blobStore` and `promptDelivery`, then remove consumer-owned
+   sizing, offload, sentinel, and cleanup branches.
 
 See
 [`examples/eventbridge-resume.ts`](./examples/eventbridge-resume.ts) for a

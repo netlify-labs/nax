@@ -48,6 +48,17 @@ import {
   submitStartOperation,
 } from './operations.js'
 import type {
+  PreparedFollowUpOperation,
+  PreparedStartOperation,
+} from './operations.js'
+import {
+  preparePromptDelivery,
+} from './prompts/delivery.js'
+import type {
+  PromptDeliveryAttempt,
+  PromptDeliveryPolicyOptions,
+} from './prompts/delivery.js'
+import type {
   LandingOutcome,
   ReconciliationResult,
   RunOutcome,
@@ -119,6 +130,7 @@ export interface AgentRunnerSdkOptions
   clockSkewAllowanceMs?: number
   promptRefDelivery?: (ref: BlobRef) => string | Promise<string>
   blobStore?: BlobStore
+  promptDelivery?: PromptDeliveryPolicyOptions
   onBlobCleanupError?: (event: BlobCleanupErrorEvent) => void
   githubToken?: string
   githubApiUrl?: string
@@ -389,6 +401,7 @@ export function createAgentRunnerSdk(
     clockSkewAllowanceMs,
     promptRefDelivery,
     blobStore,
+    promptDelivery: promptDeliveryPolicy,
     onBlobCleanupError,
     githubToken,
     githubApiUrl,
@@ -441,28 +454,129 @@ export function createAgentRunnerSdk(
       : { clockSkewAllowanceMs }),
   })
 
-  async function deliveryOptions(
-    input: StartInput | FollowUpInput,
-  ): Promise<{ deliveredPrompt?: string }> {
-    if (input.promptRef === undefined) return {}
-    if (input.promptRef.expiresAt <= now()) {
-      throw new BasicAgentRunnerSdkError(
-        'prompt-ref-expired',
-        'The Agent Runner prompt reference has expired.',
-      )
-    }
-    const delivery = promptRefDelivery
-      ?? (blobStore === undefined
-        ? undefined
-        : (ref: BlobRef) => blobStore.runnerFetchInstruction(ref).shell)
-    if (!delivery) {
-      throw new BasicAgentRunnerSdkError(
-        'validation-error',
-        'Prompt-reference delivery is not configured.',
-      )
-    }
+  function replaceStartPrompt(
+    input: EffectiveStartInput,
+    promptInput: { prompt: string } | { promptRef: BlobRef },
+  ): EffectiveStartInput {
+    const {
+      prompt: _prompt,
+      promptRef: _promptRef,
+      ...rest
+    } = input
+    return 'promptRef' in promptInput
+      ? { ...rest, promptRef: promptInput.promptRef }
+      : { ...rest, prompt: promptInput.prompt }
+  }
+
+  function replaceFollowUpPrompt(
+    input: EffectiveFollowUpInput,
+    promptInput: { prompt: string } | { promptRef: BlobRef },
+  ): EffectiveFollowUpInput {
+    const {
+      prompt: _prompt,
+      promptRef: _promptRef,
+      ...rest
+    } = input
+    return 'promptRef' in promptInput
+      ? { ...rest, promptRef: promptInput.promptRef }
+      : { ...rest, prompt: promptInput.prompt }
+  }
+
+  async function prepareStartDelivery(
+    input: StartInput,
+    rotateRequestId = false,
+  ): Promise<{
+      prepared: PreparedStartOperation
+      attempt: PromptDeliveryAttempt
+    }> {
+    const initial = prepareStartOperation(input, {
+      ...(generateRequestId === undefined
+        ? {}
+        : { randomUUID: generateRequestId }),
+      ...(input.promptRef === undefined
+        ? {}
+        : { deliveredPrompt: '' }),
+      ...(rotateRequestId ? { rotateRequestId: true } : {}),
+    })
+    const planned = await preparePromptDelivery({
+      promptInput: initial.effectiveInput,
+      decoratedPrompt: initial.submittedInput.prompt,
+      decorate: (deliveredPrompt) => prepareStartOperation(
+        initial.effectiveInput,
+        { deliveredPrompt },
+      ).submittedInput.prompt,
+      context: {
+        siteId: initial.effectiveInput.siteId,
+        operation: 'start',
+      },
+      ...(blobStore === undefined ? {} : { blobStore }),
+      ...(promptRefDelivery === undefined ? {} : { promptRefDelivery }),
+      ...(promptDeliveryPolicy === undefined
+        ? {}
+        : { policy: promptDeliveryPolicy }),
+      now,
+    })
+    const effectiveInput = replaceStartPrompt(
+      initial.effectiveInput,
+      planned.effectivePrompt,
+    )
     return {
-      deliveredPrompt: await delivery(input.promptRef),
+      prepared: prepareStartOperation(effectiveInput, {
+        ...(planned.deliveredPrompt === undefined
+          ? {}
+          : { deliveredPrompt: planned.deliveredPrompt }),
+      }),
+      attempt: planned.attempt,
+    }
+  }
+
+  async function prepareFollowUpDelivery(
+    handle: Handle,
+    input: FollowUpInput,
+    rotateRequestId = false,
+  ): Promise<{
+      prepared: PreparedFollowUpOperation
+      attempt: PromptDeliveryAttempt
+    }> {
+    const initial = prepareFollowUpOperation(input, {
+      ...(generateRequestId === undefined
+        ? {}
+        : { randomUUID: generateRequestId }),
+      ...(input.promptRef === undefined
+        ? {}
+        : { deliveredPrompt: '' }),
+      ...(rotateRequestId ? { rotateRequestId: true } : {}),
+    })
+    const planned = await preparePromptDelivery({
+      promptInput: initial.effectiveInput,
+      decoratedPrompt: initial.submittedInput.prompt,
+      decorate: (deliveredPrompt) => prepareFollowUpOperation(
+        initial.effectiveInput,
+        { deliveredPrompt },
+      ).submittedInput.prompt,
+      context: {
+        siteId: handle.siteId,
+        operation: 'followUp',
+        runnerId: handle.runnerId,
+      },
+      ...(blobStore === undefined ? {} : { blobStore }),
+      ...(promptRefDelivery === undefined ? {} : { promptRefDelivery }),
+      ...(promptDeliveryPolicy === undefined
+        ? {}
+        : { policy: promptDeliveryPolicy }),
+      now,
+    })
+    const effectiveInput = replaceFollowUpPrompt(
+      initial.effectiveInput,
+      planned.effectivePrompt,
+    )
+    return {
+      prepared: prepareFollowUpOperation(effectiveInput, {
+        ...(planned.deliveredPrompt === undefined
+          ? {}
+          : { deliveredPrompt: planned.deliveredPrompt }),
+      }),
+      attempt: planned.attempt,
     }
   }
 
@@ -570,13 +684,8 @@ export function createAgentRunnerSdk(
       deadlineMs,
       retryBudget: { capacity: retryCapacity },
     }
-    const delivery = await deliveryOptions(resolvedInput)
-    const prepared = prepareStartOperation(resolvedInput, {
-      ...(generateRequestId === undefined
-        ? {}
-        : { randomUUID: generateRequestId }),
-      ...delivery,
-    })
+    const planned = await prepareStartDelivery(resolvedInput)
+    const { prepared } = planned
     let submitted
     try {
       submitted = await submitStartOperation(
@@ -590,7 +699,12 @@ export function createAgentRunnerSdk(
         error.window,
         requestOptions,
       )
-      if (reconciled.kind === 'matched') return reconciled.handle
+      if (reconciled.kind === 'matched') {
+        return {
+          ...reconciled.handle,
+          promptDelivery: planned.attempt,
+        }
+      }
       throw error
     }
     const runner = submitted.value
@@ -623,6 +737,7 @@ export function createAgentRunnerSdk(
         retryBudget: { capacity: retryCapacity },
       },
       retries: { capacity: 0 },
+      promptDelivery: planned.attempt,
       currentSessionId: initialSession.sessionId,
     }
   }
@@ -896,14 +1011,12 @@ export function createAgentRunnerSdk(
     requestOptions?: TransportRequestOptions,
     rotateRequestId = false,
   ): Promise<SessionHandle> {
-    const delivery = await deliveryOptions(input)
-    const prepared = prepareFollowUpOperation(input, {
-      ...(generateRequestId === undefined
-        ? {}
-        : { randomUUID: generateRequestId }),
-      ...delivery,
-      ...(rotateRequestId ? { rotateRequestId: true } : {}),
-    })
+    const planned = await prepareFollowUpDelivery(
+      handle,
+      input,
+      rotateRequestId,
+    )
+    const { prepared } = planned
     try {
       const submitted = await submitFollowUpOperation(
         prepared,
@@ -925,6 +1038,7 @@ export function createAgentRunnerSdk(
         currentSessionId: submitted.value.sessionId,
         sessionId: submitted.value.sessionId,
         sessionInput: submitted.effectiveInput,
+        promptDelivery: planned.attempt,
       }
     } catch (error: unknown) {
       if (
@@ -942,7 +1056,12 @@ export function createAgentRunnerSdk(
             : {}),
         },
       )
-      if (reconciled.kind === 'matched') return reconciled.handle
+      if (reconciled.kind === 'matched') {
+        return {
+          ...reconciled.handle,
+          promptDelivery: planned.attempt,
+        }
+      }
       throw error
     }
   }
@@ -1049,14 +1168,8 @@ export function createAgentRunnerSdk(
       return retried
     }
 
-    const delivery = await deliveryOptions(handle.input)
-    const prepared = prepareStartOperation(handle.input, {
-      ...(generateRequestId === undefined
-        ? {}
-        : { randomUUID: generateRequestId }),
-      ...delivery,
-      rotateRequestId: true,
-    })
+    const planned = await prepareStartDelivery(handle.input, true)
+    const { prepared } = planned
     let submitted
     try {
       submitted = await submitStartOperation(
@@ -1080,6 +1193,7 @@ export function createAgentRunnerSdk(
           ? {}
           : { origin: reconciled.handle.origin }),
         input: reconciled.handle.input,
+        promptDelivery: planned.attempt,
         currentSessionId: reconciled.handle.currentSessionId,
       }
     }
@@ -1105,6 +1219,7 @@ export function createAgentRunnerSdk(
             },
           }),
       input: submitted.effectiveInput,
+      promptDelivery: planned.attempt,
       currentSessionId: initialSession.sessionId,
     }
   }

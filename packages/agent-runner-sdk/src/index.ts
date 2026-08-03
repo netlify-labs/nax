@@ -60,6 +60,13 @@ export {
   requestMarkerOverheadBytes,
 } from './operations.js'
 export {
+  DEFAULT_SAFE_PROMPT_BYTES,
+  classifySentinelEvidence,
+  compactPromptByBytes,
+  preparePromptDelivery,
+  promptFetchWrapper,
+} from './prompts/delivery.js'
+export {
   DEFAULT_CLOCK_SKEW_ALLOWANCE_MS,
 } from './reconciliation.js'
 export {
@@ -70,6 +77,19 @@ export {
   createHttpTransport,
 } from './transport/index.js'
 
+export type {
+  PreparePromptDeliveryOptions,
+  PreparedPromptDelivery,
+  PromptCompactionContext,
+  PromptCompactor,
+  PromptDeliveryAttempt,
+  PromptDeliveryContext,
+  PromptDeliveryKind,
+  PromptDeliveryPolicyOptions,
+  SentinelClassification,
+  SentinelEvidence,
+  SentinelVerdict,
+} from './prompts/delivery.js'
 export type {
   NetlifyBlobClient,
   NetlifyBlobStoreOptions,

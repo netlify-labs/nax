@@ -16,6 +16,12 @@ All notable changes to `nax-agent-runner-sdk` are recorded here.
   value-free typed storage failures.
 - Added restart-safe, best-effort prompt-ref cleanup on success, cancellation,
   and timeout while retaining failed-run refs for bounded retry.
+- Added final-decorated-byte prompt planning with inline, deterministic
+  compaction, and blob fallback modes; `NAX_SAFE_PROMPT_BYTES` defaults to
+  16 KiB and effective handles retain semantic input plus safe delivery
+  metadata.
+- Added sentinel evidence normalization for confirmed, failed, probable, and
+  suspect runner fetch outcomes.
 
 ## 0.1.0 - 2026-08-02
 

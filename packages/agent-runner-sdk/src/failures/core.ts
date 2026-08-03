@@ -473,7 +473,7 @@ export function classifyCoreFailure(
     || /argument list too long/i.test(text)) {
     return withContext(CORE_FAILURE_PROFILES.argvTooLong, context, override)
   }
-  if (code === 'prompt-too-large' || code === 'prompt-ref-expired'
+  if (code.startsWith('prompt-')
     || /\bprompt reference.{0,20}expired\b/i.test(text)) {
     return withContext(CORE_FAILURE_PROFILES.prompt, context, override)
   }

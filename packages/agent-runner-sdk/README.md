@@ -409,6 +409,48 @@ authentication, permission, validation, argv-too-long, terminal failures,
 prompt/blob failures, API drift, ambiguous creates/session conflicts, and
 GitHub head drift never create automatic replacement attempts.
 
+## Recovery and GitHub presenters
+
+`recommendRecovery` is a pure advisory layer over a serialized handle and
+fresh runner/session/PR evidence:
+
+```ts
+import {
+  recommendRecovery,
+  upsertGithubFailureComment,
+} from 'nax-agent-runner-sdk'
+
+const recovery = recommendRecovery({
+  kind: 'live',
+  serializedHandle,
+  runner,
+  session,
+  pullRequest,
+})
+
+await upsertGithubFailureComment({
+  serializedHandle,
+  failure,
+  links: { runnerUrl, sessionUrl, prUrl },
+  recovery,
+}, commentAdapter)
+```
+
+Recovery actions are limited to exact snapshot/result refresh, bounded
+request-marker reconciliation, persisted landing resume, deadline stop,
+changed-head escalation, manual review, or no action. There is deliberately no
+generic retry action and no action that adopts or merges a newer PR head.
+
+GitHub failure comments use one stable marker and update only a comment owned
+by the configured bot login. The renderer includes safe category/code/stage,
+links without query strings, handle version, and bounded recovery/retry
+guidance. It redacts prompts, bearer/token assignments, request markers and
+IDs, and prompt/blob-delivery values.
+
+`upsertGithubFailureCheck` and `ensureGithubFailureLabel` are separate optional
+adapters. Calling the comment presenter never creates a check run or label;
+consumers opt into each capability independently.
+
 ## BlobStore and prompt references
 
 The package ships a Netlify Blobs adapter with tenant-scoped,

@@ -347,6 +347,21 @@ Backend facts: runners don't create result branches (`result_branch` legacy); `c
 - **Resumable:** each step consults live state (`pr_url`, `pr_state`, session `commit_sha`, in-progress flags, GitHub merged-state) and skips completed steps; progress recorded in `handle.landing`; crash-recovery tested (§9).
 - Consumers: RE = `'merge'`; nax + GH Action = `'pr'` (GH-action auto-merge = recorded future option).
 
+### 6.1.1 Recovery and optional GitHub presentation
+
+`recommendRecovery` is advisory and consumes either ambiguity evidence or a
+serialized handle plus live runner/session/PR state. Its closed action union
+contains only exact result refresh, exact-marker reconciliation, persisted
+landing resume, deadline stop, changed-head escalation, manual review, or no
+action. It has no generic retry/new-head merge variant.
+
+The optional GitHub comment presenter uses a stable marker and explicit bot
+login to create once and update the same bot-owned comment after restart. It
+renders only safe failure metadata, sanitized links, handle version, and
+generated recovery/retry guidance; prompt/token/request-marker/blob values are
+redacted. Check-run upsert and label ensure adapters are exported as separate
+capabilities and are never engine or comment side effects.
+
 ### 6.2 Retry — capacity/rate-limit/platform-server auto-retry via `shouldRetry` + `retry(handle, { failure })`, bounded by `policy.retryBudget` and the original absolute deadline. `run()` applies the same allowlist in-process. `retry(RunHandle)` copies the semantic start input and creates a replacement runner; `retry(SessionHandle)` copies `sessionInput` and creates a replacement follow-up session on the same runner. Both use the injected exponential-jitter policy, generate a **new requestId for the new logical create attempt**, update the returned handle's effective input/current session, increment the retry counter, persist safe category/code/schedule metadata through `onRetryCheckpoint` before replacement I/O, and **preserve the original `deadlineAt`**. Replacement-run ambiguity is reconciled without resetting the original policy or consumed budget. Reusing a prior request marker across logical attempts is forbidden. A transport replay after a provably-pre-transmission failure remains the same logical attempt and keeps its marker. Auth, validation, argv-too-long, prompt/blob, API-drift, ambiguity/session-conflict, terminal, timeout/cancel, and GitHub head-drift failures never auto-retry.
 ### 6.3 Idempotency — caller-owned; handle = anchor; ambiguity → §6.7.
 ### 6.4 Cost/cancel — D11. · 6.5 No-op — D12.

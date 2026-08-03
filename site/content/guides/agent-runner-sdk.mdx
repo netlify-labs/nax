@@ -541,6 +541,50 @@ and unknown failures. GitHub profiles are exported separately.
 retryability, user-action, and stage metadata. It deliberately does not expose
 raw prompt, token, or backend error text.
 
+## Recover and present GitHub failures
+
+`recommendRecovery` accepts either an ambiguous create/session request or a
+serialized handle with fresh runner, session, and pull-request evidence:
+
+```ts copy
+import {
+  recommendRecovery,
+  upsertGithubFailureComment,
+} from 'nax-agent-runner-sdk'
+
+const recovery = recommendRecovery({
+  kind: 'live',
+  serializedHandle,
+  runner,
+  session,
+  pullRequest,
+  failure,
+})
+
+await upsertGithubFailureComment({
+  serializedHandle,
+  failure,
+  links: { runnerUrl, sessionUrl, prUrl },
+  recovery,
+}, commentAdapter)
+```
+
+The typed recovery action can refresh the exact result, reconcile an uncertain
+create with its bounded window and private request marker, resume a persisted
+landing step, stop the deadline target, or escalate a changed PR head. It
+never recommends prompt-similarity adoption, a forbidden generic retry, or
+merging a newer head.
+
+The comment presenter creates or updates one bot-owned comment identified by
+`GITHUB_FAILURE_COMMENT_MARKER`. It renders safe category/code/stage, sanitized
+links, handle version, and generated recovery/retry guidance. Prompts, token
+assignments, request markers/IDs, and blob-delivery values are redacted.
+
+Check runs and labels remain isolated opt-in capabilities:
+`upsertGithubFailureCheck` uses a stable external ID, while
+`ensureGithubFailureLabel` applies a bounded category label. Neither runs as a
+side effect of the comment presenter or core execution.
+
 ## Package compatibility and releases
 
 - Node.js 18, 20, and 22

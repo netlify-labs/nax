@@ -2,6 +2,16 @@
 
 All notable changes to `nax-agent-runner-sdk` are recorded here.
 
+## Unreleased
+
+- Added stable core and separate GitHub failure profiles with safe,
+  deterministic guidance metadata.
+- Added bounded in-process capacity/rate-limit/platform retry, serialized retry
+  reason/timing metadata, pre-I/O retry checkpoints, original-deadline
+  enforcement, and replacement-create reconciliation that preserves budget.
+- Kept transport replay operation-specific and prohibited automatic
+  replacement for unsafe or ambiguous failure categories.
+
 ## 0.1.0 - 2026-08-02
 
 Initial `next` candidate.

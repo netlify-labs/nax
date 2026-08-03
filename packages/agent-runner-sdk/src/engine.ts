@@ -14,12 +14,20 @@ import type {
 import {
   BasicAgentRunnerSdkError,
   CreateAmbiguousError,
-  HttpResponseError,
   InvalidApiShapeError,
   SessionAlreadyActiveError,
   SessionCreateAmbiguousError,
   isAgentRunnerSdkError,
 } from './errors.js'
+import {
+  classifyCoreFailure,
+} from './failures/core.js'
+import type {
+  FailureContext,
+} from './failures/core.js'
+import {
+  classifyGithubFailure,
+} from './failures/github.js'
 import {
   AGENT_RUNNER_SDK_HANDLE_VERSION,
   parseHandle,
@@ -51,6 +59,9 @@ import {
 import type {
   ReconcileSessionOptions,
 } from './reconciliation.js'
+import {
+  boundedRetryDelayMs,
+} from './retry.js'
 import { createBackendLandingHandler } from './landing/backend.js'
 import { createGithubLandingHandler } from './landing/github.js'
 import type { GithubMergeMethod } from './github/mergePr.js'
@@ -110,6 +121,7 @@ export interface AgentRunnerSdkOptions
   githubApiUrl?: string
   githubMergeMethod?: GithubMergeMethod
   onLandingCheckpoint?: (handle: Handle) => void | Promise<void>
+  onRetryCheckpoint?: (handle: Handle) => void | Promise<void>
 }
 
 export interface WaitForOptions extends TransportRequestOptions {
@@ -118,6 +130,10 @@ export interface WaitForOptions extends TransportRequestOptions {
 }
 
 export interface RunOptions extends WaitForOptions {}
+
+export interface RetryOptions extends TransportRequestOptions {
+  failure?: FailureClassification
+}
 
 export interface AgentRunnerSdk {
   readonly runtime: AgentRuntime
@@ -151,11 +167,11 @@ export interface AgentRunnerSdk {
   ): Promise<SessionHandle>
   retry(
     handle: RunHandle,
-    options?: TransportRequestOptions,
+    options?: RetryOptions,
   ): Promise<RunHandle>
   retry(
     handle: SessionHandle,
-    options?: TransportRequestOptions,
+    options?: RetryOptions,
   ): Promise<SessionHandle>
   shouldRetry(
     handle: Handle,
@@ -252,19 +268,15 @@ function terminalFailure(
   session: Session,
 ): FailureClassification {
   if (session.creditLimitExceeded) {
-    return {
-      category: 'capacity',
-      code: 'credit-limit-exceeded',
-      message: 'The Agent Runner credit limit was exceeded.',
-      retryable: false,
-    }
+    return classifyFailure(
+      { code: 'credit-limit-exceeded' },
+      { terminal: 'session' },
+    )
   }
-  return {
-    category: 'platform',
-    code: `terminal-${terminal}`,
-    message: 'The Agent Runner ended with a failure.',
-    retryable: false,
-  }
+  return classifyFailure(
+    session.resultText ?? { code: `terminal-${terminal}` },
+    { terminal: 'session' },
+  )
 }
 
 function toRunResult(
@@ -344,55 +356,15 @@ function landingStep(
   return handle.kind === 'session' ? 'commit' : 'pr'
 }
 
-export function classifyFailure(error: unknown): FailureClassification {
-  if (isAgentRunnerSdkError(error)) {
-    const code = error.code
-    let category: FailureClassification['category'] = 'unknown'
-    if (
-      code === 'auth-missing'
-      || code === 'auth-invalid'
-      || code === 'auth-expired'
-    ) category = 'authentication'
-    else if (code === 'auth-permission') category = 'permission'
-    else if (
-      code === 'validation-error'
-      || code === 'invalid-api-shape'
-      || code === 'invalid-handle'
-      || code === 'unsupported-handle-version'
-    ) category = 'validation'
-    else if (code === 'missing-coding-installation') category = 'permission'
-    else if (code === 'capacity-exhausted') category = 'capacity'
-    else if (code === 'rate-limited') category = 'rate-limit'
-    else if (code === 'network-error') category = 'network'
-    else if (code === 'request-timeout') category = 'timeout'
-    else if (code === 'pr-head-changed' || code === 'github-token-required') {
-      category = 'github'
-    } else if (code === 'http-error') category = 'platform'
-
-    const retryable = code === 'capacity-exhausted'
-      || code === 'rate-limited'
-      || code === 'network-error'
-      || code === 'request-timeout'
-      || (
-        error instanceof HttpResponseError
-        && error.status >= 500
-      )
-    return {
-      category,
-      code,
-      message: error.message,
-      retryable,
-      ...(error instanceof HttpResponseError
-        ? { status: error.status }
-        : {}),
-    }
-  }
-  return {
-    category: 'unknown',
-    code: 'unknown-error',
-    message: 'The Agent Runner operation failed.',
-    retryable: false,
-  }
+export function classifyFailure(
+  error: unknown,
+  context: FailureContext = {},
+): FailureClassification {
+  return classifyGithubFailure(
+    error,
+    context.stage === 'landing' ? {} : context,
+  )
+    ?? classifyCoreFailure(error, context)
 }
 
 export function createAgentRunnerSdk(
@@ -411,6 +383,10 @@ export function createAgentRunnerSdk(
     githubApiUrl,
     githubMergeMethod,
     onLandingCheckpoint,
+    onRetryCheckpoint,
+    random = Math.random,
+    baseRetryDelayMs = 250,
+    maxRetryDelayMs = 5_000,
     now = Date.now,
     ...httpOptions
   } = options
@@ -439,6 +415,9 @@ export function createAgentRunnerSdk(
         ...httpOptions,
         now,
         sleep,
+        random,
+        baseRetryDelayMs,
+        maxRetryDelayMs,
       })
     : configuredTransport
   const reconciler = createReconciler({
@@ -753,7 +732,10 @@ export function createAgentRunnerSdk(
             await onLandingCheckpoint(parsed)
           }
         },
-        classifyFailure,
+        classifyFailure: (error) => classifyFailure(
+          error,
+          { stage: 'landing' },
+        ),
       })
       const updated = parseHandle(landed.handle)
       if (
@@ -777,7 +759,7 @@ export function createAgentRunnerSdk(
         landing: {
           kind: 'failed',
           step: landingStep(handle),
-          failure: classifyFailure(error),
+          failure: classifyFailure(error, { stage: 'landing' }),
         },
       }
     }
@@ -792,19 +774,50 @@ export function createAgentRunnerSdk(
       pollIntervalMs: operationPollIntervalMs,
       ...requestOptions
     } = runOptions
-    const handle = await start(input, requestOptions)
+    let handle = await start(input, requestOptions)
     progress(onProgress, {
       kind: 'started',
       runnerId: handle.runnerId,
       sessionId: handle.currentSessionId,
       at: now(),
     })
-    const result = await waitFor(handle, {
-      ...requestOptions,
-      ...(operationPollIntervalMs === undefined
-        ? {}
-        : { pollIntervalMs: operationPollIntervalMs }),
-      ...(onProgress === undefined ? {} : { onProgress }),
+    const attemptProgress = onProgress === undefined
+      ? undefined
+      : (event: ProgressEvent): void => {
+          if (event.kind !== 'finished') progress(onProgress, event)
+        }
+    let result: RunResult
+    while (true) {
+      result = await waitFor(handle, {
+        ...requestOptions,
+        ...(operationPollIntervalMs === undefined
+          ? {}
+          : { pollIntervalMs: operationPollIntervalMs }),
+        ...(attemptProgress === undefined
+          ? {}
+          : { onProgress: attemptProgress }),
+      })
+      if (
+        result.status !== 'failed'
+        || !shouldRetry(handle, result.failure)
+      ) break
+      progress(onProgress, {
+        kind: 'retrying',
+        runnerId: handle.runnerId,
+        retry: handle.retries.capacity + 1,
+        reason: result.failure,
+        at: now(),
+      })
+      handle = await retry(handle, {
+        ...requestOptions,
+        failure: result.failure,
+      })
+    }
+    progress(onProgress, {
+      kind: 'finished',
+      runnerId: handle.runnerId,
+      status: resultStatus(result),
+      at: now(),
     })
     if (result.status !== 'succeeded') return { result, handle }
     const landed = await land(handle, requestOptions)
@@ -883,17 +896,33 @@ export function createAgentRunnerSdk(
 
   async function retry(
     handleValue: RunHandle,
-    requestOptions?: TransportRequestOptions,
+    options?: RetryOptions,
   ): Promise<RunHandle>
   async function retry(
     handleValue: SessionHandle,
-    requestOptions?: TransportRequestOptions,
+    options?: RetryOptions,
   ): Promise<SessionHandle>
   async function retry(
     handleValue: Handle,
-    requestOptions?: TransportRequestOptions,
+    options: RetryOptions = {},
   ): Promise<Handle> {
     const handle = parseHandle(handleValue)
+    const {
+      failure,
+      ...requestOptions
+    } = options
+    const retryInput = handle.kind === 'session'
+      ? handle.sessionInput
+      : handle.input
+    if (
+      retryInput.promptRef !== undefined
+      && retryInput.promptRef.expiresAt <= now()
+    ) {
+      throw new BasicAgentRunnerSdkError(
+        'prompt-ref-expired',
+        'The Agent Runner prompt reference has expired.',
+      )
+    }
     if (
       handle.retries.capacity
       >= handle.policy.retryBudget.capacity
@@ -903,19 +932,59 @@ export function createAgentRunnerSdk(
         'The Agent Runner retry budget is exhausted.',
       )
     }
+    if (failure !== undefined && !shouldRetry(handle, failure)) {
+      throw new BasicAgentRunnerSdkError(
+        'validation-error',
+        'The classified Agent Runner failure is not safe for automatic retry.',
+      )
+    }
+    const attempt = handle.retries.capacity + 1
+    const delayMs = boundedRetryDelayMs(attempt, {
+      baseDelayMs: baseRetryDelayMs,
+      maxDelayMs: maxRetryDelayMs,
+      random,
+    })
+    const scheduledAt = now()
+    if (
+      scheduledAt >= handle.policy.deadlineAt
+      || scheduledAt + delayMs >= handle.policy.deadlineAt
+    ) {
+      throw new BasicAgentRunnerSdkError(
+        'request-timeout',
+        'The original Agent Runner deadline does not permit another retry.',
+      )
+    }
+    const checkpoint: Handle = {
+      ...handle,
+      retries: {
+        capacity: attempt,
+        lastAttempt: {
+          attempt,
+          category: failure?.category ?? 'unknown',
+          code: failure?.code ?? 'manual-retry',
+          scheduledAt,
+          delayMs,
+        },
+      },
+    }
+    if (onRetryCheckpoint !== undefined) {
+      await onRetryCheckpoint(parseHandle(checkpoint))
+    }
+    await sleep(delayMs)
+    if (now() >= handle.policy.deadlineAt) {
+      throw new BasicAgentRunnerSdkError(
+        'request-timeout',
+        'The original Agent Runner deadline expired during retry backoff.',
+      )
+    }
     if (handle.kind === 'session') {
       const retried = await createFollowUp(
-        handle,
+        checkpoint,
         handle.sessionInput,
         requestOptions,
         true,
       )
-      return {
-        ...retried,
-        retries: {
-          capacity: handle.retries.capacity + 1,
-        },
-      }
+      return retried
     }
 
     const delivery = await deliveryOptions(handle.input)
@@ -926,10 +995,32 @@ export function createAgentRunnerSdk(
       ...delivery,
       rotateRequestId: true,
     })
-    const submitted = await submitStartOperation(
-      prepared,
-      (wireInput) => transport.createRunner(wireInput, requestOptions),
-    )
+    let submitted
+    try {
+      submitted = await submitStartOperation(
+        prepared,
+        (wireInput) => transport.createRunner(wireInput, requestOptions),
+      )
+    } catch (error: unknown) {
+      if (!(error instanceof CreateAmbiguousError)) throw error
+      const reconciled = await reconciler.reconcileCreate(
+        error.effectiveInput,
+        error.window,
+        requestOptions,
+      )
+      if (reconciled.kind !== 'matched') throw error
+      return {
+        ...checkpoint,
+        kind: 'run',
+        runnerId: reconciled.handle.runnerId,
+        agent: reconciled.handle.agent,
+        ...(reconciled.handle.origin === undefined
+          ? {}
+          : { origin: reconciled.handle.origin }),
+        input: reconciled.handle.input,
+        currentSessionId: reconciled.handle.currentSessionId,
+      }
+    }
     const runner = submitted.value
     const initialSession = await initialSessionFor(
       runner,
@@ -937,7 +1028,7 @@ export function createAgentRunnerSdk(
       requestOptions,
     )
     return {
-      ...handle,
+      ...checkpoint,
       kind: 'run',
       runnerId: runner.runnerId,
       agent: submitted.effectiveInput.agent ?? handle.agent,
@@ -952,11 +1043,31 @@ export function createAgentRunnerSdk(
             },
           }),
       input: submitted.effectiveInput,
-      retries: {
-        capacity: handle.retries.capacity + 1,
-      },
       currentSessionId: initialSession.sessionId,
     }
+  }
+
+  function shouldRetry(
+    handleValue: Handle,
+    failure: FailureClassification,
+  ): boolean {
+    const handle = parseHandle(handleValue)
+    const safeCategory = failure.category === 'capacity'
+      || failure.category === 'rate-limit'
+      || failure.category === 'platform'
+    const latestStart = now()
+    const maximumDelay = boundedRetryDelayMs(
+      handle.retries.capacity + 1,
+      {
+        baseDelayMs: baseRetryDelayMs,
+        maxDelayMs: maxRetryDelayMs,
+        random: () => 1,
+      },
+    )
+    return failure.retryable
+      && safeCategory
+      && latestStart + maximumDelay < handle.policy.deadlineAt
+      && handle.retries.capacity < handle.policy.retryBudget.capacity
   }
 
   return {
@@ -971,10 +1082,7 @@ export function createAgentRunnerSdk(
     run,
     followUp,
     retry,
-    shouldRetry: (handle, failure) => (
-      failure.retryable
-      && handle.retries.capacity < handle.policy.retryBudget.capacity
-    ),
+    shouldRetry,
     classifyFailure,
     reconcileCreate: reconciler.reconcileCreate,
     reconcileSession: (

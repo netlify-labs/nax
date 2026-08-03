@@ -30,6 +30,9 @@ import {
   normalizeRunner,
   normalizeSession,
 } from './normalize.js'
+import {
+  boundedRetryDelayMs,
+} from '../retry.js'
 import type {
   AccountRunnerListQuery,
   AgentRunnerApiStyle,
@@ -315,15 +318,11 @@ export function createHttpTransport(
     retryAfter: string | undefined,
   ): Promise<void> {
     const serverDelay = retryAfterMs(retryAfter, now)
-    const exponential = Math.min(
-      maxRetryDelayMs,
-      baseRetryDelayMs * (2 ** Math.max(0, attempt - 1)),
-    )
-    const sampled = random()
-    const jitter = Number.isFinite(sampled)
-      ? Math.max(0, Math.min(1, sampled))
-      : 0.5
-    const jittered = Math.floor(exponential * (0.5 + jitter))
+    const jittered = boundedRetryDelayMs(attempt, {
+      baseDelayMs: baseRetryDelayMs,
+      maxDelayMs: maxRetryDelayMs,
+      random,
+    })
     await sleep(Math.min(maxRetryDelayMs, serverDelay ?? jittered))
   }
 

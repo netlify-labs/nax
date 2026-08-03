@@ -30,6 +30,14 @@ export {
   createAgentRunnerSdk,
 } from './engine.js'
 export {
+  CORE_FAILURE_PROFILES,
+  classifyCoreFailure,
+} from './failures/core.js'
+export {
+  GITHUB_FAILURE_PROFILES,
+  classifyGithubFailure,
+} from './failures/github.js'
+export {
   AGENT_RUNNER_SDK_HANDLE_VERSION,
   parseHandle,
   serializeHandle,
@@ -67,8 +75,13 @@ export type {
   LandingHandler,
   LandingResult,
   RunOptions,
+  RetryOptions,
   WaitForOptions,
 } from './engine.js'
+export type {
+  FailureContext,
+  FailureProfile,
+} from './failures/core.js'
 export type {
   AuthTelemetryEvent,
   AuthenticatedNetlifyClient,
@@ -95,6 +108,8 @@ export type {
   EmptyMemberInput,
   FailureCategory,
   FailureClassification,
+  FailureSeverity,
+  FailureStage,
   FollowUpInput,
   LandingMode,
   MemberAccepted,
@@ -127,6 +142,8 @@ export type {
   Handle,
   HandlePolicy,
   LandingProgress,
+  RetryAttempt,
+  RetryProgress,
   RunHandle,
   SessionHandle,
 } from './handles.js'

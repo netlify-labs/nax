@@ -39,6 +39,34 @@ test('run handles round-trip through the versioned serializer', () => {
   assert.deepEqual(parseHandle(serialized), runHandle)
 })
 
+test('retry metadata round-trips and must agree with the persisted budget count', () => {
+  const retried: RunHandle = {
+    ...runHandle,
+    retries: {
+      capacity: 1,
+      lastAttempt: {
+        attempt: 1,
+        category: 'capacity',
+        code: 'model-capacity',
+        scheduledAt: 1_000,
+        delayMs: 125,
+      },
+    },
+  }
+
+  assert.deepEqual(parseHandle(serializeHandle(retried)), retried)
+  assert.throws(
+    () => parseHandle({
+      ...retried,
+      retries: {
+        ...retried.retries,
+        capacity: 2,
+      },
+    }),
+    (error: unknown) => isAgentRunnerSdkError(error, 'invalid-handle'),
+  )
+})
+
 test('session handles retain the base policy and enforce session attribution', () => {
   const sessionHandle: SessionHandle = {
     ...runHandle,

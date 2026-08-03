@@ -1,5 +1,4 @@
 import type {
-  FailureClassification,
   Runner,
   Session,
 } from '../domain.js'
@@ -7,6 +6,9 @@ import {
   BasicAgentRunnerSdkError,
   InvalidApiShapeError,
 } from '../errors.js'
+import {
+  classifyCoreFailure,
+} from '../failures/core.js'
 import type {
   Handle,
   LandingProgress,
@@ -45,17 +47,14 @@ function backendFailure(
   step: LandingStep,
   code: string,
   message: string,
-  category: FailureClassification['category'] = 'platform',
 ): LandingOutcome {
   return {
     kind: 'failed',
     step,
-    failure: {
-      category,
-      code,
-      message,
-      retryable: false,
-    },
+    failure: classifyCoreFailure(
+      { code, message },
+      { stage: 'landing' },
+    ),
   }
 }
 
@@ -68,7 +67,6 @@ function errorFromBackend(
       step,
       'missing-coding-installation',
       message,
-      'permission',
     )
   }
   return backendFailure(
@@ -256,7 +254,6 @@ async function ensureCurrentSessionCommitted<H extends Handle>(
           'commit',
           'invalid-pr-branch',
           'The Agent Runner did not provide a safe pull request branch.',
-          'validation',
         ),
       }
     }

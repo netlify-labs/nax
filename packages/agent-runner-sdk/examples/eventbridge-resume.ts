@@ -124,8 +124,8 @@ export function createEventBridgeRunner({
       && sdk.shouldRetry(handle, result.failure)
     ) {
       handle = handle.kind === 'run'
-        ? await sdk.retry(handle)
-        : await sdk.retry(handle)
+        ? await sdk.retry(handle, { failure: result.failure })
+        : await sdk.retry(handle, { failure: result.failure })
       await persist(jobId, handle)
       await scheduleNext(jobId)
       return { kind: 'rescheduled', handle }

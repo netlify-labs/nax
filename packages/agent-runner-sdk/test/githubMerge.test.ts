@@ -251,16 +251,15 @@ test('a GitHub 409 fails closed without observing or merging a newer head', asyn
     landed.handle.landing?.expectedPrHeadSha,
     EXPECTED_HEAD,
   )
-  assert.deepEqual(landed.landing, {
-    kind: 'failed',
-    step: 'merge',
-    failure: {
-      category: 'github',
-      code: 'pr-head-changed',
-      message: 'The pull request head changed before merge; refusing to merge a different revision.',
-      retryable: false,
-    },
-  })
+  assert.equal(landed.landing.kind, 'failed')
+  if (landed.landing.kind !== 'failed') {
+    assert.fail('expected a classified merge failure')
+  }
+  assert.equal(landed.landing.step, 'merge')
+  assert.equal(landed.landing.failure.category, 'github')
+  assert.equal(landed.landing.failure.code, 'pr-head-changed')
+  assert.equal(landed.landing.failure.stage, 'github')
+  assert.equal(landed.landing.failure.retryable, false)
 })
 
 test('a failed expected-head checkpoint prevents the merge mutation', async () => {
@@ -285,7 +284,8 @@ test('a failed expected-head checkpoint prevents the merge mutation', async () =
   )
   assert.equal(landed.landing.kind, 'failed')
   if (landed.landing.kind === 'failed') {
-    assert.equal(landed.landing.failure.code, 'unknown-error')
+    assert.equal(landed.landing.failure.code, 'storage-unavailable')
+    assert.equal(landed.landing.failure.category, 'landing')
   }
 })
 
@@ -426,16 +426,15 @@ test('merge requires an explicit GitHub token while auto remains PR-only', async
   })
 
   const merge = await sdk.land(handle('merge'))
-  assert.deepEqual(merge.landing, {
-    kind: 'failed',
-    step: 'merge',
-    failure: {
-      category: 'github',
-      code: 'github-token-required',
-      message: 'A GitHub token is required to merge the pull request.',
-      retryable: false,
-    },
-  })
+  assert.equal(merge.landing.kind, 'failed')
+  if (merge.landing.kind !== 'failed') {
+    assert.fail('expected a classified missing-token failure')
+  }
+  assert.equal(merge.landing.step, 'merge')
+  assert.equal(merge.landing.failure.category, 'github')
+  assert.equal(merge.landing.failure.code, 'github-token-required')
+  assert.equal(merge.landing.failure.stage, 'github')
+  assert.equal(merge.landing.failure.retryable, false)
 
   const auto = await sdk.land(handle('auto'))
   assert.deepEqual(auto.landing, {

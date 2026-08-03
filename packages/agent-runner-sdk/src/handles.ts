@@ -2,6 +2,7 @@ import type {
   BlobRef,
   EffectiveFollowUpInput,
   EffectiveStartInput,
+  FailureCategory,
   LandingMode,
   OriginInfo,
   RunnerMode,
@@ -26,6 +27,19 @@ export interface HandlePolicy {
   }
 }
 
+export interface RetryAttempt {
+  attempt: number
+  category: FailureCategory
+  code: string
+  scheduledAt: number
+  delayMs: number
+}
+
+export interface RetryProgress {
+  capacity: number
+  lastAttempt?: RetryAttempt
+}
+
 export interface BaseHandle {
   v: typeof AGENT_RUNNER_SDK_HANDLE_VERSION
   runnerId: string
@@ -34,9 +48,7 @@ export interface BaseHandle {
   origin?: OriginInfo
   input: EffectiveStartInput
   policy: HandlePolicy
-  retries: {
-    capacity: number
-  }
+  retries: RetryProgress
   landing?: LandingProgress
   currentSessionId: string
 }
@@ -286,6 +298,74 @@ function parseLandingProgress(value: unknown): LandingProgress | undefined {
   }
 }
 
+const FAILURE_CATEGORIES = new Set<FailureCategory>([
+  'authentication',
+  'permission',
+  'not-found',
+  'validation',
+  'capacity',
+  'rate-limit',
+  'transport',
+  'argv-too-long',
+  'terminal',
+  'timeout',
+  'cancelled',
+  'prompt',
+  'blob',
+  'api-drift',
+  'ambiguity',
+  'landing',
+  'platform',
+  'github',
+  'unknown',
+])
+
+function failureCategory(
+  value: unknown,
+  field: string,
+): FailureCategory {
+  if (
+    typeof value !== 'string'
+    || !FAILURE_CATEGORIES.has(value as FailureCategory)
+  ) {
+    invalidHandle(`${field} is not a supported failure category.`)
+  }
+  return value as FailureCategory
+}
+
+function parseRetryAttempt(
+  value: unknown,
+  capacity: number,
+): RetryAttempt | undefined {
+  if (value === undefined) return undefined
+  const record = recordValue(value, 'retries.lastAttempt')
+  const attempt = nonNegativeInteger(
+    record.attempt,
+    'retries.lastAttempt.attempt',
+  )
+  if (attempt === 0 || attempt !== capacity) {
+    invalidHandle(
+      'retries.lastAttempt.attempt must equal the non-zero retries.capacity.',
+    )
+  }
+  return {
+    attempt,
+    category: failureCategory(
+      record.category,
+      'retries.lastAttempt.category',
+    ),
+    code: stringValue(record.code, 'retries.lastAttempt.code'),
+    scheduledAt: finiteNumber(
+      record.scheduledAt,
+      'retries.lastAttempt.scheduledAt',
+    ),
+    delayMs: nonNegativeInteger(
+      record.delayMs,
+      'retries.lastAttempt.delayMs',
+    ),
+  }
+}
+
 function parseCurrentHandle(value: Record<string, unknown>): Handle {
   const input = parseEffectiveStartInput(value.input)
   const policyRecord = recordValue(value.policy, 'policy')
@@ -294,6 +374,14 @@ function parseCurrentHandle(value: Record<string, unknown>): Handle {
     'policy.retryBudget',
   )
   const retriesRecord = recordValue(value.retries, 'retries')
+  const retryCapacity = nonNegativeInteger(
+    retriesRecord.capacity,
+    'retries.capacity',
+  )
+  const lastRetryAttempt = parseRetryAttempt(
+    retriesRecord.lastAttempt,
+    retryCapacity,
+  )
   const origin = parseOrigin(value.origin)
   const landing = parseLandingProgress(value.landing)
   const base: BaseHandle = {
@@ -314,10 +402,10 @@ function parseCurrentHandle(value: Record<string, unknown>): Handle {
       },
     },
     retries: {
-      capacity: nonNegativeInteger(
-        retriesRecord.capacity,
-        'retries.capacity',
-      ),
+      capacity: retryCapacity,
+      ...(lastRetryAttempt === undefined
+        ? {}
+        : { lastAttempt: lastRetryAttempt }),
     },
     ...(landing === undefined ? {} : { landing }),
     currentSessionId: stringValue(

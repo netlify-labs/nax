@@ -446,20 +446,97 @@ test('run keeps execution success separate from landing outcomes', async () => {
   }
 })
 
+test('run automatically applies bounded capacity retry with persisted metadata', async () => {
+  let clock = 100
+  let creates = 0
+  let latestRequestId = REQUEST_ID
+  const requestIds = [REQUEST_ID, OTHER_REQUEST_ID]
+  const events: string[] = []
+  const checkpoints: RunHandle[] = []
+  const transport = fakeTransport({
+    createRunner: async (input) => {
+      latestRequestId = input.requestId
+      creates += 1
+      return runner({
+        runnerId: `runner-${creates}`,
+        state: creates === 1 ? 'failed' : 'completed',
+      })
+    },
+    listSessions: async (runnerId) => [
+      session({
+        runnerId,
+        sessionId: `session-${creates}`,
+        state: creates === 1 ? 'failed' : 'completed',
+        prompt: `do work\n\n${requestMarker(latestRequestId)}`,
+      }),
+    ],
+    getRunner: async (runnerId) => runner({
+      runnerId,
+      state: runnerId === 'runner-1' ? 'failed' : 'completed',
+    }),
+    getSession: async (runnerId, sessionId) => session({
+      runnerId,
+      sessionId,
+      state: runnerId === 'runner-1' ? 'failed' : 'completed',
+      resultText: runnerId === 'runner-1'
+        ? 'The selected model is currently at capacity'
+        : 'Completed after retry',
+    }),
+  })
+  const sdk = createAgentRunnerSdk({
+    transport,
+    generateRequestId: () => requestIds.shift() ?? OTHER_REQUEST_ID,
+    now: () => clock,
+    random: () => 0,
+    sleep: async (ms) => {
+      clock += ms
+    },
+    onRetryCheckpoint: (handle) => {
+      checkpoints.push(handle as RunHandle)
+    },
+  })
+
+  const outcome = await sdk.run({
+    siteId: 'site-1',
+    prompt: 'do work',
+    retryBudget: { capacity: 1 },
+  }, {
+    onProgress: (event) => events.push(event.kind),
+  })
+
+  assert.equal(outcome.result.status, 'succeeded')
+  assert.equal(outcome.handle.runnerId, 'runner-2')
+  assert.equal(outcome.handle.retries.capacity, 1)
+  assert.deepEqual(outcome.handle.retries.lastAttempt, {
+    attempt: 1,
+    category: 'capacity',
+    code: 'model-capacity',
+    scheduledAt: 100,
+    delayMs: 125,
+  })
+  assert.equal(checkpoints.length, 1)
+  assert.deepEqual(
+    sdk.parseHandle(sdk.serializeHandle(checkpoints[0] as RunHandle)),
+    checkpoints[0],
+  )
+  assert.deepEqual(events, ['started', 'retrying', 'finished'])
+  assert.equal(creates, 2)
+})
+
 test('failure classification, retry budget, and runtime detection are explicit', () => {
   const limited = classifyFailure(
     new HttpResponseError('rate-limited', 429, '/agent_runners'),
   )
-  assert.deepEqual(limited, {
-    category: 'rate-limit',
-    code: 'rate-limited',
-    message:
-      'Agent Runner API request to /agent_runners failed with status 429.',
-    retryable: true,
-    status: 429,
-  })
+  assert.equal(limited.category, 'rate-limit')
+  assert.equal(limited.code, 'rate-limited')
+  assert.equal(limited.stage, 'transport')
+  assert.equal(limited.retryable, true)
+  assert.equal(limited.status, 429)
+  assert.ok(limited.title.length > 0)
+  assert.ok(limited.remediation.length > 0)
   const sdk = createAgentRunnerSdk({
     transport: fakeTransport(),
+    now: () => 0,
   })
   const handle = runHandle({
     policy: {
@@ -496,6 +573,6 @@ test('failure classification, retry budget, and runtime detection are explicit',
         'Agent Runner API request failed.',
       ),
     ).retryable,
-    true,
+    false,
   )
 })

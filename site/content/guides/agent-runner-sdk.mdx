@@ -57,6 +57,7 @@ const sdk = createAgentRunnerSdk({
   retryAttempts: 3,
   clockSkewAllowanceMs: 5_000,
   onLandingCheckpoint: persistHandle,
+  onRetryCheckpoint: persistHandle,
   onTelemetry(event) {
     metrics.increment(event.kind)
   },
@@ -146,8 +147,10 @@ if (outcome.landing?.kind === 'prOpen') {
 }
 ```
 
-`run` performs `start`, `waitFor`, then `land` only after successful execution.
-It does not hide a replacement-run retry loop.
+`run` performs `start`, `waitFor`, any bounded retry-safe replacement attempts,
+then `land` only after successful execution. Automatic replacement is limited
+to classified capacity, rate-limit, and platform-server failures within the
+persisted budget and original deadline.
 
 For Lambda, EventBridge, queues, or any process boundary:
 
@@ -181,8 +184,8 @@ if (snapshot.kind === 'running') {
 <Callout type="warning">
   The SDK has no hidden durable state. Persist the handle returned by every
   mutating method, including start, followUp, retry, stop, land, reconciliation,
-  and run. Persist every handle delivered to onLandingCheckpoint before
-  continuing.
+  and run. Persist every handle delivered to onLandingCheckpoint and
+  onRetryCheckpoint before continuing.
 </Callout>
 
 See the package's
@@ -194,7 +197,7 @@ for a complete typechecked worker.
 | Method | Return | Behavior |
 | --- | --- | --- |
 | `start(input, options?)` | `RunHandle` | Creates a runner and resolves the exact initial session. |
-| `run(input, options?)` | `RunOutcome<RunHandle>` | Starts, waits, and lands after success. |
+| `run(input, options?)` | `RunOutcome<RunHandle>` | Starts, waits, applies bounded safe retries, and lands after success. |
 | `getSnapshot(handle, options?)` | `RunSnapshot` | Returns running state or a terminal result. |
 | `getResult(handle, options?)` | `RunResult` | Rejects unless the exact session is terminal. |
 | `waitFor(handle, options?)` | `RunResult` | Polls and enforces the absolute deadline. |
@@ -203,7 +206,7 @@ for a complete typechecked worker.
 | `followUp(handle, input, options?)` | `SessionHandle` | Creates and scopes a follow-up session. |
 | `classifyFailure(error)` | `FailureClassification` | Produces a safe category/code/retryability result. |
 | `shouldRetry(handle, failure)` | `boolean` | Checks retryability and persisted capacity. |
-| `retry(handle, options?)` | same handle kind | Creates a replacement attempt with a new request ID. |
+| `retry(handle, { failure, ...options }?)` | same handle kind | Backs off, checkpoints, and creates a replacement with a new request ID. |
 | `reconcileCreate(input, window, options?)` | reconciliation union | Resolves an uncertain runner create. |
 | `reconcileSession(handle, input, window, options?)` | reconciliation union | Resolves an uncertain or conflicting session create. |
 | `serializeHandle(handle)` | `string` | Validates and serializes the current handle schema. |
@@ -222,7 +225,7 @@ Handles contain:
 - Effective semantic input, including the private request ID
 - Original landing and retry policy
 - Absolute `deadlineAt`
-- Consumed retry capacity
+- Consumed retry capacity plus the last safe reason and backoff timing
 - Resumable landing checkpoints
 - Effective follow-up input for session handles
 
@@ -390,15 +393,23 @@ const failure = sdk.classifyFailure(error)
 
 if (sdk.shouldRetry(handle, failure)) {
   handle = handle.kind === 'run'
-    ? await sdk.retry(handle)
-    : await sdk.retry(handle)
+    ? await sdk.retry(handle, { failure })
+    : await sdk.retry(handle, { failure })
   await save(sdk.serializeHandle(handle))
 }
 ```
 
-`retry` rotates the request ID, increments consumed capacity, preserves the
-semantic input, landing policy, and original absolute deadline, then returns a
-new handle that must be persisted.
+`retry` uses the same injected exponential-jitter policy as transport retry,
+rotates the request ID, increments consumed capacity, preserves the semantic
+input, landing policy, and original absolute deadline, then returns a new
+handle that must be persisted. Configure `onRetryCheckpoint` to durably save
+the incremented count and safe category/code/timing before replacement I/O.
+
+Network/request timeouts, auth and validation failures, argv-too-long,
+arbitrary terminal failures, prompt/blob failures, malformed API shapes,
+ambiguous creates, unmatched session conflicts, and GitHub head drift never
+create automatic replacement attempts. Transport keeps its own
+operation-specific retry rules.
 
 ## Phase 1 prompt delivery
 
@@ -467,14 +478,16 @@ During migration:
 
 ## Errors
 
-Use `isAgentRunnerSdkError(error, code?)` to narrow typed SDK errors. Failure
-codes include auth/permission/validation, API drift, ambiguity, capacity,
-rate-limit/network/timeout, GitHub head drift, prompt expiry, invalid handles,
-and unsupported handle versions.
+Use `isAgentRunnerSdkError(error, code?)` to narrow typed SDK errors. Stable
+failure profiles cover authentication, permission, not-found, validation,
+rate-limit, transport, capacity, argv-too-long, terminal failure,
+timeout/cancel, prompt/blob delivery, API drift, ambiguity, landing, platform,
+and unknown failures. GitHub profiles are exported separately.
 
 `classifyFailure` converts a thrown value into a safe
-`FailureClassification`. It deliberately does not expose raw prompt or token
-data.
+`FailureClassification` with title, message, remediation, severity,
+retryability, user-action, and stage metadata. It deliberately does not expose
+raw prompt, token, or backend error text.
 
 ## Package compatibility and releases
 

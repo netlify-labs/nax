@@ -510,12 +510,12 @@ For an authorized prerelease:
 
 ```sh
 npm run ci
-npm version 0.1.0 --allow-same-version \
+npm version 0.2.0-next.0 --allow-same-version \
   --tag-version-prefix=nax-agent-runner-sdk-v
 npm run release:next
 ```
 
-Use the intended package version in place of `0.1.0`. `release:next` publishes
+Use the intended package version in place of `0.2.0-next.0`. `release:next` publishes
 with the `next` distribution tag, then installs that registry artifact in clean
 ESM and CommonJS projects and compiles its shipped examples. `npm run
 pack:smoke` performs the equivalent check against the exact local tarball

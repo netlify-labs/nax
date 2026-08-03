@@ -4,6 +4,8 @@ All notable changes to `nax-agent-runner-sdk` are recorded here.
 
 ## Unreleased
 
+## 0.2.0-next.0 - 2026-08-03
+
 - Added stable core and separate GitHub failure profiles with safe,
   deterministic guidance metadata.
 - Added bounded in-process capacity/rate-limit/platform retry, serialized retry

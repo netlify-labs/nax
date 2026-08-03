@@ -285,7 +285,7 @@ async function submitFollowup({
     details,
     artifacts: normalized.artifacts,
   })
-  const delivery = await prepareFollowupContextDelivery({
+  const delivery = prepareFollowupContextDelivery({
     contextPackage,
   })
   const sourceArtifactIds = contextPackage.artifacts.map((artifact) => artifact.id)

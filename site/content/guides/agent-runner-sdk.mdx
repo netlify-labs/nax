@@ -468,12 +468,17 @@ It sends inline when safe, optionally compacts and remeasures, then offloads
 the original semantic prompt when a `BlobStore` is available. The final
 delivery mode and byte counts are serialized under `handle.promptDelivery`.
 
-The Netlify adapter uses tenant-scoped collision-resistant keys, one-day
-default TTL, a seven-day lifetime ceiling, and a 5 MiB size ceiling. Runner
-fetches use site-scoped `netlify blobs:get`; the caller token never enters the
-instruction. Success, cancellation, and timeout delete the ref. Failed runs
-retain it until TTL for exact retry reuse. Cleanup faults are best-effort and
-emit only a value-free `onBlobCleanupError` event.
+The Netlify adapter uses tenant-scoped collision-resistant keys, a one-day
+default logical expiry, a seven-day lifetime ceiling, and a 5 MiB size ceiling.
+Runner fetches use site-scoped `netlify blobs:get`; the caller token never
+enters the instruction. Success, cancellation, and timeout delete the ref.
+Failed runs retain it until logical expiry for exact retry reuse. Cleanup
+faults are best-effort and emit only a value-free `onBlobCleanupError` event.
+
+`expiresAt` is enforced by the SDK and recorded in blob metadata; Netlify Blobs
+does not automatically remove the stored object at that timestamp. A consumer
+that can abandon failed handles must run its own expired-entry sweep for the
+configured store.
 
 `NAX_SAFE_PROMPT_BYTES` changes the default 16 KiB final-wire budget.
 `requestMarkerOverheadBytes` remains exported for compatibility adapters.

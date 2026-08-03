@@ -568,6 +568,7 @@ test('bb-api style uses its gateway and camel-case fallback only explicitly', as
 test('safe operations retry every documented status and network failure', async () => {
   for (const status of [408, 409, 425, 429, 500]) {
     const sleeps: number[] = []
+    const telemetry: TransportTelemetryEvent[] = []
     const fake = fakeFetch([
       {
         status,
@@ -584,25 +585,54 @@ test('safe operations retry every documented status and network failure', async 
       sleep: async (ms) => {
         sleeps.push(ms)
       },
+      onTelemetry: (event) => telemetry.push(event),
     })
 
     assert.equal((await transport.getRunner('runner-1')).runnerId, 'runner-1')
     assert.deepEqual(sleeps, [status === 429 ? 2_000 : 125])
+    assert.deepEqual(
+      telemetry.filter((event) => event.kind === 'transportRetry'),
+      [{
+        kind: 'transportRetry',
+        method: 'GET',
+        pathname: '/agent_runners/runner-1',
+        attempt: 1,
+        maxAttempts: 2,
+        delayMs: status === 429 ? 2_000 : 125,
+        reason: 'http',
+        status,
+      }],
+    )
   }
 
   const reset = new TypeError('socket reset', {
     cause: Object.assign(new Error('reset'), { code: 'ECONNRESET' }),
   })
   const network = fakeFetch([{ error: reset }, { status: 202 }])
+  const telemetry: TransportTelemetryEvent[] = []
   const transport = createHttpTransport({
     fetch: network.fetch,
     token: 'token',
     baseUrl: 'https://api.example.test/api/v1',
     retryAttempts: 2,
+    random: () => 0.5,
     sleep: async () => {},
+    onTelemetry: (event) => telemetry.push(event),
   })
   await transport.cancelRunner('runner-1')
   assert.equal(network.calls.length, 2)
+  assert.deepEqual(
+    telemetry.filter((event) => event.kind === 'transportRetry'),
+    [{
+      kind: 'transportRetry',
+      method: 'DELETE',
+      pathname: '/agent_runners/runner-1',
+      attempt: 1,
+      maxAttempts: 2,
+      delayMs: 250,
+      reason: 'network',
+    }],
+  )
 })
 
 test('create ambiguity includes HTTP and response-read uncertainty', async () => {

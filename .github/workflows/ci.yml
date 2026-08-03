@@ -1,0 +1,30 @@
+name: Nax CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - master
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Check and test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci --ignore-scripts
+      - run: npm run sdk:build
+      - run: npm run check
+      - run: npm test
+      - run: npm run dashboard:build
+      - run: npm ci --ignore-scripts
+        working-directory: site
+      - run: npm run build
+        working-directory: site

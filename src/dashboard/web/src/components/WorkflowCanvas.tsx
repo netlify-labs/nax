@@ -215,17 +215,19 @@ export function WorkflowCanvas(props: Props) {
     return `${props.graph.metadata.flowId}:${nodeKey}:${edgeKey}`
   }, [props.graph])
 
-  const nodesGraph = useMemo(() => {
+  const nodesGraph = useMemo<WorkflowGraph | null>(() => {
     if (!props.graph) return null
     return {
       ...props.graph,
       nodes: props.graph.nodes.map((node) => {
+        const agentInteraction: WorkflowGraphNodeData['agentInteraction'] =
+          props.mode === 'inspect' ? 'view-result' : 'toggle'
         return {
           ...node,
           selected: props.selectedNode ? props.selectedNode.stepId === node.data.stepId : false,
           data: {
             ...node.data,
-            agentInteraction: props.mode === 'inspect' ? 'view-result' : 'toggle',
+            agentInteraction,
             onToggleAgent: props.onToggleStepAgent,
             onViewAgentResult: props.mode === 'inspect' ? props.onViewAgentResult : undefined,
           },

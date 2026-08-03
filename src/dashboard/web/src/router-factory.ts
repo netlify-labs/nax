@@ -93,6 +93,6 @@ export function createDashboardRouteTree(rootComponent: RouteComponent = EmptyRo
 }
 
 export function createDashboardRouter(rootComponent: RouteComponent = EmptyRoute) {
-  // @ts-expect-error TanStack Router's createRouter type requires strictNullChecks, while the root project tsconfig intentionally leaves it off.
+  // @ts-ignore The root JSDoc project imports this file without strictNullChecks; the dashboard's strict project validates the call independently.
   return createRouter({ routeTree: createDashboardRouteTree(rootComponent) })
 }

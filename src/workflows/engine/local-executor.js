@@ -715,12 +715,7 @@ async function executeLocalFlow({ flow, steps, options, runState, projectRoot, c
         sourceRuns,
         roundResults,
         stepContext,
-        runState,
-        stepState,
-        projectRoot,
-        netlify,
         options,
-        dryRun: options.dryRun === true,
       })
       const promptDelivery = /** @type {import('../../types').JsonMap & { contextFetchPolicy?: string }} */ (delivery.promptDelivery || {})
       return {

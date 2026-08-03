@@ -79,7 +79,7 @@ function createNaxAgentRunnerSdk({
     env,
     ...(transport ? { transport } : {}),
     retryAttempts: attempts,
-    baseRetryDelayMs: delayMs,
+    baseRetryDelayMs: Math.min(500, delayMs),
     maxRetryDelayMs: delayMs,
     ...(blobStore ? { blobStore } : {}),
     promptDelivery: {
@@ -90,13 +90,17 @@ function createNaxAgentRunnerSdk({
     },
     ...(sleepFn ? { sleep: sleepFn } : {}),
     onTelemetry: (event) => {
-      if (event.kind !== 'httpFailure' || event.retrying !== true) return
+      if (event.kind !== 'transportRetry') return
       onRetry({
-        error: new Error(`Netlify Agent Runner API returned HTTP ${event.status}.`),
+        error: new Error(
+          event.status === undefined
+            ? 'Netlify Agent Runner API request failed before receiving a response.'
+            : `Netlify Agent Runner API returned HTTP ${event.status}.`,
+        ),
         attempt: event.attempt,
         nextAttempt: event.attempt + 1,
         attempts: event.maxAttempts,
-        delayMs,
+        delayMs: event.delayMs,
       })
     },
   })
@@ -106,7 +110,7 @@ function createNaxAgentRunnerSdk({
  * Safe delivery metadata copied from an SDK handle into nax artifacts.
  * Fetch commands and credentials intentionally remain SDK-private.
  *
- * @param {Handle} handle
+ * @param {Pick<Handle, 'promptDelivery'>} handle
  * @returns {import('../../types').AgentRun['promptDelivery']}
  */
 function promptDeliveryArtifact(handle) {
@@ -116,7 +120,9 @@ function promptDeliveryArtifact(handle) {
   return {
     mode: delivery.kind,
     safePromptBytes: delivery.safeBytes,
-    promptBytes: delivery.semanticBytes || 0,
+    ...(delivery.semanticBytes === undefined
+      ? {}
+      : { promptBytes: delivery.semanticBytes }),
     submittedPromptBytes: delivery.submittedBytes,
     ...(promptRef
       ? {

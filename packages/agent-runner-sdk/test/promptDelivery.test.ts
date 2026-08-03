@@ -361,6 +361,14 @@ test('sentinel evidence normalizes all four verdicts', () => {
   assert.equal(
     classifySentinelEvidence({
       expectedSentinel: 'abc',
+      commandOutput: '',
+      transcript: 'netlify blobs:get store key\nError: blob not found',
+    }).verdict,
+    'failed',
+  )
+  assert.equal(
+    classifySentinelEvidence({
+      expectedSentinel: 'abc',
       resultText: 'loaded private fact',
       blobOnlyNeedles: ['private fact'],
     }).verdict,

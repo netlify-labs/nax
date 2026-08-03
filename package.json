@@ -21,7 +21,7 @@
   },
   "scripts": {
     "start": "node src/cli/nax.js",
-    "check": "node --check src/cli/nax.js && find src -path src/dashboard/web/dist -prune -o -name '*.js' -print0 | xargs -0 -n 1 node --check && npm run check:import-direction && npm run check:jsdoc-types && npm run typecheck",
+    "check": "node --check src/cli/nax.js && find src -path src/dashboard/web/dist -prune -o -name '*.js' -print0 | xargs -0 -n 1 node --check && npm run check:import-direction && npm run check:jsdoc-types && npm run typecheck && npm run dashboard:typecheck",
     "check:cli-help": "node scripts/check-cli-help.js",
     "check:import-direction": "node scripts/check-import-direction.js",
     "check:jsdoc-types": "node scripts/check-jsdoc-types.js",
@@ -36,6 +36,7 @@
     "docs:workflows": "md-magic --file workflows/README.md --config ./.github/markdown.config.js",
     "dashboard:dev": "vite --config src/dashboard/web/vite.config.mjs",
     "dashboard:dev:real": "NAX_DASHBOARD_API_URL=${NAX_DASHBOARD_API_URL:-http://127.0.0.1:53734} vite --config src/dashboard/web/vite.config.mjs",
+    "dashboard:typecheck": "tsc -p src/dashboard/web/tsconfig.json",
     "dashboard:build": "vite build --config src/dashboard/web/vite.config.mjs",
     "dashboard:preview": "vite preview --config src/dashboard/web/vite.config.mjs",
     "dashboard:smoke": "playwright test tests/e2e/dashboard.spec.js",

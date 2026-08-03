@@ -167,17 +167,12 @@ const DEFAULT_LOCAL_SAFE_PROMPT_BYTES = 16384
  * Options for preparing local prompt delivery.
  * @typedef {{
  *   agent?: string,
- *   prompt?: PromptDefinition,
- *   step?: PromptWorkflowStep,
+ *   prompt: PromptDefinition,
+ *   step: PromptWorkflowStep,
  *   sourceRuns?: PromptSourceRun[],
  *   roundResults?: string,
  *   stepContext?: string,
- *   runState?: import('../../types').WorkflowRunState,
- *   stepState?: PromptWorkflowStep,
- *   projectRoot?: string,
- *   netlify?: PromptNetlifyContext,
  *   options?: PromptDeliveryOptions,
- *   dryRun?: boolean,
  * }} PrepareLocalPromptDeliveryInput
  *
  * Options for cleaning prompt blobs after a workflow run.
@@ -396,29 +391,13 @@ function formatLocalRunResults(runs) {
   return parts.join('\n')
 }
 
-/** @param {unknown} text @param {number} limit @param {string} [label] */
-function compactTextForRetry(text, limit, label = 'content') {
-  const value = String(text || '').trim()
-  if (!value || value.length <= limit) return value
-  if (limit < 200) return value.slice(0, limit).trim()
-
-  const note = `\n\n[${label} compacted from ${value.length} chars for retry after Netlify runner argument limit. Middle omitted.]\n\n`
-  const available = Math.max(0, limit - note.length)
-  const headLength = Math.ceil(available * 0.65)
-  const tailLength = Math.max(0, available - headLength)
-  return `${value.slice(0, headLength).trimEnd()}${note}${value.slice(value.length - tailLength).trimStart()}`
-}
-
 /** @param {PromptDeliveryOptions} [options] */
 function localSafePromptBytes(options = {}) {
-  const configured = safePromptBytes({
-    safePromptBytes: Number(
-      options.safePromptBytes || options.safePromptBytes === 0
-        ? options.safePromptBytes
-        : options.promptSafeBytes || process.env.NAX_SAFE_PROMPT_BYTES || DEFAULT_LOCAL_SAFE_PROMPT_BYTES,
-    ),
-  })
-  return configured
+  const configured = options.safePromptBytes
+    ?? options.promptSafeBytes
+    ?? process.env.NAX_SAFE_PROMPT_BYTES
+    ?? DEFAULT_LOCAL_SAFE_PROMPT_BYTES
+  return safePromptBytes({ safePromptBytes: Number(configured) })
 }
 
 /** @param {unknown} text @param {number} limit @param {string} [label] */
@@ -556,7 +535,11 @@ function ensureStepBlobOffload({
     payloadSeed: seed,
     kind: refKind,
   })
-  if (stepState.promptBlobRef?.store === ref.store && stepState.promptBlobRef?.key === ref.key) return stepState.promptBlobRef
+  if (
+    stepState.promptBlobRef?.store === ref.store
+    && stepState.promptBlobRef?.key === ref.key
+    && stepState.promptBlobRef?.sentinel === ref.sentinel
+  ) return stepState.promptBlobRef
   const blobPayload = buildBlobPayload({ fullResults: seed, sentinel: ref.sentinel })
   const localDebug = dryRun
     ? {}
@@ -652,7 +635,7 @@ function prepareLocalPromptDelivery({
   roundResults,
   stepContext,
   options = {},
-} = {}) {
+}) {
   const safeBytes = localSafePromptBytes(options)
   const promptText = buildLocalAgentPrompt({
     model: agent,
@@ -780,7 +763,6 @@ module.exports = {
   ensureGithubIssueFullPromptBlobOffload,
   ensureGithubPlanBlobOffload,
   formatLocalRunResults,
-  compactTextForRetry,
   localSafePromptBytes,
   compactLocalTextByBytes,
   formatCompactLocalRunResults,

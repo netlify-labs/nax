@@ -66,6 +66,8 @@ function failure(
     message: [
       `Bearer ${TOKEN_SECRET}`,
       `token=${TOKEN_SECRET}`,
+      `Authorization: token ${TOKEN_SECRET}`,
+      `Authorization: Basic ${TOKEN_SECRET}`,
       '<!-- agent-runner-sdk-request-id:33333333-3333-4333-8333-333333333333 -->',
     ].join(' '),
     remediation: [
@@ -213,6 +215,31 @@ test('GitHub failure comments create once and update the same bot-owned marker',
       botLogin: ' ',
     }),
     /requires a bot login/,
+  )
+})
+
+test('GitHub failure comments and checks stay within API text limits', async () => {
+  const oversized = presentation({
+    failure: failure({
+      title: 'T'.repeat(300),
+      message: 'M'.repeat(70_000),
+    }),
+  })
+  const comment = renderGithubFailureComment(oversized)
+  assert.equal(comment.length <= 60_000, true)
+  assert.match(comment, /Output truncated to fit GitHub limits/)
+
+  let check: GithubFailureCheck | undefined
+  await upsertGithubFailureCheck(oversized, {
+    upsertCheck: async (value) => {
+      check = value
+    },
+  })
+  assert.equal((check?.title.length ?? 0) <= 255, true)
+  assert.equal((check?.summary.length ?? 0) <= 60_000, true)
+  assert.match(
+    check?.summary ?? '',
+    /Output truncated to fit GitHub limits/,
   )
 })
 

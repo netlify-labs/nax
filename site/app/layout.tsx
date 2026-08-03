@@ -64,7 +64,7 @@ export default async function RootLayout({ children }: { children: React.ReactNo
           pageMap={pageMap}
           navbar={navbar}
           footer={footer}
-          docsRepositoryBase="https://github.com/netlify-labs/nax/blob/main/site/content"
+          docsRepositoryBase="https://github.com/netlify-labs/nax/blob/master/site/content"
           editLink="Edit this page on GitHub"
           feedback={{ content: 'Question? Give us feedback' }}
           search={search}

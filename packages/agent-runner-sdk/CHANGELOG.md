@@ -6,8 +6,11 @@ All notable changes to `nax-agent-runner-sdk` are recorded here.
 
 ## 0.2.0 - 2026-08-03
 
-- Promoted the tested `0.2.0-next.2` API and runtime unchanged as the first
-  stable release of the resumable Agent Runner SDK.
+- Promoted the tested `0.2.0-next.2` API as the first stable release of the
+  resumable Agent Runner SDK.
+- Hardened public failure-text redaction for `Authorization` headers using
+  Bearer, Basic, token, or direct credential forms.
+- Bounded GitHub failure comment and check-run text to stay within API limits.
 - Includes exact-session result attribution, bounded create/session
   reconciliation, persisted deadlines and retry budgets, explicit landing
   outcomes, prompt/blob delivery, redacted recovery guidance, and typed ESM

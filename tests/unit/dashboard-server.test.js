@@ -1151,19 +1151,15 @@ test('dashboard follow-up endpoint submits matching runner and fresh additional 
       stopped.push(runnerId)
       return { stopped: true, error: '', commandError: false }
     },
-    followupSyncRunCommand: (_command, args) => {
-      const data = JSON.parse(args[args.indexOf('--data') + 1] || '{}')
-      const runnerId = data.agent_runner_id
+    followupSyncRunner: ({ runner }) => {
+      const runnerId = runner.runnerId
       return {
-        status: 0,
-        stdout: JSON.stringify({
-          sessions: [{
-            id: runnerId === 'runner-gemini' ? 'session-gemini' : 'session-codex-followup',
-            state: 'submitted',
-            result: '',
-          }],
-        }),
-        stderr: '',
+        sessions: [{
+          sessionId: runnerId === 'runner-gemini' ? 'session-gemini' : 'session-codex-followup',
+          runnerId,
+          status: 'submitted',
+          resultText: '',
+        }],
       }
     },
   })
@@ -1252,20 +1248,16 @@ test('dashboard run graph syncs completed remote follow-up sessions', async () =
   })
   const server = await startDashboardServer({
     projectRoot,
-    followupSyncRunCommand: (_command, args) => {
-      const data = JSON.parse(args[args.indexOf('--data') + 1] || '{}')
-      assert.equal(data.agent_runner_id, 'runner-1')
+    followupSyncRunner: ({ runner }) => {
+      assert.equal(runner.runnerId, 'runner-1')
       return {
-        status: 0,
-        stdout: JSON.stringify({
-          sessions: [{
-            id: 'session-followup',
-            state: 'completed',
-            result: 'Remote follow-up result.',
-            updated_at: '2026-06-20T20:05:00.000Z',
-          }],
-        }),
-        stderr: '',
+        sessions: [{
+          sessionId: 'session-followup',
+          runnerId: 'runner-1',
+          status: 'completed',
+          resultText: 'Remote follow-up result.',
+          updatedAt: '2026-06-20T20:05:00.000Z',
+        }],
       }
     },
   })

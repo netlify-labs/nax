@@ -16,7 +16,8 @@ export default {
       'run-workflows': 'Run Workflows',
       'write-custom-workflows': 'Write Custom Workflows',
       'use-the-dashboard': 'Use the Dashboard',
-      'run-nax-in-ci': 'Run NAX in CI'
+      'run-nax-in-ci': 'Run NAX in CI',
+      'agent-runner-sdk': 'Agent Runner SDK'
     }
   },
   reference: {

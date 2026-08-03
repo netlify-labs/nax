@@ -3,6 +3,9 @@
   "version": "1.0.5",
   "description": "Run multi step Netlify agent workflows using the world's leading AI models.",
   "type": "commonjs",
+  "workspaces": [
+    "packages/*"
+  ],
   "bin": {
     "nax": "src/cli/nax.js"
   },
@@ -23,6 +26,11 @@
     "check:import-direction": "node scripts/check-import-direction.js",
     "check:jsdoc-types": "node scripts/check-jsdoc-types.js",
     "typecheck": "tsc -p tsconfig.json",
+    "sdk:build": "npm run build --workspace nax-agent-runner-sdk",
+    "sdk:typecheck": "npm run typecheck --workspace nax-agent-runner-sdk",
+    "sdk:test": "npm run test --workspace nax-agent-runner-sdk",
+    "sdk:ci": "npm run ci --workspace nax-agent-runner-sdk",
+    "sdk:pack-smoke": "npm run pack:smoke --workspace nax-agent-runner-sdk",
     "dry-run": "node src/cli/nax.js issue review --dry --force",
     "try:multiline": "node scripts/try-multiline.js",
     "docs:workflows": "md-magic --file workflows/README.md --config ./.github/markdown.config.js",
@@ -31,7 +39,7 @@
     "dashboard:build": "vite build --config src/dashboard/web/vite.config.mjs",
     "dashboard:preview": "vite preview --config src/dashboard/web/vite.config.mjs",
     "dashboard:smoke": "playwright test tests/e2e/dashboard.spec.js",
-    "prepare": "npm run dashboard:build",
+    "prepare": "npm run sdk:build && npm run dashboard:build",
     "prepack": "npm run dashboard:build",
     "test": "node --import tsx --test tests/unit/*.test.js tests/unit/*.test.ts tests/integration/*.test.js",
     "publish": "git push origin && git push origin --tags",
@@ -70,6 +78,7 @@
     "@netlify/build-info": "^10.5.1",
     "@tanstack/react-query": "^5.101.0",
     "@tanstack/react-router": "^1.170.16",
+    "nax-agent-runner-sdk": "0.1.0",
     "commander": "^14.0.3",
     "comment-block-parser": "^1.5.4",
     "configorama": "^1.0.0",

@@ -16,17 +16,48 @@ function remoteRun(overrides = {}) {
   }
 }
 
+function sdkHandle(runnerId = 'runner-1', sessionId = 'session-1') {
+  return {
+    v: 1,
+    kind: 'run',
+    runnerId,
+    siteId: 'site-1',
+    agent: 'codex',
+    input: {
+      siteId: 'site-1',
+      prompt: 'Review this',
+      agent: 'codex',
+      land: 'none',
+      deadlineMs: 60_000,
+      retryBudget: { capacity: 0 },
+      requestId: '11111111-1111-4111-8111-111111111111',
+    },
+    policy: {
+      landing: 'none',
+      deadlineAt: Date.now() + 60_000,
+      retryBudget: { capacity: 0 },
+    },
+    retries: { capacity: 0 },
+    currentSessionId: sessionId,
+  }
+}
+
 test('hosted Netlify API transport starts runs and deduplicates idempotent submissions', async () => {
   const calls = []
+  const reads = []
+  const handle = sdkHandle()
   const transport = createHostedNetlifyApiTransport({
     siteId: 'site-1',
     client: {
       createAgentRunner: async (input) => {
         calls.push(input)
-        return remoteRun()
+        return remoteRun({ sdkHandle: handle })
       },
       cancelAgentRunner: async () => remoteRun({ status: 'cancelled', state: 'cancelled' }),
-      getAgentRunner: async () => remoteRun({ status: 'running', state: 'running' }),
+      getAgentRunner: async (input) => {
+        reads.push(input)
+        return remoteRun({ status: 'running', state: 'running', sdkHandle: input.sdkHandle })
+      },
     },
   })
   const body = { prompt: 'Review this', agent: 'codex', branch: 'main' }
@@ -41,6 +72,10 @@ test('hosted Netlify API transport starts runs and deduplicates idempotent submi
   assert.equal(calls.length, 1)
   assert.equal(calls[0].siteId, 'site-1')
   assert.equal(calls[0].source.idempotencyKey, idempotencyKey('review', body))
+  assert.deepEqual(first.body.run.sdkHandle, handle)
+
+  await transport.getRun('runner-1')
+  assert.deepEqual(reads[0].sdkHandle, handle)
 })
 
 test('hosted Netlify API transport rejects unregistered runner IDs before remote calls', async () => {

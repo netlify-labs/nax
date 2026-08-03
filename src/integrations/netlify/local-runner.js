@@ -1,14 +1,21 @@
 const { execFile, spawnSync } = require('child_process')
 const fs = require('fs')
 const path = require('path')
-const { readLinkedSiteId, readNetlifyCliToken } = require('./init')
+const { readLinkedSiteId } = require('./init')
+const { readNetlifyCliToken } = require('./auth')
 const { wrapFailure } = require('./failure-guidance')
+const {
+  createNaxAgentRunnerSdk,
+  parsePersistedHandle,
+  resolveRunHandle,
+  runnerArtifactPayload,
+  sessionArtifactPayload,
+} = require('./agent-runner-sdk')
 const { normalizeAgentRunResult } = require('../../workflows/results/agent-run-results')
 
 const TERMINAL_SUCCESS_STATES = new Set(['completed', 'done'])
 const TERMINAL_FAILURE_STATES = new Set(['failed', 'cancelled', 'canceled'])
 const SESSION_FAILURE_STATES = new Set(['failed', 'error', 'cancelled', 'canceled'])
-const RUNNER_ERROR_STATES = new Set(['error'])
 const RETRYABLE_CAPACITY_ERROR = /^The (?:Claude Code|Gemini|Codex) model is currently at capacity\. Retrying automatically\.\.\.$/
 const RETRYABLE_ARGUMENT_LIMIT_ERROR = /fork\/exec\s+\/opt\/build-bin\/agent-runner:\s+argument list too long/i
 const SENSITIVE_ARGS = new Set(['--prompt', '-p', '--data'])
@@ -151,38 +158,6 @@ const NETLIFY_CONFIG_SCAN_SKIP_DIRS = new Set([
  *   sleepFn?: (ms: number) => Promise<unknown>,
  * }} SubmissionRetryOptions
  *
- * Options for creating a fresh Netlify Agent Runner.
- * @typedef {{
- *   projectRoot?: string,
- *   promptText?: string,
- *   agent?: string,
- *   branch?: string,
- *   siteId?: string,
- *   netlifyFilter?: string,
- *   env?: NodeJS.ProcessEnv,
- *   runCommand?: SyncRunCommand,
- * }} CreateAgentRunOptions
- *
- * Options for creating a fresh Netlify Agent Runner asynchronously.
- * @typedef {Omit<CreateAgentRunOptions, 'runCommand'> & SubmissionRetryOptions & {
- *   runCommand?: AsyncRunCommand,
- * }} CreateAgentRunAsyncOptions
- *
- * Options for creating a follow-up Agent Runner session.
- * @typedef {{
- *   projectRoot?: string,
- *   runnerId?: string,
- *   promptText?: string,
- *   agent?: string,
- *   env?: NodeJS.ProcessEnv,
- *   runCommand?: SyncRunCommand,
- * }} CreateAgentSessionOptions
- *
- * Options for creating a follow-up Agent Runner session asynchronously.
- * @typedef {Omit<CreateAgentSessionOptions, 'runCommand'> & SubmissionRetryOptions & {
- *   runCommand?: AsyncRunCommand,
- * }} CreateAgentSessionAsyncOptions
- *
  * Submitted local run options.
  * @typedef {SubmissionRetryOptions & {
  *   run: import('../../types').AgentRun,
@@ -192,6 +167,8 @@ const NETLIFY_CONFIG_SCAN_SKIP_DIRS = new Set([
  *   netlifyFilter?: string,
  *   env?: NodeJS.ProcessEnv,
  *   runCommand?: AsyncRunCommand,
+ *   sdk?: import('nax-agent-runner-sdk').AgentRunnerSdk,
+ *   timeoutMinutes?: number,
  * }} SubmitLocalAgentRunOptions
  *
  * Agent Runner query command options.
@@ -202,6 +179,7 @@ const NETLIFY_CONFIG_SCAN_SKIP_DIRS = new Set([
  *   netlifyFilter?: string,
  *   env?: NodeJS.ProcessEnv,
  *   runCommand?: SyncRunCommand,
+ *   sdk?: import('nax-agent-runner-sdk').AgentRunnerSdk,
  * }} ShowAgentRunOptions
  *
  * Agent Runner session list command options.
@@ -210,9 +188,11 @@ const NETLIFY_CONFIG_SCAN_SKIP_DIRS = new Set([
  *   runnerId?: string,
  *   env?: NodeJS.ProcessEnv,
  *   runCommand?: SyncRunCommand,
+ *   sdk?: import('nax-agent-runner-sdk').AgentRunnerSdk,
+ *   sdkHandle?: import('nax-agent-runner-sdk').Handle,
  * }} AgentRunnerCommandOptions
  *
- * Poll response returned by agents:show.
+ * Poll response normalized from an SDK runner snapshot.
  * @typedef {{
  *   state?: string,
  *   raw?: NetlifyRunnerPayload,
@@ -249,6 +229,7 @@ const NETLIFY_CONFIG_SCAN_SKIP_DIRS = new Set([
  *   onTerminalRun?: (run: import('../../types').AgentRun) => void,
  *   refreshRuns?: () => import('../../types').AgentRun[],
  *   runCommand?: SyncRunCommand,
+ *   sdk?: import('nax-agent-runner-sdk').AgentRunnerSdk,
  * }} WaitForLocalAgentRunsOptions
  *
  * Polling progress event for Agent Runner execution.
@@ -702,88 +683,6 @@ function runAsync(command, args, { cwd, env = process.env, allowFailure = false,
   })
 }
 
-function parseJson(value, label) {
-  try {
-    return JSON.parse(value || '{}')
-  } catch (error) {
-    throw new Error(`Could not parse ${label} JSON: ${error.message}`)
-  }
-}
-
-function sleep(ms) {
-  return new Promise((resolve) => setTimeout(resolve, ms))
-}
-
-function isRetryableSubmissionError(error) {
-  const text = String(error?.message || error || '').toLowerCase()
-  return [
-    'could not parse',
-    'timeout',
-    'timed out',
-    'etimedout',
-    'econnreset',
-    'econnrefused',
-    'eai_again',
-    'enotfound',
-    'socket hang up',
-    'network',
-    'temporarily unavailable',
-    'too many requests',
-    'rate limit',
-    '429',
-    '500',
-    '502',
-    '503',
-    '504',
-    'gateway',
-    'bad gateway',
-    'service unavailable',
-    'internal server error',
-  ].some((needle) => text.includes(needle))
-}
-
-/**
- * Retry policy used by withSubmissionRetry.
- * @typedef {{
- *   attempts?: number,
- *   delayMs?: number,
- *   onRetry?: (event: SubmissionRetryEvent) => void,
- *   sleepFn?: (ms: number) => Promise<unknown>,
- * }} WithSubmissionRetryOptions
- */
-
-/**
- * @template T
- * @param {() => Promise<T>} fn
- * @param {WithSubmissionRetryOptions} param1
- */
-async function withSubmissionRetry(fn, {
-  attempts = DEFAULT_SUBMISSION_RETRY_ATTEMPTS,
-  delayMs = DEFAULT_SUBMISSION_RETRY_DELAY_MS,
-  onRetry = () => {},
-  sleepFn = sleep,
-} = {}) {
-  const totalAttempts = Math.max(1, Number(attempts) || 1)
-  const baseDelayMs = Math.max(0, Number(delayMs) || 0)
-  for (let attempt = 1; attempt <= totalAttempts; attempt += 1) {
-    try {
-      return await fn()
-    } catch (error) {
-      if (attempt >= totalAttempts || !isRetryableSubmissionError(error)) throw error
-      const nextDelayMs = baseDelayMs * (2 ** (attempt - 1))
-      onRetry({
-        error,
-        attempt,
-        nextAttempt: attempt + 1,
-        attempts: totalAttempts,
-        delayMs: nextDelayMs,
-      })
-      if (nextDelayMs > 0) await sleepFn(nextDelayMs)
-    }
-  }
-  throw new Error('Submission retry failed unexpectedly.')
-}
-
 /** @param {NetlifyEnvOptions} param0 */
 function buildNetlifyEnv({ env = process.env, projectRoot, siteId: explicitSiteId } = {}) {
   const token = readNetlifyCliToken({ env })
@@ -820,12 +719,6 @@ function latestSessionFromRunner(runner) {
   return runner?.latest_session && typeof runner.latest_session === 'object'
     ? runner.latest_session
     : {}
-}
-
-function isTerminalFailureState(state, runner = {}) {
-  if (TERMINAL_FAILURE_STATES.has(state)) return true
-  if (!RUNNER_ERROR_STATES.has(state)) return false
-  return Boolean(runner.done_at || runner.latest_session_state === 'error')
 }
 
 function isRetryableCapacityFailure(run) {
@@ -887,354 +780,164 @@ function appendAutoRetryMetadata(runState, rawRetry, {
   }
 }
 
-/** @param {CreateAgentRunOptions} param0 */
-function createAgentRun({
-  projectRoot,
-  promptText,
-  agent,
-  branch,
-  siteId,
-  netlifyFilter,
-  env,
-  runCommand = run,
-} = {}) {
-  const args = ['agents:create', '--json', '--agent', agent, '--project', siteId]
-  if (branch) args.push('--branch', branch)
-  if (netlifyFilter) args.push('--filter', netlifyFilter)
-  args.push('--prompt', promptText)
-
-  let result
-  try {
-    result = runCommand('netlify', args, { cwd: projectRoot, env, timeout: 120000 })
-  } catch (error) {
-    throw wrapFailure(error, { siteId })
-  }
-  const raw = parseJson(result.stdout, 'agents:create')
-  const runnerId = raw.id || ''
-  if (!runnerId) {
-    throw new Error(`Netlify agent run was created but no runner ID was returned for ${agent}.`)
-  }
-  return {
-    runnerId,
-    state: raw.state || 'running',
-    raw,
-  }
-}
-
-/** @param {CreateAgentRunAsyncOptions} param0 */
-async function createAgentRunAsync({
-  projectRoot,
-  promptText,
-  agent,
-  branch,
-  siteId,
-  netlifyFilter,
-  env,
-  runCommand = runAsync,
-  retryAttempts = DEFAULT_SUBMISSION_RETRY_ATTEMPTS,
-  retryDelayMs = DEFAULT_SUBMISSION_RETRY_DELAY_MS,
-  onRetry = () => {},
-  sleepFn,
-} = {}) {
-  const args = ['agents:create', '--json', '--agent', agent, '--project', siteId]
-  if (branch) args.push('--branch', branch)
-  if (netlifyFilter) args.push('--filter', netlifyFilter)
-  args.push('--prompt', promptText)
-
-  try {
-    return await withSubmissionRetry(async () => {
-      const result = await runCommand('netlify', args, { cwd: projectRoot, env, timeout: 120000 })
-      const raw = parseJson(result.stdout, 'agents:create')
-      const runnerId = raw.id || ''
-      if (!runnerId) {
-        throw new Error(`Netlify agent run was created but no runner ID was returned for ${agent}.`)
-      }
-      return {
-        runnerId,
-        state: raw.state || 'running',
-        raw,
-      }
-    }, {
-      attempts: retryAttempts,
-      delayMs: retryDelayMs,
-      onRetry,
-      sleepFn,
-    })
-  } catch (error) {
-    throw wrapFailure(error, { siteId, attempts: retryAttempts })
-  }
-}
-
-/** @param {CreateAgentSessionOptions} param0 */
-function createAgentSession({
-  projectRoot,
-  runnerId,
-  promptText,
-  agent,
-  env,
-  runCommand = run,
-} = {}) {
-  const data = JSON.stringify({
-    agent_runner_id: runnerId,
-    body: {
-      prompt: promptText,
-      agent,
-    },
-  })
-  const result = runCommand('netlify', ['api', 'createAgentRunnerSession', '--data', data], {
-    cwd: projectRoot,
-    env,
-    timeout: 120000,
-  })
-  const raw = parseJson(result.stdout, 'createAgentRunnerSession')
-  const state = raw.state || ''
-  if (!state) {
-    throw new Error(`Netlify follow-up session was submitted but no state was returned for ${agent}.`)
-  }
-  return {
-    runnerId,
-    state,
-    raw,
-  }
-}
-
-/** @param {CreateAgentSessionAsyncOptions} param0 */
-async function createAgentSessionAsync({
-  projectRoot,
-  runnerId,
-  promptText,
-  agent,
-  env,
-  runCommand = runAsync,
-  retryAttempts = DEFAULT_SUBMISSION_RETRY_ATTEMPTS,
-  retryDelayMs = DEFAULT_SUBMISSION_RETRY_DELAY_MS,
-  onRetry = () => {},
-  sleepFn,
-} = {}) {
-  const data = JSON.stringify({
-    agent_runner_id: runnerId,
-    body: {
-      prompt: promptText,
-      agent,
-    },
-  })
-  const args = ['api', 'createAgentRunnerSession', '--data', data]
-  try {
-    return await withSubmissionRetry(async () => {
-      const result = await runCommand('netlify', args, {
-        cwd: projectRoot,
-        env,
-        timeout: 120000,
-      })
-      const raw = parseJson(result.stdout, 'createAgentRunnerSession')
-      const state = raw.state || ''
-      if (!state) {
-        throw new Error(`Netlify follow-up session was submitted but no state was returned for ${agent}.`)
-      }
-      return {
-        runnerId,
-        state,
-        raw,
-      }
-    }, {
-      attempts: retryAttempts,
-      delayMs: retryDelayMs,
-      onRetry,
-      sleepFn,
-    })
-  } catch (error) {
-    throw wrapFailure(error, { attempts: retryAttempts })
-  }
-}
-
-/** @param {SubmitLocalAgentRunOptions} param0 */
+/** @param {SubmitLocalAgentRunOptions} param0 @returns {Promise<import('../../types').AgentRun>} */
 async function submitLocalAgentRun({
   run,
-  projectRoot,
   branch,
   siteId,
-  netlifyFilter,
   env,
-  runCommand,
+  sdk,
+  timeoutMinutes = 25,
   retryAttempts = DEFAULT_SUBMISSION_RETRY_ATTEMPTS,
   retryDelayMs = DEFAULT_SUBMISSION_RETRY_DELAY_MS,
   onRetry = () => {},
   sleepFn,
 }) {
-  const created = run.existingRunnerId
-    ? await createAgentSessionAsync({
-        projectRoot,
-        runnerId: run.existingRunnerId,
-        promptText: run.promptText,
-        agent: run.agent,
-        env,
-        runCommand,
-        retryAttempts,
-        retryDelayMs,
-        onRetry,
-        sleepFn,
-      })
-    : await createAgentRunAsync({
-        projectRoot,
-        promptText: run.promptText,
-        agent: run.agent,
-        branch,
-        siteId,
-        netlifyFilter,
-        env,
-        runCommand,
-        retryAttempts,
-        retryDelayMs,
-        onRetry,
-        sleepFn,
-      })
-
-  return {
-    ...run,
-    status: 'submitted',
-    runnerId: created.runnerId,
-    sessionId: run.existingRunnerId ? (created.raw.id || run.sessionId || '') : (run.sessionId || ''),
-    ...(siteId || run.netlifySiteId ? { netlifySiteId: siteId || run.netlifySiteId } : {}),
-    raw: {
-      ...run.raw,
-      [run.existingRunnerId ? 'session' : 'create']: created.raw,
-    },
+  const deadlineMs = Math.max(0, Number(timeoutMinutes) || 25) * 60 * 1000
+  const client = createNaxAgentRunnerSdk({
+    sdk,
+    env,
+    retryAttempts,
+    retryDelayMs,
+    onRetry,
+    sleepFn,
+  })
+  try {
+    const handle = run.existingRunnerId
+      ? await client.followUp(
+          await resolveRunHandle({
+            sdk: client,
+            run: {
+              ...run,
+              runnerId: run.existingRunnerId,
+              netlifySiteId: siteId || run.netlifySiteId,
+            },
+            branch,
+            deadlineMs,
+          }),
+          {
+            prompt: run.promptText,
+            agent: run.agent,
+          },
+        )
+      : await client.start({
+          siteId: siteId || run.netlifySiteId,
+          prompt: run.promptText,
+          agent: run.agent,
+          ...(branch ? { branch } : {}),
+          land: 'none',
+          deadlineMs,
+          retryBudget: { capacity: 1 },
+        })
+    const [runner, session] = await Promise.all([
+      client.transport.getRunner(handle.runnerId),
+      client.transport.getSession(handle.runnerId, handle.currentSessionId),
+    ])
+    const rawRunner = runnerArtifactPayload(runner)
+    const rawSession = sessionArtifactPayload(session)
+    return {
+      ...run,
+      status: 'submitted',
+      runnerId: handle.runnerId,
+      sessionId: handle.currentSessionId,
+      sdkHandle: handle,
+      ...(siteId || run.netlifySiteId ? { netlifySiteId: siteId || run.netlifySiteId } : {}),
+      raw: {
+        ...run.raw,
+        sdkHandle: handle,
+        [run.existingRunnerId ? 'session' : 'create']: run.existingRunnerId
+          ? rawSession
+          : rawRunner,
+      },
+    }
+  } catch (error) {
+    throw wrapFailure(error, { siteId, attempts: retryAttempts })
   }
 }
 
 /** @param {ShowAgentRunOptions} param0 */
-function showAgentRun({ projectRoot, runnerId, siteId, netlifyFilter, env, runCommand = run } = {}) {
-  const args = ['agents:show', runnerId, '--json', '--project', siteId]
-  if (netlifyFilter) args.push('--filter', netlifyFilter)
-  const result = runCommand('netlify', args, {
-    cwd: projectRoot,
-    env,
-    allowFailure: true,
-  })
-  if (result.status !== 0) {
-    return {
-      state: '',
-      raw: {},
-      error: (result.stderr || result.stdout || '').trim(),
-      commandError: true,
-    }
-  }
-  let raw
+async function showAgentRun({ runnerId, env, sdk } = {}) {
   try {
-    raw = parseJson(result.stdout, 'agents:show')
+    const client = createNaxAgentRunnerSdk({ sdk, env })
+    const runner = await client.transport.getRunner(runnerId)
+    const raw = runnerArtifactPayload(runner)
+    return {
+      state: runner.state,
+      raw,
+      error: '',
+      commandError: false,
+    }
   } catch (error) {
     return {
       state: '',
       raw: {},
-      error: error.message,
+      error: error?.message || String(error),
       commandError: true,
     }
-  }
-  return {
-    state: raw.state || '',
-    raw,
-    error: raw.error || raw.error_message || '',
-    commandError: false,
   }
 }
 
 /** @param {AgentRunnerCommandOptions} param0 */
-function listAgentSessions({ projectRoot, runnerId, env, runCommand = run } = {}) {
-  const data = JSON.stringify({ agent_runner_id: runnerId })
-  const result = runCommand('netlify', ['api', 'listAgentRunnerSessions', '--data', data], {
-    cwd: projectRoot,
-    env,
-    allowFailure: true,
-  })
-  if (result.status !== 0) {
-    return {
-      raw: null,
-      latest: {},
-      error: (result.stderr || result.stdout || result.error?.message || '').trim(),
-      commandError: true,
-    }
-  }
-  if (!result.stdout.trim()) return { raw: null, latest: {}, error: '', commandError: false }
-  let raw
+async function listAgentSessions({ runnerId, env, sdk } = {}) {
   try {
-    raw = parseJson(result.stdout, 'listAgentRunnerSessions')
+    const client = createNaxAgentRunnerSdk({ sdk, env })
+    const sessions = await client.transport.listSessions(runnerId)
+    const raw = sessions.map(sessionArtifactPayload)
+    return {
+      raw,
+      latest: latestSessionFromList(raw),
+      error: '',
+      commandError: false,
+    }
   } catch (error) {
     return {
       raw: null,
       latest: {},
-      error: error.message,
+      error: error?.message || String(error),
       commandError: true,
     }
-  }
-  return {
-    raw,
-    latest: latestSessionFromList(raw),
-    error: '',
-    commandError: false,
   }
 }
 
 /** @param {AgentRunnerCommandOptions} param0 */
-function stopAgentRun({ projectRoot, runnerId, env, runCommand = run } = {}) {
+async function stopAgentRun({ runnerId, env, sdk, sdkHandle } = {}) {
   if (!runnerId) throw new Error('Netlify agent runner ID is required to stop a run.')
-  const data = JSON.stringify({ agent_runner_id: runnerId })
-  const result = runCommand('netlify', ['api', 'deleteAgentRunner', '--data', data], {
-    cwd: projectRoot,
-    env,
-    allowFailure: true,
-  })
-  if (result.status === 0) {
+  const client = createNaxAgentRunnerSdk({ sdk, env })
+  try {
+    const handle = parsePersistedHandle(sdkHandle)
+    if (handle) await client.stop(handle)
+    else await client.transport.cancelRunner(runnerId)
     return {
       stopped: true,
       error: '',
       commandError: false,
     }
-  }
-  const detail = (result.stderr || result.stdout || result.error?.message || '').toString().replace(/\x1b\[[0-9;]*m/g, '').trim()
-  if (/TextHTTPError:\s*Accepted/i.test(detail) || /^Accepted$/i.test(detail)) {
+  } catch (error) {
     return {
-      stopped: true,
-      accepted: true,
-      error: '',
-      commandError: false,
+      stopped: false,
+      error: error?.message || String(error),
+      commandError: true,
     }
-  }
-  return {
-    stopped: false,
-    error: detail,
-    commandError: true,
   }
 }
 
 /** @param {AgentRunnerCommandOptions} param0 */
-function archiveAgentRun({ projectRoot, runnerId, env, runCommand = run } = {}) {
+async function archiveAgentRun({ runnerId, env, sdk } = {}) {
   if (!runnerId) throw new Error('Netlify agent runner ID is required to archive a run.')
-  const data = JSON.stringify({ agent_runner_id: runnerId })
-  const result = runCommand('netlify', ['api', 'archiveAgentRunner', '--data', data], {
-    cwd: projectRoot,
-    env,
-    allowFailure: true,
-  })
-  if (result.status !== 0) {
-    const detail = (result.stderr || result.stdout || result.error?.message || '').toString().replace(/\x1b\[[0-9;]*m/g, '').trim()
-    if (/TextHTTPError:\s*Accepted/i.test(detail) || /^Accepted$/i.test(detail)) {
-      return {
-        archived: true,
-        accepted: true,
-        error: '',
-        commandError: false,
-      }
+  const client = createNaxAgentRunnerSdk({ sdk, env })
+  try {
+    await client.transport.member(runnerId, 'archive', {})
+    return {
+      archived: true,
+      error: '',
+      commandError: false,
     }
+  } catch (error) {
     return {
       archived: false,
-      error: detail,
+      error: error?.message || String(error),
       commandError: true,
     }
-  }
-  return {
-    archived: true,
-    error: '',
-    commandError: false,
   }
 }
 
@@ -1298,10 +1001,8 @@ function normalizeFailedRun({ run, shown, sessions }) {
 
 /** @param {WaitForLocalAgentRunsOptions} param0 */
 async function waitForLocalAgentRuns({
-  projectRoot,
   runs,
   siteId,
-  netlifyFilter,
   env,
   timeoutMinutes = 25,
   initialDelayMs = 50000,
@@ -1309,12 +1010,14 @@ async function waitForLocalAgentRuns({
   onProgress = () => {},
   onTerminalRun = () => {},
   refreshRuns = () => [],
-  runCommand = run,
+  sdk,
 } = {}) {
   const deadline = Date.now() + timeoutMinutes * 60 * 1000
+  const client = createNaxAgentRunnerSdk({ sdk, env })
   let trackedRuns = Array.isArray(runs) ? runs : []
   const pending = new Map(trackedRuns.map((item) => [item.runnerId, item]))
   const completed = new Map()
+  const handles = new Map()
   const capacityRetryCounts = new Map(trackedRuns.map((item) => [item.runnerId, Number(item.autoRetryCount || 0)]))
   const promptShrinkRetryCounts = new Map(trackedRuns.map((item) => [item.runnerId, Number(item.promptShrinkRetryCount || 0)]))
   const isTerminalStoredStatus = (status) => {
@@ -1341,12 +1044,26 @@ async function waitForLocalAgentRuns({
       } else if (!completed.has(runnerId)) {
         pending.set(runnerId, refreshedRun)
       }
+      const refreshedHandle = parsePersistedHandle(refreshedRun.sdkHandle || refreshedRun.raw?.sdkHandle)
+      if (refreshedHandle) handles.set(runnerId, refreshedHandle)
       if (!capacityRetryCounts.has(runnerId)) capacityRetryCounts.set(runnerId, Number(refreshedRun.autoRetryCount || 0))
       if (!promptShrinkRetryCounts.has(runnerId)) promptShrinkRetryCounts.set(runnerId, Number(refreshedRun.promptShrinkRetryCount || 0))
     }
     trackedRuns = refreshed
   }
-  const retryFailedRun = async (runState, failedRun) => {
+  const handleFor = async (runState) => {
+    const cached = handles.get(runState.runnerId)
+    if (cached) return cached
+    const handle = await resolveRunHandle({
+      sdk: client,
+      run: runState,
+      siteId: siteId || runState.netlifySiteId,
+      deadlineMs: timeoutMinutes * 60 * 1000,
+    })
+    handles.set(runState.runnerId, handle)
+    return handle
+  }
+  const retryFailedRun = async (runState, failedRun, handle) => {
     const capacityRetryCount = capacityRetryCounts.get(runState.runnerId) || 0
     const promptShrinkRetryCount = promptShrinkRetryCounts.get(runState.runnerId) || 0
     let promptText = ''
@@ -1372,6 +1089,16 @@ async function waitForLocalAgentRuns({
       return false
     }
 
+    if (
+      retryMetadata.retryReason === 'capacity'
+      && !client.shouldRetry(handle, {
+        category: 'capacity',
+        code: 'model-capacity',
+        message: failedRun.resultText || 'The model is currently at capacity.',
+        retryable: true,
+      })
+    ) return false
+
     onProgress({
       message,
       run: runState,
@@ -1382,31 +1109,45 @@ async function waitForLocalAgentRuns({
       retry: true,
       retryReason: retryMetadata.retryReason,
     })
-    const retried = await createAgentSessionAsync({
-      projectRoot,
-      runnerId: runState.runnerId,
-      promptText,
+    const followed = await client.followUp(handle, {
+      prompt: promptText,
       agent: runState.agent,
-      env,
-      runCommand,
-      onRetry: ({ error, nextAttempt, attempts, delayMs }) => {
-        onProgress({
-          message: `${runState.agent} ${runState.runnerId}: retry submission failed, retrying ${nextAttempt}/${attempts} in ${Math.round(delayMs / 1000)}s — ${error.message}`,
-          run: runState,
-          state: 'retrying',
-          error: error.message,
-          terminal: false,
-          terminalSuccess: false,
-          terminalFailure: false,
-          retry: true,
-          retryReason: retryMetadata.retryReason,
-        })
+    })
+    const retriedHandle = retryMetadata.retryReason === 'capacity'
+      ? {
+          ...followed,
+          retries: {
+            capacity: handle.retries.capacity + 1,
+          },
+        }
+      : followed
+    const retriedSession = await client.transport.getSession(
+      retriedHandle.runnerId,
+      retriedHandle.currentSessionId,
+    )
+    const retriedRun = {
+      ...appendAutoRetryMetadata(runState, sessionArtifactPayload(retriedSession), {
+        ...retryMetadata,
+        promptText,
+      }),
+      runnerId: retriedHandle.runnerId,
+      sessionId: retriedHandle.currentSessionId,
+      sdkHandle: retriedHandle,
+      raw: {
+        ...runState.raw,
+        sdkHandle: retriedHandle,
+        session: sessionArtifactPayload(retriedSession),
+        autoRetries: [
+          ...(Array.isArray(runState.raw?.autoRetries) ? runState.raw.autoRetries : []),
+          {
+            ...sessionArtifactPayload(retriedSession),
+            retryReason: retryMetadata.retryReason,
+            promptLength: promptText.length,
+          },
+        ],
       },
-    })
-    const retriedRun = appendAutoRetryMetadata(runState, retried.raw, {
-      ...retryMetadata,
-      promptText,
-    })
+    }
+    handles.set(runState.runnerId, retriedHandle)
     if (retryMetadata.autoRetryCount !== undefined) {
       capacityRetryCounts.set(runState.runnerId, retryMetadata.autoRetryCount)
     }
@@ -1417,13 +1158,72 @@ async function waitForLocalAgentRuns({
     onProgress({
       message: `${runState.agent} ${runState.runnerId}: retry submitted`,
       run: retriedRun,
-      state: retried.state || 'submitted',
+      state: retriedSession.state || 'submitted',
       terminal: false,
       terminalSuccess: false,
       terminalFailure: false,
       retry: true,
     })
     return true
+  }
+
+  const terminalRun = async (runState, handle, result) => {
+    const [runner, sessions] = await Promise.all([
+      client.transport.getRunner(handle.runnerId),
+      client.transport.listSessions(handle.runnerId),
+    ])
+    const current = sessions.find((session) => (
+      session.sessionId === handle.currentSessionId
+    ))
+    if (!current) {
+      throw new Error(
+        `Agent Runner ${handle.runnerId} did not return current session ${handle.currentSessionId}.`,
+      )
+    }
+    const rawRunner = runnerArtifactPayload(runner)
+    const rawSessions = sessions.map(sessionArtifactPayload)
+    const sessionList = {
+      raw: rawSessions,
+      latest: sessionArtifactPayload(current),
+      error: '',
+      commandError: false,
+    }
+    const shown = {
+      state: runner.state,
+      raw: rawRunner,
+      error: result.status === 'failed' ? result.failure.message : '',
+      commandError: false,
+    }
+    const withHandle = {
+      ...runState,
+      runnerId: handle.runnerId,
+      sessionId: handle.currentSessionId,
+      sdkHandle: handle,
+      raw: {
+        ...runState.raw,
+        sdkHandle: handle,
+      },
+    }
+    if (result.status === 'succeeded') {
+      return normalizeCompletedRun({
+        run: withHandle,
+        shown,
+        sessions: sessionList,
+      })
+    }
+    if (result.status === 'timedOut') {
+      return {
+        ...withHandle,
+        status: 'timeout',
+        resultText: '',
+        usage: result.usage || withHandle.usage,
+      }
+    }
+    return normalizeFailedRun({
+      run: withHandle,
+      shown,
+      sessions: sessionList,
+    })
   }
 
   if (pending.size > 0 && initialDelayMs > 0) {
@@ -1450,82 +1250,70 @@ async function waitForLocalAgentRuns({
         })
         continue
       }
-      const shown = showAgentRun({
-        projectRoot,
-        runnerId: runState.runnerId,
-        siteId,
-        netlifyFilter,
-        env,
-        runCommand,
-      })
-      const state = String(shown.state || '').toLowerCase()
-      const terminalSuccess = TERMINAL_SUCCESS_STATES.has(state)
-      const terminalFailure = isTerminalFailureState(state, shown.raw)
-      const terminal = terminalSuccess || terminalFailure
-      onProgress({
-        message: shown.commandError
-          ? `${runState.agent} ${runState.runnerId}: poll failed, retrying`
-          : `${runState.agent} ${runState.runnerId}: ${state || 'unknown'}`,
-        run: runState,
-        state,
-        currentTask: shown.raw?.current_task || shown.raw?.currentTask || '',
-        error: shown.error,
-        terminal,
-        terminalSuccess,
-        terminalFailure,
-      })
 
-      if (shown.commandError) continue
-
-      if (terminalSuccess) {
-        const sessions = listAgentSessions({
-          projectRoot,
-          runnerId: runState.runnerId,
-          env,
-          runCommand,
-        })
-        if (sessions.commandError) {
-          onProgress({
-            message: `${runState.agent} ${runState.runnerId}: session list failed, retrying`,
-            run: runState,
-            state,
-            error: sessions.error,
-            terminal: false,
-            terminalSuccess: false,
-            terminalFailure: false,
-          })
+      let handle
+      let snapshot
+      try {
+        handle = await handleFor(runState)
+        if (Date.now() >= handle.policy.deadlineAt) {
+          await client.stop(handle).catch(() => {})
+          const timeoutRun = {
+            ...runState,
+            sessionId: handle.currentSessionId,
+            sdkHandle: handle,
+            status: 'timeout',
+            resultText: '',
+          }
+          onTerminalRun(timeoutRun)
+          completed.set(runState.runnerId, timeoutRun)
+          pending.delete(runState.runnerId)
           continue
         }
-        const normalized = normalizeCompletedRun({ run: runState, shown, sessions })
-        onTerminalRun(normalized)
-        if (normalized.status === 'failed' && await retryFailedRun(runState, normalized)) continue
-        completed.set(runState.runnerId, normalized)
-        pending.delete(runState.runnerId)
-      } else if (terminalFailure) {
-        const sessions = listAgentSessions({
-          projectRoot,
-          runnerId: runState.runnerId,
-          env,
-          runCommand,
+        snapshot = await client.getSnapshot(handle)
+      } catch (error) {
+        onProgress({
+          message: `${runState.agent} ${runState.runnerId}: poll failed, retrying`,
+          run: runState,
+          state: '',
+          error: error?.message || String(error),
+          terminal: false,
+          terminalSuccess: false,
+          terminalFailure: false,
         })
-        if (sessions.commandError) {
-          onProgress({
-            message: `${runState.agent} ${runState.runnerId}: session list failed, retrying`,
-            run: runState,
-            state,
-            error: sessions.error,
-            terminal: false,
-            terminalSuccess: false,
-            terminalFailure: false,
-          })
-          continue
-        }
-        const failedRun = normalizeFailedRun({ run: runState, shown, sessions })
-        onTerminalRun(failedRun)
-        if (await retryFailedRun(runState, failedRun)) continue
-        completed.set(runState.runnerId, failedRun)
-        pending.delete(runState.runnerId)
+        continue
       }
+
+      if (snapshot.kind === 'running') {
+        onProgress({
+          message: `${runState.agent} ${runState.runnerId}: ${snapshot.state || 'unknown'}`,
+          run: runState,
+          state: snapshot.state,
+          currentTask: snapshot.latestStep || '',
+          error: '',
+          terminal: false,
+          terminalSuccess: false,
+          terminalFailure: false,
+        })
+        continue
+      }
+
+      const result = snapshot.result
+      const normalized = await terminalRun(runState, handle, result)
+      const terminalSuccess = normalized.status === 'completed'
+      onProgress({
+        message: `${runState.agent} ${runState.runnerId}: ${normalized.status || result.status}`,
+        run: normalized,
+        state: normalized.status,
+        currentTask: '',
+        error: terminalSuccess ? '' : normalized.resultText || '',
+        terminal: true,
+        terminalSuccess,
+        terminalFailure: !terminalSuccess,
+      })
+      onTerminalRun(normalized)
+      if (!terminalSuccess && await retryFailedRun(runState, normalized, handle)) continue
+      completed.set(runState.runnerId, normalized)
+      pending.delete(runState.runnerId)
     }
 
     if (pending.size > 0 && Date.now() < deadline) {
@@ -1534,6 +1322,8 @@ async function waitForLocalAgentRuns({
   }
 
   for (const runState of pending.values()) {
+    const handle = await handleFor(runState).catch(() => null)
+    if (handle) await client.stop(handle).catch(() => {})
     const timeoutRun = {
       ...runState,
       status: 'timeout',
@@ -1549,10 +1339,6 @@ async function waitForLocalAgentRuns({
 module.exports = {
   archiveAgentRun,
   buildNetlifyEnv,
-  createAgentRun,
-  createAgentRunAsync,
-  createAgentSession,
-  createAgentSessionAsync,
   compactPromptForArgumentLimitRetry,
   currentGitBranch,
   stopAgentRun,
@@ -1568,7 +1354,6 @@ module.exports = {
   listAgentSessions,
   normalizeCompletedRun,
   normalizeAgentRunResult,
-  parseJson,
   readNetlifyState,
   readRootNetlifyBuildCommand,
   resolveNetlifyFilter,

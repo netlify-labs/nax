@@ -702,7 +702,7 @@ test('shouldArchiveCompletedStep archives intermediate steps only when requested
   }), false)
 })
 
-test('archiveEligibleCompletedLocalRuns defers runs needed by follow-up steps and dedupes runner archive calls', () => {
+test('archiveEligibleCompletedLocalRuns defers runs needed by follow-up steps and dedupes runner archive calls', async () => {
   const projectRoot = tmpRoot()
   const runState = writeRunState(projectRoot, 'archive-test', {
     flowId: 'review',
@@ -729,7 +729,7 @@ test('archiveEligibleCompletedLocalRuns defers runs needed by follow-up steps an
     return { archived: true, error: '' }
   }
 
-  archiveEligibleCompletedLocalRuns({
+  await archiveEligibleCompletedLocalRuns({
     runState,
     flowSteps,
     currentStepIndex: 0,
@@ -755,7 +755,7 @@ test('archiveEligibleCompletedLocalRuns defers runs needed by follow-up steps an
     }],
   })
 
-  archiveEligibleCompletedLocalRuns({
+  await archiveEligibleCompletedLocalRuns({
     runState,
     flowSteps,
     currentStepIndex: 1,
@@ -1483,7 +1483,7 @@ test('localAgentRunUrl uses nested Netlify config directory and rejects root sit
   }
 })
 
-test('cancelLocalWorkflowRunnersForInterrupt stops active fresh Netlify runners and records state', () => {
+test('cancelLocalWorkflowRunnersForInterrupt stops active fresh Netlify runners and records state', async () => {
   const projectRoot = tmpRoot()
   const calls = []
   const runState = {
@@ -1500,7 +1500,7 @@ test('cancelLocalWorkflowRunnersForInterrupt stops active fresh Netlify runners 
     }],
   }
 
-  const result = cancelLocalWorkflowRunnersForInterrupt({
+  const result = await cancelLocalWorkflowRunnersForInterrupt({
     runState,
     projectRoot,
     options: { netlifySiteId: 'site-123' },

@@ -1,9 +1,9 @@
 const fs = require('fs')
-const os = require('os')
 const path = require('path')
 const { spawnSync } = require('child_process')
 const { assertGhAuthenticated, runGh } = require('../github/gh-cli')
 const { ensureNaxGitignore, naxStatePath } = require('../../storage/local/nax-gitignore')
+const { readNetlifyCliToken } = require('./auth')
 
 const WORKFLOW_PATH = path.join('.github', 'workflows', 'netlify-agents.yml')
 const WORKFLOWS_DIR = path.join('.github', 'workflows')
@@ -203,34 +203,6 @@ function defaultSiteName(projectRoot, repo) {
     .toLowerCase()
     .replace(/[^a-z0-9-]+/g, '-')
     .replace(/^-+|-+$/g, '')
-}
-
-/** @param {{ env?: NodeJS.ProcessEnv, home?: string }} param0 */
-function readNetlifyCliToken({ env = process.env, home = os.homedir() } = {}) {
-  if (env.NETLIFY_AUTH_TOKEN) {
-    return { token: env.NETLIFY_AUTH_TOKEN, source: 'NETLIFY_AUTH_TOKEN' }
-  }
-
-  const xdgConfigHome = env.XDG_CONFIG_HOME || path.join(home, '.config')
-  const candidates = [
-    path.join(home, 'Library', 'Preferences', 'netlify', 'config.json'),
-    path.join(xdgConfigHome, 'netlify', 'config.json'),
-    path.join(home, '.netlify', 'config.json'),
-  ]
-
-  for (const filePath of candidates) {
-    if (!fs.existsSync(filePath)) continue
-    try {
-      const config = readJson(filePath)
-      const user = config.users?.[config.userId]
-      const token = user?.auth?.token
-      if (token) return { token, source: filePath }
-    } catch {
-      // Ignore corrupt or unfamiliar CLI config and keep looking.
-    }
-  }
-
-  return { token: '', source: '' }
 }
 
 function loadWorkflowTemplate() {

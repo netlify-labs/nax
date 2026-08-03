@@ -168,6 +168,7 @@ function normalizeFollowupRun({ run = {}, promptText = '', source = {}, timestam
     resultText: run.resultText || '',
     runnerId: run.runnerId || run.existingRunnerId || '',
     sessionId: run.sessionId || '',
+    sdkHandle: run.sdkHandle || run.raw?.sdkHandle || null,
     existingRunnerId: run.existingRunnerId || '',
     issueUrl: run.issueUrl || '',
     commentUrl: run.commentUrl || '',
@@ -361,6 +362,7 @@ function persistFreshPseudoWorkflow({
       resultText: run.resultText || '',
       runnerId: run.runnerId || '',
       sessionId: run.sessionId || '',
+      sdkHandle: run.sdkHandle || null,
       issueUrl: run.issueUrl || '',
       commentUrl: run.commentUrl || '',
       prUrl: run.prUrl || '',
@@ -385,15 +387,13 @@ function persistFreshPseudoWorkflow({
  *   runState?: import('../../types').WorkflowRunState,
  *   projectRoot?: string,
  *   env?: NodeJS.ProcessEnv,
- *   runCommand?: import('../../types').RunCommand,
- *   syncRunner?: (input: { projectRoot?: string, runner?: import('../../types').AgentRunner, env?: NodeJS.ProcessEnv, runCommand?: import('../../types').RunCommand }) => { sessions?: import('../../types').AgentSession[] },
+ *   syncRunner?: (input: { projectRoot?: string, runner?: import('../../types').AgentRunner, env?: NodeJS.ProcessEnv }) => { sessions?: import('../../types').AgentSession[] } | Promise<{ sessions?: import('../../types').AgentSession[] }>,
  * }} input
  */
-function syncSubmittedFollowupRunsToWorkflow({
+async function syncSubmittedFollowupRunsToWorkflow({
   runState,
   projectRoot = followupProjectRoot(runState),
   env = process.env,
-  runCommand,
   syncRunner = syncAgentRunner,
 } = {}) {
   if (!runState?.dir || !projectRoot) return { runState, changed: false, warnings: [] }
@@ -413,10 +413,9 @@ function syncSubmittedFollowupRunsToWorkflow({
   for (const runnerId of [...new Set(candidates.map(({ run }) => String(run.runnerId || '')).filter(Boolean))]) {
     const candidate = candidates.find(({ run }) => String(run.runnerId || '') === runnerId)
     try {
-      const synced = syncRunner({
+      const synced = await syncRunner({
         projectRoot,
         env,
-        runCommand,
         runner: {
           runnerId,
           agent: candidate?.run?.agent || '',

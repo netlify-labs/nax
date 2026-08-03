@@ -46,8 +46,7 @@ function decodeRunsCursor(value) {
  *   projectRoot: string,
  *   env?: NodeJS.ProcessEnv,
  *   flowStore?: { loadWorkflow?: (id: string) => Promise<Record<string, unknown>> },
- *   followupSyncRunCommand?: import('../../types').RunCommand,
- *   followupSyncRunner?: (input: { projectRoot?: string, runner?: import('../../types').AgentRunner, env?: NodeJS.ProcessEnv, runCommand?: import('../../types').RunCommand }) => { sessions?: import('../../types').AgentSession[] },
+ *   followupSyncRunner?: (input: { projectRoot?: string, runner?: import('../../types').AgentRunner, env?: NodeJS.ProcessEnv }) => { sessions?: import('../../types').AgentSession[] } | Promise<{ sessions?: import('../../types').AgentSession[] }>,
  *   refreshCooldownMs?: number,
  *   resolveRunStateId?: (id: string) => string | null | undefined,
  * }} LocalRunStoreOptions
@@ -103,7 +102,6 @@ function createLocalRunStore({
   projectRoot,
   env = process.env,
   flowStore,
-  followupSyncRunCommand,
   followupSyncRunner,
   refreshCooldownMs = DEFAULT_REFRESH_COOLDOWN_MS,
   resolveRunStateId,
@@ -138,7 +136,7 @@ function createLocalRunStore({
   }
 
   /** @param {Record<string, unknown> | null} runState @param {RefreshRunStateContext} [context] */
-  function refreshRunStateIfNeeded(runState, context = {}) {
+  async function refreshRunStateIfNeeded(runState, context = {}) {
     if (!runState) return runState
     const snapshot = projectRunSnapshot(runState)
     const runId = String(runState.runId || '')
@@ -155,11 +153,10 @@ function createLocalRunStore({
     if (!context.force && lastAttemptMs > 0 && nowMs - lastAttemptMs < refreshCooldownMs) return runState
     if (!hasRefreshCandidates) return runState
     refreshAttemptedAt.set(runId, nowMs)
-    const synced = syncSubmittedFollowupRunsToWorkflow({
+    const synced = await syncSubmittedFollowupRunsToWorkflow({
       runState,
       projectRoot,
       env,
-      runCommand: followupSyncRunCommand,
       syncRunner: followupSyncRunner,
     })
     return synced.runState || runState
@@ -187,13 +184,13 @@ function createLocalRunStore({
       }
     },
     getRunState,
-    getRun(id) {
-      const runState = refreshRunStateIfNeeded(getRunState(id), { view: 'detail' })
+    async getRun(id) {
+      const runState = await refreshRunStateIfNeeded(getRunState(id), { view: 'detail' })
       return publicRunWithLiveness(runState)
     },
     refreshRunStateIfNeeded,
     async getRunGraph(id) {
-      const durable = refreshRunStateIfNeeded(getRunState(id), { view: 'graph' })
+      const durable = await refreshRunStateIfNeeded(getRunState(id), { view: 'graph' })
       if (!durable) return null
       let flow = null
       try {
@@ -213,7 +210,7 @@ function createLocalRunStore({
       }
     },
     async getRunDetails(id) {
-      const durable = refreshRunStateIfNeeded(getRunState(id), { view: 'details' })
+      const durable = await refreshRunStateIfNeeded(getRunState(id), { view: 'details' })
       if (!durable) return null
       let flow = null
       try {

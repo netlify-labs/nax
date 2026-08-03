@@ -5,32 +5,56 @@ let activeRunState = null
 let activeInterruptHandler = null
 let installed = false
 
-function persistActiveRunState(reason, now = new Date()) {
+function persistInterruptedState(reason, now = new Date()) {
   if (!activeRunState || activeRunState.status === 'completed') return null
-  if (activeInterruptHandler) {
-    try {
-      // onInterrupt must be synchronous here: the onAnyExit('process-exit') path
-      // runs persistActiveRunState synchronously, so async cleanup cannot complete.
-      activeInterruptHandler({ runState: activeRunState, reason })
-    } catch (error) {
-      activeRunState.interruptCleanupWarning = error?.message || String(error)
-      activeRunState.interruptCleanupStack = error?.stack || ''
-      console.warn('interrupt cleanup failed', error)
-    }
-  }
   activeRunState.status = 'interrupted'
   activeRunState.interruptedAt = now.toISOString()
   activeRunState.interruptReason = reason
   return saveRunState(activeRunState)
 }
 
+function persistActiveRunState(reason, now = new Date()) {
+  if (!activeRunState || activeRunState.status === 'completed') return null
+  if (
+    activeInterruptHandler
+    && activeInterruptHandler.constructor?.name !== 'AsyncFunction'
+  ) {
+    try {
+      const pending = activeInterruptHandler({ runState: activeRunState, reason })
+      if (pending && typeof pending.then === 'function') {
+        activeRunState.interruptCleanupWarning = 'Interrupt cleanup did not finish before process exit.'
+      }
+    } catch (error) {
+      activeRunState.interruptCleanupWarning = error?.message || String(error)
+      activeRunState.interruptCleanupStack = error?.stack || ''
+      console.warn('interrupt cleanup failed', error)
+    }
+  } else if (activeInterruptHandler) {
+    activeRunState.interruptCleanupWarning =
+      'Async interrupt cleanup could not run during the synchronous process-exit fallback.'
+  }
+  return persistInterruptedState(reason, now)
+}
+
+async function persistActiveRunStateAsync(reason, now = new Date()) {
+  if (!activeRunState || activeRunState.status === 'completed') return null
+  if (activeInterruptHandler) {
+    try {
+      await activeInterruptHandler({ runState: activeRunState, reason })
+    } catch (error) {
+      activeRunState.interruptCleanupWarning = error?.message || String(error)
+      activeRunState.interruptCleanupStack = error?.stack || ''
+      console.warn('interrupt cleanup failed', error)
+    }
+  }
+  return persistInterruptedState(reason, now)
+}
+
 function installGracefulRunStateHandlers() {
   if (installed) return
   installed = true
 
-  onShutdown('nax-run-state', () => {
-    persistActiveRunState('shutdown')
-  })
+  onShutdown('nax-run-state', () => persistActiveRunStateAsync('shutdown'))
   onAnyExit(() => {
     persistActiveRunState('process-exit')
   })
@@ -45,7 +69,7 @@ function installGracefulRunStateHandlers() {
  *
  * Graceful run-state tracking options.
  * @typedef {{
- *   onInterrupt?: (event: RunStateInterruptEvent) => void,
+ *   onInterrupt?: (event: RunStateInterruptEvent) => void | Promise<void>,
  * }} TrackRunStateOptions
  */
 
@@ -76,5 +100,6 @@ module.exports = {
   installGracefulRunStateHandlers,
   markRunCompleted,
   persistActiveRunState,
+  persistActiveRunStateAsync,
   trackRunState,
 }

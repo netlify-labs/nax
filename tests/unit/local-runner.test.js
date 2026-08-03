@@ -3,1476 +3,450 @@ const assert = require('node:assert/strict')
 const fs = require('fs')
 const os = require('os')
 const path = require('path')
-const { spawnSync } = require('child_process')
 
 const {
   archiveAgentRun,
   buildNetlifyEnv,
   compactPromptForArgumentLimitRetry,
-  createAgentRun,
-  createAgentRunAsync,
-  createAgentSession,
-  createAgentSessionAsync,
-  stopAgentRun,
-  detectJavascriptWorkspace,
-  findNetlifyConfigPaths,
   formatCommandForError,
-  inferNetlifyFilterFromCommand,
   latestSessionFromList,
-  listNetlifyFilterCandidates,
-  listLinkedNetlifySites,
   listAgentSessions,
-  normalizeCompletedRun,
-  readNetlifyState,
-  readRootNetlifyBuildCommand,
-  resolveNetlifyFilter,
   resolveNetlifyProjectTarget,
-  waitForLocalAgentRuns,
   showAgentRun,
+  stopAgentRun,
   submitLocalAgentRun,
-  runAsync,
+  waitForLocalAgentRuns,
 } = require('../../src/integrations/netlify/local-runner')
 
-test('latestSessionFromList accepts array and sessions wrapper responses', () => {
-  assert.deepEqual(latestSessionFromList([{ id: 's1' }, { id: 's2' }]), { id: 's2' })
-  assert.deepEqual(latestSessionFromList({ sessions: [{ id: 's3' }] }), { id: 's3' })
-  assert.deepEqual(latestSessionFromList({}), {})
+const REQUEST_ID = '11111111-1111-4111-8111-111111111111'
+const FOLLOWUP_ID = '22222222-2222-4222-8222-222222222222'
+
+/** @returns {import('nax-agent-runner-sdk').RunHandle} */
+function handle(overrides = {}) {
+  return {
+    v: 1,
+    kind: 'run',
+    runnerId: 'runner-1',
+    siteId: 'site-1',
+    agent: 'codex',
+    input: {
+      siteId: 'site-1',
+      prompt: 'Review this repo',
+      agent: 'codex',
+      branch: 'feature/sdk',
+      land: 'none',
+      deadlineMs: 60_000,
+      retryBudget: { capacity: 1 },
+      requestId: REQUEST_ID,
+    },
+    policy: {
+      landing: 'none',
+      deadlineAt: Date.now() + 60_000,
+      retryBudget: { capacity: 1 },
+    },
+    retries: { capacity: 0 },
+    currentSessionId: 'session-1',
+    ...overrides,
+  }
+}
+
+function runner(overrides = {}) {
+  return {
+    runnerId: 'runner-1',
+    state: 'running',
+    siteId: 'site-1',
+    branch: 'feature/sdk',
+    currentTask: 'Reading files',
+    ...overrides,
+  }
+}
+
+function session(sessionId = 'session-1', overrides = {}) {
+  return {
+    sessionId,
+    runnerId: 'runner-1',
+    state: 'running',
+    prompt: 'Review this repo',
+    agent: 'codex',
+    usage: null,
+    ...overrides,
+  }
+}
+
+function sdkHarness(overrides = {}) {
+  const calls = []
+  const transport = {
+    getRunner: async (runnerId) => {
+      calls.push(['getRunner', runnerId])
+      return runner()
+    },
+    getSession: async (runnerId, sessionId) => {
+      calls.push(['getSession', runnerId, sessionId])
+      return session(sessionId)
+    },
+    listSessions: async (runnerId) => {
+      calls.push(['listSessions', runnerId])
+      return [session()]
+    },
+    cancelRunner: async (runnerId) => {
+      calls.push(['cancelRunner', runnerId])
+    },
+    member: async (runnerId, action, input) => {
+      calls.push(['member', runnerId, action, input])
+    },
+    ...overrides.transport,
+  }
+  const sdk = {
+    transport,
+    start: async (input) => {
+      calls.push(['start', input])
+      return handle()
+    },
+    followUp: async (base, input) => {
+      calls.push(['followUp', base, input])
+      return handle({
+        ...base,
+        kind: 'session',
+        currentSessionId: 'session-2',
+        sessionId: 'session-2',
+        sessionInput: {
+          prompt: input.prompt,
+          agent: input.agent,
+          requestId: FOLLOWUP_ID,
+        },
+      })
+    },
+    getSnapshot: async (value) => {
+      calls.push(['getSnapshot', value])
+      return {
+        kind: 'terminal',
+        result: {
+          status: 'succeeded',
+          runnerId: value.runnerId,
+          sessionId: value.currentSessionId,
+          resultText: 'Done',
+          usage: { totalTokens: 42 },
+          changes: 'changed',
+          links: {},
+        },
+      }
+    },
+    stop: async (value) => {
+      calls.push(['stop', value])
+      return value
+    },
+    shouldRetry: () => false,
+    ...overrides.sdk,
+  }
+  return { sdk, calls }
+}
+
+test('submission creates a fresh SDK run and persists its exact handle', async () => {
+  const { sdk, calls } = sdkHarness({
+    transport: {
+      getRunner: async () => runner(),
+      getSession: async () => session(),
+    },
+  })
+  const submitted = await submitLocalAgentRun({
+    run: {
+      transport: 'netlify-api',
+      agent: 'codex',
+      status: 'pending',
+      promptText: 'Review this repo',
+      raw: {},
+    },
+    siteId: 'site-1',
+    branch: 'feature/sdk',
+    timeoutMinutes: 12,
+    sdk,
+  })
+
+  const start = calls.find(([operation]) => operation === 'start')
+  assert.equal(start[1].siteId, 'site-1')
+  assert.equal(start[1].prompt, 'Review this repo')
+  assert.equal(start[1].branch, 'feature/sdk')
+  assert.equal(start[1].deadlineMs, 12 * 60 * 1000)
+  assert.equal(start[1].retryBudget.capacity, 1)
+  assert.equal(submitted.runnerId, 'runner-1')
+  assert.equal(submitted.sessionId, 'session-1')
+  assert.equal(submitted.sdkHandle.runnerId, 'runner-1')
+  assert.equal(submitted.sdkHandle.currentSessionId, 'session-1')
+  assert.deepEqual(submitted.raw.sdkHandle, submitted.sdkHandle)
 })
 
-test('formatCommandForError redacts prompt and API payload values', () => {
+test('follow-up submission resumes the persisted handle and records the new session', async () => {
+  const base = handle()
+  const { sdk, calls } = sdkHarness({
+    transport: {
+      getRunner: async () => runner(),
+      getSession: async () => session('session-2'),
+    },
+  })
+  const submitted = await submitLocalAgentRun({
+    run: {
+      agent: 'codex',
+      promptText: 'Continue the review',
+      existingRunnerId: 'runner-1',
+      netlifySiteId: 'site-1',
+      sdkHandle: base,
+      raw: { sdkHandle: base },
+    },
+    siteId: 'site-1',
+    sdk,
+  })
+
+  const followUp = calls.find(([operation]) => operation === 'followUp')
+  assert.deepEqual(followUp[1], base)
+  assert.deepEqual(followUp[2], {
+    prompt: 'Continue the review',
+    agent: 'codex',
+  })
+  assert.equal(submitted.runnerId, 'runner-1')
+  assert.equal(submitted.sessionId, 'session-2')
+  assert.equal(submitted.sdkHandle.kind, 'session')
   assert.equal(
-    formatCommandForError('netlify', ['agents:create', '--prompt', 'secret prompt', '--agent', 'codex']),
+    /** @type {{ id?: string }} */ (submitted.raw.session).id,
+    'session-2',
+  )
+})
+
+test('polling attributes completion to the handle current session', async () => {
+  const persisted = handle({ currentSessionId: 'session-current' })
+  const progress = []
+  const terminal = []
+  const { sdk } = sdkHarness({
+    transport: {
+      getRunner: async () => runner({ state: 'completed', hasResultDiff: true }),
+      listSessions: async () => [
+        session('session-old', { state: 'completed', resultText: 'Old' }),
+        session('session-current', {
+          state: 'completed',
+          resultText: 'Current result',
+          hasResultDiff: true,
+          usage: { totalTokens: 42 },
+        }),
+      ],
+    },
+  })
+  const [completed] = await waitForLocalAgentRuns({
+    runs: [{
+      agent: 'codex',
+      status: 'submitted',
+      promptText: 'Review this repo',
+      runnerId: 'runner-1',
+      sessionId: 'session-current',
+      netlifySiteId: 'site-1',
+      sdkHandle: persisted,
+      raw: { sdkHandle: persisted },
+    }],
+    siteId: 'site-1',
+    initialDelayMs: 0,
+    pollIntervalMs: 1,
+    sdk,
+    onProgress: (event) => progress.push(event),
+    onTerminalRun: (run) => terminal.push(run),
+  })
+
+  assert.equal(completed.status, 'completed')
+  assert.equal(completed.sessionId, 'session-current')
+  assert.equal(completed.resultText, 'Current result')
+  assert.equal(completed.usage.totalTokens, 42)
+  assert.equal(completed.fileChanges.hasChanges, true)
+  assert.equal(completed.rawResult.latestSession.id, 'session-current')
+  assert.equal(terminal.length, 1)
+  assert.equal(progress.at(-1).terminalSuccess, true)
+})
+
+test('capacity retry stays on the runner and advances the SDK handle once', async () => {
+  let currentSessionId = 'session-1'
+  const initial = handle()
+  const { sdk, calls } = sdkHarness({
+    transport: {
+      getRunner: async () => runner({
+        state: currentSessionId === 'session-1' ? 'failed' : 'completed',
+      }),
+      getSession: async (_runnerId, requestedSessionId) => session(
+        requestedSessionId,
+        requestedSessionId === 'session-1'
+          ? {
+              state: 'failed',
+              resultText: 'The Codex model is currently at capacity. Retrying automatically...',
+            }
+          : {
+              state: 'completed',
+              resultText: 'Recovered',
+            },
+      ),
+      listSessions: async () => [
+        session('session-1', {
+          state: 'failed',
+          resultText: 'The Codex model is currently at capacity. Retrying automatically...',
+        }),
+        ...(currentSessionId === 'session-2'
+          ? [session('session-2', { state: 'completed', resultText: 'Recovered' })]
+          : []),
+      ],
+    },
+    sdk: {
+      getSnapshot: async (value) => value.currentSessionId === 'session-1'
+        ? {
+            kind: 'terminal',
+            result: {
+              status: 'failed',
+              runnerId: 'runner-1',
+              sessionId: 'session-1',
+              failure: {
+                category: 'capacity',
+                code: 'model-capacity',
+                message: 'capacity',
+                retryable: true,
+              },
+              usage: null,
+            },
+          }
+        : {
+            kind: 'terminal',
+            result: {
+              status: 'succeeded',
+              runnerId: 'runner-1',
+              sessionId: 'session-2',
+              resultText: 'Recovered',
+              usage: null,
+              changes: 'unknown',
+              links: {},
+            },
+          },
+      shouldRetry: () => true,
+      followUp: async (base, input) => {
+        calls.push(['followUp', base, input])
+        currentSessionId = 'session-2'
+        return {
+          ...base,
+          kind: 'session',
+          currentSessionId,
+          sessionId: currentSessionId,
+          sessionInput: {
+            prompt: input.prompt,
+            agent: input.agent,
+            requestId: FOLLOWUP_ID,
+          },
+        }
+      },
+    },
+  })
+  const [completed] = await waitForLocalAgentRuns({
+    runs: [{
+      agent: 'codex',
+      status: 'submitted',
+      promptText: 'Review this repo',
+      runnerId: 'runner-1',
+      sessionId: 'session-1',
+      netlifySiteId: 'site-1',
+      sdkHandle: initial,
+      raw: { sdkHandle: initial },
+    }],
+    siteId: 'site-1',
+    initialDelayMs: 0,
+    pollIntervalMs: 1,
+    sdk,
+  })
+
+  assert.equal(calls.filter(([operation]) => operation === 'followUp').length, 1)
+  assert.equal(completed.status, 'completed')
+  assert.equal(completed.resultText, 'Recovered')
+  assert.equal(completed.autoRetryCount, 1)
+  assert.equal(completed.sdkHandle.currentSessionId, 'session-2')
+  assert.equal(completed.sdkHandle.retries.capacity, 1)
+})
+
+test('runner controls and reads use only the SDK transport boundary', async () => {
+  const persisted = handle()
+  const { sdk, calls } = sdkHarness()
+
+  const shown = await showAgentRun({ runnerId: 'runner-1', sdk })
+  const sessions = await listAgentSessions({ runnerId: 'runner-1', sdk })
+  const stopped = await stopAgentRun({
+    runnerId: 'runner-1',
+    sdkHandle: persisted,
+    sdk,
+  })
+  const archived = await archiveAgentRun({ runnerId: 'runner-1', sdk })
+
+  assert.equal(shown.state, 'running')
+  assert.equal(sessions.latest.id, 'session-1')
+  assert.equal(stopped.stopped, true)
+  assert.equal(archived.archived, true)
+  assert.ok(calls.some(([operation]) => operation === 'stop'))
+  assert.deepEqual(
+    calls.find(([operation]) => operation === 'member').slice(0, 4),
+    ['member', 'runner-1', 'archive', {}],
+  )
+  assert.equal(calls.some(([operation]) => operation === 'runCommand'), false)
+})
+
+test('legacy run handles are recovered from the exact persisted session before follow-up', async () => {
+  const { sdk, calls } = sdkHarness({
+    transport: {
+      listSessions: async () => [
+        session('session-old'),
+        session('session-current'),
+      ],
+      getRunner: async () => runner(),
+      getSession: async () => session('session-2'),
+    },
+  })
+  await submitLocalAgentRun({
+    run: {
+      agent: 'codex',
+      promptText: 'Continue',
+      existingRunnerId: 'runner-1',
+      sessionId: 'session-current',
+      netlifySiteId: 'site-1',
+      raw: {},
+    },
+    siteId: 'site-1',
+    sdk,
+  })
+
+  const followUp = calls.find(([operation]) => operation === 'followUp')
+  assert.equal(followUp[1].currentSessionId, 'session-current')
+  assert.equal(followUp[1].siteId, 'site-1')
+})
+
+test('local runner utilities preserve redaction, prompt retry, and target selection', () => {
+  assert.deepEqual(
+    latestSessionFromList([{ id: 's1' }, { id: 's2' }]),
+    { id: 's2' },
+  )
+  assert.equal(
+    formatCommandForError(
+      'netlify',
+      ['agents:create', '--prompt', 'secret prompt', '--agent', 'codex'],
+    ),
     'netlify agents:create --prompt <redacted> --agent codex',
   )
-  assert.equal(
-    formatCommandForError('netlify', ['api', 'createAgentRunnerSession', '--data', '{"prompt":"secret"}']),
-    'netlify api createAgentRunnerSession --data <redacted>',
-  )
-})
-
-test('compactPromptForArgumentLimitRetry preserves blob prompt wrappers', () => {
-  const run = {
+  assert.equal(compactPromptForArgumentLimitRetry({
     promptText: 'short blob wrapper',
     compactPromptText: 'compact fallback',
     blobRef: { store: 's', key: 'k' },
     promptDelivery: { mode: 'blob' },
-  }
+  }), 'short blob wrapper')
 
-  assert.equal(compactPromptForArgumentLimitRetry(run), 'short blob wrapper')
-})
-
-test('stopAgentRun cancels active runner through Netlify API stop operation', () => {
-  const calls = []
-  const result = stopAgentRun({
-    projectRoot: '/tmp/project',
-    runnerId: 'runner-1',
-    env: { NETLIFY_AUTH_TOKEN: 'token' },
-    runCommand(command, args, options) {
-      calls.push({ command, args, options })
-      return { status: 0, stdout: '', stderr: '' }
-    },
-  })
-
-  assert.equal(result.stopped, true)
-  assert.equal(calls[0].command, 'netlify')
-  assert.deepEqual(calls[0].args, [
-    'api',
-    'deleteAgentRunner',
-    '--data',
-    '{"agent_runner_id":"runner-1"}',
-  ])
-  assert.equal(calls[0].options.cwd, '/tmp/project')
-  assert.equal(calls[0].options.allowFailure, true)
-})
-
-test('stopAgentRun treats Netlify CLI Accepted response as stopped', () => {
-  const result = stopAgentRun({
-    projectRoot: '/tmp/project',
-    runnerId: 'runner-1',
-    env: { NETLIFY_AUTH_TOKEN: 'token' },
-    runCommand() {
-      return { status: 1, stdout: '', stderr: '\u001b[31mTextHTTPError:\u001b[39m Accepted' }
-    },
-  })
-
-  assert.equal(result.stopped, true)
-  assert.equal(result.accepted, true)
-  assert.equal(result.commandError, false)
-})
-
-test('archiveAgentRun invokes Netlify API archive operation', () => {
-  const calls = []
-  const result = archiveAgentRun({
-    projectRoot: '/tmp/project',
-    runnerId: 'runner-1',
-    env: { NETLIFY_AUTH_TOKEN: 'token' },
-    runCommand(command, args, options) {
-      calls.push({ command, args, options })
-      return { status: 0, stdout: '', stderr: '' }
-    },
-  })
-
-  assert.equal(result.archived, true)
-  assert.deepEqual(calls[0].args, [
-    'api',
-    'archiveAgentRunner',
-    '--data',
-    '{"agent_runner_id":"runner-1"}',
-  ])
-  assert.equal(calls[0].options.cwd, '/tmp/project')
-  assert.equal(calls[0].options.allowFailure, true)
-})
-
-test('archiveAgentRun treats Netlify CLI Accepted response as archived', () => {
-  const result = archiveAgentRun({
-    projectRoot: '/tmp/project',
-    runnerId: 'runner-1',
-    env: { NETLIFY_AUTH_TOKEN: 'token' },
-    runCommand() {
-      return { status: 1, stdout: '', stderr: '\u001b[31mTextHTTPError:\u001b[39m Accepted' }
-    },
-  })
-
-  assert.equal(result.archived, true)
-  assert.equal(result.accepted, true)
-  assert.equal(result.commandError, false)
-})
-
-test('detectJavascriptWorkspace reports build-info workspace state', async () => {
-  const detected = await detectJavascriptWorkspace({
-    projectRoot: '/tmp/project',
-    getBuildInfo: async (config) => ({
-      jsWorkspaces: {
-        isRoot: true,
-        rootDir: config.rootDir,
-        packages: [{ path: 'frontend', name: 'frontend' }],
-      },
-      packageManager: { name: 'pnpm' },
-    }),
-  })
-
-  assert.equal(detected.isWorkspace, true)
-  assert.equal(detected.workspace.packages[0].path, 'frontend')
-  assert.equal(detected.packageManager.name, 'pnpm')
-  assert.equal(detected.error, '')
-})
-
-test('detectJavascriptWorkspace returns non-workspace when build-info finds no js workspace', async () => {
-  const detected = await detectJavascriptWorkspace({
-    projectRoot: '/tmp/project',
-    getBuildInfo: async () => ({
-      jsWorkspaces: null,
-      packageManager: { name: 'npm' },
-    }),
-  })
-
-  assert.equal(detected.isWorkspace, false)
-  assert.equal(detected.workspace, null)
-  assert.equal(detected.packageManager.name, 'npm')
-})
-
-test('readNetlifyState reads a local Netlify site link', () => {
-  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'nax-netlify-state-'))
-  fs.mkdirSync(path.join(tmp, '.netlify'), { recursive: true })
-  fs.writeFileSync(path.join(tmp, '.netlify', 'state.json'), JSON.stringify({ siteId: 'site-from-state' }))
-
-  assert.deepEqual(readNetlifyState(tmp), {
-    siteId: 'site-from-state',
-    statePath: path.join(tmp, '.netlify', 'state.json'),
-  })
-})
-
-test('buildNetlifyEnv accepts an explicit selected site id', () => {
-  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'nax-netlify-env-'))
-  const netlify = buildNetlifyEnv({
-    projectRoot: tmp,
-    siteId: 'selected-site',
-    env: { NETLIFY_AUTH_TOKEN: 'token' },
-  })
-
-  assert.equal(netlify.siteId, 'selected-site')
-  assert.equal(netlify.env.NETLIFY_SITE_ID, 'selected-site')
-  assert.equal(netlify.env.NETLIFY_AUTH_TOKEN, 'token')
-})
-
-test('runAsync redacts sensitive payloads from exec errors', async () => {
-  const payload = '{"prompt":"secret prompt"}'
-  await assert.rejects(
-    runAsync(process.execPath, ['-e', 'process.exit(1)', '--data', payload]),
-    (error) => {
-      const err = /** @type {Error} */ (error)
-      assert.match(err.message, /--data <redacted>/)
-      assert.doesNotMatch(err.message, /secret prompt/)
-      return true
-    },
+  const projectRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'nax-sdk-target-'))
+  fs.mkdirSync(path.join(projectRoot, '.netlify'), { recursive: true })
+  fs.writeFileSync(
+    path.join(projectRoot, '.netlify', 'state.json'),
+    JSON.stringify({ siteId: 'site-1' }),
   )
-})
-
-test('inferNetlifyFilterFromCommand reads a single package-manager filter', () => {
+  const built = buildNetlifyEnv({
+    projectRoot,
+    env: { NETLIFY_AUTH_TOKEN: 'token' },
+  })
+  assert.equal(built.siteId, 'site-1')
+  assert.equal(built.env.NETLIFY_AUTH_TOKEN, 'token')
   assert.equal(
-    inferNetlifyFilterFromCommand('BUGSNAG=1 pnpm --filter revenue-engine-frontend build:netlify'),
-    'revenue-engine-frontend',
-  )
-  assert.equal(inferNetlifyFilterFromCommand('pnpm --filter=revenue-engine-frontend build'), 'revenue-engine-frontend')
-  assert.equal(inferNetlifyFilterFromCommand('pnpm -F "revenue-engine-frontend" build'), 'revenue-engine-frontend')
-  assert.equal(inferNetlifyFilterFromCommand('pnpm --filter one --filter two build'), '')
-})
-
-test('resolveNetlifyFilter infers a root filter from netlify.toml build command', () => {
-  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'nax-local-runner-filter-'))
-  fs.writeFileSync(path.join(tmp, 'netlify.toml'), [
-    '[build]',
-    '  command = "pnpm --filter revenue-engine-frontend build:netlify"',
-    '  publish = "clients/frontend/dist"',
-    '',
-  ].join('\n'))
-
-  assert.equal(readRootNetlifyBuildCommand(tmp), 'pnpm --filter revenue-engine-frontend build:netlify')
-  assert.deepEqual(resolveNetlifyFilter({ projectRoot: tmp }), {
-    filter: 'revenue-engine-frontend',
-    source: 'netlify.toml',
-  })
-  assert.deepEqual(resolveNetlifyFilter({ projectRoot: tmp, filter: 'explicit-app' }), {
-    filter: 'explicit-app',
-    source: 'option',
-  })
-})
-
-test('resolveNetlifyFilter falls back to a nested netlify.toml build command', () => {
-  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'nax-local-runner-nested-filter-'))
-  const appDir = path.join(tmp, 'apps', 'workspace', 'packages', 'clients', 'frontend')
-  fs.mkdirSync(appDir, { recursive: true })
-  fs.writeFileSync(path.join(appDir, 'netlify.toml'), [
-    '[build]',
-    '  command = "pnpm --filter revenue-engine-frontend build:netlify"',
-    '  publish = "/clients/frontend/dist"',
-    '',
-  ].join('\n'))
-
-  assert.deepEqual(resolveNetlifyFilter({ projectRoot: tmp }), {
-    filter: 'revenue-engine-frontend',
-    source: path.join('apps', 'workspace', 'packages', 'clients', 'frontend', 'netlify.toml'),
-  })
-  assert.deepEqual(listNetlifyFilterCandidates(tmp).map((candidate) => ({
-    source: candidate.source,
-    dir: candidate.dir,
-    filter: candidate.filter,
-  })), [{
-    source: path.join('apps', 'workspace', 'packages', 'clients', 'frontend', 'netlify.toml'),
-    dir: path.join('apps', 'workspace', 'packages', 'clients', 'frontend'),
-    filter: 'revenue-engine-frontend',
-  }])
-})
-
-test('listNetlifyFilterCandidates includes exact local Netlify site state for config dirs', () => {
-  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'nax-local-runner-state-'))
-  const appDir = path.join(tmp, 'projects', 'data', 'snowflake_dbt')
-  fs.mkdirSync(path.join(appDir, '.netlify'), { recursive: true })
-  fs.writeFileSync(path.join(appDir, 'netlify.toml'), '[build]\n  command = "npm run build"\n')
-  fs.writeFileSync(path.join(appDir, '.netlify', 'state.json'), JSON.stringify({ siteId: 'site-from-app' }))
-
-  assert.deepEqual(listNetlifyFilterCandidates(tmp).map((candidate) => ({
-    source: candidate.source,
-    dir: candidate.dir,
-    siteId: candidate.siteId,
-    stateSource: candidate.stateSource,
-  })), [{
-    source: path.join('projects', 'data', 'snowflake_dbt', 'netlify.toml'),
-    dir: path.join('projects', 'data', 'snowflake_dbt'),
-    siteId: 'site-from-app',
-    stateSource: path.join('projects', 'data', 'snowflake_dbt', '.netlify', 'state.json'),
-  }])
-})
-
-test('listLinkedNetlifySites includes root and nested links without requiring netlify.toml', () => {
-  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'nax-local-runner-linked-sites-'))
-  const nestedDir = path.join(tmp, 'clients', 'frontend')
-  const unconfiguredDir = path.join(tmp, 'tools', 'preview')
-  fs.mkdirSync(path.join(tmp, '.netlify'), { recursive: true })
-  fs.mkdirSync(path.join(nestedDir, '.netlify'), { recursive: true })
-  fs.mkdirSync(path.join(unconfiguredDir, '.netlify'), { recursive: true })
-  fs.mkdirSync(path.join(tmp, 'node_modules', 'ignored', '.netlify'), { recursive: true })
-  fs.writeFileSync(path.join(tmp, '.netlify', 'state.json'), JSON.stringify({ siteId: 'root-site' }))
-  fs.writeFileSync(path.join(nestedDir, '.netlify', 'state.json'), JSON.stringify({ siteId: 'frontend-site' }))
-  fs.writeFileSync(path.join(unconfiguredDir, '.netlify', 'state.json'), JSON.stringify({ siteId: 'preview-site' }))
-  fs.writeFileSync(path.join(tmp, 'node_modules', 'ignored', '.netlify', 'state.json'), JSON.stringify({ siteId: 'ignored-site' }))
-
-  assert.deepEqual(listLinkedNetlifySites(tmp).map(({ siteId, source, dir }) => ({ siteId, source, dir })), [
-    {
-      siteId: 'root-site',
-      source: path.join('.netlify', 'state.json'),
-      dir: '.',
-    },
-    {
-      siteId: 'frontend-site',
-      source: path.join('clients', 'frontend', '.netlify', 'state.json'),
-      dir: path.join('clients', 'frontend'),
-    },
-    {
-      siteId: 'preview-site',
-      source: path.join('tools', 'preview', '.netlify', 'state.json'),
-      dir: path.join('tools', 'preview'),
-    },
-  ])
-})
-
-test('resolveNetlifyProjectTarget uses nested config site state with inferred filter', () => {
-  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'nax-local-target-nested-'))
-  const appDir = path.join(tmp, 'clients', 'frontend')
-  fs.mkdirSync(path.join(tmp, '.netlify'), { recursive: true })
-  fs.writeFileSync(path.join(tmp, '.netlify', 'state.json'), JSON.stringify({ siteId: 'root-site' }))
-  fs.mkdirSync(path.join(appDir, '.netlify'), { recursive: true })
-  fs.writeFileSync(path.join(appDir, 'netlify.toml'), [
-    '[build]',
-    '  command = "pnpm --filter revenue-engine-frontend build:netlify"',
-    '',
-  ].join('\n'))
-  fs.writeFileSync(path.join(appDir, '.netlify', 'state.json'), JSON.stringify({ siteId: 'frontend-site' }))
-
-  const target = resolveNetlifyProjectTarget({ projectRoot: tmp, env: {} })
-
-  assert.equal(target.siteId, 'frontend-site')
-  assert.equal(target.env.NETLIFY_SITE_ID, 'frontend-site')
-  assert.equal(target.filter, 'revenue-engine-frontend')
-  assert.equal(target.filterSource, path.join('clients', 'frontend', 'netlify.toml'))
-  assert.equal(target.siteSource, path.join('clients', 'frontend', '.netlify', 'state.json'))
-})
-
-test('resolveNetlifyProjectTarget refuses root site fallback for unlinked nested config', () => {
-  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'nax-local-target-refuse-root-'))
-  const appDir = path.join(tmp, 'clients', 'frontend')
-  fs.mkdirSync(path.join(tmp, '.netlify'), { recursive: true })
-  fs.mkdirSync(appDir, { recursive: true })
-  fs.writeFileSync(path.join(tmp, '.netlify', 'state.json'), JSON.stringify({ siteId: 'root-site' }))
-  fs.writeFileSync(path.join(appDir, 'netlify.toml'), [
-    '[build]',
-    '  command = "pnpm --filter revenue-engine-frontend build:netlify"',
-    '',
-  ].join('\n'))
-
-  assert.throws(
-    () => resolveNetlifyProjectTarget({ projectRoot: tmp, env: {} }),
-    /Refusing to use root \.netlify\/state\.json/,
-  )
-})
-
-test('resolveNetlifyProjectTarget accepts explicit site id for unlinked nested config', () => {
-  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'nax-local-target-explicit-'))
-  const appDir = path.join(tmp, 'clients', 'frontend')
-  fs.mkdirSync(appDir, { recursive: true })
-  fs.writeFileSync(path.join(appDir, 'netlify.toml'), [
-    '[build]',
-    '  command = "pnpm --filter revenue-engine-frontend build:netlify"',
-    '',
-  ].join('\n'))
-
-  const target = resolveNetlifyProjectTarget({ projectRoot: tmp, siteId: 'explicit-site', env: {} })
-
-  assert.equal(target.siteId, 'explicit-site')
-  assert.equal(target.filter, 'revenue-engine-frontend')
-  assert.equal(target.siteSource, 'option')
-})
-
-test('findNetlifyConfigPaths skips netlify.toml inside gitignored directories', () => {
-  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'nax-local-runner-gitignore-'))
-  spawnSync('git', ['init', '-q'], { cwd: tmp })
-  fs.writeFileSync(path.join(tmp, '.gitignore'), 'projects/data/data-internal/\n')
-
-  fs.writeFileSync(path.join(tmp, 'netlify.toml'), '[build]\n')
-
-  const ignoredDir = path.join(tmp, 'projects', 'data', 'data-internal')
-  fs.mkdirSync(ignoredDir, { recursive: true })
-  fs.writeFileSync(path.join(ignoredDir, 'netlify.toml'), '[build]\n')
-
-  const trackedDir = path.join(tmp, 'projects', 'data', 'snowflake_dbt')
-  fs.mkdirSync(trackedDir, { recursive: true })
-  fs.writeFileSync(path.join(trackedDir, 'netlify.toml'), '[build]\n')
-
-  const results = findNetlifyConfigPaths(tmp).map((p) => path.relative(tmp, p))
-  assert.deepEqual(results.sort(), [
-    'netlify.toml',
-    path.join('projects', 'data', 'snowflake_dbt', 'netlify.toml'),
-  ].sort())
-})
-
-test('findNetlifyConfigPaths returns all paths when project is not a git repo', () => {
-  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'nax-local-runner-nogit-'))
-  fs.writeFileSync(path.join(tmp, 'netlify.toml'), '[build]\n')
-  const nested = path.join(tmp, 'projects', 'app')
-  fs.mkdirSync(nested, { recursive: true })
-  fs.writeFileSync(path.join(nested, 'netlify.toml'), '[build]\n')
-
-  const results = findNetlifyConfigPaths(tmp).map((p) => path.relative(tmp, p))
-  assert.deepEqual(results.sort(), [
-    'netlify.toml',
-    path.join('projects', 'app', 'netlify.toml'),
-  ].sort())
-})
-
-test('resolveNetlifyFilter ignores ambiguous nested netlify.toml filters', () => {
-  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'nax-local-runner-ambiguous-filter-'))
-  for (const [dir, filter] of [['frontend', 'web'], ['docs', 'docs']]) {
-    const appDir = path.join(tmp, 'clients', dir)
-    fs.mkdirSync(appDir, { recursive: true })
-    fs.writeFileSync(path.join(appDir, 'netlify.toml'), [
-      '[build]',
-      `  command = "pnpm --filter ${filter} build"`,
-      '',
-    ].join('\n'))
-  }
-
-  assert.deepEqual(resolveNetlifyFilter({ projectRoot: tmp }), {
-    filter: '',
-    source: '',
-  })
-})
-
-test('createAgentRun invokes netlify agents:create with prompt, agent, project, and branch', () => {
-  const calls = []
-  const created = createAgentRun({
-    projectRoot: '/tmp/project',
-    promptText: 'Review this repo',
-    agent: 'codex',
-    branch: 'master',
-    siteId: 'site-123',
-    env: { NETLIFY_SITE_ID: 'site-123' },
-    runCommand(command, args, options) {
-      calls.push({ command, args, options })
-      return { status: 0, stdout: JSON.stringify({ id: 'runner-1', state: 'running' }), stderr: '' }
-    },
-  })
-
-  assert.equal(created.runnerId, 'runner-1')
-  assert.equal(calls[0].command, 'netlify')
-  assert.deepEqual(calls[0].args, [
-    'agents:create',
-    '--json',
-    '--agent',
-    'codex',
-    '--project',
-    'site-123',
-    '--branch',
-    'master',
-    '--prompt',
-    'Review this repo',
-  ])
-  assert.equal(calls[0].options.timeout, 120000)
-})
-
-test('createAgentRun passes Netlify monorepo filter when provided', () => {
-  const calls = []
-  createAgentRun({
-    projectRoot: '/tmp/project',
-    promptText: 'Review this repo',
-    agent: 'codex',
-    branch: 'master',
-    siteId: 'site-123',
-    netlifyFilter: 'revenue-engine-frontend',
-    env: { NETLIFY_SITE_ID: 'site-123' },
-    runCommand(command, args, options) {
-      calls.push({ command, args, options })
-      return { status: 0, stdout: JSON.stringify({ id: 'runner-1', state: 'running' }), stderr: '' }
-    },
-  })
-
-  assert.deepEqual(calls[0].args, [
-    'agents:create',
-    '--json',
-    '--agent',
-    'codex',
-    '--project',
-    'site-123',
-    '--branch',
-    'master',
-    '--filter',
-    'revenue-engine-frontend',
-    '--prompt',
-    'Review this repo',
-  ])
-})
-
-test('createAgentRunAsync invokes netlify agents:create with async runner', async () => {
-  const calls = []
-  const created = await createAgentRunAsync({
-    projectRoot: '/tmp/project',
-    promptText: 'Review async',
-    agent: 'gemini',
-    branch: 'master',
-    siteId: 'site-123',
-    env: {},
-    async runCommand(command, args, options) {
-      calls.push({ command, args, options })
-      return { status: 0, stdout: JSON.stringify({ id: 'runner-async', state: 'running' }), stderr: '' }
-    },
-  })
-
-  assert.equal(created.runnerId, 'runner-async')
-  assert.equal(calls[0].command, 'netlify')
-  assert.equal(calls[0].options.timeout, 120000)
-})
-
-test('createAgentRunAsync passes Netlify monorepo filter when provided', async () => {
-  const calls = []
-  await createAgentRunAsync({
-    projectRoot: '/tmp/project',
-    promptText: 'Review async',
-    agent: 'gemini',
-    branch: 'master',
-    siteId: 'site-123',
-    netlifyFilter: 'revenue-engine-frontend',
-    env: {},
-    async runCommand(command, args, options) {
-      calls.push({ command, args, options })
-      return { status: 0, stdout: JSON.stringify({ id: 'runner-async', state: 'running' }), stderr: '' }
-    },
-  })
-
-  assert.deepEqual(calls[0].args, [
-    'agents:create',
-    '--json',
-    '--agent',
-    'gemini',
-    '--project',
-    'site-123',
-    '--branch',
-    'master',
-    '--filter',
-    'revenue-engine-frontend',
-    '--prompt',
-    'Review async',
-  ])
-})
-
-test('createAgentSession invokes Netlify follow-up session API', () => {
-  const calls = []
-  const created = createAgentSession({
-    projectRoot: '/tmp/project',
-    runnerId: 'runner-1',
-    promptText: 'Cross review these findings',
-    agent: 'claude',
-    env: {},
-    runCommand(command, args, options) {
-      calls.push({ command, args, options })
-      return { status: 0, stdout: JSON.stringify({ id: 'session-1', state: 'running' }), stderr: '' }
-    },
-  })
-
-  assert.equal(created.runnerId, 'runner-1')
-  assert.equal(created.state, 'running')
-  assert.equal(calls[0].command, 'netlify')
-  assert.deepEqual(calls[0].args.slice(0, 3), ['api', 'createAgentRunnerSession', '--data'])
-  assert.equal(calls[0].options.timeout, 120000)
-  assert.deepEqual(JSON.parse(calls[0].args[3]), {
-    agent_runner_id: 'runner-1',
-    body: {
-      prompt: 'Cross review these findings',
-      agent: 'claude',
-    },
-  })
-})
-
-test('createAgentSessionAsync invokes Netlify follow-up session API with async runner', async () => {
-  const calls = []
-  const created = await createAgentSessionAsync({
-    projectRoot: '/tmp/project',
-    runnerId: 'runner-1',
-    promptText: 'Cross review async',
-    agent: 'claude',
-    env: {},
-    async runCommand(command, args, options) {
-      calls.push({ command, args, options })
-      return { status: 0, stdout: JSON.stringify({ id: 'session-async', state: 'running' }), stderr: '' }
-    },
-  })
-
-  assert.equal(created.runnerId, 'runner-1')
-  assert.equal(created.state, 'running')
-  assert.equal(calls[0].options.timeout, 120000)
-})
-
-test('createAgentSessionAsync retries transient submission failures', async () => {
-  const retryEvents = []
-  let calls = 0
-  const created = await createAgentSessionAsync({
-    projectRoot: '/tmp/project',
-    runnerId: 'runner-1',
-    promptText: 'Cross review async',
-    agent: 'gemini',
-    env: {},
-    retryDelayMs: 0,
-    onRetry: (event) => retryEvents.push(event),
-    async runCommand() {
-      calls += 1
-      if (calls === 1) {
-        throw new Error('netlify api createAgentRunnerSession --data <redacted> failed: 502 Bad Gateway')
-      }
-      return { status: 0, stdout: JSON.stringify({ id: 'session-retry', state: 'running' }), stderr: '' }
-    },
-  })
-
-  assert.equal(calls, 2)
-  assert.equal(retryEvents.length, 1)
-  assert.equal(retryEvents[0].nextAttempt, 2)
-  assert.equal(retryEvents[0].attempts, 5)
-  assert.equal(retryEvents[0].delayMs, 0)
-  assert.equal(created.runnerId, 'runner-1')
-  assert.equal(created.raw.id, 'session-retry')
-})
-
-test('createAgentSessionAsync uses exponential backoff between retry attempts', async () => {
-  const retryEvents = []
-  const sleeps = []
-  let calls = 0
-  const created = await createAgentSessionAsync({
-    projectRoot: '/tmp/project',
-    runnerId: 'runner-1',
-    promptText: 'Cross review async',
-    agent: 'gemini',
-    env: {},
-    onRetry: (event) => retryEvents.push(event),
-    sleepFn: async (ms) => sleeps.push(ms),
-    async runCommand() {
-      calls += 1
-      if (calls < 4) {
-        throw new Error('netlify api createAgentRunnerSession --data <redacted> failed: 503 Service Unavailable')
-      }
-      return { status: 0, stdout: JSON.stringify({ id: 'session-retry', state: 'running' }), stderr: '' }
-    },
-  })
-
-  assert.equal(calls, 4)
-  assert.deepEqual(retryEvents.map((event) => event.nextAttempt), [2, 3, 4])
-  assert.deepEqual(retryEvents.map((event) => event.delayMs), [5000, 10000, 20000])
-  assert.deepEqual(sleeps, [5000, 10000, 20000])
-  assert.equal(created.raw.id, 'session-retry')
-})
-
-test('submitLocalAgentRun returns a submitted run with create metadata', async () => {
-  const submitted = await submitLocalAgentRun({
-    projectRoot: '/tmp/project',
-    branch: 'master',
-    siteId: 'site-123',
-    env: {},
-    run: {
-      agent: 'codex',
-      promptText: 'Review',
-      status: 'pending',
-      runnerId: '',
-      raw: { stepId: 'review' },
-    },
-    async runCommand() {
-      return { status: 0, stdout: JSON.stringify({ id: 'runner-1', state: 'running' }), stderr: '' }
-    },
-  })
-
-  assert.equal(submitted.status, 'submitted')
-  assert.equal(submitted.runnerId, 'runner-1')
-  assert.equal(submitted.netlifySiteId, 'site-123')
-  assert.equal(submitted.raw.create.id, 'runner-1')
-})
-
-test('submitLocalAgentRun preserves follow-up session id', async () => {
-  const submitted = await submitLocalAgentRun({
-    projectRoot: '/tmp/project',
-    branch: 'master',
-    siteId: 'site-123',
-    env: {},
-    run: {
-      agent: 'codex',
-      promptText: 'Cross review',
-      status: 'pending',
-      runnerId: 'runner-1',
-      existingRunnerId: 'runner-1',
-      raw: { stepId: 'cross-review' },
-    },
-    async runCommand() {
-      return { status: 0, stdout: JSON.stringify({ id: 'session-1', state: 'running' }), stderr: '' }
-    },
-  })
-
-  assert.equal(submitted.status, 'submitted')
-  assert.equal(submitted.runnerId, 'runner-1')
-  assert.equal(submitted.sessionId, 'session-1')
-  assert.equal(submitted.netlifySiteId, 'site-123')
-  assert.equal(submitted.raw.session.id, 'session-1')
-})
-
-test('normalizeCompletedRun prefers latest session result and links', () => {
-  const normalized = normalizeCompletedRun({
-    run: { agent: 'codex', runnerId: 'runner-1', status: 'submitted' },
-    shown: { raw: { id: 'runner-1', state: 'completed', result: 'runner result' } },
-    sessions: {
-      raw: { sessions: [] },
-      latest: {
-        id: 'session-1',
-        result: 'session result',
-        deploy_url: 'https://deploy.example',
-        pull_request_url: 'https://github.com/o/r/pull/1',
-        usage: {
-          total_input_tokens: 100,
-          total_output_tokens: 20,
-          total_tokens: 120,
-          total_credits_cost: 1.5,
-        },
-        steps_count: 8,
-        credit_limit_exceeded: false,
-      },
-    },
-  })
-
-  assert.equal(normalized.status, 'completed')
-  assert.equal(normalized.sessionId, 'session-1')
-  assert.equal(normalized.resultText, 'session result')
-  assert.equal(normalized.deployUrl, 'https://deploy.example')
-  assert.equal(normalized.prUrl, 'https://github.com/o/r/pull/1')
-  assert.deepEqual(normalized.usage, {
-    totalTokens: 120,
-    totalCreditsCost: 1.5,
-    stepsCount: 8,
-    creditLimitExceeded: false,
-  })
-  assert.deepEqual(normalized.links, {
-    deployUrl: 'https://deploy.example',
-    prUrl: 'https://github.com/o/r/pull/1',
-  })
-})
-
-test('normalizeCompletedRun fails when latest session errored even if runner completed', () => {
-  const normalized = normalizeCompletedRun({
-    run: { agent: 'claude', runnerId: 'runner-1', status: 'submitted' },
-    shown: { raw: { id: 'runner-1', state: 'done' } },
-    sessions: {
-      raw: { sessions: [] },
-      latest: {
-        id: 'session-1',
-        state: 'error',
-        result: 'Encountered a temporary issue — the agent will attempt to continue.',
-      },
-    },
-  })
-
-  assert.equal(normalized.status, 'failed')
-  assert.equal(normalized.resultText, 'Encountered a temporary issue — the agent will attempt to continue.')
-  assert.equal(normalized.rawResult.latestSession.state, 'error')
-})
-
-test('showAgentRun treats CLI failures as retryable poll errors', () => {
-  const shown = showAgentRun({
-    projectRoot: '/tmp/project',
-    runnerId: 'runner-1',
-    siteId: 'site-123',
-    env: {},
-    runCommand() {
-      return { status: 1, stdout: '', stderr: 'temporary API failure' }
-    },
-  })
-
-  assert.equal(shown.state, '')
-  assert.equal(shown.commandError, true)
-  assert.equal(shown.error, 'temporary API failure')
-})
-
-test('showAgentRun passes Netlify monorepo filter when provided', () => {
-  const calls = []
-  const shown = showAgentRun({
-    projectRoot: '/tmp/project',
-    runnerId: 'runner-1',
-    siteId: 'site-123',
-    netlifyFilter: 'revenue-engine-frontend',
-    env: {},
-    runCommand(command, args, options) {
-      calls.push({ command, args, options })
-      return { status: 0, stdout: JSON.stringify({ id: 'runner-1', state: 'done' }), stderr: '' }
-    },
-  })
-
-  assert.equal(shown.state, 'done')
-  assert.deepEqual(calls[0].args, [
-    'agents:show',
-    'runner-1',
-    '--json',
-    '--project',
-    'site-123',
-    '--filter',
-    'revenue-engine-frontend',
-  ])
-})
-
-test('listAgentSessions treats malformed JSON as a retryable command error', () => {
-  const sessions = listAgentSessions({
-    projectRoot: '/tmp/project',
-    runnerId: 'runner-1',
-    env: {},
-    runCommand() {
-      return { status: 0, stdout: '{not json', stderr: '' }
-    },
-  })
-
-  assert.equal(sessions.commandError, true)
-  assert.equal(sessions.raw, null)
-  assert.deepEqual(sessions.latest, {})
-  assert.match(sessions.error, /Could not parse listAgentRunnerSessions JSON/)
-})
-
-test('waitForLocalAgentRuns retries transient poll errors', async () => {
-  let showCount = 0
-  const progress = []
-  const showArgs = []
-  const result = await waitForLocalAgentRuns({
-    projectRoot: '/tmp/project',
-    siteId: 'site-123',
-    netlifyFilter: 'revenue-engine-frontend',
-    env: {},
-    timeoutMinutes: 1,
-    initialDelayMs: 0,
-    pollIntervalMs: 1,
-    runs: [{ agent: 'claude', runnerId: 'runner-1', status: 'submitted', resultText: '' }],
-    onProgress(event) {
-      progress.push(event.message)
-    },
-    runCommand(command, args) {
-      if (args[0] === 'agents:show') {
-        showArgs.push(args)
-        showCount += 1
-        if (showCount === 1) return { status: 1, stdout: '', stderr: 'temporary API failure' }
-        return {
-          status: 0,
-          stdout: JSON.stringify({ id: 'runner-1', state: 'completed' }),
-          stderr: '',
-        }
-      }
-      return {
-        status: 0,
-        stdout: JSON.stringify({ sessions: [{ id: 'session-1', result: 'done' }] }),
-        stderr: '',
-      }
-    },
-  })
-
-  assert.equal(result[0].status, 'completed')
-  assert.equal(result[0].resultText, 'done')
-  assert.match(progress[0], /poll failed, retrying/)
-  assert.deepEqual(showArgs[0], [
-    'agents:show',
-    'runner-1',
-    '--json',
-    '--project',
-    'site-123',
-    '--filter',
-    'revenue-engine-frontend',
-  ])
-})
-
-test('waitForLocalAgentRuns retries malformed session-list JSON', async () => {
-  let listCount = 0
-  const progress = []
-  const result = await waitForLocalAgentRuns({
-    projectRoot: '/tmp/project',
-    siteId: 'site-123',
-    env: {},
-    timeoutMinutes: 1,
-    initialDelayMs: 0,
-    pollIntervalMs: 1,
-    runs: [{ agent: 'codex', runnerId: 'runner-1', status: 'submitted', resultText: '' }],
-    onProgress(event) {
-      progress.push(event)
-    },
-    runCommand(command, args) {
-      if (args[0] === 'agents:show') {
-        return {
-          status: 0,
-          stdout: JSON.stringify({ id: 'runner-1', state: 'completed' }),
-          stderr: '',
-        }
-      }
-      listCount += 1
-      return {
-        status: 0,
-        stdout: listCount === 1
-          ? '{not json'
-          : JSON.stringify({ sessions: [{ id: 'session-1', result: 'done' }] }),
-        stderr: '',
-      }
-    },
-  })
-
-  assert.equal(listCount, 2)
-  assert.equal(result[0].status, 'completed')
-  assert.equal(result[0].resultText, 'done')
-  assert.equal(progress.some((event) => /session list failed, retrying/.test(event.message)), true)
-})
-
-test('waitForLocalAgentRuns keeps polling an error state until it resolves', async () => {
-  let showCount = 0
-  const result = await waitForLocalAgentRuns({
-    projectRoot: '/tmp/project',
-    siteId: 'site-123',
-    env: {},
-    timeoutMinutes: 1,
-    initialDelayMs: 0,
-    pollIntervalMs: 1,
-    runs: [{ agent: 'claude', runnerId: 'runner-1', status: 'submitted', resultText: '' }],
-    runCommand(command, args) {
-      if (args[0] === 'agents:show') {
-        showCount += 1
-        return {
-          status: 0,
-          stdout: JSON.stringify({
-            id: 'runner-1',
-            state: showCount === 1 ? 'error' : 'done',
-          }),
-          stderr: '',
-        }
-      }
-      return {
-        status: 0,
-        stdout: JSON.stringify({ sessions: [{ id: 'session-1', result: 'done' }] }),
-        stderr: '',
-      }
-    },
-  })
-
-  assert.equal(showCount, 2)
-  assert.equal(result[0].status, 'completed')
-  assert.equal(result[0].resultText, 'done')
-})
-
-test('waitForLocalAgentRuns fails terminal runner error states immediately', async () => {
-  const progress = []
-  const calls = []
-  const result = await waitForLocalAgentRuns({
-    projectRoot: '/tmp/project',
-    siteId: 'site-123',
-    env: {},
-    timeoutMinutes: 1,
-    initialDelayMs: 0,
-    pollIntervalMs: 1,
-    runs: [{ agent: 'claude', runnerId: 'runner-1', status: 'submitted', resultText: '' }],
-    onProgress(event) {
-      progress.push(event)
-    },
-    runCommand(command, args) {
-      calls.push(args[0])
-      if (args[0] === 'agents:show') {
-        return {
-          status: 0,
-          stdout: JSON.stringify({
-            id: 'runner-1',
-            state: 'error',
-            done_at: '2026-05-15T01:25:58.379Z',
-            latest_session_state: 'error',
-          }),
-          stderr: '',
-        }
-      }
-      return {
-        status: 0,
-        stdout: JSON.stringify([{
-          id: 'session-1',
-          state: 'error',
-          result: 'The agent failed permanently.',
-        }]),
-        stderr: '',
-      }
-    },
-  })
-
-  assert.deepEqual(calls, ['agents:show', 'api'])
-  assert.equal(progress[0].terminal, true)
-  assert.equal(progress[0].terminalSuccess, false)
-  assert.equal(progress[0].terminalFailure, true)
-  assert.equal(result[0].status, 'failed')
-  assert.equal(result[0].resultText, 'The agent failed permanently.')
-  assert.equal(result[0].rawResult.latestSession.state, 'error')
-})
-
-test('waitForLocalAgentRuns retries Claude capacity failures once on the same runner', async () => {
-  const progress = []
-  const calls = []
-  let showCount = 0
-  let listCount = 0
-  const result = await waitForLocalAgentRuns({
-    projectRoot: '/tmp/project',
-    siteId: 'site-123',
-    env: {},
-    timeoutMinutes: 1,
-    initialDelayMs: 0,
-    pollIntervalMs: 1,
-    runs: [{
-      agent: 'claude',
-      runnerId: 'runner-1',
-      status: 'submitted',
-      promptText: 'retry this prompt',
-      resultText: '',
-    }],
-    onProgress(event) {
-      progress.push(event)
-    },
-    runCommand(command, args) {
-      calls.push(args.slice(0, 2))
-      if (args[0] === 'agents:show') {
-        showCount += 1
-        return {
-          status: 0,
-          stdout: JSON.stringify(showCount === 1
-            ? {
-                id: 'runner-1',
-                state: 'error',
-                done_at: '2026-05-15T01:25:58.379Z',
-                latest_session_state: 'error',
-              }
-            : { id: 'runner-1', state: 'done' }),
-          stderr: '',
-        }
-      }
-      if (args[1] === 'listAgentRunnerSessions') {
-        listCount += 1
-        return {
-          status: 0,
-          stdout: JSON.stringify(listCount === 1
-            ? [{
-                id: 'session-1',
-                state: 'error',
-                result: 'The Claude Code model is currently at capacity. Retrying automatically...',
-              }]
-            : [{ id: 'session-2', state: 'done', result: 'retried result' }]),
-          stderr: '',
-        }
-      }
-      assert.equal(args[1], 'createAgentRunnerSession')
-      assert.deepEqual(JSON.parse(args[3]), {
-        agent_runner_id: 'runner-1',
-        body: {
-          prompt: 'retry this prompt',
-          agent: 'claude',
-        },
-      })
-      return {
-        status: 0,
-        stdout: JSON.stringify({ id: 'session-2', state: 'running' }),
-        stderr: '',
-      }
-    },
-  })
-
-  assert.deepEqual(calls, [
-    ['agents:show', 'runner-1'],
-    ['api', 'listAgentRunnerSessions'],
-    ['api', 'createAgentRunnerSession'],
-    ['agents:show', 'runner-1'],
-    ['api', 'listAgentRunnerSessions'],
-  ])
-  assert.equal(progress.some((event) => event.retry === true), true)
-  assert.equal(result[0].status, 'completed')
-  assert.equal(result[0].resultText, 'retried result')
-  assert.equal(result[0].autoRetryCount, 1)
-  assert.equal(result[0].raw.autoRetries[0].id, 'session-2')
-})
-
-test('waitForLocalAgentRuns retries Gemini and Codex capacity failures', async () => {
-  for (const agent of ['gemini', 'codex']) {
-    let showCount = 0
-    let listCount = 0
-    let retryCount = 0
-    const result = await waitForLocalAgentRuns({
-      projectRoot: '/tmp/project',
-      siteId: 'site-123',
-      env: {},
-      timeoutMinutes: 1,
-      initialDelayMs: 0,
-      pollIntervalMs: 1,
-      runs: [{
-        agent,
-        runnerId: `runner-${agent}`,
-        status: 'submitted',
-        promptText: 'retry this prompt',
-        resultText: '',
-      }],
-      runCommand(command, args) {
-        if (args[0] === 'agents:show') {
-          showCount += 1
-          return {
-            status: 0,
-            stdout: JSON.stringify(showCount === 1
-              ? {
-                  id: `runner-${agent}`,
-                  state: 'error',
-                  done_at: '2026-05-15T01:25:58.379Z',
-                  latest_session_state: 'error',
-                }
-              : { id: `runner-${agent}`, state: 'done' }),
-            stderr: '',
-          }
-        }
-        if (args[1] === 'listAgentRunnerSessions') {
-          listCount += 1
-          return {
-            status: 0,
-            stdout: JSON.stringify(listCount === 1
-              ? [{
-                  id: 'session-1',
-                  state: 'error',
-                  result: `The ${agent === 'gemini' ? 'Gemini' : 'Codex'} model is currently at capacity. Retrying automatically...`,
-                }]
-              : [{ id: 'session-2', state: 'done', result: `${agent} retried result` }]),
-            stderr: '',
-          }
-        }
-        retryCount += 1
-        return {
-          status: 0,
-          stdout: JSON.stringify({ id: 'session-2', state: 'running' }),
-          stderr: '',
-        }
-      },
-    })
-
-    assert.equal(retryCount, 1)
-    assert.equal(result[0].status, 'completed')
-    assert.equal(result[0].resultText, `${agent} retried result`)
-  }
-})
-
-test('waitForLocalAgentRuns retries argument limit failures once with compact prompt', async () => {
-  const calls = []
-  let showCount = 0
-  let listCount = 0
-  const result = await waitForLocalAgentRuns({
-    projectRoot: '/tmp/project',
-    siteId: 'site-123',
-    env: {},
-    timeoutMinutes: 1,
-    initialDelayMs: 0,
-    pollIntervalMs: 1,
-    runs: [{
-      agent: 'claude',
-      runnerId: 'runner-1',
-      status: 'submitted',
-      promptText: 'original prompt with too many prior results and a long embedded result payload',
-      compactPromptText: 'compact prompt',
-      resultText: '',
-    }],
-    runCommand(command, args) {
-      calls.push(args.slice(0, 2))
-      if (args[0] === 'agents:show') {
-        showCount += 1
-        return {
-          status: 0,
-          stdout: JSON.stringify(showCount === 1
-            ? {
-                id: 'runner-1',
-                state: 'error',
-                done_at: '2026-05-15T01:25:58.379Z',
-                latest_session_state: 'error',
-              }
-            : { id: 'runner-1', state: 'done' }),
-          stderr: '',
-        }
-      }
-      if (args[1] === 'listAgentRunnerSessions') {
-        listCount += 1
-        return {
-          status: 0,
-          stdout: JSON.stringify(listCount === 1
-            ? [{
-                id: 'session-1',
-                state: 'error',
-                result: 'fork/exec /opt/build-bin/agent-runner: argument list too long',
-              }]
-            : [{ id: 'session-2', state: 'done', result: 'retried compact result' }]),
-          stderr: '',
-        }
-      }
-
-      assert.equal(args[1], 'createAgentRunnerSession')
-      assert.deepEqual(JSON.parse(args[3]), {
-        agent_runner_id: 'runner-1',
-        body: {
-          prompt: 'compact prompt',
-          agent: 'claude',
-        },
-      })
-      return {
-        status: 0,
-        stdout: JSON.stringify({ id: 'session-2', state: 'running' }),
-        stderr: '',
-      }
-    },
-  })
-
-  assert.deepEqual(calls, [
-    ['agents:show', 'runner-1'],
-    ['api', 'listAgentRunnerSessions'],
-    ['api', 'createAgentRunnerSession'],
-    ['agents:show', 'runner-1'],
-    ['api', 'listAgentRunnerSessions'],
-  ])
-  assert.equal(result[0].status, 'completed')
-  assert.equal(result[0].resultText, 'retried compact result')
-  assert.equal(result[0].promptText, 'compact prompt')
-  assert.equal(result[0].promptShrinkRetryCount, 1)
-  assert.equal(result[0].raw.autoRetries[0].retryReason, 'argument-list-too-long')
-})
-
-test('waitForLocalAgentRuns does not retry Claude capacity failures more than once', async () => {
-  const calls = []
-  const result = await waitForLocalAgentRuns({
-    projectRoot: '/tmp/project',
-    siteId: 'site-123',
-    env: {},
-    timeoutMinutes: 1,
-    initialDelayMs: 0,
-    pollIntervalMs: 1,
-    runs: [{
-      agent: 'claude',
-      runnerId: 'runner-1',
-      status: 'submitted',
-      promptText: 'retry this prompt',
-      resultText: '',
-    }],
-    runCommand(command, args) {
-      calls.push(args.slice(0, 2))
-      if (args[0] === 'agents:show') {
-        return {
-          status: 0,
-          stdout: JSON.stringify({
-            id: 'runner-1',
-            state: 'error',
-            done_at: '2026-05-15T01:25:58.379Z',
-            latest_session_state: 'error',
-          }),
-          stderr: '',
-        }
-      }
-      if (args[1] === 'createAgentRunnerSession') {
-        return {
-          status: 0,
-          stdout: JSON.stringify({ id: 'session-2', state: 'running' }),
-          stderr: '',
-        }
-      }
-      return {
-        status: 0,
-        stdout: JSON.stringify([{
-          id: 'session-1',
-          state: 'error',
-          result: 'The Claude Code model is currently at capacity. Retrying automatically...',
-        }]),
-        stderr: '',
-      }
-    },
-  })
-
-  assert.equal(calls.filter((args) => args[1] === 'createAgentRunnerSession').length, 1)
-  assert.equal(result[0].status, 'failed')
-  assert.equal(result[0].autoRetryCount, 1)
-  assert.equal(result[0].resultText, 'The Claude Code model is currently at capacity. Retrying automatically...')
-})
-
-test('waitForLocalAgentRuns returns completed runs after polling terminal state', async () => {
-  const calls = []
-  const terminalRuns = []
-  const result = await waitForLocalAgentRuns({
-    projectRoot: '/tmp/project',
-    siteId: 'site-123',
-    env: {},
-    timeoutMinutes: 1,
-    initialDelayMs: 0,
-    pollIntervalMs: 1,
-    runs: [{ agent: 'codex', runnerId: 'runner-1', status: 'submitted', resultText: '' }],
-    onTerminalRun(run) {
-      terminalRuns.push(run)
-    },
-    runCommand(command, args) {
-      calls.push(args[0])
-      if (args[0] === 'agents:show') {
-        return {
-          status: 0,
-          stdout: JSON.stringify({ id: 'runner-1', state: 'completed' }),
-          stderr: '',
-        }
-      }
-      return {
-        status: 0,
-        stdout: JSON.stringify({ sessions: [{ id: 'session-1', result: 'done' }] }),
-        stderr: '',
-      }
-    },
-  })
-
-  assert.deepEqual(calls, ['agents:show', 'api'])
-  assert.equal(result[0].status, 'completed')
-  assert.equal(result[0].resultText, 'done')
-  assert.equal(terminalRuns.length, 1)
-  assert.equal(terminalRuns[0].status, 'completed')
-  assert.equal(terminalRuns[0].resultText, 'done')
-  assert.equal(terminalRuns[0].sessionId, 'session-1')
-})
-
-test('waitForLocalAgentRuns waits for dashboard retry replacement from refreshed state', async () => {
-  let oldCodexCompleted = false
-  const shownRunners = []
-  const initialRuns = [
-    { agent: 'claude', runnerId: 'runner-claude', status: 'submitted', resultText: '' },
-    { agent: 'codex', runnerId: 'runner-old', status: 'submitted', resultText: '' },
-  ]
-  const result = await waitForLocalAgentRuns({
-    projectRoot: '/tmp/project',
-    siteId: 'site-123',
-    env: {},
-    timeoutMinutes: 1,
-    initialDelayMs: 0,
-    pollIntervalMs: 1,
-    runs: initialRuns,
-    refreshRuns() {
-      if (!oldCodexCompleted) return initialRuns
-      return [
-        { agent: 'claude', runnerId: 'runner-claude', status: 'submitted', resultText: '' },
-        { agent: 'codex', runnerId: 'runner-new', status: 'submitted', resultText: '', raw: { dashboardRetry: { previous: { runnerId: 'runner-old' } } } },
-      ]
-    },
-    runCommand(_command, args) {
-      if (args[0] === 'agents:show') {
-        const runnerId = args[1]
-        shownRunners.push(runnerId)
-        return {
-          status: 0,
-          stdout: JSON.stringify({ id: runnerId, state: runnerId === 'runner-claude' && shownRunners.filter((id) => id === 'runner-claude').length === 1 ? 'running' : 'completed' }),
-          stderr: '',
-        }
-      }
-      const serializedArgs = args.join(' ')
-      const runnerId = serializedArgs.includes('runner-old') ? 'runner-old' : serializedArgs.includes('runner-new') ? 'runner-new' : 'runner-claude'
-      if (runnerId === 'runner-old') oldCodexCompleted = true
-      return {
-        status: 0,
-        stdout: JSON.stringify({ sessions: [{ id: `session-${runnerId}`, result: `result-${runnerId}` }] }),
-        stderr: '',
-      }
-    },
-  })
-
-  assert.equal(result.length, 2)
-  assert.equal(result[1].runnerId, 'runner-new')
-  assert.equal(result[1].resultText, 'result-runner-new')
-  assert.equal(shownRunners.includes('runner-new'), true)
-})
-
-test('waitForLocalAgentRuns fails completed parent runners with errored latest sessions', async () => {
-  const result = await waitForLocalAgentRuns({
-    projectRoot: '/tmp/project',
-    siteId: 'site-123',
-    env: {},
-    timeoutMinutes: 1,
-    initialDelayMs: 0,
-    pollIntervalMs: 1,
-    runs: [{ agent: 'claude', runnerId: 'runner-1', status: 'submitted', resultText: '' }],
-    runCommand(command, args) {
-      if (args[0] === 'agents:show') {
-        return {
-          status: 0,
-          stdout: JSON.stringify({ id: 'runner-1', state: 'done' }),
-          stderr: '',
-        }
-      }
-      return {
-        status: 0,
-        stdout: JSON.stringify({
-          sessions: [{
-            id: 'session-1',
-            state: 'error',
-            result: 'Encountered a temporary issue — the agent will attempt to continue.',
-          }],
-        }),
-        stderr: '',
-      }
-    },
-  })
-
-  assert.equal(result[0].status, 'failed')
-  assert.equal(result[0].resultText, 'Encountered a temporary issue — the agent will attempt to continue.')
-})
-
-test('createAgentRunAsync wraps access-denied CLI failures with wrong-account guidance', async () => {
-  await assert.rejects(
-    () => createAgentRunAsync({
-      projectRoot: '/tmp/project',
-      promptText: 'Review async',
-      agent: 'gemini',
-      siteId: 'site-999',
-      env: {},
-      retryAttempts: 1,
-      async runCommand() {
-        throw new Error('netlify agents:create --json failed: Not Found (404)')
-      },
-    }),
-    (error) => {
-      assert.match(error.message, /wrong Netlify account/)
-      assert.match(error.message, /site-999/)
-      assert.match(error.message, /Not Found \(404\)/)
-      return true
-    },
-  )
-})
-
-test('createAgentRunAsync rethrows non-access failures unchanged', async () => {
-  await assert.rejects(
-    () => createAgentRunAsync({
-      projectRoot: '/tmp/project',
-      promptText: 'Review async',
-      agent: 'gemini',
-      siteId: 'site-999',
-      env: {},
-      retryAttempts: 1,
-      async runCommand() {
-        throw new Error('netlify agents:create --json failed: something exploded')
-      },
-    }),
-    (error) => {
-      assert.equal(error.message, 'netlify agents:create --json failed: something exploded')
-      return true
-    },
-  )
-})
-
-test('createAgentRun wraps access-denied CLI failures with wrong-account guidance', () => {
-  assert.throws(
-    () => createAgentRun({
-      projectRoot: '/tmp/project',
-      promptText: 'Review',
-      agent: 'codex',
-      siteId: 'site-999',
-      env: {},
-      runCommand() {
-        throw new Error('netlify agents:create --json failed: Unauthorized')
-      },
-    }),
-    (error) => {
-      assert.match(error.message, /wrong Netlify account/)
-      assert.match(error.message, /Unauthorized/)
-      return true
-    },
-  )
-})
-
-test('createAgentRunAsync explains argv-limit failures that survive retries', async () => {
-  await assert.rejects(
-    () => createAgentRunAsync({
-      projectRoot: '/tmp/project',
-      promptText: 'huge prompt',
-      agent: 'codex',
-      siteId: 'site-1',
-      env: {},
-      retryAttempts: 1,
-      async runCommand() {
-        throw new Error('netlify agents:create --json failed: fork/exec /opt/build-bin/agent-runner: argument list too long')
-      },
-    }),
-    (error) => {
-      assert.match(error.message, /argument size limit/)
-      assert.match(error.message, /retrying will not help/i)
-      assert.match(error.message, /argument list too long/)
-      return true
-    },
+    resolveNetlifyProjectTarget({ projectRoot, env: built.env }).siteId,
+    'site-1',
   )
 })

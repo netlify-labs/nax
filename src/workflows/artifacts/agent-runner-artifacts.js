@@ -114,6 +114,7 @@ function persistAgentRunnerArtifact(input = {}, options = {}) {
     createdAt: existing.createdAt || input.createdAt || latestSession?.createdAt || '',
     updatedAt: input.updatedAt || latestSession?.updatedAt || new Date().toISOString(),
     latestSessionId: latestSession?.sessionId || existing.latestSessionId || '',
+    sdkHandle: input.sdkHandle || input.run?.sdkHandle || latestSession?.sdkHandle || existing.sdkHandle || null,
     sessions,
     source: input.source || latestSession?.source || existing.source || null,
     links: input.links || latestSession?.links || existing.links || {},

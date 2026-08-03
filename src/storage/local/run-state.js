@@ -16,6 +16,7 @@ const DEFAULT_STATE_LOCK_STALE_MS = 10 * 60 * 1000
 const STATE_WRITE_DURABLE_FIELDS = [
   'runnerId',
   'sessionId',
+  'sdkHandle',
   'issueNumber',
   'issueUrl',
   'submittedAfterSeconds',
@@ -254,7 +255,7 @@ function mergeRunDurableFields(existingRun = {}, incomingRun = {}) {
   }
   if (existingRun.raw && typeof existingRun.raw === 'object') {
     incomingRun.raw = incomingRun.raw && typeof incomingRun.raw === 'object' ? incomingRun.raw : {}
-    for (const field of ['create', 'session']) {
+    for (const field of ['create', 'session', 'sdkHandle']) {
       if (!incomingRun.raw[field] && existingRun.raw[field]) {
         incomingRun.raw[field] = existingRun.raw[field]
       }

@@ -1,0 +1,498 @@
+---
+title: Use the Agent Runner SDK
+description: Start, resume, reconcile, and safely land Netlify Agent Runner work from Node.js.
+---
+
+import { Callout } from 'nextra/components'
+
+# Use the Agent Runner SDK
+
+`nax-agent-runner-sdk` is the shared Node.js lifecycle client for Netlify Agent
+Runner. Use it when a service, worker, CLI, or GitHub Action needs typed
+submission, exact-session polling, durable recovery, bounded retry, and safe
+landing.
+
+The package lives in the nax repository at `packages/agent-runner-sdk` but is
+versioned and published independently.
+
+## Install and authenticate
+
+```sh
+npm install nax-agent-runner-sdk
+```
+
+```ts copy
+import { createAgentRunnerSdk } from 'nax-agent-runner-sdk'
+
+const sdk = createAgentRunnerSdk({
+  token: process.env.NETLIFY_AUTH_TOKEN,
+})
+```
+
+Token precedence is:
+
+1. Per-operation `options.token`
+2. Constructor `token`
+3. `NETLIFY_AUTH_TOKEN`
+4. Netlify CLI config discovery
+
+`NETLIFY_AGENT_RUNNER_TOKEN` is not an alias. `NETLIFY_AUTH_TOKEN` is the sole
+environment-token contract. Long-running services should pass their token
+explicitly.
+
+A separate optional `githubToken` is used only for GitHub pull request merges.
+PR creation itself uses the Netlify Agent Runner backend and does not need a
+GitHub token in the SDK.
+
+## Configure the client
+
+```ts copy
+const sdk = createAgentRunnerSdk({
+  transport: 'http',
+  apiStyle: 'v1',
+  token: netlifyToken,
+  githubToken,
+  defaultDeadlineMs: 25 * 60 * 1_000,
+  pollIntervalMs: 15_000,
+  retryAttempts: 3,
+  clockSkewAllowanceMs: 5_000,
+  onLandingCheckpoint: persistHandle,
+  onTelemetry(event) {
+    metrics.increment(event.kind)
+  },
+})
+```
+
+HTTP is the default built-in transport. `apiStyle: 'v1'` uses the verified
+`api.netlify.com/api/v1/agent_runners` endpoints. The opt-in `'bb-api'` style
+uses the legacy access-control base and camel-case aliases. Both normalize to
+the same `Runner` and `Session` types.
+
+You may inject a custom object implementing `Transport`. Tests can also inject
+`fetch`, `sleep`, `now`, `random`, and `generateRequestId`.
+
+`onTelemetry` receives value-free request metadata and API-drift events.
+Tokens, prompts, response bodies, and private request markers are redacted.
+
+## Start inputs and follow-ups
+
+`StartInput` requires `siteId` and exactly one of `prompt` or `promptRef`:
+
+```ts copy
+const handle = await sdk.start({
+  siteId,
+  prompt: 'Fix the failing tests and open a pull request.',
+  agent: 'claude',
+  model: 'sonnet',
+  branch: 'fix/runner-tests',
+  mode: 'normal',
+  fileKeys: ['requirements.md'],
+  land: 'pr',
+  deadlineMs: 25 * 60 * 1_000,
+  retryBudget: { capacity: 1 },
+})
+```
+
+The defaults are:
+
+| Field | Default |
+| --- | --- |
+| `agent` | `claude` |
+| `land` | `none` |
+| `deadlineMs` | 25 minutes |
+| `retryBudget.capacity` | `0` |
+
+`deployId` and `requestId` are also supported. A supplied `requestId` must be a
+UUID unique to one logical create attempt.
+
+Follow-ups accept a new `prompt` or `promptRef` plus optional `agent`, `model`,
+`mode`, `fileKeys`, and `requestId`:
+
+```ts copy
+const sessionHandle = await sdk.followUp(handle, {
+  prompt: 'Address the review feedback without changing the public API.',
+})
+await save(sdk.serializeHandle(sessionHandle))
+```
+
+The returned `SessionHandle` retains the original site, start input, policy,
+deadline, retry count, and landing progress. Its
+`sessionId === currentSessionId`, so later reads and commits are attributed to
+the exact follow-up.
+
+## Choose in-process or out-of-band execution
+
+For one process, use `run`:
+
+```ts copy
+const outcome = await sdk.run({
+  siteId,
+  prompt,
+  land: 'pr',
+}, {
+  onProgress(event) {
+    console.log(event.kind)
+  },
+})
+
+await save(sdk.serializeHandle(outcome.handle))
+
+if (outcome.result.status === 'succeeded') {
+  console.log(outcome.result.resultText)
+}
+
+if (outcome.landing?.kind === 'prOpen') {
+  console.log(outcome.landing.prUrl)
+}
+```
+
+`run` performs `start`, `waitFor`, then `land` only after successful execution.
+It does not hide a replacement-run retry loop.
+
+For Lambda, EventBridge, queues, or any process boundary:
+
+1. Call `start`.
+2. Persist its complete serialized handle.
+3. Parse the handle on each tick.
+4. Call `getSnapshot`.
+5. Enforce `handle.policy.deadlineAt` with `stop`.
+6. On terminal success, call `land` and persist its returned handle.
+7. On a retryable failure, call `shouldRetry`, then `retry`, and persist its
+   returned handle.
+
+```ts copy
+let handle = sdk.parseHandle(await loadHandle(jobId))
+const snapshot = await sdk.getSnapshot(handle)
+
+if (snapshot.kind === 'running') {
+  if (Date.now() >= handle.policy.deadlineAt) {
+    handle = await sdk.stop(handle)
+    await saveHandle(jobId, sdk.serializeHandle(handle))
+  }
+  await scheduleNextTick(jobId)
+} else if (snapshot.result.status === 'succeeded') {
+  console.log(snapshot.result.resultText)
+  const landed = await sdk.land(handle)
+  handle = landed.handle
+  await saveHandle(jobId, sdk.serializeHandle(handle))
+}
+```
+
+<Callout type="warning">
+  The SDK has no hidden durable state. Persist the handle returned by every
+  mutating method, including start, followUp, retry, stop, land, reconciliation,
+  and run. Persist every handle delivered to onLandingCheckpoint before
+  continuing.
+</Callout>
+
+See the package's
+[`eventbridge-resume.ts`](https://github.com/netlify-labs/nax/blob/main/packages/agent-runner-sdk/examples/eventbridge-resume.ts)
+for a complete typechecked worker.
+
+## Method reference
+
+| Method | Return | Behavior |
+| --- | --- | --- |
+| `start(input, options?)` | `RunHandle` | Creates a runner and resolves the exact initial session. |
+| `run(input, options?)` | `RunOutcome<RunHandle>` | Starts, waits, and lands after success. |
+| `getSnapshot(handle, options?)` | `RunSnapshot` | Returns running state or a terminal result. |
+| `getResult(handle, options?)` | `RunResult` | Rejects unless the exact session is terminal. |
+| `waitFor(handle, options?)` | `RunResult` | Polls and enforces the absolute deadline. |
+| `land(handle, options?)` | `{ handle, landing }` | Resumes origin-specific landing. |
+| `stop(handle, options?)` | same handle kind | Cancels the exact runner/session. |
+| `followUp(handle, input, options?)` | `SessionHandle` | Creates and scopes a follow-up session. |
+| `classifyFailure(error)` | `FailureClassification` | Produces a safe category/code/retryability result. |
+| `shouldRetry(handle, failure)` | `boolean` | Checks retryability and persisted capacity. |
+| `retry(handle, options?)` | same handle kind | Creates a replacement attempt with a new request ID. |
+| `reconcileCreate(input, window, options?)` | reconciliation union | Resolves an uncertain runner create. |
+| `reconcileSession(handle, input, window, options?)` | reconciliation union | Resolves an uncertain or conflicting session create. |
+| `serializeHandle(handle)` | `string` | Validates and serializes the current handle schema. |
+| `parseHandle(value)` | `Handle` | Parses, validates, and rejects unknown schema versions. |
+
+The normalized low-level transport remains available as `sdk.transport`. Use
+`sdk.transport.member(runnerId, action, input)` only when the high-level engine
+does not cover the operation.
+
+## Handles and deadline semantics
+
+Handles contain:
+
+- Schema version and kind
+- Runner, site, and exact current-session identities
+- Effective semantic input, including the private request ID
+- Original landing and retry policy
+- Absolute `deadlineAt`
+- Consumed retry capacity
+- Resumable landing checkpoints
+- Effective follow-up input for session handles
+
+Use `serializeHandle` and `parseHandle` at every storage boundary. Do not
+persist only IDs or construct a partial handle.
+
+`deadlineMs` is converted once when the original attempt is sent.
+Reconciliation reconstructs `deadlineAt` from that attempt's `sentAt`.
+Follow-ups and retries preserve it. Resuming work never restarts the clock.
+
+`waitFor` cancels when an in-process deadline elapses. Out-of-band workers must
+check `deadlineAt` themselves and call `stop`.
+
+## Results and usage
+
+`RunResult` has four terminal variants:
+
+```ts copy
+switch (result.status) {
+  case 'succeeded':
+    console.log(result.resultText)
+    console.log(result.changes)
+    break
+  case 'failed':
+    console.error(result.failure.code)
+    break
+  case 'cancelled':
+    break
+  case 'timedOut':
+    console.error(result.cancelledRunner)
+    break
+}
+
+await persistUsage(result.usage)
+```
+
+`usage: Usage | null` is present on every result variant. Record it for failed,
+cancelled, and timed-out attempts as well as successful ones.
+
+Successful `changes` is tri-state:
+
+- `changed`: the service reported a diff.
+- `unchanged`: the service explicitly reported no diff.
+- `unknown`: the API did not provide enough evidence.
+
+`unknown` must not be treated as `unchanged`.
+
+`RunOutcome` always contains `{ result, handle }` and may contain `landing`.
+Execution and landing are separate: a successful result can have a failed,
+unsupported, or still-open landing.
+
+## Landing outcomes
+
+The `LandingOutcome` union includes:
+
+| Kind | Meaning |
+| --- | --- |
+| `merged` | GitHub PR merged at the recorded `mergeSha`. |
+| `prOpen` | PR exists and `merged` is exactly `false`. |
+| `published` | Netlify Git production publish completed. |
+| `unsupported` | The origin has no applicable landing strategy. |
+| `failed` | `commit`, `pr`, `merge`, or `publish` failed with a classification. |
+| `skipped` | Landing policy was `none`. |
+
+Phase 1's default handler supports GitHub `pr`, `merge`, `auto`, and `none`.
+For follow-ups it commits the exact current session; stale runner-level commit
+state from an earlier session cannot short-circuit the current one. Merge
+persists the live PR head and sends it as a compare-and-swap guard. Head drift
+fails closed.
+
+`merge` requires `githubToken`. GitHub `auto` merges only when that token is
+configured; otherwise it returns `prOpen`. Netlify Git publishing is added in
+Phase 3, so non-GitHub origins are `unsupported` in Phase 1. An injected custom
+`landingHandler` may return any valid outcome.
+
+Landing failures are values, not thrown exceptions. Always inspect them
+separately:
+
+```ts copy
+const landed = await sdk.land(handle)
+await save(sdk.serializeHandle(landed.handle))
+
+if (landed.landing.kind === 'failed') {
+  console.error(landed.landing.step, landed.landing.failure.code)
+}
+```
+
+## Reconcile uncertain creates
+
+Each create receives a UUID request ID before transmission. The SDK appends a
+reserved server-visible marker to the submitted inline prompt or blob wrapper,
+while preserving the unmarked semantic input. The exact marker is stripped
+from normalized result text and redacted from telemetry and emitted error
+messages. Typed ambiguity errors intentionally retain the effective input in
+memory so a later worker can reconcile it.
+
+An uncertain runner write throws `create-ambiguous`; an uncertain session
+write throws `session-create-ambiguous`; a session 409 throws
+`session-already-active`. These errors carry the effective input and bounded
+`{ sentAt, failedAt }` request window.
+
+`start` and `followUp` make one automatic reconciliation attempt. If a unique
+match cannot be proven, catch the typed error and reconcile later:
+
+```ts copy
+import { isAgentRunnerSdkError } from 'nax-agent-runner-sdk'
+
+try {
+  const handle = await sdk.start(input)
+  await save(sdk.serializeHandle(handle))
+} catch (error: unknown) {
+  if (!isAgentRunnerSdkError(error, 'create-ambiguous')) throw error
+
+  const resolution = await sdk.reconcileCreate(
+    error.effectiveInput,
+    error.window,
+  )
+
+  switch (resolution.kind) {
+    case 'matched':
+      await save(sdk.serializeHandle(resolution.handle))
+      break
+    case 'none':
+      await requireManualReview('No matching runner exists.', [])
+      break
+    case 'ambiguous':
+      await requireManualReview(
+        'More than one exact candidate exists.',
+        resolution.candidates,
+      )
+      break
+  }
+}
+```
+
+Reconciliation searches only the bounded time window plus clock-skew
+allowance, traverses all result pages, requires the exact marker, and verifies
+the prompt/agent/model/branch fingerprint. It never adopts a later
+same-prompt run.
+
+For a session conflict, pass the error as `conflict`:
+
+```ts copy
+if (isAgentRunnerSdkError(error, 'session-already-active')) {
+  const resolution = await sdk.reconcileSession(
+    handle,
+    error.effectiveInput,
+    error.window,
+    { conflict: error },
+  )
+}
+```
+
+That permits adoption only when the reported active session also matches the
+exact marker and fingerprint. `none` and `ambiguous` require explicit review;
+never blind-replay the create.
+
+## Retry safely
+
+Safe GET/DELETE operations have transport-level retry. A new runner/session is
+a separate logical attempt and is explicit:
+
+```ts copy
+const failure = sdk.classifyFailure(error)
+
+if (sdk.shouldRetry(handle, failure)) {
+  handle = handle.kind === 'run'
+    ? await sdk.retry(handle)
+    : await sdk.retry(handle)
+  await save(sdk.serializeHandle(handle))
+}
+```
+
+`retry` rotates the request ID, increments consumed capacity, preserves the
+semantic input, landing policy, and original absolute deadline, then returns a
+new handle that must be persisted.
+
+## Phase 1 prompt delivery
+
+`StartInput` and `FollowUpInput` accept a `BlobRef`, and the package exports:
+
+```ts copy
+interface BlobRef {
+  store: string
+  key: string
+  tenant: string
+  expiresAt: number
+}
+
+interface BlobStore {
+  put(
+    key: string,
+    bytes: Uint8Array,
+    options: { ttlSeconds: number; tenant: string },
+  ): Promise<BlobRef>
+  delete(ref: BlobRef): Promise<void>
+  runnerFetchInstruction(ref: BlobRef): {
+    shell: string
+    sentinel: string
+  }
+}
+```
+
+The default Netlify Blobs store and its cleanup lifecycle arrive in Phase 2.
+During Phase 1, existing consumers keep their offload layer and pass
+`promptRefDelivery(ref)`, which returns the fetch wrapper submitted to the
+runner. The SDK:
+
+- Refuses expired references with `prompt-ref-expired`
+- Adds the private request marker to the wrapper
+- Keeps the original `promptRef` on the durable handle
+
+The caller still owns the blob put/delete lifecycle, TTL, tenant isolation,
+fetch authorization, and sentinel verification. Reserve the exported
+`requestMarkerOverheadBytes` when calculating the final submitted byte limit.
+
+## Migrate a direct Agent Runner client
+
+Map existing operations to the engine:
+
+| Existing client behavior | SDK behavior |
+| --- | --- |
+| Direct runner POST | `sdk.start` |
+| Runner plus latest-session reads | `sdk.getSnapshot` with a persisted handle |
+| Poll loop | `sdk.waitFor`, or out-of-band snapshot ticks |
+| Direct session POST | `sdk.followUp` |
+| DELETE cancel | `sdk.stop` |
+| PR/commit/merge calls | `sdk.land` |
+| Blind create retry | Reconciliation, then explicit `shouldRetry`/`retry` |
+| Raw member call | `sdk.transport.member` |
+
+During migration:
+
+1. Replace stored runner/session IDs with the full serialized handle.
+2. Read and land the exact `currentSessionId`, not a runner's stale latest
+   session or runner-level merge SHA.
+3. Preserve the handle's original absolute deadline.
+4. Remove duplicate auth, retry, response normalization, and create replay.
+5. Use only `NETLIFY_AUTH_TOKEN` or an explicitly passed token.
+6. Retain existing prompt offload around `promptRefDelivery` until Phase 2.
+7. Persist usage from every terminal result.
+
+## Errors
+
+Use `isAgentRunnerSdkError(error, code?)` to narrow typed SDK errors. Failure
+codes include auth/permission/validation, API drift, ambiguity, capacity,
+rate-limit/network/timeout, GitHub head drift, prompt expiry, invalid handles,
+and unsupported handle versions.
+
+`classifyFailure` converts a thrown value into a safe
+`FailureClassification`. It deliberately does not expose raw prompt or token
+data.
+
+## Package compatibility and releases
+
+- Node.js 18, 20, and 22
+- ESM and CommonJS entry points
+- Strict `.d.ts` and `.d.cts` declarations
+- Package-specific Git tags: `nax-agent-runner-sdk-vX.Y.Z`
+- Prerelease distribution tag: `next`
+
+The release gate builds and typechecks the package, runs the deterministic
+suite, compiles public examples, creates the exact npm tarball, and installs
+that tarball into clean ESM and CommonJS consumers. After an authorized
+publication, `npm run published:smoke` repeats those consumer checks against
+`nax-agent-runner-sdk@next` from the registry. Publication remains a manual,
+explicitly authorized step.
+
+## See also
+
+- [Run NAX in CI](/guides/run-nax-in-ci) for the GitHub Action consumer.
+- [Transports](/concepts/transports) for nax transport selection.
+- [Artifacts](/concepts/artifacts) for nax's persisted run/session files.

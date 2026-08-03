@@ -782,7 +782,7 @@ const TERMINAL_WORKFLOW_EVENT_TYPES = new Set(['workflow_failed', 'workflow_comp
 /**
  * Preserves the failure reason for late readers when a child process died
  * before logging its own terminal workflow event.
- * @param {{ status?: string, flowId?: string, stderr?: string, exitCode?: number | null, signal?: string | null, durationMs?: number }} run
+ * @param {{ runId?: string, status?: string, flowId?: string, stderr?: string, exitCode?: number | null, signal?: string | null, durationMs?: number }} run
  * @param {import('../types').WorkflowRunState} [durable]
  */
 function appendMissingTerminalEvents(run, durable) {
@@ -934,7 +934,7 @@ function createRequestHandler(options = {}) {
   const followupSetBlob = options.followupSetBlob || setBlob
   const followupStopRun = options.followupStopRun || stopAgentRun
   const cancelStopRun = options.cancelStopRun || stopAgentRun
-  const followupSyncRunCommand = options.followupSyncRunCommand
+  const followupSyncRunner = options.followupSyncRunner
   const workflowChildRunner = options.runWorkflowChild || runWorkflowChild
   const liveRunRegistry = createLocalLiveRunRegistry()
   const workflowStore = createLocalWorkflowStore(flowOptions)
@@ -958,7 +958,7 @@ function createRequestHandler(options = {}) {
     projectRoot,
     env,
     flowStore: workflowStore,
-    followupSyncRunCommand,
+    followupSyncRunner,
     resolveRunStateId: resolveActiveDurableRunId,
   })
   const eventStore = createLocalEventStore({ getRunState: runStore.getRunState })
@@ -1533,7 +1533,7 @@ function createRequestHandler(options = {}) {
   }
 
   /** @param {string} id @param {string} view */
-  function durableRunStateForRequest(id, view) {
+  async function durableRunStateForRequest(id, view) {
     const requestedId = safeDecode(id)
     const active = liveRunRegistry.getRawRun(requestedId)
     const candidates = [requestedId, String(active?.runId || '')].filter(Boolean)
@@ -1541,14 +1541,14 @@ function createRequestHandler(options = {}) {
     for (const candidate of candidates) {
       if (seen.has(candidate)) continue
       seen.add(candidate)
-      const durable = refreshDurableRunState(durableRunStateForId(candidate), view)
+      const durable = await refreshDurableRunState(durableRunStateForId(candidate), view)
       if (durable) return durable
     }
     return null
   }
 
   /** @param {Record<string, unknown> | null} durable @param {string} view */
-  function refreshDurableRunState(durable, view) {
+  async function refreshDurableRunState(durable, view) {
     if (!durable) return durable
     if (typeof runStore.refreshRunStateIfNeeded === 'function') {
       return runStore.refreshRunStateIfNeeded(durable, { view })
@@ -1710,7 +1710,7 @@ function createRequestHandler(options = {}) {
             return
           }
           assertToken(req, requestUrl, token)
-          const durable = durableRunStateForRequest(runGraphMatch[1], 'graph')
+          const durable = await durableRunStateForRequest(runGraphMatch[1], 'graph')
           if (!durable) {
             notFound(res, 'Unknown dashboard run.')
             return
@@ -1743,7 +1743,7 @@ function createRequestHandler(options = {}) {
             return
           }
           assertToken(req, requestUrl, token)
-          const durable = durableRunStateForRequest(runDetailsMatch[1], 'details')
+          const durable = await durableRunStateForRequest(runDetailsMatch[1], 'details')
           if (!durable) {
             notFound(res, 'Unknown dashboard run.')
             return
@@ -1928,7 +1928,7 @@ function createRequestHandler(options = {}) {
           }
           assertToken(req, requestUrl, token)
           const requestedRunId = safeDecode(runMatch[1])
-          const durable = durableRunStateForRequest(requestedRunId, 'detail')
+          const durable = await durableRunStateForRequest(requestedRunId, 'detail')
           if (durable) {
             jsonResponse(res, 200, { run: publicRunState(durable) })
             return

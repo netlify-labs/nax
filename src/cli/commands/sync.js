@@ -18,6 +18,7 @@ const { resolveProjectRoot } = require('../../integrations/netlify/project-selec
  *   cwd?: string,
  *   env?: NodeJS.ProcessEnv,
  *   runCommand?: SyncRunCommand,
+ *   sdk?: import('nax-agent-runner-sdk').AgentRunnerSdk,
  *   log?: (message: string) => void,
  * }} SyncDependencies
  *
@@ -41,12 +42,13 @@ const { resolveProjectRoot } = require('../../integrations/netlify/project-selec
  * @param {string | number} [target]
  * @param {import('./options').CliOptions} [options]
  * @param {SyncDependencies} [dependencies]
- * @returns {SyncCommandResult}
+ * @returns {Promise<SyncCommandResult>}
  */
-function handleSync(target = 'last', options = {}, {
+async function handleSync(target = 'last', options = {}, {
   cwd = process.cwd(),
   env = process.env,
   runCommand,
+  sdk,
   log = console.log,
 } = {}) {
   const projectRoot = resolveProjectRoot(options.projectRoot, { cwd })
@@ -54,7 +56,7 @@ function handleSync(target = 'last', options = {}, {
   const githubRun = parseGithubActionsRunTarget(target)
   if (githubRun) {
     const repo = githubRun.repo || resolveRepo(options.repo)
-    const result = syncGithubActionsRun({
+    const result = await syncGithubActionsRun({
       projectRoot,
       repo,
       runId: githubRun.runId,
@@ -73,10 +75,10 @@ function handleSync(target = 'last', options = {}, {
     throw new Error('Expected `nax admin sync last`, a GitHub Actions run ID, or a GitHub Actions run URL.')
   }
   const netlify = buildNetlifyEnv({ projectRoot, env })
-  const result = syncLastAgentRunner({
+  const result = await syncLastAgentRunner({
     projectRoot,
     env: netlify.env,
-    runCommand,
+    sdk,
   })
   log(`Synced Agent Runner ${result.runnerId}: ${result.syncedSessionCount}/${result.remoteSessionCount} remote sessions`)
   if (result.dir) log(`Updated: ${relativeDisplayPath(projectRoot, result.dir)}`)

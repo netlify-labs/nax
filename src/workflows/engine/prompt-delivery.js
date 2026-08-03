@@ -1,4 +1,5 @@
 const { setBlob, deleteBlob } = require('../../integrations/netlify/blobs')
+const { requestMarkerOverheadBytes } = require('nax-agent-runner-sdk')
 const { addRunBlobRef, cleanupRunBlobRefs } = require('../../storage/local/blob-ref-registry')
 const { writeLocalBlobDebugPayload } = require('../../storage/local/blob-debug-cache')
 const {
@@ -425,13 +426,14 @@ function compactTextForRetry(text, limit, label = 'content') {
 
 /** @param {PromptDeliveryOptions} [options] */
 function localSafePromptBytes(options = {}) {
-  return safePromptBytes({
+  const configured = safePromptBytes({
     safePromptBytes: Number(
       options.safePromptBytes || options.safePromptBytes === 0
         ? options.safePromptBytes
         : options.promptSafeBytes || process.env.NAX_SAFE_PROMPT_BYTES || DEFAULT_LOCAL_SAFE_PROMPT_BYTES,
     ),
   })
+  return Math.max(1, configured - requestMarkerOverheadBytes)
 }
 
 /** @param {unknown} text @param {number} limit @param {string} [label] */

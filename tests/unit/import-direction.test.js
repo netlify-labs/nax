@@ -69,3 +69,15 @@ test('import direction checker fails forbidden local runtime imports', () => {
   assert.match(result.stderr, /core-runtime-import/)
   assert.match(result.stderr, /new-top-level-src-file/)
 })
+
+test('import direction checker rejects SDK imports from nax application source', () => {
+  const root = fixtureRoot({
+    'src/core/status.js': 'module.exports = {}\n',
+    'packages/agent-runner-sdk/src/index.ts': "import status from '../../../src/core/status.js'\nexport { status }\n",
+  })
+
+  const result = runChecker(root)
+
+  assert.notEqual(result.status, 0)
+  assert.match(result.stderr, /sdk-imports-nax-application/)
+})

@@ -11,6 +11,11 @@ All notable changes to `nax-agent-runner-sdk` are recorded here.
   enforcement, and replacement-create reconciliation that preserves budget.
 - Kept transport replay operation-specific and prohibited automatic
   replacement for unsafe or ambiguous failure categories.
+- Added the default Netlify `BlobStore` with tenant-scoped collision-resistant
+  refs, TTL and size ceilings, sentinel-bearing runner fetch instructions, and
+  value-free typed storage failures.
+- Added restart-safe, best-effort prompt-ref cleanup on success, cancellation,
+  and timeout while retaining failed-run refs for bounded retry.
 
 ## 0.1.0 - 2026-08-02
 

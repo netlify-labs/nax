@@ -1,4 +1,11 @@
 export {
+  DEFAULT_NETLIFY_BLOB_STORE,
+  DEFAULT_PROMPT_BLOB_TTL_SECONDS,
+  MAX_PROMPT_BLOB_BYTES,
+  MAX_PROMPT_BLOB_TTL_SECONDS,
+  createNetlifyBlobStore,
+} from './blobs/netlify.js'
+export {
   AGENT_RUNNER_SDK_VERSION,
   DEFAULT_NETLIFY_API_URL,
   DEFAULT_USER_AGENT,
@@ -64,6 +71,10 @@ export {
 } from './transport/index.js'
 
 export type {
+  NetlifyBlobClient,
+  NetlifyBlobStoreOptions,
+} from './blobs/netlify.js'
+export type {
   ReconcileSessionOptions,
   Reconciler,
   ReconcilerOptions,
@@ -71,6 +82,7 @@ export type {
 export type {
   AgentRunnerSdk,
   AgentRunnerSdkOptions,
+  BlobCleanupErrorEvent,
   LandingContext,
   LandingHandler,
   LandingResult,

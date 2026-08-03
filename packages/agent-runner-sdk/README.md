@@ -116,7 +116,9 @@ Important constructor options include:
 | `pollIntervalMs` | Default polling interval; 15 seconds. |
 | `retryAttempts` | Transport attempts for retry-safe operations. |
 | `clockSkewAllowanceMs` | Reconciliation-window allowance; 5 seconds. |
-| `promptRefDelivery` | Phase 1 adapter that turns a `BlobRef` into a runner fetch wrapper. |
+| `blobStore` | `BlobStore` used for prompt-reference delivery and terminal cleanup. |
+| `promptRefDelivery` | Compatibility override that turns a `BlobRef` into a runner fetch wrapper. |
+| `onBlobCleanupError` | Receives a value-free cleanup failure event; cleanup never changes the run result. |
 | `onLandingCheckpoint` | Persists irreversible landing progress before the next mutation. |
 | `onRetryCheckpoint` | Persists consumed retry capacity and safe reason/timing metadata before replacement I/O. |
 | `onTelemetry` | Receives redacted auth/transport events. |
@@ -393,25 +395,60 @@ authentication, permission, validation, argv-too-long, terminal failures,
 prompt/blob failures, API drift, ambiguous creates/session conflicts, and
 GitHub head drift never create automatic replacement attempts.
 
-## Phase 1 prompt-reference adapter
+## BlobStore and prompt references
 
-The public `BlobRef` and `BlobStore` contracts are available, but the default
-Netlify Blobs delivery/lifecycle implementation arrives in Phase 2. During
-Phase 1, callers that already offload prompts provide `promptRefDelivery`:
+The package ships a Netlify Blobs adapter with tenant-scoped,
+collision-resistant keys, mandatory TTLs, and hard size/lifetime ceilings:
 
 ```ts
+import {
+  createAgentRunnerSdk,
+  createNetlifyBlobStore,
+} from 'nax-agent-runner-sdk'
+
+const blobStore = createNetlifyBlobStore({
+  siteId: process.env.NETLIFY_SITE_ID!,
+  token: process.env.NETLIFY_AUTH_TOKEN!,
+})
+
+const promptRef = await blobStore.put(
+  'artifact-art_123',
+  new TextEncoder().encode(largePrompt),
+  {
+    ttlSeconds: 24 * 60 * 60,
+    tenant: 'site_123/art_123',
+  },
+)
+
 const sdk = createAgentRunnerSdk({
-  promptRefDelivery: (ref) => [
-    `Fetch ${ref.key} from ${ref.store} for tenant ${ref.tenant}.`,
-    'Verify the configured sentinel before following its contents.',
-  ].join('\n'),
+  blobStore,
+})
+
+const handle = await sdk.start({
+  siteId: process.env.NETLIFY_SITE_ID!,
+  promptRef,
 })
 ```
 
-The adapter returns the text submitted to the runner. The SDK validates
-`expiresAt`, appends its request marker to the wrapper, and preserves the
-original `promptRef` in the handle. The caller still owns blob creation,
-cleanup, tenant isolation, TTL, and wrapper authentication.
+The adapter stores a sentinel with the semantic prompt. Its runner instruction
+uses the runner's own site-scoped `netlify blobs:get` authorization and never
+embeds the caller token. The SDK validates `expiresAt`, appends its request
+marker, and preserves the original `promptRef` in the handle.
+
+Terminal success, cancellation, and timeout delete the current attempt's blob.
+Failed attempts retain it until TTL so `retry(handle)` can reuse the exact
+reference. Cleanup is idempotent and best-effort; failures emit only the
+value-free `onBlobCleanupError` event. A restored handle performs the same
+cleanup when its terminal result is observed.
+
+`DEFAULT_PROMPT_BLOB_TTL_SECONDS` is one day. The built-in hard ceilings are
+`MAX_PROMPT_BLOB_TTL_SECONDS` (seven days) and
+`MAX_PROMPT_BLOB_BYTES` (5 MiB); callers may configure lower limits. A delete
+must match the adapter's full store, tenant, and key identity.
+
+Existing stores can implement the `BlobStore` interface. The older
+`promptRefDelivery` option remains available as a delivery-only override; when
+it is used without `blobStore`, the caller continues to own cleanup.
 
 Reserve `requestMarkerOverheadBytes` when enforcing a submitted-prompt byte
 limit. An expired reference fails with `prompt-ref-expired`; do not extend it

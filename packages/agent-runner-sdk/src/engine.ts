@@ -1,5 +1,6 @@
 import type {
   BlobRef,
+  BlobStore,
   EffectiveFollowUpInput,
   EffectiveStartInput,
   FailureClassification,
@@ -117,11 +118,19 @@ export interface AgentRunnerSdkOptions
   landingHandler?: LandingHandler
   clockSkewAllowanceMs?: number
   promptRefDelivery?: (ref: BlobRef) => string | Promise<string>
+  blobStore?: BlobStore
+  onBlobCleanupError?: (event: BlobCleanupErrorEvent) => void
   githubToken?: string
   githubApiUrl?: string
   githubMergeMethod?: GithubMergeMethod
   onLandingCheckpoint?: (handle: Handle) => void | Promise<void>
   onRetryCheckpoint?: (handle: Handle) => void | Promise<void>
+}
+
+export interface BlobCleanupErrorEvent {
+  kind: 'blobCleanupFailed'
+  code: 'blob-delete-failed'
+  terminalStatus: 'succeeded' | 'cancelled' | 'timedOut'
 }
 
 export interface WaitForOptions extends TransportRequestOptions {
@@ -379,6 +388,8 @@ export function createAgentRunnerSdk(
     landingHandler: configuredLandingHandler,
     clockSkewAllowanceMs,
     promptRefDelivery,
+    blobStore,
+    onBlobCleanupError,
     githubToken,
     githubApiUrl,
     githubMergeMethod,
@@ -440,14 +451,46 @@ export function createAgentRunnerSdk(
         'The Agent Runner prompt reference has expired.',
       )
     }
-    if (!promptRefDelivery) {
+    const delivery = promptRefDelivery
+      ?? (blobStore === undefined
+        ? undefined
+        : (ref: BlobRef) => blobStore.runnerFetchInstruction(ref).shell)
+    if (!delivery) {
       throw new BasicAgentRunnerSdkError(
         'validation-error',
         'Prompt-reference delivery is not configured.',
       )
     }
     return {
-      deliveredPrompt: await promptRefDelivery(input.promptRef),
+      deliveredPrompt: await delivery(input.promptRef),
+    }
+  }
+
+  function promptRefFor(handle: Handle): BlobRef | undefined {
+    const input = handle.kind === 'session'
+      ? handle.sessionInput
+      : handle.input
+    return input.promptRef
+  }
+
+  async function cleanupPromptRef(
+    handle: Handle,
+    terminalStatus: 'succeeded' | 'cancelled' | 'timedOut',
+  ): Promise<void> {
+    const ref = promptRefFor(handle)
+    if (blobStore === undefined || ref === undefined) return
+    try {
+      await blobStore.delete(ref)
+    } catch {
+      try {
+        onBlobCleanupError?.({
+          kind: 'blobCleanupFailed',
+          code: 'blob-delete-failed',
+          terminalStatus,
+        })
+      } catch {
+        // Cleanup reporting is value-free and cannot change run completion.
+      }
     }
   }
 
@@ -591,7 +634,16 @@ export function createAgentRunnerSdk(
     const handle = parseHandle(handleValue)
     const observed = await observe(handle, requestOptions)
     const result = toRunResult(handle, observed)
-    if (result !== undefined) return { kind: 'terminal', result }
+    if (result !== undefined) {
+      if (
+        result.status === 'succeeded'
+        || result.status === 'cancelled'
+        || result.status === 'timedOut'
+      ) {
+        await cleanupPromptRef(handle, result.status)
+      }
+      return { kind: 'terminal', result }
+    }
     return {
       kind: 'running',
       runnerId: handle.runnerId,
@@ -622,7 +674,7 @@ export function createAgentRunnerSdk(
     return snapshot.result
   }
 
-  async function stop<H extends Handle>(
+  async function cancelHandle<H extends Handle>(
     handleValue: H,
     requestOptions?: TransportRequestOptions,
   ): Promise<H> {
@@ -640,6 +692,15 @@ export function createAgentRunnerSdk(
     } catch (error: unknown) {
       if (!isAgentRunnerSdkError(error, 'not-found')) throw error
     }
+    return handle
+  }
+
+  async function stop<H extends Handle>(
+    handleValue: H,
+    requestOptions?: TransportRequestOptions,
+  ): Promise<H> {
+    const handle = await cancelHandle(handleValue, requestOptions)
+    await cleanupPromptRef(handle, 'cancelled')
     return handle
   }
 
@@ -688,7 +749,7 @@ export function createAgentRunnerSdk(
       if (remaining <= 0) {
         let cancelledRunner = false
         try {
-          await stop(handle, requestOptions)
+          await cancelHandle(handle, requestOptions)
           cancelledRunner = handle.kind === 'run'
         } catch {
           // The timeout result records whether runner cancellation succeeded.
@@ -700,6 +761,7 @@ export function createAgentRunnerSdk(
           usage: latestUsage,
           cancelledRunner,
         }
+        await cleanupPromptRef(handle, 'timedOut')
         progress(onProgress, {
           kind: 'finished',
           runnerId: handle.runnerId,

@@ -50,6 +50,9 @@
     "release:minor": "npm version minor --tag-version-prefix=nax-agent-runner-sdk-v && npm publish",
     "release:major": "npm version major --tag-version-prefix=nax-agent-runner-sdk-v && npm publish"
   },
+  "dependencies": {
+    "@netlify/blobs": "^10.7.9"
+  },
   "devDependencies": {
     "@types/node": "^22.19.0",
     "tsup": "^8.5.0",

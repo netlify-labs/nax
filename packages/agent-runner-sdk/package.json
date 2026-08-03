@@ -1,6 +1,6 @@
 {
   "name": "nax-agent-runner-sdk",
-  "version": "0.2.0-next.1",
+  "version": "0.2.0-next.2",
   "description": "Typed, resumable client and engine for Netlify Agent Runner.",
   "license": "MIT",
   "type": "module",

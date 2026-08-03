@@ -3,9 +3,14 @@ import test from 'node:test'
 
 import {
   AGENT_RUNNER_SDK_HANDLE_VERSION,
+  BasicAgentRunnerSdkError,
   CreateAmbiguousError,
+  HttpResponseError,
+  InvalidApiShapeError,
+  PrHeadChangedError,
   SessionAlreadyActiveError,
   SessionCreateAmbiguousError,
+  classifyFailure,
   createAgentRunnerSdk,
   isAgentRunnerSdkError,
 } from '../src/index.js'
@@ -273,6 +278,8 @@ test('retry replaces a runner while preserving semantic input and policy', async
   const sdk = createAgentRunnerSdk({
     transport,
     generateRequestId: () => RETRY_ID,
+    now: () => 100,
+    sleep: async () => {},
   })
   const base = runHandle()
 
@@ -334,6 +341,7 @@ test('session retry preserves an unexpired prompt reference and same runner', as
       deliveredRef = ref
       return 'Fetch and verify the stored prompt.'
     },
+    sleep: async () => {},
   })
 
   const retried = await sdk.retry(base)
@@ -394,6 +402,7 @@ test('retry rejects expired prompt references and exhausted budgets before I/O',
 
 test('retry never blind-replays an ambiguous new logical create', async () => {
   let creates = 0
+  const checkpoints: RunHandle[] = []
   const sdk = createAgentRunnerSdk({
     transport: fakeTransport({
       createRunner: async (input) => {
@@ -403,8 +412,14 @@ test('retry never blind-replays an ambiguous new logical create', async () => {
           { sentAt: 200, failedAt: 220 },
         )
       },
+      listRunners: async () => ({ items: [] }),
     }),
     generateRequestId: () => RETRY_ID,
+    now: () => 100,
+    sleep: async () => {},
+    onRetryCheckpoint: (handle) => {
+      checkpoints.push(handle as RunHandle)
+    },
   })
 
   await assert.rejects(
@@ -417,4 +432,188 @@ test('retry never blind-replays an ambiguous new logical create', async () => {
     },
   )
   assert.equal(creates, 1)
+  assert.equal(checkpoints.length, 1)
+  assert.equal(checkpoints[0]?.retries.capacity, 1)
+  assert.equal(checkpoints[0]?.retries.lastAttempt?.code, 'manual-retry')
+  assert.deepEqual(
+    sdk.parseHandle(sdk.serializeHandle(checkpoints[0] as RunHandle)),
+    checkpoints[0],
+  )
+})
+
+test('retry reconciliation adopts an exact replacement without resetting policy or budget', async () => {
+  const sdk = createAgentRunnerSdk({
+    transport: fakeTransport({
+      createRunner: async (input) => {
+        throw new CreateAmbiguousError(
+          input,
+          { sentAt: 200, failedAt: 220 },
+        )
+      },
+      listRunners: async () => ({
+        items: [runner('runner-reconciled', { createdAt: 210 })],
+      }),
+      listSessions: async (runnerId) => [
+        session('session-reconciled', RETRY_ID, {
+          runnerId,
+          createdAt: 210,
+          prompt: `original prompt\n\n${marker(RETRY_ID)}`,
+          agent: 'claude',
+          model: 'model-1',
+          mode: 'create',
+          fileKeys: ['context.md'],
+        }),
+      ],
+    }),
+    generateRequestId: () => RETRY_ID,
+    now: () => 100,
+    random: () => 0,
+    sleep: async () => {},
+  })
+  const base = runHandle()
+  const failure = classifyFailure(
+    new Error('The selected model is currently at capacity'),
+  )
+
+  const retried = await sdk.retry(base, { failure })
+
+  assert.equal(retried.runnerId, 'runner-reconciled')
+  assert.equal(retried.currentSessionId, 'session-reconciled')
+  assert.deepEqual(retried.policy, base.policy)
+  assert.deepEqual(retried.landing, base.landing)
+  assert.equal(retried.retries.capacity, 1)
+  assert.equal(retried.retries.lastAttempt?.code, 'model-capacity')
+  assert.equal(retried.input.requestId, RETRY_ID)
+})
+
+test('classified retry persists safe reason and bounded jitter across serialization', async () => {
+  let clock = 100
+  const delays: number[] = []
+  const checkpoints: RunHandle[] = []
+  const sdk = createAgentRunnerSdk({
+    transport: fakeTransport({
+      createRunner: async () => runner('runner-replacement'),
+      listSessions: async (runnerId) => [
+        session('session-replacement', RETRY_ID, { runnerId }),
+      ],
+    }),
+    generateRequestId: () => RETRY_ID,
+    now: () => clock,
+    random: () => 0,
+    sleep: async (ms) => {
+      delays.push(ms)
+      clock += ms
+    },
+    onRetryCheckpoint: (handle) => {
+      checkpoints.push(handle as RunHandle)
+    },
+  })
+  const base = runHandle({
+    policy: {
+      landing: 'merge',
+      deadlineAt: 70_000,
+      retryBudget: { capacity: 1 },
+    },
+  })
+  const failure = classifyFailure(
+    new Error('The selected model is currently at capacity'),
+  )
+
+  assert.equal(sdk.shouldRetry(base, failure), true)
+  const retried = await sdk.retry(base, { failure })
+  const restored = sdk.parseHandle(sdk.serializeHandle(retried))
+
+  assert.deepEqual(delays, [125])
+  assert.equal(checkpoints.length, 1)
+  assert.deepEqual(retried.retries.lastAttempt, {
+    attempt: 1,
+    category: 'capacity',
+    code: 'model-capacity',
+    scheduledAt: 100,
+    delayMs: 125,
+  })
+  assert.equal(restored.retries.capacity, 1)
+  assert.equal(sdk.shouldRetry(restored, failure), false)
+})
+
+test('automatic retry allowlist rejects forbidden categories and expired deadlines without I/O', async () => {
+  let creates = 0
+  let clock = 100
+  const sdk = createAgentRunnerSdk({
+    transport: fakeTransport({
+      createRunner: async () => {
+        creates += 1
+        return runner('unexpected')
+      },
+    }),
+    now: () => clock,
+    sleep: async () => {},
+  })
+  const base = runHandle()
+  const forbidden = [
+    classifyFailure(
+      new BasicAgentRunnerSdkError('auth-invalid', 'invalid token'),
+    ),
+    classifyFailure(
+      new BasicAgentRunnerSdkError('validation-error', 'invalid input'),
+    ),
+    classifyFailure(
+      new BasicAgentRunnerSdkError('argv-too-long', 'too large'),
+    ),
+    classifyFailure(
+      new BasicAgentRunnerSdkError('prompt-too-large', 'too large'),
+    ),
+    classifyFailure(
+      new InvalidApiShapeError('/runner', 'id'),
+    ),
+    classifyFailure(
+      new CreateAmbiguousError(
+        originalInput,
+        { sentAt: 1, failedAt: 2 },
+      ),
+    ),
+    classifyFailure(
+      new SessionAlreadyActiveError(
+        {
+          prompt: 'follow up',
+          requestId: FOLLOW_UP_ID,
+        },
+        { sentAt: 1, failedAt: 2 },
+      ),
+    ),
+    classifyFailure(new PrHeadChangedError('expected', 'actual')),
+    classifyFailure(new Error('arbitrary terminal failure'), {
+      terminal: 'session',
+    }),
+    classifyFailure(
+      new BasicAgentRunnerSdkError('network-error', 'network failure'),
+    ),
+    classifyFailure(new Error('unknown failure')),
+  ]
+
+  for (const failure of forbidden) {
+    assert.equal(sdk.shouldRetry(base, failure), false)
+    await assert.rejects(
+      () => sdk.retry(base, { failure }),
+      (error: unknown) => isAgentRunnerSdkError(error, 'validation-error'),
+    )
+  }
+  assert.equal(creates, 0)
+
+  const rateLimited = classifyFailure(
+    new HttpResponseError('rate-limited', 429, '/runner'),
+  )
+  const serverError = classifyFailure(
+    new HttpResponseError('http-error', 503, '/runner'),
+  )
+  assert.equal(sdk.shouldRetry(base, rateLimited), true)
+  assert.equal(sdk.shouldRetry(base, serverError), true)
+
+  clock = base.policy.deadlineAt
+  assert.equal(sdk.shouldRetry(base, rateLimited), false)
+  await assert.rejects(
+    () => sdk.retry(base, { failure: rateLimited }),
+    (error: unknown) => isAgentRunnerSdkError(error, 'validation-error'),
+  )
+  assert.equal(creates, 0)
 })

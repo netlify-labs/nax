@@ -1,6 +1,9 @@
 const { execFile, spawnSync } = require('child_process')
 const fs = require('fs')
 const path = require('path')
+const {
+  classifyFailure: classifySdkFailure,
+} = require('nax-agent-runner-sdk')
 const { readLinkedSiteId } = require('./init')
 const { readNetlifyCliToken } = require('./auth')
 const { wrapFailure } = require('./failure-guidance')
@@ -1091,12 +1094,10 @@ async function waitForLocalAgentRuns({
 
     if (
       retryMetadata.retryReason === 'capacity'
-      && !client.shouldRetry(handle, {
-        category: 'capacity',
+      && !client.shouldRetry(handle, classifySdkFailure({
         code: 'model-capacity',
         message: failedRun.resultText || 'The model is currently at capacity.',
-        retryable: true,
-      })
+      }))
     ) return false
 
     onProgress({

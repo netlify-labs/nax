@@ -56,7 +56,16 @@ type BaseHandle = {
   origin?: OriginInfo                // runner code_origin + site/account provider once known
   input: EffectiveStartInput         // FULL effective input, including the generated correlation requestId
   policy: { landing: LandingMode; deadlineAt: number; retryBudget: { capacity: number } }
-  retries: { capacity: number }
+  retries: {
+    capacity: number
+    lastAttempt?: {
+      attempt: number
+      category: FailureCategory
+      code: string
+      scheduledAt: number
+      delayMs: number
+    }
+  }
   landing?: LandingProgress          // completed landing steps (resumable land, §6.1)
   currentSessionId: string           // the session whose outcome/commit we track (§6.1 step 2)
 }
@@ -207,7 +216,7 @@ if (snap.kind === 'terminal' && snap.result.status === 'succeeded') {
 }
 if (Date.now() > handle.policy.deadlineAt) await sdk.stop(handle)
 if (snap.kind === 'terminal' && snap.result.status === 'failed' && sdk.shouldRetry(handle, snap.result.failure)) {
-  handle = await sdk.retry(handle)                    // rotates requestId; semantic input + deadline preserved
+  handle = await sdk.retry(handle, { failure: snap.result.failure }) // backoff + checkpoint; semantic input + deadline preserved
 }
 
 // ── ambiguity recovery (§6.7); examples are typechecked in CI ──
@@ -315,7 +324,7 @@ Backend facts: runners don't create result branches (`result_branch` legacy); `c
 - **Resumable:** each step consults live state (`pr_url`, `pr_state`, session `commit_sha`, in-progress flags, GitHub merged-state) and skips completed steps; progress recorded in `handle.landing`; crash-recovery tested (§9).
 - Consumers: RE = `'merge'`; nax + GH Action = `'pr'` (GH-action auto-merge = recorded future option).
 
-### 6.2 Retry — capacity auto-retry via `shouldRetry` + `retry(handle)`, bounded by `policy.retryBudget`. `retry(RunHandle)` copies the semantic start input and creates a replacement runner; `retry(SessionHandle)` copies `sessionInput` and creates a replacement follow-up session on the same runner. Both generate a **new requestId for the new logical create attempt**, update the returned handle's effective input/current session, increment the retry counter, and **preserve the original `deadlineAt`**. Reusing a prior request marker across logical attempts is forbidden. A transport replay after a provably-pre-transmission failure remains the same logical attempt and keeps its marker. argv-too-long is surfaced.
+### 6.2 Retry — capacity/rate-limit/platform-server auto-retry via `shouldRetry` + `retry(handle, { failure })`, bounded by `policy.retryBudget` and the original absolute deadline. `run()` applies the same allowlist in-process. `retry(RunHandle)` copies the semantic start input and creates a replacement runner; `retry(SessionHandle)` copies `sessionInput` and creates a replacement follow-up session on the same runner. Both use the injected exponential-jitter policy, generate a **new requestId for the new logical create attempt**, update the returned handle's effective input/current session, increment the retry counter, persist safe category/code/schedule metadata through `onRetryCheckpoint` before replacement I/O, and **preserve the original `deadlineAt`**. Replacement-run ambiguity is reconciled without resetting the original policy or consumed budget. Reusing a prior request marker across logical attempts is forbidden. A transport replay after a provably-pre-transmission failure remains the same logical attempt and keeps its marker. Auth, validation, argv-too-long, prompt/blob, API-drift, ambiguity/session-conflict, terminal, timeout/cancel, and GitHub head-drift failures never auto-retry.
 ### 6.3 Idempotency — caller-owned; handle = anchor; ambiguity → §6.7.
 ### 6.4 Cost/cancel — D11. · 6.5 No-op — D12.
 ### 6.6 Drift boundary — additive unknown fields ignored (log-once); missing/malformed `runnerId`/`sessionId`(where required)/`state` → typed `invalid-api-shape`.

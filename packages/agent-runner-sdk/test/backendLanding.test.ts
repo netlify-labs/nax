@@ -407,16 +407,18 @@ test('backend landing surfaces PR and current-session commit failures', async ()
     }),
   })
   const prFailure = await prSdk.land(runHandle('pr'))
-  assert.deepEqual(prFailure.landing, {
-    kind: 'failed',
-    step: 'pr',
-    failure: {
-      category: 'permission',
-      code: 'missing-coding-installation',
-      message: 'GitHub Coding installation not configured',
-      retryable: false,
-    },
-  })
+  assert.equal(prFailure.landing.kind, 'failed')
+  if (prFailure.landing.kind !== 'failed') {
+    assert.fail('expected a classified PR landing failure')
+  }
+  assert.equal(prFailure.landing.step, 'pr')
+  assert.equal(prFailure.landing.failure.category, 'permission')
+  assert.equal(
+    prFailure.landing.failure.code,
+    'missing-coding-installation',
+  )
+  assert.equal(prFailure.landing.failure.stage, 'landing')
+  assert.equal(prFailure.landing.failure.retryable, false)
 
   const commitSdk = createAgentRunnerSdk({
     transport: fakeTransport({
@@ -432,16 +434,15 @@ test('backend landing surfaces PR and current-session commit failures', async ()
     }),
   })
   const commitFailure = await commitSdk.land(sessionHandle('pr'))
-  assert.deepEqual(commitFailure.landing, {
-    kind: 'failed',
-    step: 'commit',
-    failure: {
-      category: 'platform',
-      code: 'commit-to-pr-failed',
-      message: 'Failed to apply commit',
-      retryable: false,
-    },
-  })
+  assert.equal(commitFailure.landing.kind, 'failed')
+  if (commitFailure.landing.kind !== 'failed') {
+    assert.fail('expected a classified commit landing failure')
+  }
+  assert.equal(commitFailure.landing.step, 'commit')
+  assert.equal(commitFailure.landing.failure.category, 'landing')
+  assert.equal(commitFailure.landing.failure.code, 'commit-to-pr-failed')
+  assert.equal(commitFailure.landing.failure.stage, 'landing')
+  assert.equal(commitFailure.landing.failure.retryable, false)
 })
 
 test('PR polling errors and missing settled URLs fail without replay', async () => {

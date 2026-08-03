@@ -84,21 +84,48 @@ export type DiffRef =
 export type FailureCategory =
   | 'authentication'
   | 'permission'
+  | 'not-found'
   | 'validation'
   | 'capacity'
   | 'rate-limit'
-  | 'network'
+  | 'transport'
+  | 'argv-too-long'
+  | 'terminal'
   | 'timeout'
   | 'cancelled'
+  | 'prompt'
+  | 'blob'
+  | 'api-drift'
+  | 'ambiguity'
+  | 'landing'
   | 'platform'
   | 'github'
   | 'unknown'
 
+export type FailureStage =
+  | 'validate'
+  | 'transport'
+  | 'create'
+  | 'runner'
+  | 'session'
+  | 'prompt'
+  | 'blob'
+  | 'landing'
+  | 'github'
+  | 'unknown'
+
+export type FailureSeverity = 'info' | 'warning' | 'error'
+
 export interface FailureClassification {
   category: FailureCategory
   code: string
+  title: string
   message: string
+  remediation: string[]
+  severity: FailureSeverity
   retryable: boolean
+  userActionRequired: boolean
+  stage: FailureStage
   status?: number
 }
 

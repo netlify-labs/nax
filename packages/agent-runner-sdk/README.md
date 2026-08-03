@@ -97,6 +97,9 @@ const sdk = createAgentRunnerSdk({
   onLandingCheckpoint: async (handle) => {
     await saveHandle(JSON.stringify(handle))
   },
+  onRetryCheckpoint: async (handle) => {
+    await saveHandle(JSON.stringify(handle))
+  },
 })
 ```
 
@@ -115,6 +118,7 @@ Important constructor options include:
 | `clockSkewAllowanceMs` | Reconciliation-window allowance; 5 seconds. |
 | `promptRefDelivery` | Phase 1 adapter that turns a `BlobRef` into a runner fetch wrapper. |
 | `onLandingCheckpoint` | Persists irreversible landing progress before the next mutation. |
+| `onRetryCheckpoint` | Persists consumed retry capacity and safe reason/timing metadata before replacement I/O. |
 | `onTelemetry` | Receives redacted auth/transport events. |
 
 `fetch`, `sleep`, `now`, `random`, and `generateRequestId` can be injected for
@@ -168,7 +172,7 @@ the original site, landing, deadline, or retry policy.
 | Method | Purpose |
 | --- | --- |
 | `start(input, options?)` | Create a runner and return a `RunHandle` with its exact initial session. |
-| `run(input, options?)` | Convenience path: `start` → `waitFor` → `land` after success. |
+| `run(input, options?)` | Convenience path: `start` → `waitFor`, bounded safe retries, then `land` after success. |
 | `getSnapshot(handle, options?)` | Return a running snapshot or terminal result without waiting. |
 | `getResult(handle, options?)` | Return a terminal result; reject if still running. |
 | `waitFor(handle, options?)` | Poll to a terminal result, enforcing the handle deadline. |
@@ -177,7 +181,7 @@ the original site, landing, deadline, or retry policy.
 | `followUp(handle, input, options?)` | Create a session and return a full `SessionHandle`. |
 | `classifyFailure(error)` | Normalize a thrown value into the SDK failure taxonomy. |
 | `shouldRetry(handle, failure)` | Check retryability and the persisted budget. |
-| `retry(handle, options?)` | Create a replacement logical attempt and return its updated handle. |
+| `retry(handle, { failure, ...options }?)` | Back off, checkpoint, and create a replacement logical attempt. |
 | `reconcileCreate(input, window, options?)` | Resolve an uncertain runner create. |
 | `reconcileSession(handle, input, window, options?)` | Resolve an uncertain/409 session create. |
 | `serializeHandle(handle)` | Validate and serialize a versioned handle. |
@@ -207,7 +211,8 @@ if (snapshot.kind === 'terminal' && snapshot.result.status === 'succeeded') {
 ```
 
 Handles are version-stamped and contain the original effective input, exact
-`currentSessionId`, policy, retry count, and landing checkpoints. A
+`currentSessionId`, policy, retry count, last safe retry reason/timing, and
+landing checkpoints. A
 `SessionHandle` additionally contains its effective follow-up input and
 maintains `sessionId === currentSessionId`.
 
@@ -291,7 +296,8 @@ origins return `unsupported`; `published` remains part of the stable result
 contract and may also be returned by an injected `landingHandler`.
 
 Landing failures are returned as data rather than thrown. Persist both the
-returned handle and every handle passed to `onLandingCheckpoint`.
+returned handle and every handle passed to `onLandingCheckpoint`. Retry
+checkpoints use the separate `onRetryCheckpoint` callback.
 
 ## Ambiguous create reconciliation
 
@@ -361,23 +367,31 @@ inspect the safe candidate IDs first.
 
 ## Retry
 
-The SDK does not silently create replacement runners/sessions. Classify the
-failure, check the persisted budget, then persist the handle returned by
-`retry`:
+`run()` automatically retries only classified capacity, rate-limit, and
+platform-server failures within the persisted budget and original deadline.
+Out-of-band workers use the same policy explicitly:
 
 ```ts
 const failure = sdk.classifyFailure(error)
 
 if (sdk.shouldRetry(handle, failure)) {
   handle = handle.kind === 'run'
-    ? await sdk.retry(handle)
-    : await sdk.retry(handle)
+    ? await sdk.retry(handle, { failure })
+    : await sdk.retry(handle, { failure })
   await saveHandle(sdk.serializeHandle(handle))
 }
 ```
 
-Retry rotates `requestId`, increments the handle retry count, preserves the
-semantic input and original deadline, and creates a new logical attempt.
+Retry uses the constructor's injected exponential-jitter backoff, rotates
+`requestId`, increments the handle retry count, preserves the semantic input
+and original deadline, and creates a new logical attempt. The SDK calls
+`onRetryCheckpoint` before waiting or sending replacement I/O so a restart
+cannot reset the consumed budget.
+
+Transport retry remains operation-specific. Network/request timeouts,
+authentication, permission, validation, argv-too-long, terminal failures,
+prompt/blob failures, API drift, ambiguous creates/session conflicts, and
+GitHub head drift never create automatic replacement attempts.
 
 ## Phase 1 prompt-reference adapter
 

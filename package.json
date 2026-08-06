@@ -79,7 +79,7 @@
     "@netlify/build-info": "^10.5.1",
     "@tanstack/react-query": "^5.101.0",
     "@tanstack/react-router": "^1.170.16",
-    "nax-agent-runner-sdk": "0.2.0",
+    "nax-agent-runner-sdk": "0.3.0",
     "commander": "^14.0.3",
     "comment-block-parser": "^1.5.4",
     "configorama": "^1.0.0",

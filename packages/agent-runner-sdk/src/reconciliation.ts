@@ -196,6 +196,9 @@ function startFingerprintMatches(
     && session.agent !== expectedAgent
   ) return false
   if (input.model !== undefined && session.model !== input.model) return false
+  if (input.effort !== undefined && session.effort !== input.effort) {
+    return false
+  }
   if (input.branch !== undefined && runner.branch !== input.branch) return false
   if (input.mode !== undefined && session.mode !== input.mode) return false
   return sameStrings(input.fileKeys, session.fileKeys)
@@ -215,6 +218,9 @@ function sessionFingerprintMatches(
   ) return false
   if (input.agent !== undefined && session.agent !== input.agent) return false
   if (input.model !== undefined && session.model !== input.model) return false
+  if (input.effort !== undefined && session.effort !== input.effort) {
+    return false
+  }
   if (input.mode !== undefined && session.mode !== input.mode) return false
   return sameStrings(input.fileKeys, session.fileKeys)
 }

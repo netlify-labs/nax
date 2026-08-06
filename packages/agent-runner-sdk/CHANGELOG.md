@@ -4,6 +4,20 @@ All notable changes to `nax-agent-runner-sdk` are recorded here.
 
 ## Unreleased
 
+## 0.3.0 - 2026-08-06
+
+- Added optional open-string `effort` configuration to runner creation and
+  follow-up inputs and to normalized session output.
+- Forwarded exact `agent`, `model`, and `effort` values on both create paths
+  while preserving omission semantics for backend-selected Auto behavior.
+- Preserved effort in version 1 durable handles, ambiguity errors, retries,
+  and reconciliation fingerprints. Existing version 1 handles without effort
+  remain valid.
+- Added exact request/response contract fixtures and snake/camel normalization,
+  retry, reconciliation, packed-declaration, and Auto-omission coverage.
+- Kept provider/model catalogs and effort compatibility rules outside the SDK;
+  consumers own those changing UX capabilities.
+
 ## 0.2.0 - 2026-08-03
 
 - Promoted the tested `0.2.0-next.2` API as the first stable release of the

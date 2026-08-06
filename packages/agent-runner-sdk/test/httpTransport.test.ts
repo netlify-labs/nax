@@ -82,6 +82,7 @@ function session(
     agent_config: {
       agent: 'codex',
       model: 'gpt-test',
+      effort: 'high',
     },
     usage: {
       total_tokens: 12,
@@ -111,6 +112,7 @@ test('HTTP transport creates and reads snake-case runner resources', async () =>
     prompt: 'do the work',
     agent: 'codex',
     model: 'gpt-test',
+    effort: 'high',
     branch: 'main',
     deployId: 'deploy-1',
     mode: 'normal',
@@ -131,6 +133,7 @@ test('HTTP transport creates and reads snake-case runner resources', async () =>
     prompt: 'do the work',
     agent: 'codex',
     model: 'gpt-test',
+    effort: 'high',
     branch: 'main',
     deploy_id: 'deploy-1',
     mode: 'normal',
@@ -179,6 +182,8 @@ test('HTTP transport paginates sessions and preserves oldest-first order', async
     totalCreditsCost: 0.25,
   })
   assert.equal(fetched.agent, 'codex')
+  assert.equal(fetched.model, 'gpt-test')
+  assert.equal(fetched.effort, 'high')
   assert.match(
     fake.calls[0]?.url ?? '',
     /sessions\?page=1&per_page=100&order_by=asc$/,
@@ -219,6 +224,7 @@ test('HTTP transport creates sessions with the exact follow-up body', async () =
     prompt: 'continue',
     agent: 'codex',
     model: 'gpt-test',
+    effort: 'xhigh',
     mode: 'ask',
     fileKeys: ['file-1'],
     requestId: 'request-2',
@@ -233,9 +239,73 @@ test('HTTP transport creates sessions with the exact follow-up body', async () =
     prompt: 'continue',
     agent: 'codex',
     model: 'gpt-test',
+    effort: 'xhigh',
     mode: 'ask',
     file_keys: ['file-1'],
   })
+})
+
+test('HTTP transport omits undefined model and effort on create and follow-up', async () => {
+  const fake = fakeFetch([
+    { body: runner() },
+    { body: session('session-auto') },
+  ])
+  const transport = createHttpTransport({
+    fetch: fake.fetch,
+    token: 'token',
+    baseUrl: 'https://api.example.test/api/v1',
+  })
+
+  await transport.createRunner({
+    siteId: 'site-1',
+    prompt: 'auto create',
+    agent: 'claude',
+    requestId: 'request-auto-create',
+  })
+  await transport.createSession('runner-1', {
+    prompt: 'auto follow-up',
+    agent: 'claude',
+    requestId: 'request-auto-follow-up',
+  })
+
+  assert.deepEqual(jsonBody(fake.calls[0] as FetchCall), {
+    prompt: 'auto create',
+    agent: 'claude',
+  })
+  assert.deepEqual(jsonBody(fake.calls[1] as FetchCall), {
+    prompt: 'auto follow-up',
+    agent: 'claude',
+  })
+})
+
+test('bb-api session normalization reads camel-case agent configuration effort', async () => {
+  const fake = fakeFetch([{
+    body: {
+      id: 'session-camel',
+      agentRunnerId: 'runner-camel',
+      state: 'running',
+      agentConfig: {
+        agent: 'opencode',
+        model: 'z-ai/glm-5.2',
+        effort: 'xhigh',
+      },
+      usage: {},
+    },
+  }])
+  const transport = createHttpTransport({
+    apiStyle: 'bb-api',
+    fetch: fake.fetch,
+    token: 'token',
+  })
+
+  const normalized = await transport.getSession(
+    'runner-camel',
+    'session-camel',
+  )
+
+  assert.equal(normalized.agent, 'opencode')
+  assert.equal(normalized.model, 'z-ai/glm-5.2')
+  assert.equal(normalized.effort, 'xhigh')
 })
 
 test('HTTP transport sends exact member verbs and bodies', async () => {

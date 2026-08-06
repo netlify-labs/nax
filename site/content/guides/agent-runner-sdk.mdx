@@ -92,7 +92,8 @@ const handle = await sdk.start({
   siteId,
   prompt: 'Fix the failing tests and open a pull request.',
   agent: 'claude',
-  model: 'sonnet',
+  model: 'claude-opus-4-8',
+  effort: 'high',
   branch: 'fix/runner-tests',
   mode: 'normal',
   fileKeys: ['requirements.md'],
@@ -115,14 +116,23 @@ The defaults are:
 UUID unique to one logical create attempt.
 
 Follow-ups accept a new `prompt` or `promptRef` plus optional `agent`, `model`,
-`mode`, `fileKeys`, and `requestId`:
+`effort`, `mode`, `fileKeys`, and `requestId`:
 
 ```ts copy
 const sessionHandle = await sdk.followUp(handle, {
   prompt: 'Address the review feedback without changing the public API.',
+  agent: 'opencode',
+  model: 'z-ai/glm-5.2',
+  effort: 'xhigh',
 })
 await save(sdk.serializeHandle(sessionHandle))
 ```
+
+`agent`, `model`, and `effort` are open protocol strings. The SDK forwards
+them unchanged and deliberately has no provider/model catalog or effort enum.
+Catalogs and compatibility validation belong to the consuming product. For
+backend-selected Auto behavior, omit `model` and `effort`; do not pass an
+`auto` sentinel.
 
 The returned `SessionHandle` retains the original site, start input, policy,
 deadline, retry count, and landing progress. Its
@@ -230,7 +240,8 @@ Handles contain:
 
 - Schema version and kind
 - Runner, site, and exact current-session identities
-- Effective semantic input, including the private request ID
+- Effective semantic input, including provider, model, effort, and the private
+  request ID
 - Original landing and retry policy
 - Absolute `deadlineAt`
 - Consumed retry capacity plus the last safe reason and backoff timing

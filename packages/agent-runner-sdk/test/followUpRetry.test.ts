@@ -94,6 +94,7 @@ const originalInput: EffectiveStartInput = {
   prompt: 'original prompt',
   agent: 'claude',
   model: 'model-1',
+  effort: 'high',
   branch: 'feature/sdk',
   deployId: 'deploy-1',
   mode: 'create',
@@ -157,6 +158,7 @@ test('followUp preserves the complete base handle and exact follow-up fields', a
     prompt: 'follow up',
     agent: 'codex',
     model: 'model-2',
+    effort: 'xhigh',
     mode: 'ask',
     fileKeys: ['follow-up.md'],
     requestId: FOLLOW_UP_ID,
@@ -175,6 +177,7 @@ test('followUp preserves the complete base handle and exact follow-up fields', a
   assert.equal(handle.currentSessionId, 'session-2')
   assert.equal(handle.sessionId, 'session-2')
   assert.deepEqual(handle.sessionInput, input)
+  assert.equal(handle.sessionInput.effort, 'xhigh')
   assert.ok(wirePrompt.endsWith(marker(FOLLOW_UP_ID)))
   assert.doesNotMatch(handle.sessionInput.prompt, /agent-runner-sdk-request-id/)
 })
@@ -290,6 +293,7 @@ test('retry replaces a runner while preserving semantic input and policy', async
   assert.equal(retried.currentSessionId, 'session-replacement')
   assert.equal(retried.input.requestId, RETRY_ID)
   assert.equal(retried.input.prompt, originalInput.prompt)
+  assert.equal(retried.input.effort, 'high')
   assert.deepEqual({
     ...retried.input,
     requestId: RUN_REQUEST_ID,
@@ -298,6 +302,7 @@ test('retry replaces a runner while preserving semantic input and policy', async
   assert.deepEqual(retried.landing, base.landing)
   assert.equal(retried.retries.capacity, 1)
   assert.equal(wireInput?.requestId, RETRY_ID)
+  assert.equal(wireInput?.effort, 'high')
   assert.ok(wireInput?.prompt?.endsWith(marker(RETRY_ID)))
 })
 
@@ -317,6 +322,7 @@ test('session retry preserves an unexpired prompt reference and same runner', as
       promptRef,
       agent: 'codex',
       model: 'model-2',
+      effort: 'max',
       mode: 'ask',
       fileKeys: ['follow-up.md'],
       requestId: FOLLOW_UP_ID,
@@ -351,6 +357,7 @@ test('session retry preserves an unexpired prompt reference and same runner', as
   assert.equal(retried.currentSessionId, 'session-3')
   assert.deepEqual(retried.sessionInput.promptRef, promptRef)
   assert.equal(retried.sessionInput.requestId, RETRY_ID)
+  assert.equal(retried.sessionInput.effort, 'max')
   assert.deepEqual(retried.policy, base.policy)
   assert.deepEqual(retried.landing, base.landing)
   assert.equal(retried.retries.capacity, 1)
@@ -460,6 +467,7 @@ test('retry reconciliation adopts an exact replacement without resetting policy 
           prompt: `original prompt\n\n${marker(RETRY_ID)}`,
           agent: 'claude',
           model: 'model-1',
+          effort: 'high',
           mode: 'create',
           fileKeys: ['context.md'],
         }),

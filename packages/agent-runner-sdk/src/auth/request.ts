@@ -11,7 +11,7 @@ import type {
   NetlifyTokenResult,
 } from './token.js'
 
-export const AGENT_RUNNER_SDK_VERSION = '0.2.0' as const
+export const AGENT_RUNNER_SDK_VERSION = '0.3.0' as const
 export const DEFAULT_USER_AGENT =
   `nax-agent-runner-sdk/${AGENT_RUNNER_SDK_VERSION}` as const
 export const DEFAULT_NETLIFY_API_URL = 'https://api.netlify.com/api/v1'

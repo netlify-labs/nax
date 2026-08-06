@@ -6,6 +6,7 @@ import type {
   AgentRunnerSdkOptions,
   EffectiveFollowUpInput,
   EffectiveStartInput,
+  FollowUpInput,
   Handle,
   LandingOutcome,
   ReconciliationCandidate,
@@ -161,10 +162,7 @@ export function createEventBridgeRunner({
 
   async function followUp(
     jobId: string,
-    input: {
-      prompt: string
-      requestId?: string
-    },
+    input: FollowUpInput,
   ): Promise<Handle | undefined> {
     const handle = sdk.parseHandle(await store.loadHandle(jobId))
     try {

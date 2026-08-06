@@ -417,6 +417,7 @@ export function normalizeSession(
   if (agentConfig) {
     addOptional(session, 'agent', optionalString(agentConfig, 'agent', 'agent', style))
     addOptional(session, 'model', optionalString(agentConfig, 'model', 'model', style))
+    addOptional(session, 'effort', optionalString(agentConfig, 'effort', 'effort', style))
   }
   addOptional(session, 'mode', optionalString(source, 'mode', 'mode', style))
   addOptional(session, 'fileKeys', optionalStringArray(

@@ -59,7 +59,38 @@ export function smokePackageSpec(
         stdio: 'pipe',
       })
 
-      if (moduleType !== 'module') continue
+      writeFileSync(
+        join(consumerRoot, 'effort-contract.ts'),
+        [
+          "import type { FollowUpInput, Session, StartInput } from 'nax-agent-runner-sdk'",
+          "const start: StartInput = { siteId: 'site-1', prompt: 'audit', agent: 'claude', model: 'claude-opus-4-8', effort: 'high' }",
+          "const followUp: FollowUpInput = { prompt: 'continue', agent: 'opencode', model: 'z-ai/glm-5.2', effort: 'xhigh' }",
+          "const session: Session = { sessionId: 'session-1', runnerId: 'runner-1', state: 'running', effort: 'xhigh', usage: null }",
+          'void start',
+          'void followUp',
+          'void session',
+          '',
+        ].join('\n'),
+      )
+      writeFileSync(
+        join(consumerRoot, 'tsconfig.json'),
+        `${JSON.stringify({
+          compilerOptions: {
+            lib: ['ES2022', 'DOM'],
+            module: 'Node16',
+            moduleResolution: 'Node16',
+            noEmit: true,
+            skipLibCheck: true,
+            strict: true,
+            target: 'ES2022',
+          },
+          files: ['effort-contract.ts'],
+        }, null, 2)}\n`,
+      )
+      execFileSync(tsc, ['-p', join(consumerRoot, 'tsconfig.json')], {
+        cwd: consumerRoot,
+        stdio: 'pipe',
+      })
 
       const installedRoot = join(
         consumerRoot,
@@ -72,6 +103,8 @@ export function smokePackageSpec(
       assert.equal(installedManifest.name, 'nax-agent-runner-sdk')
       assert.equal(installedManifest.version, expectedVersion)
       assert.equal(installedManifest.engines.node, '>=18')
+
+      if (moduleType !== 'module') continue
 
       for (const path of [
         'README.md',

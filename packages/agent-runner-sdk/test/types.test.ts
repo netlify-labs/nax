@@ -30,6 +30,7 @@ type _StartHasExpectedKeys = Assert<Equal<
   | 'siteId'
   | 'agent'
   | 'model'
+  | 'effort'
   | 'branch'
   | 'deployId'
   | 'mode'
@@ -46,6 +47,7 @@ type _FollowUpHasExpectedKeys = Assert<Equal<
   | 'promptRef'
   | 'agent'
   | 'model'
+  | 'effort'
   | 'mode'
   | 'fileKeys'
   | 'requestId'
@@ -55,6 +57,9 @@ function inputContractChecks(): void {
   const inline: StartInput = {
     siteId: 'site-1',
     prompt: 'hello',
+    agent: 'claude',
+    model: 'claude-opus-4-8',
+    effort: 'high',
     mode: 'normal',
     land: 'auto',
   }
@@ -69,6 +74,7 @@ function inputContractChecks(): void {
   }
   const followUp: FollowUpInput = {
     prompt: 'continue',
+    effort: 'max',
     mode: 'ask',
   }
   const effectiveInline: EffectiveStartInput = {

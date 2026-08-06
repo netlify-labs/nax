@@ -29,6 +29,9 @@ const sdk = createAgentRunnerSdk({
 const outcome = await sdk.run({
   siteId: 'your-site-id',
   prompt: 'Update the documentation and open a pull request.',
+  agent: 'claude',
+  model: 'claude-opus-4-8',
+  effort: 'high',
   land: 'pr',
   deadlineMs: 25 * 60 * 1_000,
 })
@@ -159,6 +162,7 @@ type StartInput = (
   siteId: string
   agent?: string
   model?: string
+  effort?: string
   branch?: string
   deployId?: string
   mode?: 'normal' | 'create' | 'ask'
@@ -175,8 +179,23 @@ engine retries. A caller-supplied `requestId` must be a UUID unique to that
 logical create attempt.
 
 `FollowUpInput` also accepts exactly one prompt source and supports `agent`,
-`model`, `mode`, `fileKeys`, and `requestId`. It intentionally does not replace
-the original site, landing, deadline, or retry policy.
+`model`, `effort`, `mode`, `fileKeys`, and `requestId`. It intentionally does
+not replace the original site, landing, deadline, or retry policy.
+
+`agent`, `model`, and `effort` are open protocol strings. The SDK forwards
+non-empty values exactly and does not publish a provider/model catalog or
+translate effort levels. Consumers that offer model pickers own their current
+catalog and compatibility validation. To request the backend's Auto behavior,
+omit both `model` and `effort`; do not send an `auto` sentinel.
+
+```ts
+const next = await sdk.followUp(handle, {
+  prompt: 'Re-check the authentication boundary.',
+  agent: 'opencode',
+  model: 'z-ai/glm-5.2',
+  effort: 'xhigh',
+})
+```
 
 ## Methods
 
@@ -570,11 +589,11 @@ For an authorized prerelease:
 
 ```sh
 npm run ci
-npm version 0.2.0-next.2 --no-git-tag-version
+npm version 0.3.0-next.0 --no-git-tag-version
 npm run release:next
 ```
 
-Use the intended package version in place of `0.2.0-next.2`. `release:next` publishes
+Use the intended package version in place of `0.3.0-next.0`. `release:next` publishes
 with the `next` distribution tag, then installs that registry artifact in clean
 ESM and CommonJS projects and compiles its shipped examples. `npm run
 pack:smoke` performs the equivalent check against the exact local tarball
@@ -585,8 +604,8 @@ candidate first. From that exact clean commit:
 
 ```sh
 npm run release:stable
-git tag -a nax-agent-runner-sdk-v0.2.0 -m "nax-agent-runner-sdk 0.2.0"
-git push origin refs/tags/nax-agent-runner-sdk-v0.2.0
+git tag -a nax-agent-runner-sdk-v0.3.0 -m "nax-agent-runner-sdk 0.3.0"
+git push origin refs/tags/nax-agent-runner-sdk-v0.3.0
 ```
 
 `release:stable` publishes with npm's `latest` tag and installs the exact

@@ -146,6 +146,9 @@ test('safe envelopes retain semantic input and ambiguity windows', async () => {
   const start = prepareStartOperation({
     siteId: 'site-1',
     prompt: semanticPrompt,
+    agent: 'claude',
+    model: 'claude-opus-4-8',
+    effort: 'high',
     requestId: FIRST_ID,
   })
   await assert.rejects(
@@ -159,6 +162,7 @@ test('safe envelopes retain semantic input and ambiguity windows', async () => {
     (error: unknown) => {
       if (!isAgentRunnerSdkError(error, 'create-ambiguous')) return false
       assert.equal(error.effectiveInput.prompt, semanticPrompt)
+      assert.equal(error.effectiveInput.effort, 'high')
       assert.deepEqual(error.window, { sentAt: 100, failedAt: 125 })
       assert.doesNotMatch(error.message, /sensitive|11111111/)
       return true
@@ -167,6 +171,9 @@ test('safe envelopes retain semantic input and ambiguity windows', async () => {
 
   const followUp = prepareFollowUpOperation({
     prompt: 'sensitive follow-up',
+    agent: 'opencode',
+    model: 'z-ai/glm-5.2',
+    effort: 'xhigh',
     requestId: SECOND_ID,
   })
   for (const conflict of [
@@ -190,6 +197,7 @@ test('safe envelopes retain semantic input and ambiguity windows', async () => {
           && !isAgentRunnerSdkError(error, 'session-already-active')
         ) return false
         assert.equal(error.effectiveInput.prompt, 'sensitive follow-up')
+        assert.equal(error.effectiveInput.effort, 'xhigh')
         assert.deepEqual(error.window, { sentAt: 200, failedAt: 225 })
         assert.doesNotMatch(error.message, /sensitive|22222222/)
         if (isAgentRunnerSdkError(error, 'session-already-active')) {

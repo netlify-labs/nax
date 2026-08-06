@@ -60,6 +60,7 @@ function session(
     prompt: `same prompt\n\n${marker(requestId)}`,
     agent: 'claude',
     model: 'model-1',
+    effort: 'high',
     mode: 'normal',
     fileKeys: ['context.md'],
     createdAt,
@@ -96,6 +97,7 @@ const startInput: EffectiveStartInput = {
   prompt: 'same prompt',
   agent: 'claude',
   model: 'model-1',
+  effort: 'high',
   branch: 'feature/sdk',
   mode: 'normal',
   fileKeys: ['context.md'],
@@ -330,6 +332,9 @@ test('defensive fingerprint mismatch rejects an exact marker', async () => {
       model: 'other-model',
     }),
     session('runner-1', 'session-1', CREATE_ID, 11_000, {
+      effort: 'low',
+    }),
+    session('runner-1', 'session-1', CREATE_ID, 11_000, {
       fileKeys: ['other.md'],
     }),
   ]) {
@@ -370,6 +375,7 @@ test('session reconciliation preserves the complete base handle', async () => {
     prompt: 'follow up',
     agent: 'codex',
     model: 'model-2',
+    effort: 'xhigh',
     mode: 'ask',
     fileKeys: ['follow-up.md'],
     requestId: SESSION_ID,
@@ -383,6 +389,7 @@ test('session reconciliation preserves the complete base handle', async () => {
       prompt: `follow up\n\n${marker(SESSION_ID)}`,
       agent: 'codex',
       model: 'model-2',
+      effort: 'xhigh',
       mode: 'ask',
       fileKeys: ['follow-up.md'],
     },
@@ -422,6 +429,40 @@ test('session reconciliation preserves the complete base handle', async () => {
     assert.equal(result.handle.sessionId, 'session-follow-up')
     assert.deepEqual(result.handle.sessionInput, followUp)
   }
+})
+
+test('effort-only differences prevent follow-up reconciliation', async () => {
+  const followUp: EffectiveFollowUpInput = {
+    prompt: 'follow up',
+    agent: 'codex',
+    model: 'model-2',
+    effort: 'high',
+    requestId: SESSION_ID,
+  }
+  const sdk = createAgentRunnerSdk({
+    transport: fakeTransport({
+      listSessions: async () => [
+        session(
+          'runner-existing',
+          'session-low-effort',
+          SESSION_ID,
+          11_000,
+          {
+            prompt: `follow up\n\n${marker(SESSION_ID)}`,
+            agent: 'codex',
+            model: 'model-2',
+            effort: 'low',
+          },
+        ),
+      ],
+    }),
+    clockSkewAllowanceMs: 0,
+  })
+
+  assert.deepEqual(
+    await sdk.reconcileSession(baseHandle(), followUp, requestWindow),
+    { kind: 'none' },
+  )
 })
 
 test('active-session conflicts adopt only the exact active marker', async () => {

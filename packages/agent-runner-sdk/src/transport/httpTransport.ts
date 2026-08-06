@@ -227,6 +227,7 @@ function startBody(input: EffectiveStartInput): Record<string, unknown> {
     prompt: input.prompt,
     ...(input.agent === undefined ? {} : { agent: input.agent }),
     ...(input.model === undefined ? {} : { model: input.model }),
+    ...(input.effort === undefined ? {} : { effort: input.effort }),
     ...(input.branch === undefined ? {} : { branch: input.branch }),
     ...(input.deployId === undefined ? {} : { deploy_id: input.deployId }),
     ...(input.mode === undefined ? {} : { mode: input.mode }),
@@ -247,6 +248,7 @@ function followUpBody(
     prompt: input.prompt,
     ...(input.agent === undefined ? {} : { agent: input.agent }),
     ...(input.model === undefined ? {} : { model: input.model }),
+    ...(input.effort === undefined ? {} : { effort: input.effort }),
     ...(input.mode === undefined ? {} : { mode: input.mode }),
     ...(input.fileKeys === undefined ? {} : { file_keys: input.fileKeys }),
   }

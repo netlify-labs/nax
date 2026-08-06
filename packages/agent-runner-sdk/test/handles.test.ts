@@ -23,6 +23,9 @@ const runHandle: RunHandle = {
   input: {
     siteId: 'site-1',
     prompt: 'Make the requested change.',
+    agent: 'claude',
+    model: 'claude-opus-4-8',
+    effort: 'high',
     requestId: '44444444-4444-4444-8444-444444444444',
   },
   policy: {
@@ -89,6 +92,9 @@ test('session handles retain the base policy and enforce session attribution', (
         tenant: 'site-1',
         expiresAt: 2_000_000_000_000,
       },
+      agent: 'opencode',
+      model: 'z-ai/glm-5.2',
+      effort: 'xhigh',
       requestId: '55555555-5555-4555-8555-555555555555',
     },
   }
@@ -102,6 +108,21 @@ test('session handles retain the base policy and enforce session attribution', (
       && /sessionId must equal currentSessionId/.test(error.message)
     ),
   )
+})
+
+test('old v1 handles without effort remain valid', () => {
+  const oldInput = { ...runHandle.input }
+  delete oldInput.effort
+  const oldHandle: RunHandle = {
+    ...runHandle,
+    input: oldInput,
+  }
+
+  const parsed = parseHandle(serializeHandle(oldHandle))
+
+  assert.deepEqual(parsed, oldHandle)
+  assert.equal(parsed.v, 1)
+  assert.equal('effort' in parsed.input, false)
 })
 
 test('handle parsing rejects malformed required fields and unknown versions', () => {
@@ -143,6 +164,7 @@ test('typed SDK error guards preserve ambiguity payloads', () => {
     assert.fail('expected create-ambiguous')
   }
   assert.equal(error.effectiveInput.requestId, runHandle.input.requestId)
+  assert.equal(error.effectiveInput.effort, 'high')
   assert.deepEqual(error.window, { sentAt: 10, failedAt: 20 })
   assert.equal(
     isAgentRunnerSdkError(

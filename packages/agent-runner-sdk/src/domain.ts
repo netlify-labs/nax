@@ -26,6 +26,7 @@ interface StartOptions {
   siteId: string
   agent?: string
   model?: string
+  effort?: string
   branch?: string
   deployId?: string
   mode?: RunnerMode
@@ -41,6 +42,7 @@ export type StartInput = PromptInput & StartOptions
 interface FollowUpOptions {
   agent?: string
   model?: string
+  effort?: string
   mode?: RunnerMode
   fileKeys?: string[]
   requestId?: string
@@ -209,6 +211,7 @@ export interface Session {
   title?: string
   agent?: string
   model?: string
+  effort?: string
   mode?: string
   fileKeys?: string[]
   createdAt?: number

@@ -283,6 +283,7 @@ function parseEffectiveStartInput(value: unknown): EffectiveStartInput {
   const prompt = parsePrompt(record, 'input')
   const agent = optionalString(record.agent, 'input.agent')
   const model = optionalString(record.model, 'input.model')
+  const effort = optionalString(record.effort, 'input.effort')
   const branch = optionalString(record.branch, 'input.branch')
   const deployId = optionalString(record.deployId, 'input.deployId')
   const mode = optionalRunnerMode(record.mode, 'input.mode')
@@ -307,6 +308,7 @@ function parseEffectiveStartInput(value: unknown): EffectiveStartInput {
     siteId: stringValue(record.siteId, 'input.siteId'),
     ...(agent === undefined ? {} : { agent }),
     ...(model === undefined ? {} : { model }),
+    ...(effort === undefined ? {} : { effort }),
     ...(branch === undefined ? {} : { branch }),
     ...(deployId === undefined ? {} : { deployId }),
     ...(mode === undefined ? {} : { mode }),
@@ -325,6 +327,7 @@ function parseEffectiveFollowUpInput(
   const prompt = parsePrompt(record, 'sessionInput')
   const agent = optionalString(record.agent, 'sessionInput.agent')
   const model = optionalString(record.model, 'sessionInput.model')
+  const effort = optionalString(record.effort, 'sessionInput.effort')
   const mode = optionalRunnerMode(record.mode, 'sessionInput.mode')
   const fileKeys = optionalStringArray(record.fileKeys, 'sessionInput.fileKeys')
 
@@ -332,6 +335,7 @@ function parseEffectiveFollowUpInput(
     ...prompt,
     ...(agent === undefined ? {} : { agent }),
     ...(model === undefined ? {} : { model }),
+    ...(effort === undefined ? {} : { effort }),
     ...(mode === undefined ? {} : { mode }),
     ...(fileKeys === undefined ? {} : { fileKeys }),
     requestId: requestIdValue(

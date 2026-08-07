@@ -186,16 +186,16 @@ test('interactive configuration preserves unknown inherited IDs and exposes canc
 })
 
 test('single-agent config defaults to the best model and its highest effort', async () => {
-  const harness = promptHarness(['claude-opus-5', 'high'])
+  const harness = promptHarness(['claude-fable-5', 'high'])
   const result = await chooseSingleAgentConfigInteractively({ clack: harness.clack, agent: 'claude' })
 
   assert.deepEqual(result, {
-    models: { claude: 'claude-opus-5' },
+    models: { claude: 'claude-fable-5' },
     efforts: { claude: 'high' },
   })
   assert.deepEqual(harness.calls.map((call) => call.kind), ['select', 'select'])
   const modelPrompt = harness.calls.find((call) => call.input.message === 'Claude model')
-  assert.equal(modelPrompt.input.initialValue, 'claude-opus-5')
+  assert.equal(modelPrompt.input.initialValue, 'claude-fable-5')
   const effortPrompt = harness.calls.find((call) => call.input.message === 'Claude reasoning effort')
   assert.equal(effortPrompt.input.initialValue, 'high')
 })

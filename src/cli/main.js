@@ -2479,7 +2479,6 @@ async function handleAdHocAgentRun(options = {}) {
   const invocationDir = path.resolve(options.invocationDir || process.cwd())
   const projectRoot = resolveProjectRoot(options.projectRoot, { cwd: invocationDir })
   const agent = await chooseAdHocAgentInteractively(options.agent)
-  const promptText = await promptForAdHocAgentPrompt(options.prompt || options.context)
   let configuredOptions = options
   if (process.stdin.isTTY && options.model === undefined && options.effort === undefined) {
     const clack = await loadClack()
@@ -2490,6 +2489,7 @@ async function handleAdHocAgentRun(options = {}) {
       efforts: interactiveConfiguration.efforts,
     }
   }
+  const promptText = await promptForAdHocAgentPrompt(options.prompt || options.context)
   const resolvedConfig = resolveAgentRunConfig(agent, {
     globalCli: {
       models: configuredOptions.model === undefined ? configuredOptions.models : { [agent]: configuredOptions.model },

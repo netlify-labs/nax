@@ -8,5 +8,5 @@ steps:
     action: issue
     submit: new-run
     agents:
-      - { agent: claude, models: [claude-opus-5, claude-opus-4-8, claude-opus-4-7] }
+      - { agent: claude, models: [claude-opus-5, claude-opus-4-8, claude-fable-5] }
     waitFor: agent-results

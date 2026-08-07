@@ -636,6 +636,7 @@ module.exports = {
   AGENT_CONFIGURATION_CATALOG,
   AUTO_CONFIGURATION_VALUE,
   SUPPORTED_AGENT_PROVIDERS,
+  catalogModel,
   formatAgentConfigLabel,
   getAgentEffortOptions,
   getAgentModelOptions,

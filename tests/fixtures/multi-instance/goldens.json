@@ -5,9 +5,27 @@
       "fixture": "bakeoff.flow.yml",
       "transport": "netlify-api",
       "instances": [
-        { "id": "claude:claude-opus-5:auto", "agent": "claude", "model": "claude-opus-5", "effort": null, "resolvedFrom": "pinned" },
-        { "id": "claude:claude-opus-4-8:auto", "agent": "claude", "model": "claude-opus-4-8", "effort": null, "resolvedFrom": "pinned" },
-        { "id": "claude:claude-opus-4-7:auto", "agent": "claude", "model": "claude-opus-4-7", "effort": null, "resolvedFrom": "pinned" }
+        {
+          "id": "claude:claude-opus-5:auto",
+          "agent": "claude",
+          "model": "claude-opus-5",
+          "effort": null,
+          "resolvedFrom": "pinned"
+        },
+        {
+          "id": "claude:claude-opus-4-8:auto",
+          "agent": "claude",
+          "model": "claude-opus-4-8",
+          "effort": null,
+          "resolvedFrom": "pinned"
+        },
+        {
+          "id": "claude:claude-fable-5:auto",
+          "agent": "claude",
+          "model": "claude-fable-5",
+          "effort": null,
+          "resolvedFrom": "pinned"
+        }
       ],
       "warnings": []
     },
@@ -15,9 +33,27 @@
       "fixture": "sweep.flow.yml",
       "transport": "netlify-api",
       "instances": [
-        { "id": "claude:claude-opus-5:low", "agent": "claude", "model": "claude-opus-5", "effort": "low", "resolvedFrom": "pinned" },
-        { "id": "claude:claude-opus-5:medium", "agent": "claude", "model": "claude-opus-5", "effort": "medium", "resolvedFrom": "pinned" },
-        { "id": "claude:claude-opus-5:high", "agent": "claude", "model": "claude-opus-5", "effort": "high", "resolvedFrom": "pinned" }
+        {
+          "id": "claude:claude-opus-5:low",
+          "agent": "claude",
+          "model": "claude-opus-5",
+          "effort": "low",
+          "resolvedFrom": "pinned"
+        },
+        {
+          "id": "claude:claude-opus-5:medium",
+          "agent": "claude",
+          "model": "claude-opus-5",
+          "effort": "medium",
+          "resolvedFrom": "pinned"
+        },
+        {
+          "id": "claude:claude-opus-5:high",
+          "agent": "claude",
+          "model": "claude-opus-5",
+          "effort": "high",
+          "resolvedFrom": "pinned"
+        }
       ],
       "warnings": []
     },
@@ -26,9 +62,27 @@
       "transport": "github-eligible",
       "_transportNote": "No pinned intent and one instance per provider, so transport:auto may use github; open instances are Auto on the wire.",
       "instances": [
-        { "id": "claude:auto:auto", "agent": "claude", "model": null, "effort": null, "resolvedFrom": "open" },
-        { "id": "gemini:auto:auto", "agent": "gemini", "model": null, "effort": null, "resolvedFrom": "open" },
-        { "id": "codex:auto:auto", "agent": "codex", "model": null, "effort": null, "resolvedFrom": "open" }
+        {
+          "id": "claude:auto:auto",
+          "agent": "claude",
+          "model": null,
+          "effort": null,
+          "resolvedFrom": "open"
+        },
+        {
+          "id": "gemini:auto:auto",
+          "agent": "gemini",
+          "model": null,
+          "effort": null,
+          "resolvedFrom": "open"
+        },
+        {
+          "id": "codex:auto:auto",
+          "agent": "codex",
+          "model": null,
+          "effort": null,
+          "resolvedFrom": "open"
+        }
       ],
       "warnings": []
     },
@@ -36,11 +90,41 @@
       "fixture": "combo.flow.yml",
       "transport": "netlify-api",
       "instances": [
-        { "id": "claude:claude-opus-5:auto", "agent": "claude", "model": "claude-opus-5", "effort": null, "resolvedFrom": "pinned" },
-        { "id": "claude:claude-opus-4-8:auto", "agent": "claude", "model": "claude-opus-4-8", "effort": null, "resolvedFrom": "pinned" },
-        { "id": "gemini:gemini-3.1-pro-preview:auto", "agent": "gemini", "model": "gemini-3.1-pro-preview", "effort": null, "resolvedFrom": "latest" },
-        { "id": "codex:gpt-5.6-sol:medium", "agent": "codex", "model": "gpt-5.6-sol", "effort": "medium", "resolvedFrom": "pinned" },
-        { "id": "codex:gpt-5.6-sol:high", "agent": "codex", "model": "gpt-5.6-sol", "effort": "high", "resolvedFrom": "pinned" }
+        {
+          "id": "claude:claude-opus-5:auto",
+          "agent": "claude",
+          "model": "claude-opus-5",
+          "effort": null,
+          "resolvedFrom": "pinned"
+        },
+        {
+          "id": "claude:claude-opus-4-8:auto",
+          "agent": "claude",
+          "model": "claude-opus-4-8",
+          "effort": null,
+          "resolvedFrom": "pinned"
+        },
+        {
+          "id": "gemini:gemini-3.1-pro-preview:auto",
+          "agent": "gemini",
+          "model": "gemini-3.1-pro-preview",
+          "effort": null,
+          "resolvedFrom": "latest"
+        },
+        {
+          "id": "codex:gpt-5.6-sol:medium",
+          "agent": "codex",
+          "model": "gpt-5.6-sol",
+          "effort": "medium",
+          "resolvedFrom": "pinned"
+        },
+        {
+          "id": "codex:gpt-5.6-sol:high",
+          "agent": "codex",
+          "model": "gpt-5.6-sol",
+          "effort": "high",
+          "resolvedFrom": "pinned"
+        }
       ],
       "warnings": []
     },
@@ -48,17 +132,32 @@
       "fixture": "clamp.flow.yml",
       "transport": "netlify-api",
       "instances": [
-        { "id": "opencode:z-ai/glm-5.2:high", "agent": "opencode", "model": "z-ai/glm-5.2", "effort": "high", "resolvedFrom": "pinned", "wireEffort": "xhigh" }
+        {
+          "id": "opencode:z-ai/glm-5.2:high",
+          "agent": "opencode",
+          "model": "z-ai/glm-5.2",
+          "effort": "high",
+          "resolvedFrom": "pinned"
+        }
       ],
       "warnings": [
-        { "code": "effort_clamped", "match": "low" },
-        { "code": "effort_clamped", "match": "medium" }
+        {
+          "code": "effort_clamped",
+          "match": "low"
+        },
+        {
+          "code": "effort_clamped",
+          "match": "medium"
+        }
       ],
       "_note": "GLM 5.2 supports [high, max]; low and medium clamp up to high; the three-way fan-out then dedupes to one instance. max would translate to wire xhigh only at send."
     },
     {
       "fixture": "duplicate.flow.yml",
-      "error": { "code": "duplicate_instance", "match": "claude:claude-opus-5:high" },
+      "error": {
+        "code": "duplicate_instance",
+        "match": "claude:claude-opus-5:high"
+      },
       "_note": "Two identical tuples in one step must error (no label bypass; Best-of-N is issue #45)."
     }
   ]

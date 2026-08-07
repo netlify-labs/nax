@@ -149,6 +149,7 @@ test('nax run agent routes positional and flagged prompts', async () => {
 
   await parse(program, ['run', 'agent', 'codex', 'Review', 'this', '--dry'])
   await parse(program, ['run', 'agent', 'claude', '--prompt', 'Check this', '--transport', 'netlify-api'])
+  await parse(program, ['run', 'agent', 'opencode', 'Inspect this', '--model', 'z-ai/glm-5.2', '--effort', 'max'])
 
   assert.equal(calls[0].name, 'run')
   assert.equal(calls[0].args[0], null)
@@ -162,12 +163,52 @@ test('nax run agent routes positional and flagged prompts', async () => {
     prompt: /** @type {{ agent?: string, prompt?: string, transport?: string }} */ (calls[1].args[1]).prompt,
     transport: /** @type {{ agent?: string, prompt?: string, transport?: string }} */ (calls[1].args[1]).transport,
   }, { agent: 'claude', prompt: 'Check this', transport: 'netlify-api' })
+  assert.deepEqual({
+    agent: /** @type {{ agent?: string, model?: string, effort?: string }} */ (calls[2].args[1]).agent,
+    model: /** @type {{ agent?: string, model?: string, effort?: string }} */ (calls[2].args[1]).model,
+    effort: /** @type {{ agent?: string, model?: string, effort?: string }} */ (calls[2].args[1]).effort,
+  }, { agent: 'opencode', model: 'z-ai/glm-5.2', effort: 'max' })
+})
+
+test('workflow configuration flags preserve provider-keyed mappings', async () => {
+  const { calls, program } = makeProgram()
+
+  await parse(program, [
+    'run',
+    'review',
+    '--agents',
+    'claude,codex',
+    '--models',
+    'claude=claude-opus-4-8',
+    '--models',
+    'codex=gpt-5.6-sol',
+    '--efforts',
+    'claude=high',
+    '--step-agents',
+    'synthesize=codex',
+    '--step-models',
+    'synthesize:codex=gpt-5.6-terra',
+    '--step-efforts',
+    'synthesize:codex=low',
+  ])
+
+  const options = /** @type {Record<string, unknown>} */ (calls[0].args[1])
+  assert.equal(options.agents, 'claude,codex')
+  assert.deepEqual(options.models, [
+    'claude=claude-opus-4-8',
+    'codex=gpt-5.6-sol',
+  ])
+  assert.deepEqual(options.efforts, ['claude=high'])
+  assert.deepEqual(options.stepAgents, ['synthesize=codex'])
+  assert.deepEqual(options.stepModels, ['synthesize:codex=gpt-5.6-terra'])
+  assert.deepEqual(options.stepEfforts, ['synthesize:codex=low'])
 })
 
 test('agent names are restricted to supported Netlify agents', () => {
   assert.equal(validateAgentName('Codex'), 'codex')
+  assert.equal(validateAgentName('OpenCode'), 'opencode')
   assert.throws(() => validateAgentName('cdx'), /Did you mean codex/)
-  assert.throws(() => validateAgentName('gpt-9'), /Expected one of: claude, gemini, codex/)
+  assert.throws(() => validateAgentName('gpt-9'), /Expected one of: claude, gemini, codex, opencode/)
 })
 
 test('handoff, admin, and hidden ci route to their handlers', async () => {

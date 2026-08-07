@@ -27,7 +27,7 @@ nax init [OPTIONS]
 
 ```sh
 nax run [flow] [OPTIONS]
-nax run agent <claude|gemini|codex> [prompt...] [OPTIONS]
+nax run agent <claude|codex|gemini|opencode> [prompt...] [OPTIONS]
 ```
 
 | Flag | Purpose |
@@ -35,13 +35,25 @@ nax run agent <claude|gemini|codex> [prompt...] [OPTIONS]
 | `--branch <branch-or-pr>` | Branch or PR selector such as `fix/auth` or `#123`. |
 | `--context <text>` | Additional context appended to each prompt. |
 | `--context-file <path>` | Additional context read from disk. |
-| `--models <list>` | Override agents for workflow steps. |
+| `--agents <list>` | Select comma-separated agent providers for workflow steps. |
+| `--models <agent=model>` | Assign a real model ID to a provider. Repeat for more providers. |
+| `--efforts <agent=effort>` | Assign reasoning effort to a provider. Repeat for more providers. |
 | `--step <id>` | Run only one step. |
 | `--from-step <id>` | Run from a step through the end. |
 | `--transport <kind>` | `auto`, `github`, `github-actions`, or `netlify-api`. |
 | `--dry` | Preview without creating issues, jobs, or artifacts. |
 | `--force` | Skip confirmation prompts. |
 | `--retry [run-id]` | Retry one failed Netlify API agent run and continue. |
+
+Advanced workflow overrides use `--step-agents <step=agents>`,
+`--step-models <step:agent=model>`, and
+`--step-efforts <step:agent=effort>`. Direct single-agent runs use
+`--model <id>` and `--effort <level>`.
+
+`auto` for a model or effort means omission on the wire. Pinned model or
+effort settings make `--transport auto` select `netlify-api`. Explicit
+`--transport github` rejects pinned settings because the GitHub Action only
+supports provider selection.
 
 ## `nax handoff`
 

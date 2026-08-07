@@ -177,7 +177,7 @@ function writeCompletedRunFixture(projectRoot, options = {}) {
     options: {
       branch: 'main',
       transport: 'netlify-api',
-      stepModels: {
+      stepAgents: {
         review: ['codex'],
       },
     },
@@ -356,7 +356,181 @@ test('dashboard renders Review graph on narrow viewport', async ({ page }, testI
   })
 })
 
-test('dashboard dry-run simulation updates step, model pill, and output without credits', async ({ page }, testInfo) => {
+test('dashboard submits configured workflow model and effort', async ({ page }) => {
+  const projectRoot = tmpRoot()
+  const runId = writeCompletedRunFixture(projectRoot)
+  const server = await startDashboardServer({
+    projectRoot,
+    initialWorkflow: 'review',
+  })
+  const requests = []
+  await page.route('**/api/workflows/review/runs', async (route) => {
+    requests.push(route.request().postDataJSON())
+    await route.fulfill({
+      status: 202,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        workflow: { id: 'review', title: 'Review', description: '', steps: [] },
+        run: {
+          id: runId,
+          runId,
+          flowId: 'review',
+          flowTitle: 'Review',
+          status: 'completed',
+        },
+      }),
+    })
+  })
+
+  try {
+    await page.setViewportSize({ width: 1360, height: 860 })
+    await page.goto(server.url, { waitUntil: 'networkidle' })
+    await page.getByRole('button', { name: 'Run', exact: true }).click()
+    const runDialog = page.getByRole('dialog', { name: 'Run Review' })
+    await expect(runDialog).toBeVisible()
+    await runDialog.getByRole('button', { name: 'Configure agents' }).click()
+
+    const configDrawer = page.getByRole('dialog', { name: 'Agent configuration' })
+    await expect(configDrawer).toBeVisible()
+    await configDrawer.getByRole('tab', { name: 'Codex' }).click()
+    await configDrawer.getByRole('combobox', { name: 'Model' }).click()
+    await page.getByRole('option', { name: 'GPT 5.6 Sol' }).click()
+    await configDrawer.getByRole('combobox', { name: 'Reasoning effort' }).click()
+    await page.getByRole('option', { name: 'High' }).click()
+    await configDrawer.getByRole('button', { name: 'Save' }).click()
+    await expect(configDrawer).toBeHidden()
+
+    await runDialog.getByRole('textbox', { name: 'Optional context' }).fill('Focus on authentication boundaries.')
+    await runDialog.getByRole('button', { name: 'Run', exact: true }).click()
+    await expect.poll(() => requests.length).toBe(1)
+    expect(requests[0]).toMatchObject({
+      context: 'Focus on authentication boundaries.',
+      models: { codex: 'gpt-5.6-sol' },
+      efforts: { codex: 'high' },
+    })
+  } finally {
+    await server.close()
+  }
+})
+
+test('dashboard adds an opencode ghost chip and pins per-step model and effort from the canvas', async ({ page }) => {
+  const projectRoot = tmpRoot()
+  const runId = writeCompletedRunFixture(projectRoot)
+  const server = await startDashboardServer({
+    projectRoot,
+    initialWorkflow: 'do-next',
+  })
+  const requests = []
+  await page.route('**/api/workflows/do-next/runs', async (route) => {
+    requests.push(route.request().postDataJSON())
+    await route.fulfill({
+      status: 202,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        workflow: { id: 'do-next', title: 'Do Next', description: '', steps: [] },
+        run: { id: runId, runId, flowId: 'do-next', flowTitle: 'Do Next', status: 'completed' },
+      }),
+    })
+  })
+
+  try {
+    await page.setViewportSize({ width: 1360, height: 860 })
+    await page.goto(server.url, { waitUntil: 'networkidle' })
+
+    const proposeNode = page.locator('.workflow-node').filter({ hasText: 'Propose Next Task' })
+    // do-next does not declare opencode, so it is offered as a ghost chip.
+    const opencodeGhost = proposeNode.locator('.agent-chip.ghost', { hasText: 'OpenCode' })
+    await expect(opencodeGhost).toBeVisible()
+    await opencodeGhost.click()
+
+    // Pin Claude's model and effort for this step via the chip caret popover.
+    await proposeNode.getByRole('button', { name: 'Configure Claude for Propose Next Task' }).click()
+    await page.getByRole('combobox', { name: 'Model' }).click()
+    await page.getByRole('option', { name: 'Opus 4.8' }).click()
+    await page.getByRole('combobox', { name: 'Reasoning effort' }).click()
+    await page.getByRole('option', { name: 'High' }).click()
+    await page.keyboard.press('Escape')
+
+    await page.getByRole('button', { name: 'Run', exact: true }).click()
+    const runDialog = page.getByRole('dialog', { name: 'Run Do Next' })
+    await expect(runDialog).toBeVisible()
+    await runDialog.getByRole('button', { name: 'Run', exact: true }).click()
+
+    await expect.poll(() => requests.length).toBe(1)
+    expect(requests[0]).toMatchObject({
+      stepAgents: { propose: ['claude', 'gemini', 'codex', 'opencode'] },
+      stepModels: { propose: { claude: 'claude-opus-4-8' } },
+      stepEfforts: { propose: { claude: 'high' } },
+    })
+  } finally {
+    await server.close()
+  }
+})
+
+test('dashboard runs one configured agent on a narrow dark layout', async ({ page }) => {
+  const projectRoot = tmpRoot()
+  writeCompletedRunFixture(projectRoot)
+  const submissions = []
+  const server = await startDashboardServer({
+    projectRoot,
+    initialWorkflow: 'review',
+    followupSubmitRun: async ({ run, branch }) => {
+      submissions.push({ ...run, branch })
+      return {
+        ...run,
+        status: 'submitted',
+        runnerId: 'runner-standalone',
+        sessionId: 'session-standalone',
+      }
+    },
+  })
+
+  try {
+    await page.setViewportSize({ width: 430, height: 900 })
+    await page.goto(server.url, { waitUntil: 'networkidle' })
+    await expect(page.locator('html')).toHaveAttribute('data-mantine-color-scheme', 'dark')
+    await page.getByRole('button', { name: 'Run agent' }).click()
+
+    const runDialog = page.getByRole('dialog', { name: 'Run one agent' })
+    await expect(runDialog).toBeVisible()
+    await runDialog.getByRole('combobox', { name: 'Agent provider' }).click()
+    await page.getByRole('option', { name: 'OpenCode' }).click()
+    await runDialog.getByRole('button', { name: 'Configure OpenCode' }).click()
+
+    const configDrawer = page.getByRole('dialog', { name: 'OpenCode configuration' })
+    await expect(configDrawer).toBeVisible()
+    await expect.poll(async () => {
+      const drawerBox = await configDrawer.boundingBox()
+      return {
+        left: Math.round(drawerBox?.x || 0),
+        right: Math.round((drawerBox?.x || 0) + (drawerBox?.width || 0)),
+      }
+    }).toEqual({ left: 0, right: 430 })
+    await configDrawer.getByRole('combobox', { name: 'Model' }).click()
+    await page.getByRole('option', { name: 'GLM 5.2' }).click()
+    await configDrawer.getByRole('combobox', { name: 'Reasoning effort' }).click()
+    await page.getByRole('option', { name: 'Max' }).click()
+    await configDrawer.getByRole('button', { name: 'Save' }).click()
+    await expect(configDrawer).toBeHidden()
+
+    await runDialog.getByRole('textbox', { name: 'Instructions' }).fill('Audit the services directory.')
+    await runDialog.getByRole('button', { name: 'Run agent' }).click()
+    await expect.poll(() => submissions.length).toBe(1)
+    expect(submissions[0]).toMatchObject({
+      agent: 'opencode',
+      model: 'z-ai/glm-5.2',
+      effort: 'xhigh',
+      branch: 'master',
+    })
+    await expect(page.locator('.workflow-node').getByRole('heading', {
+      name: 'OpenCode agent run',
+    })).toBeVisible()
+  } finally {
+    await server.close()
+  }
+})
+
+test('dashboard dry-run simulation updates step, agent pill, and output without credits', async ({ page }, testInfo) => {
   await page.setViewportSize({ width: 1360, height: 860 })
   await page.goto(instance.url, { waitUntil: 'networkidle' })
 
@@ -598,6 +772,7 @@ test('dashboard submits a follow-up from run details composer', async ({ page })
     projectRoot,
     initialWorkflow: 'review',
     siteName: 'netlify-agent-executor',
+    followupSyncRunner: async () => ({ sessions: [] }),
     followupSubmitRun: async ({ run }) => {
       submissions.push({ ...run })
       return {
@@ -640,8 +815,17 @@ test('dashboard submits a follow-up from run details composer', async ({ page })
     await expect(page.getByText('Show advanced artifacts')).toBeHidden()
     await expect(page.getByRole('button', { name: 'Run follow-up' })).toBeDisabled()
 
-    await page.locator('.run-followup-model-chip').filter({ hasText: 'Gemini' }).click()
+    await page.locator('.run-followup-agent-chip').filter({ hasText: 'Gemini' }).click()
     await expect(page.getByText('Gemini: start fresh agent runner')).toBeVisible()
+    await page.getByRole('button', { name: 'Configure' }).click()
+    const configDrawer = page.getByRole('dialog', { name: 'Follow-up agent configuration' })
+    await configDrawer.getByRole('tab', { name: 'Gemini' }).click()
+    await configDrawer.getByRole('combobox', { name: 'Model' }).click()
+    await page.getByRole('option', { name: 'Gemini 3.1 Pro' }).click()
+    await configDrawer.getByRole('combobox', { name: 'Reasoning effort' }).click()
+    await page.getByRole('option', { name: 'High' }).click()
+    await configDrawer.getByRole('button', { name: 'Save' }).click()
+    await expect(configDrawer).toBeHidden()
     await page.getByLabel('What should the next agent do?').fill('Verify the proposed fix and call out risk.')
     await page.getByRole('button', { name: 'Run follow-up' }).click()
 
@@ -655,7 +839,9 @@ test('dashboard submits a follow-up from run details composer', async ({ page })
       mode: 'follow-up-thread',
       prompt: 'Verify the proposed fix and call out risk.',
       targetId: 'agent-result:review:runner-1:session-1:codex',
-      models: ['codex', 'gemini'],
+      agents: ['codex', 'gemini'],
+      models: { gemini: 'gemini-3.1-pro-preview' },
+      efforts: { gemini: 'high' },
     })
     expect(followupRequests[0].artifacts).toEqual([{ id: 'workflow-summary:summary.md', kind: 'workflow-summary' }])
     expect(submissions.map((submission) => [submission.agent, submission.existingRunnerId])).toEqual([

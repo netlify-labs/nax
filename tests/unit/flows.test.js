@@ -41,9 +41,9 @@ test('loadFlow reads flow.yml via configorama and normalizes steps', async () =>
   assert.equal(flow.id, 'review')
   assert.equal(flow.title, 'Review')
   assert.equal(flow.defaults.transport, 'auto')
-  assert.deepEqual(flow.defaults.agents, ['claude', 'gemini', 'codex'])
+  assert.deepEqual(flow.defaults.agents, ['claude', 'gemini', 'codex', 'opencode'])
   assert.deepEqual(flow.steps.map((step) => step.id), ['review', 'cross-review', 'synthesize'])
-  assert.deepEqual(flow.steps[0].agents, ['claude', 'gemini', 'codex'])
+  assert.deepEqual(flow.steps[0].agents, ['claude', 'gemini', 'codex', 'opencode'])
   assert.deepEqual(flow.steps[2].agents, ['codex'])
   assert.equal(flow.steps[0].waitFor, 'agent-results')
   assert.equal(flow.steps[0].autoArchive, null)
@@ -128,7 +128,7 @@ test('loadFlow uses nax.config.json flowsDirs and project flows shadow bundled f
   assert.equal(flows.find((candidate) => candidate.id === 'release-readiness').sourceLabel, 'project .github/nax-flows')
 })
 
-test('loadFlow blocks JavaScript nax config files', async () => {
+test('loadFlow accepts a static JavaScript nax config object export', async () => {
   const projectRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'nax-flow-js-config-'))
   fs.writeFileSync(path.join(projectRoot, 'nax.config.js'), [
     'module.exports = {',
@@ -140,14 +140,10 @@ test('loadFlow blocks JavaScript nax config files', async () => {
     title: 'JS Config Flow',
   })
 
-  await assert.rejects(
-    () => projectFlowDirs({ projectRoot }),
-    /Blocked executable config file in safe mode/,
-  )
-  await assert.rejects(
-    () => loadFlow('js-config-flow', { projectRoot }),
-    /Blocked executable config file in safe mode/,
-  )
+  assert.deepEqual(await projectFlowDirs({ projectRoot }), [
+    path.join(projectRoot, 'tools/nax/flows'),
+  ])
+  assert.equal((await loadFlow('js-config-flow', { projectRoot })).title, 'JS Config Flow')
 })
 
 test('loadFlow accepts explicit project workflow directories', async () => {
@@ -214,7 +210,7 @@ test('loadFlow reads ideas workflow', async () => {
   assert.equal(flow.id, 'ideas')
   assert.equal(flow.title, 'Ideas')
   assert.deepEqual(flow.steps.map((step) => step.id), ['ideate', 'cross-score', 'react', 'synthesize'])
-  assert.deepEqual(flow.steps[0].agents, ['claude', 'gemini', 'codex'])
+  assert.deepEqual(flow.steps[0].agents, ['claude', 'gemini', 'codex', 'opencode'])
   assert.deepEqual(flow.steps[3].agents, ['codex'])
   assert.equal(loadStepPrompt(flow, flow.steps[0]).name, 'ideate')
   assert.equal(loadStepPrompt(flow, flow.steps[1]).name, 'cross-score')
@@ -262,13 +258,28 @@ test('loadFlow accepts json flow files through configorama', async () => {
   fs.writeFileSync(path.join(flowDir, 'flow.json'), JSON.stringify({
     id: 'json-flow',
     title: 'JSON Flow',
-    steps: [{ id: 'one', prompt: 'prompts/one.md', agents: ['codex'] }],
+    defaults: {
+      agents: ['codex'],
+      models: { codex: 'gpt-5.6-sol' },
+      efforts: { codex: 'high' },
+    },
+    steps: [{
+      id: 'one',
+      prompt: 'prompts/one.md',
+      agents: ['codex'],
+      models: { codex: 'gpt-5.6-terra' },
+      efforts: { codex: 'low' },
+    }],
   }))
   fs.writeFileSync(path.join(flowDir, 'prompts', 'one.md'), '---\ntitle: One\n---\n\nBody\n')
 
   const flow = await loadFlow('json-flow', { flowsDir: tmp })
   assert.equal(flow.id, 'json-flow')
   assert.equal(flow.steps[0].id, 'one')
+  assert.deepEqual(flow.defaults.models, { codex: 'gpt-5.6-sol' })
+  assert.deepEqual(flow.defaults.efforts, { codex: 'high' })
+  assert.deepEqual(flow.steps[0].models, { codex: 'gpt-5.6-terra' })
+  assert.deepEqual(flow.steps[0].efforts, { codex: 'low' })
   assert.equal(loadStepPrompt(flow, flow.steps[0]).title, 'One')
 })
 
@@ -280,10 +291,19 @@ test('loadFlow accepts toml flow files through configorama', async () => {
     'id = "toml-flow"',
     'title = "TOML Flow"',
     '',
+    '[defaults]',
+    'agents = ["opencode"]',
+    '',
+    '[defaults.models]',
+    'opencode = "z-ai/glm-5.2"',
+    '',
+    '[defaults.efforts]',
+    'opencode = "max"',
+    '',
     '[[steps]]',
     'id = "one"',
     'prompt = "prompts/one.md"',
-    'agents = ["codex"]',
+    'agents = ["opencode"]',
     '',
   ].join('\n'))
   fs.writeFileSync(path.join(flowDir, 'prompts', 'one.md'), '---\ntitle: One\n---\n\nBody\n')
@@ -292,26 +312,83 @@ test('loadFlow accepts toml flow files through configorama', async () => {
   assert.equal(flow.id, 'toml-flow')
   assert.equal(flow.title, 'TOML Flow')
   assert.equal(flow.steps[0].id, 'one')
+  assert.deepEqual(flow.defaults.models, { opencode: 'z-ai/glm-5.2' })
+  assert.deepEqual(flow.defaults.efforts, { opencode: 'max' })
   assert.equal(loadStepPrompt(flow, flow.steps[0]).title, 'One')
 })
 
-test('loadFlow blocks JavaScript flow files through configorama safe mode', async () => {
+test('loadFlow normalizes YAML model and effort maps with explicit Auto clearing', async () => {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'nax-flow-test-'))
-  const flowDir = path.join(tmp, 'js-flow')
+  const flowDir = path.join(tmp, 'yaml-config-flow')
   fs.mkdirSync(path.join(flowDir, 'prompts'), { recursive: true })
-  fs.writeFileSync(path.join(flowDir, 'flow.js'), [
-    'module.exports = {',
-    '  id: "js-flow",',
-    '  title: "JavaScript Flow",',
-    '  steps: [{ id: "one", prompt: "prompts/one.md", agents: ["codex"] }],',
-    '}',
+  fs.writeFileSync(path.join(flowDir, 'flow.yml'), [
+    'id: yaml-config-flow',
+    'defaults:',
+    '  agents: [claude]',
+    '  models:',
+    '    claude: claude-opus-4-8',
+    '  efforts:',
+    '    claude: high',
+    'steps:',
+    '  - id: one',
+    '    prompt: prompts/one.md',
+    '    models:',
+    '      claude: auto',
+    '    efforts:',
+    '      claude: auto',
     '',
   ].join('\n'))
   fs.writeFileSync(path.join(flowDir, 'prompts', 'one.md'), '---\ntitle: One\n---\n\nBody\n')
 
+  const flow = await loadFlow('yaml-config-flow', { flowsDir: tmp })
+  assert.deepEqual(flow.defaults.models, { claude: 'claude-opus-4-8' })
+  assert.deepEqual(flow.defaults.efforts, { claude: 'high' })
+  assert.deepEqual(flow.steps[0].models, { claude: 'auto' })
+  assert.deepEqual(flow.steps[0].efforts, { claude: 'auto' })
+})
+
+test('loadFlow accepts static JavaScript and TypeScript object exports without execution', async () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'nax-flow-test-'))
+  for (const fixture of [
+    { id: 'js-flow', file: 'flow.js', prefix: 'module.exports = ' },
+    { id: 'ts-flow', file: 'flow.ts', prefix: 'export default ', suffix: ' as const' },
+  ]) {
+    const flowDir = path.join(tmp, fixture.id)
+    fs.mkdirSync(path.join(flowDir, 'prompts'), { recursive: true })
+    fs.writeFileSync(path.join(flowDir, fixture.file), `${fixture.prefix}${JSON.stringify({
+      id: fixture.id,
+      defaults: {
+        agents: ['claude'],
+        models: { claude: 'claude-opus-4-8' },
+        efforts: { claude: 'high' },
+      },
+      steps: [{
+        id: 'one',
+        prompt: 'prompts/one.md',
+        agents: ['claude'],
+        models: { claude: 'claude-sonnet-5' },
+        efforts: { claude: 'medium' },
+      }],
+    }, null, 2)}${fixture.suffix || ''}\n`)
+    fs.writeFileSync(path.join(flowDir, 'prompts', 'one.md'), '---\ntitle: One\n---\n\nBody\n')
+
+    const flow = await loadFlow(fixture.id, { flowsDir: tmp })
+    assert.deepEqual(flow.defaults.models, { claude: 'claude-opus-4-8' })
+    assert.deepEqual(flow.defaults.efforts, { claude: 'high' })
+    assert.deepEqual(flow.steps[0].models, { claude: 'claude-sonnet-5' })
+    assert.deepEqual(flow.steps[0].efforts, { claude: 'medium' })
+  }
+})
+
+test('loadFlow blocks dynamic JavaScript flow modules in safe mode', async () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'nax-flow-test-'))
+  const flowDir = path.join(tmp, 'dynamic-js-flow')
+  fs.mkdirSync(flowDir, { recursive: true })
+  fs.writeFileSync(path.join(flowDir, 'flow.js'), 'module.exports = createFlow()\n')
+
   await assert.rejects(
-    () => loadFlow('js-flow', { flowsDir: tmp }),
-    /Blocked executable config file in safe mode/,
+    () => loadFlow('dynamic-js-flow', { flowsDir: tmp }),
+    /Dynamic executable config is blocked in safe mode/,
   )
 })
 

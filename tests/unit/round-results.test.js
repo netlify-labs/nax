@@ -6,22 +6,22 @@ const {
   extractStructuredSection,
   fetchRoundResults,
   formatRoundResults,
-  inferModelFromTitle,
+  inferAgentFromTitle,
   pickAgentReplyComment,
   pickAgentReplyComments,
   rawIssuesFromResults,
   sanitizeAgentReplyBody,
 } = require('../../src/workflows/round-results')
 
-test('inferModelFromTitle pulls model out of standard issue titles', () => {
-  assert.equal(inferModelFromTitle('2026-05-07 Claude Review'), 'claude')
-  assert.equal(inferModelFromTitle('2026-05-07 Gemini Cross Review'), 'gemini')
-  assert.equal(inferModelFromTitle('2026-05-07 Codex Review'), 'codex')
+test('inferAgentFromTitle pulls agent out of standard issue titles', () => {
+  assert.equal(inferAgentFromTitle('2026-05-07 Claude Review'), 'claude')
+  assert.equal(inferAgentFromTitle('2026-05-07 Gemini Cross Review'), 'gemini')
+  assert.equal(inferAgentFromTitle('2026-05-07 Codex Review'), 'codex')
 })
 
-test('inferModelFromTitle returns null when no known model is present', () => {
-  assert.equal(inferModelFromTitle('Random unrelated title'), null)
-  assert.equal(inferModelFromTitle(''), null)
+test('inferAgentFromTitle returns null when no known agent is present', () => {
+  assert.equal(inferAgentFromTitle('Random unrelated title'), null)
+  assert.equal(inferAgentFromTitle(''), null)
 })
 
 test('pickAgentReplyComment skips @netlify prompt comments and picks latest reply', () => {
@@ -147,7 +147,7 @@ test('formatRoundResults produces collapsible details with single-reply summary'
         issueNumber: 29,
         issueTitle: '2026-05-07 Claude Review',
         issueUrl: 'https://github.com/x/y/issues/29',
-        model: 'claude',
+        agent: 'claude',
         replies: [
           {
             body: '## Findings\n- foo',
@@ -161,7 +161,7 @@ test('formatRoundResults produces collapsible details with single-reply summary'
         issueNumber: 30,
         issueTitle: '2026-05-07 Gemini Review',
         issueUrl: 'https://github.com/x/y/issues/30',
-        model: 'gemini',
+        agent: 'gemini',
         replies: [],
       },
     ],
@@ -185,7 +185,7 @@ test('formatRoundResults adds per-reply sub-headings when multiple replies are e
         issueNumber: 29,
         issueTitle: '2026-05-07 Claude Review',
         issueUrl: 'https://github.com/x/y/issues/29',
-        model: 'claude',
+        agent: 'claude',
         replies: [
           { body: '## Round 1 Findings', url: 'https://x/r1', createdAt: '2026-05-07T18:00:00Z' },
           { body: '## Round 2 Cross Review', url: 'https://x/r2', createdAt: '2026-05-08T18:00:00Z' },
@@ -209,7 +209,7 @@ test('formatRoundResults still accepts the legacy single-reply shape', () => {
         issueNumber: 29,
         issueTitle: '2026-05-07 Claude Review',
         issueUrl: 'https://github.com/x/y/issues/29',
-        model: 'claude',
+        agent: 'claude',
         reply: {
           body: '## Findings',
           url: 'https://x/1',
@@ -268,7 +268,7 @@ test('formatRoundResults sanitizes replies by default and can preserve raw repli
     issueNumber: 29,
     issueTitle: '2026-05-07 Claude Ideas',
     issueUrl: 'https://github.com/x/y/issues/29',
-    model: 'claude',
+    agent: 'claude',
     replies: [{
       url: 'https://github.com/x/y/issues/29#issuecomment-1',
       body: [
@@ -396,7 +396,7 @@ test('formatRoundResults with structuredOnly replaces prose with the JSON block 
         issueNumber: 67,
         issueTitle: '2026-05-09 Claude Review',
         issueUrl: 'https://x/67',
-        model: 'claude',
+        agent: 'claude',
         replies: [
           {
             url: 'https://x/67#c1',
@@ -423,7 +423,7 @@ test('formatRoundResults with structuredOnly notes when a reply has no JSON bloc
         issueNumber: 68,
         issueTitle: '2026-05-09 Gemini Review',
         issueUrl: 'https://x/68',
-        model: 'gemini',
+        agent: 'gemini',
         replies: [{ url: 'https://x/68#c1', body: 'free-form text only' }],
       },
     ],

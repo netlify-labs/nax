@@ -1062,11 +1062,11 @@ body {
   color: var(--mantine-primary-color-2);
 }
 
-.run-followup-model-row {
+.run-followup-agent-row {
   align-items: center;
 }
 
-.run-followup-model-chip {
+.run-followup-agent-chip {
   min-height: 30px;
 }
 
@@ -1192,7 +1192,7 @@ body {
 }
 
 .workflow-node {
-  width: 430px;
+  width: 620px;
   overflow: hidden;
   border: 1px solid light-dark(var(--mantine-color-gray-4), var(--mantine-color-dark-4));
   border-radius: 8px;
@@ -1284,7 +1284,7 @@ body {
   align-items: center;
   width: fit-content;
   max-width: 100%;
-  border-radius: 999px;
+  border-radius: 8px;
   white-space: nowrap;
 }
 
@@ -1335,6 +1335,7 @@ body {
   display: flex;
   flex-wrap: wrap;
   justify-content: center;
+  align-items: stretch;
   gap: 8px;
   padding: 12px;
 }
@@ -1465,6 +1466,97 @@ body {
   background: light-dark(var(--mantine-color-gray-1), var(--mantine-color-dark-5));
   box-shadow: none;
   opacity: 0.8;
+}
+
+.agent-chip-wrap {
+  display: inline-flex;
+  align-items: stretch;
+  transition: transform 120ms ease;
+}
+
+/* Per-step model/effort popover: lighter than the node card so it reads as a layer above it. */
+.agent-config-popover.agent-config-popover {
+  background: light-dark(var(--mantine-color-gray-0), var(--mantine-color-dark-5));
+  border-color: light-dark(var(--mantine-color-gray-3), var(--mantine-color-dark-3));
+}
+
+/* Lift the chip and its caret together on hover so they never detach. */
+.agent-chip-wrap:hover {
+  transform: translateY(-1px);
+}
+
+.agent-chip-wrap .agent-chip:hover {
+  transform: none;
+}
+
+.agent-chip-label {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: flex-start;
+  line-height: 1.15;
+}
+
+.agent-chip-effort {
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  opacity: 0.55;
+}
+
+.agent-chip-config {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  opacity: 0.72;
+}
+
+.agent-chip.ghost {
+  border-style: dashed;
+  border-color: light-dark(var(--mantine-color-gray-4), var(--mantine-color-dark-3));
+  background: transparent;
+  color: var(--mantine-color-dimmed);
+  font-weight: 600;
+  opacity: 0.7;
+  box-shadow: none;
+}
+
+.agent-chip.ghost:hover {
+  border-style: dashed;
+  opacity: 1;
+  color: var(--mantine-color-text);
+}
+
+.agent-chip-wrap:has(.agent-chip-caret) .agent-chip {
+  border-top-right-radius: 0;
+  border-bottom-right-radius: 0;
+}
+
+.agent-chip-caret {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 5px;
+  cursor: pointer;
+  border: 1px solid color-mix(in srgb, var(--mantine-primary-color-4), transparent 16%);
+  border-left: none;
+  border-radius: 0 8px 8px 0;
+  background: color-mix(in srgb, var(--mantine-primary-color-5), transparent 82%);
+  color: light-dark(var(--mantine-primary-color-9), var(--mantine-color-white));
+  transition: background-color 120ms ease, color 120ms ease;
+}
+
+[data-mantine-color-scheme='dark'] .agent-chip-caret {
+  background: color-mix(in srgb, var(--mantine-primary-color-6), transparent 74%);
+  border-color: color-mix(in srgb, var(--mantine-color-teal-3), transparent 10%);
+}
+
+.agent-chip-caret:hover {
+  background: color-mix(in srgb, var(--mantine-primary-color-5), transparent 68%);
+}
+
+.agent-chip-caret:focus-visible {
+  outline: 2px solid var(--mantine-primary-color-5);
+  outline-offset: 2px;
 }
 
 .agent-icon {
@@ -1671,6 +1763,21 @@ body {
   }
 
   .header-netlify-target .mantine-Button-section {
+    margin-inline: 0;
+  }
+
+  .header-agent-run {
+    width: 32px;
+    min-width: 32px;
+    max-width: 32px;
+    padding-inline: 0;
+  }
+
+  .header-agent-run .mantine-Button-label {
+    display: none;
+  }
+
+  .header-agent-run .mantine-Button-section {
     margin-inline: 0;
   }
 

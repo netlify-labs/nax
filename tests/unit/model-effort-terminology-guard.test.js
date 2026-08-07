@@ -4,28 +4,16 @@ const path = require('node:path')
 const test = require('node:test')
 
 const projectRoot = path.resolve(__dirname, '../..')
-const inventoryPath = path.join(
-  projectRoot,
-  'tests/fixtures/model-effort-provider-model-inventory.json',
-)
-
-/**
- * @typedef {{
- *   purpose: string,
- *   entries: Array<{ path: string, markers: string[] }>,
- * }} TerminologyInventory
- */
-
-/** @type {TerminologyInventory} */
-const inventory = JSON.parse(fs.readFileSync(inventoryPath, 'utf8'))
-
-test('provider-as-model terminology inventory covers every required surface', () => {
-  const paths = new Set(inventory.entries.map((entry) => entry.path))
-  const requiredKinds = [
+const guardedPaths = [
     'src/core/constants.js',
     'src/core/agents/selection.js',
+    'src/integrations/github/comment-markers.js',
+    'src/integrations/github/issue-groups.js',
+    'src/integrations/github/issue-plan.js',
     'src/workflows/followups/plan.js',
     'src/workflows/engine/runner.js',
+    'src/workflows/catalog/prompts.js',
+    'src/workflows/round-results.js',
     'src/cli/commands/nax.js',
     'src/cli/commands/issue.js',
     'src/cli/main.js',
@@ -39,26 +27,44 @@ test('provider-as-model terminology inventory covers every required surface', ()
     'tests/unit/followup-plan.test.js',
     'tests/unit/workflow-runner.test.js',
     'README.md',
+    'site/content/concepts/council-pattern.mdx',
+    'site/content/for-agents.mdx',
     'site/content/guides/run-workflows.mdx',
+    'site/content/reference/commands.mdx',
     'src/templates/skills/nax-workflows/SKILL.md',
-  ]
-  assert.deepEqual([...paths].sort(), requiredKinds.sort())
-})
+]
 
-test('provider-as-model inventory remains executable until the hard rename', () => {
-  const missing = []
-  for (const entry of inventory.entries) {
-    const source = fs.readFileSync(path.join(projectRoot, entry.path), 'utf8')
-    for (const marker of entry.markers) {
-      if (!source.includes(marker)) {
-        missing.push(`${entry.path}: ${marker}`)
-      }
+test('hard-cut surfaces contain no provider-as-model vocabulary', () => {
+  const forbidden = [
+    /\bDEFAULT_MODELS\b/,
+    /\bDEFAULT_MODEL_CSV\b/,
+    /\bDEFAULT_FOLLOWUP_MODELS\b/,
+    /\bnormalizeModels\b/,
+    /\bdefaultModelsForTarget\b/,
+    /\bselectedModels\b/,
+    /\bfallbackModels\b/,
+    /\binferModelFrom(?:Title|IssueTitle)\b/,
+    /\bsourceModels\b/,
+    /\bmodels\??:\s*string\[\]/,
+    /--models[ \t]+(?:<list>|(?:claude|codex|gemini|opencode)(?=,|[ \t]*$))/m,
+    /--step-models\s+<step=models>/,
+    /Choose Netlify agent models/i,
+    /\bmissing_models\b/,
+    /\binvalid_models?\b/,
+    /\bUnknown model "(?:claude|gemini|codex|opencode)/,
+    /\bModels:\s*(?:all configured agents|\$\{agents\})/,
+  ]
+  const failures = []
+  for (const relativePath of guardedPaths) {
+    const source = fs.readFileSync(path.join(projectRoot, relativePath), 'utf8')
+    for (const pattern of forbidden) {
+      if (pattern.test(source)) failures.push(`${relativePath}: ${pattern}`)
     }
   }
   assert.deepEqual(
-    missing,
+    failures,
     [],
-    `Update the provider/model terminology inventory for these changed surfaces:\n${missing.join('\n')}`,
+    `Provider values must be named agents; models are real model IDs:\n${failures.join('\n')}`,
   )
 })
 

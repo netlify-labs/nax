@@ -6,10 +6,11 @@ import {
   cancelWorkflowRun,
   retryAgentRun,
   runWorkflowDryRun,
+  startAgentRun,
   startRunFollowup,
   startWorkflowRun,
 } from '../api'
-import type { DryRunOptions, RunFollowupRequest, RunRetryRequest } from '../types'
+import type { AgentRunRequest, DryRunOptions, RunFollowupRequest, RunRetryRequest } from '../types'
 import { invalidateRunViews, upsertRunInDashboardCache } from './dashboard-cache'
 
 export function useDryRunWorkflowMutation() {
@@ -22,6 +23,17 @@ export function useStartWorkflowRunMutation() {
   const queryClient = useQueryClient()
   return useMutation({
     mutationFn: ({ workflowId, options }: { workflowId: string; options: DryRunOptions }) => startWorkflowRun(workflowId, options),
+    onSuccess(response) {
+      upsertRunInDashboardCache(queryClient, response.run)
+      void invalidateRunViews(queryClient, response.run.runId || response.run.id)
+    },
+  })
+}
+
+export function useStartAgentRunMutation() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: (request: AgentRunRequest) => startAgentRun(request),
     onSuccess(response) {
       upsertRunInDashboardCache(queryClient, response.run)
       void invalidateRunViews(queryClient, response.run.runId || response.run.id)

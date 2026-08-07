@@ -18,6 +18,7 @@ description: Choose between GitHub Actions and local Netlify API execution.
 | Resume after local interruption | Re-run or sync the Actions artifact | Resume unfinished local workflow state |
 | Dashboard live events | Limited to local process visibility | Full local structured event stream |
 | Best for | Team-visible hosted runs | Interactive local orchestration and follow-up work |
+| Provider-specific model/effort | Not supported | Supported |
 
 ## Local Netlify API flow
 
@@ -58,6 +59,12 @@ Use this path when the team wants hosted logs, GitHub-native visibility, and a m
 ## Choosing a transport
 
 Start with `--transport auto` unless you need one behavior explicitly.
+
+When every selected run uses Auto model and effort, transport selection keeps
+its normal behavior. If any run pins a model or effort, Auto selects
+`netlify-api`. Explicit GitHub transport rejects the configuration before
+dispatch because the pinned Action has a provider channel but no real model or
+effort channel. NAX never drops or prompt-encodes those settings.
 
 Use GitHub Actions when the run should be visible to the team, should survive your laptop going offline, or should attach naturally to repository automation.
 

@@ -20,5 +20,12 @@ export function AgentIcon({ agent }: { agent: string }) {
       </svg>
     )
   }
+  if (agent === 'opencode') {
+    return (
+      <svg viewBox="0 0 16 16" aria-hidden="true" className="agent-icon">
+        <path d="M5.4 3.1 1 8l4.4 4.9 1.2-1.1L3.2 8l3.4-3.8-1.2-1.1Zm5.2 0-1.2 1.1L12.8 8l-3.4 3.8 1.2 1.1L15 8l-4.4-4.9ZM8.7 2 6 13.6l1.6.4 2.7-11.6L8.7 2Z" />
+      </svg>
+    )
+  }
   return null
 }

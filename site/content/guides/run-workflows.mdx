@@ -1,13 +1,13 @@
 ---
 title: Run Workflows
-description: Run bundled workflows, single-agent prompts, step selections, retries, and model overrides.
+description: Run bundled workflows, single-agent prompts, step selections, retries, and agent model configuration.
 ---
 
 import { Callout, Tabs } from 'nextra/components'
 
 # Run workflows
 
-Use this guide after `nax` is installed and initialized. The runner is designed around repeatable, reviewable flows: each flow declares its steps, prompts, models, inputs, and wait behavior, so a multi-agent process can be rerun without copy-paste coordination.
+Use this guide after `nax` is installed and initialized. The runner is designed around repeatable, reviewable flows: each flow declares its steps, prompts, agent providers, inputs, and wait behavior, so a multi-agent process can be rerun without copy-paste coordination.
 
 The bundled review-style flows use the council pattern: independent first passes, cross-review, then a final synthesis that keeps confirmed findings and useful disagreement visible.
 
@@ -39,6 +39,7 @@ nax run documentation
 ```sh
 nax run agent codex "Review this branch for regressions"
 nax run agent gemini --prompt "Check for broken links"
+nax run agent claude "Audit authentication" --model claude-opus-4-8 --effort high
 ```
 
   </Tabs.Tab>
@@ -68,18 +69,36 @@ nax run review --transport github-actions
 nax run review --transport netlify-api
 ```
 
-Use `github-actions` for hosted workflow-dispatch runs and team-visible logs. Use `netlify-api` for local orchestration, resume support, and dashboard event streaming.
+Use `github-actions` for provider-only hosted workflow-dispatch runs and team-visible logs. Use `netlify-api` for model/effort configuration, local orchestration, resume support, and dashboard event streaming. With pinned model or effort settings, `auto` selects `netlify-api`; forcing GitHub fails before creating remote work.
 
-## Override models
+## Choose agents, models, and effort
 
 ```sh
-nax run review --models claude,codex
-nax run review --step-models review=gemini,codex --step-models synthesize=codex
+nax run review --agents claude,codex
+nax run review \
+  --agents claude,codex \
+  --models claude=claude-opus-4-8 \
+  --efforts claude=high \
+  --models codex=gpt-5.6-sol \
+  --efforts codex=high
+nax run review --step-agents review=gemini,codex --step-agents synthesize=codex
+nax run review \
+  --step-models review:gemini=gemini-3.1-pro-preview \
+  --step-efforts review:gemini=medium
 ```
 
-`--models` changes all runnable steps. `--step-models` changes named steps and can be repeated.
+Agents are providers: Claude, Codex, Gemini, and OpenCode. Models are real
+provider-specific model IDs. Efforts are reasoning levels. Mapping flags can
+be repeated. OpenCode is opt-in and is not added to existing council defaults.
 
-Model overrides are useful when you want the full council for ambiguous work, two models for a cheaper confirmation pass, or one model for a targeted follow-up.
+Configuration precedence is step CLI, global CLI, step workflow map, defaults
+workflow map, then Auto. When a higher scope changes a model without setting
+effort, inherited effort resets to Auto. `agent=auto` explicitly clears a pin;
+Auto is never sent to the SDK.
+
+Known incompatible combinations fail before a run starts. Unknown future IDs
+are forwarded with a warning. For OpenCode GLM 5.2 and DeepSeek V4 Pro, the
+displayed Max effort is sent as `xhigh`.
 
 ## Add context
 
@@ -107,5 +126,5 @@ Interrupted `netlify-api` runs write state under `.nax/workflows/<run-id>/workfl
 
 - [Command reference](/reference/commands) for the full public command surface.
 - [Workflow file reference](/reference/workflow-files) for step schema.
-- [Council pattern](/concepts/council-pattern) for the independent-review shape behind multi-model flows.
+- [Council pattern](/concepts/council-pattern) for the independent-review shape behind multi-agent flows.
 - [Transports](/concepts/transports) for transport trade-offs.

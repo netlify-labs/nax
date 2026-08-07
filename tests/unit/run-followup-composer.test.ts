@@ -5,7 +5,7 @@ import {
   buildRunFollowupRequest,
   defaultFollowupMode,
   defaultFollowupArtifactIds,
-  defaultFollowupModels,
+  defaultFollowupAgents,
   defaultFollowupTarget,
   defaultFollowupThreadTarget,
   followupThreadTargets,
@@ -135,12 +135,12 @@ function detailsFixture(): RunDetails {
   }
 }
 
-test('follow-up composer defaults to server-selected target, artifacts, and prior model', () => {
+test('follow-up composer defaults to server-selected target, artifacts, and prior agent', () => {
   const details = detailsFixture()
   const target = defaultFollowupTarget(details)
   assert.equal(target?.id, 'agent-result:review:runner-1:session-1:codex')
   assert.deepEqual(defaultFollowupArtifactIds(details), ['workflow-summary:summary.md'])
-  assert.deepEqual(defaultFollowupModels(target), ['codex'])
+  assert.deepEqual(defaultFollowupAgents(target), ['codex'])
 })
 
 test('follow-up composer defaults mode to existing thread when a runner target exists', () => {
@@ -174,7 +174,7 @@ test('follow-up composer builds request body from selected artifacts', () => {
     mode: 'follow-up-thread',
     prompt: 'Check the patch.',
     target,
-    models: ['codex', 'gemini'],
+    agents: ['codex', 'gemini'],
     artifacts,
   })
 
@@ -182,7 +182,9 @@ test('follow-up composer builds request body from selected artifacts', () => {
     mode: 'follow-up-thread',
     prompt: 'Check the patch.',
     targetId: 'agent-result:review:runner-1:session-1:codex',
-    models: ['codex', 'gemini'],
+    agents: ['codex', 'gemini'],
+    models: {},
+    efforts: {},
     artifacts: [{ id: 'metadata-json:review:codex.json', kind: 'metadata-json' }],
   })
 })
@@ -194,7 +196,7 @@ test('follow-up composer can intentionally build a no-context request', () => {
     mode: 'fresh-runner',
     prompt: 'Start from the prompt only.',
     target,
-    models: ['claude'],
+    agents: ['claude'],
     artifacts: [],
   })
   assert.deepEqual(request.artifacts, [])

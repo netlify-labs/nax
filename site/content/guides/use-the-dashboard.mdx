@@ -50,6 +50,8 @@ nax dashboard --no-open --tail
 | Graph canvas | Shows steps, agents, inputs, submit mode, and run status. |
 | Dry Run | Runs `nax run <flow> --dry --force` through the local API. |
 | Run | Starts the workflow after browser confirmation. |
+| Run agent | Starts a standalone provider run with its own model and effort settings. |
+| Agent configuration | Configures provider-specific model and effort from the server-owned catalog. |
 | Recent runs | Reads `.nax/workflows` and highlights resumable or completed runs. |
 | Run details | Shows results, prompt source, artifacts, copy/open actions, and follow-up controls. |
 
@@ -79,6 +81,28 @@ http://127.0.0.1:5173/?token=<token>&workflow=do-next
 ## Follow up from a run
 
 In Run details, choose **Send to next agent**. The composer requires fresh instructions, defaults to the last meaningful artifact, and lets you choose which workflow, step, runner, session, or result artifacts to include.
+
+## Configure models and effort
+
+Before a workflow run or dry run, choose **Configure agents**. Each selected
+provider has an Auto-first model picker and a model-sensitive effort picker.
+Auto omits model and effort. Models without an effort dial explain that the
+setting is unavailable; unknown values saved by a newer backend remain visible
+instead of being reset.
+
+The follow-up composer opens the same configuration drawer and initializes the
+matching provider from the selected source run or session. Changing it is an
+intentional override for the new submission. Run history and details keep the
+requested model/effort separate from the backend-observed `agent_config`.
+
+Pinned settings with transport Auto resolve to the Netlify API. GitHub
+transport disables model and effort configuration because the pinned GitHub
+Action supports provider selection only.
+
+For work that does not need a workflow, choose **Run agent** in the header.
+Select one provider, enter the prompt, and use the same server-owned model and
+effort catalog. The standalone run is persisted and appears in Recent runs
+with the resolved provider, model, and effort.
 
 ## See also
 

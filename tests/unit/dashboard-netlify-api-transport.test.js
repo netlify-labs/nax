@@ -60,7 +60,13 @@ test('hosted Netlify API transport starts runs and deduplicates idempotent submi
       },
     },
   })
-  const body = { prompt: 'Review this', agent: 'codex', branch: 'main' }
+  const body = {
+    prompt: 'Review this',
+    agent: 'codex',
+    models: { codex: 'gpt-5.6-sol' },
+    efforts: { codex: 'high' },
+    branch: 'main',
+  }
 
   const first = await transport.startWorkflowRun('review', body)
   const second = await transport.startWorkflowRun('review', body)
@@ -71,6 +77,8 @@ test('hosted Netlify API transport starts runs and deduplicates idempotent submi
   assert.equal(second.body.duplicate, true)
   assert.equal(calls.length, 1)
   assert.equal(calls[0].siteId, 'site-1')
+  assert.equal(calls[0].model, 'gpt-5.6-sol')
+  assert.equal(calls[0].effort, 'high')
   assert.equal(calls[0].source.idempotencyKey, idempotencyKey('review', body))
   assert.deepEqual(first.body.run.sdkHandle, handle)
 
@@ -142,7 +150,16 @@ test('hosted Hono mutation routes use Netlify API transport when configured', as
     token: 'dashboard-token',
     siteId: 'site-1',
     netlifyApiClient: {
-      createAgentRunner: async () => remoteRun(),
+      createAgentRunner: async (input) => remoteRun({
+        raw: {
+          id: 'runner-1',
+          agent_config: {
+            agent: input.agent,
+            model: input.model,
+            effort: input.effort,
+          },
+        },
+      }),
       cancelAgentRunner: async (input) => remoteRun({ runnerId: input.runnerId || '', status: 'cancelled', state: 'cancelled' }),
       getAgentRunner: async (input) => remoteRun({ runnerId: input.runnerId || '', status: 'running', state: 'running' }),
     },
@@ -158,6 +175,18 @@ test('hosted Hono mutation routes use Netlify API transport when configured', as
   assert.equal(start.statusCode, 202)
   assert.equal(startPayload.run.runnerId, 'runner-1')
   assert.equal(startPayload.duplicate, false)
+
+  const standalone = await handler({
+    httpMethod: 'POST',
+    path: '/api/agent-runs',
+    headers: { 'x-nax-token': 'dashboard-token' },
+    body: '{"prompt":"Audit services","agent":"opencode","models":{"opencode":"z-ai/glm-5.2"},"efforts":{"opencode":"max"}}',
+  })
+  const standalonePayload = /** @type {{ run: { runnerId: string, model: string, effort: string } }} */ (JSON.parse(standalone.body))
+  assert.equal(standalone.statusCode, 202)
+  assert.equal(standalonePayload.run.runnerId, 'runner-1')
+  assert.equal(standalonePayload.run.model, 'z-ai/glm-5.2')
+  assert.equal(standalonePayload.run.effort, 'xhigh')
 
   const cancel = await handler({
     httpMethod: 'POST',
@@ -286,7 +315,15 @@ test('hosted Netlify API transport submits remote-safe follow-ups', async () => 
 
   const response = await transport.submitFollowup('runner-source', {
     prompt: 'Please continue',
-    models: ['codex', 'claude'],
+    agents: ['codex', 'claude'],
+    models: {
+      codex: 'gpt-5.6-sol',
+      claude: 'claude-opus-4-8',
+    },
+    efforts: {
+      codex: 'high',
+      claude: 'medium',
+    },
     branch: 'main',
     artifacts: [{
       id: 'summary',
@@ -306,9 +343,20 @@ test('hosted Netlify API transport submits remote-safe follow-ups', async () => 
   assert.equal(response.body.submissions[0].runnerArtifactPath, '')
   assert.equal(calls.length, 2)
   assert.equal(calls[0].siteId, 'site-1')
+  assert.equal(calls[0].model, 'gpt-5.6-sol')
+  assert.equal(calls[0].effort, 'high')
+  assert.equal(calls[1].model, 'claude-opus-4-8')
+  assert.equal(calls[1].effort, 'medium')
   assert.equal(calls[0].source.sourceWorkflowRunId, 'runner-source')
   assert.deepEqual(calls[0].source.sourceArtifactIds, ['summary'])
   assert.match(calls[0].promptText, /Remote artifact references/)
+  assert.deepEqual(
+    response.body.submissions.map(({ agent, model, effort }) => ({ agent, model, effort })),
+    [
+      { agent: 'codex', model: 'gpt-5.6-sol', effort: 'high' },
+      { agent: 'claude', model: 'claude-opus-4-8', effort: 'medium' },
+    ],
+  )
 })
 
 test('hosted Netlify API transport validates follow-up prompt and unsupported modes', async () => {
@@ -402,7 +450,13 @@ test('hosted Netlify API transport normalizes run details and expands selected a
         state: 'success',
         raw: {
           id: input.runnerId || '',
-          agent: 'codex',
+          latest_session: {
+            agent_config: {
+              agent: 'codex',
+              model: 'gpt-5.6-sol',
+              effort: 'high',
+            },
+          },
           summary: '# Hosted result\n\nDone.',
           artifacts: [{
             id: 'summary',
@@ -421,6 +475,11 @@ test('hosted Netlify API transport normalizes run details and expands selected a
   assert.equal(details.run.status, 'completed')
   assert.equal(details.details.finalMarkdown, '# Hosted result\n\nDone.')
   assert.equal(details.details.followupTargets[0].defaultMode, 'fresh-runner')
+  assert.equal(details.run.agent, 'codex')
+  assert.equal(details.run.model, 'gpt-5.6-sol')
+  assert.equal(details.run.effort, 'high')
+  assert.equal(details.details.followupTargets[0].model, 'gpt-5.6-sol')
+  assert.equal(details.details.followupTargets[0].effort, 'high')
   assert.equal(details.details.followupTargets[0].absolutePath, '')
   assert.equal(details.details.followupArtifacts[0].id, 'summary')
   assert.equal(details.details.followupArtifacts[0].url, 'https://example.netlify.app/summary.md')

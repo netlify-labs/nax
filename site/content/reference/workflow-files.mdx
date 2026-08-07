@@ -28,7 +28,10 @@ Council-style workflows usually start with independent `new-run` submissions, fe
 
 `flow.yml`, `flow.yaml`, `flow.json`, and `flow.toml` are supported.
 
-JavaScript and TypeScript flow files are blocked by safe mode during workflow discovery. Use static flow files for project workflows.
+JavaScript and TypeScript flows are supported when the entire module is a
+JSON5-compatible static object export. NAX parses the object as data and never
+executes project code; imports, declarations, function calls, and exported
+functions are rejected.
 
 ## Top-level keys
 
@@ -38,7 +41,7 @@ JavaScript and TypeScript flow files are blocked by safe mode during workflow di
 | `title` | yes | Human name shown in lists, prompts, and dashboard. |
 | `description` | recommended | One-sentence summary. |
 | `disabled` | no | Set to `true` to hide a workflow from `nax list`, `nax run`, and the dashboard without deleting its files. |
-| `defaults` | no | Default transport, notification, and agents. |
+| `defaults` | no | Default transport, notification, agents, models, and efforts. |
 | `steps` | yes | Ordered workflow steps. |
 
 ## Step keys
@@ -47,7 +50,9 @@ JavaScript and TypeScript flow files are blocked by safe mode during workflow di
 | --- | --- | --- |
 | `action` | `issue`, `comment`, `human-review` | Submission or gate behavior. |
 | `submit` | `new-run`, `follow-up` | Start fresh or reuse prior context. |
-| `agents` | `claude`, `gemini`, `codex` | Agent fan-out targets. |
+| `agents` | `claude`, `codex`, `gemini`, `opencode` | Provider fan-out targets. OpenCode is supported but is not in bundled council defaults. |
+| `models` | provider-keyed string map | Real model IDs, such as `{ claude: "claude-opus-4-8" }`. |
+| `efforts` | provider-keyed string map | Reasoning settings, such as `{ claude: "high" }`. Requires a pinned model. |
 | `input` | `[{ step, results }]` | Earlier results to include. |
 | `waitFor` | `agent-results` | Wait until every configured agent has a result. |
 
@@ -61,6 +66,12 @@ description: Review, cross-review, and synthesize findings.
 defaults:
   transport: auto
   agents: [claude, gemini, codex]
+  models:
+    claude: claude-opus-4-8
+    codex: gpt-5.6-sol
+  efforts:
+    claude: high
+    codex: high
 
 steps:
   - id: review
@@ -69,6 +80,10 @@ steps:
     action: issue
     submit: new-run
     agents: [claude, gemini, codex]
+    models:
+      claude: claude-sonnet-5
+    efforts:
+      claude: medium
     waitFor: agent-results
 
   - id: cross-review
@@ -95,6 +110,40 @@ steps:
         results: all
     waitFor: agent-results
 ```
+
+Model and effort configuration resolves separately for each selected agent.
+Precedence is step CLI, global CLI, step map, defaults map, then Auto. A
+higher-precedence model change clears an inherited effort unless the same
+scope also supplies an effort. The literal `auto` clears an inherited value
+and is omitted from the Agent Runner request.
+
+Known provider/model or model/effort mismatches fail before submission.
+Unknown future model and effort strings pass through with a warning so a
+slightly stale NAX catalog does not block new backend capabilities. Do not use
+an `agentConfig` wrapper; `models` and `efforts` are first-class maps.
+
+## Current model and effort catalog
+
+| Provider | Model IDs | Configurable effort |
+| --- | --- | --- |
+| Claude | `claude-opus-5`, `claude-opus-4-8`, `claude-fable-5`, `claude-sonnet-5`, `claude-haiku-4-5` | Low, Medium, High |
+| Codex | `gpt-5.6-sol`, `gpt-5.6-terra`, `gpt-5.6-luna`, `gpt-5.4-mini` | Low, Medium, High |
+| Gemini | `gemini-3.1-pro-preview`, `gemini-3.6-flash`, `gemini-3.5-flash-lite` | Low, Medium, High |
+| OpenCode | `moonshotai/kimi-k3` | Low, High, Max |
+| OpenCode | `moonshotai/kimi-k2.7-code` | Auto only |
+| OpenCode | `z-ai/glm-5.2`, `deepseek/deepseek-v4-pro` | High, Max (`xhigh` on the wire) |
+| OpenCode | `~deepseek/deepseek-v4-flash-latest` | Low, High, Max |
+| OpenCode | `x-ai/grok-4.5` | Low, Medium, High |
+| OpenCode | `minimax/minimax-m3` | Auto only |
+
+The leading tilde in `~deepseek/deepseek-v4-flash-latest` is part of the model
+ID. The dashboard displays Max even where Agent Runner expects `xhigh`.
+
+## NAX 2.0 breaking change
+
+NAX 2.0 does not accept the old provider-list meaning of `models`. Replace a
+request such as `--models claude,codex` with `--agents claude,codex`, then add
+real model assignments separately if needed. There is no compatibility alias.
 
 <Callout type="warning">
   Project-local flows with the same id as bundled flows shadow the bundled version. This is useful when intentional and confusing when accidental.

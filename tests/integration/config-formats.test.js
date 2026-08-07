@@ -21,12 +21,16 @@ function flowObject(id, title) {
     title,
     defaults: {
       agents: ['codex'],
+      models: { codex: 'gpt-5.6-sol' },
+      efforts: { codex: 'high' },
     },
     steps: [{
       id: 'one',
       title: 'One',
       prompt: 'prompts/one.md',
       agents: ['codex'],
+      models: { codex: 'gpt-5.6-terra' },
+      efforts: { codex: 'low' },
     }],
   }
 }
@@ -39,11 +43,19 @@ function flowSource(format, id, title) {
       `title: ${title}`,
       'defaults:',
       '  agents: [codex]',
+      '  models:',
+      '    codex: gpt-5.6-sol',
+      '  efforts:',
+      '    codex: high',
       'steps:',
       '  - id: one',
       '    title: One',
       '    prompt: prompts/one.md',
       '    agents: [codex]',
+      '    models:',
+      '      codex: gpt-5.6-terra',
+      '    efforts:',
+      '      codex: low',
       '',
     ].join('\n')
   }
@@ -56,11 +68,23 @@ function flowSource(format, id, title) {
       '[defaults]',
       'agents = ["codex"]',
       '',
+      '[defaults.models]',
+      'codex = "gpt-5.6-sol"',
+      '',
+      '[defaults.efforts]',
+      'codex = "high"',
+      '',
       '[[steps]]',
       'id = "one"',
       'title = "One"',
       'prompt = "prompts/one.md"',
       'agents = ["codex"]',
+      '',
+      '[steps.models]',
+      'codex = "gpt-5.6-terra"',
+      '',
+      '[steps.efforts]',
+      'codex = "low"',
       '',
     ].join('\n')
   }
@@ -124,9 +148,6 @@ const SYNTAX_CASES = [
   { label: 'YAML', extension: 'yml' },
   { label: 'JSON', extension: 'json' },
   { label: 'TOML', extension: 'toml' },
-]
-
-const EXECUTABLE_SYNTAX_CASES = [
   { label: 'JavaScript', extension: 'js' },
   { label: 'TypeScript', extension: 'ts' },
 ]
@@ -145,25 +166,8 @@ test('CLI dry run loads project flow files across supported syntaxes', async (t)
       assert.equal(result.status, 0, result.stderr || result.stdout)
       assert.match(stdout, /Multi step agent workflow:/)
       assert.match(stdout, new RegExp(`"${title}"`))
+      assert.match(stdout, /Codex · GPT 5\.6 Terra · Low/)
       assert.match(stdout, /Dry run only/)
-      assert.equal(fs.existsSync(path.join(root, '.nax')), false)
-    })
-  }
-})
-
-test('CLI dry run blocks executable project flow files', async (t) => {
-  for (const { label, extension } of EXECUTABLE_SYNTAX_CASES) {
-    await t.test(label, () => {
-      const root = tmpRoot()
-      const flowId = `flow-${extension}`
-      const title = `${label} Flow`
-      writeFlow(root, path.join('.github', 'nax-flows'), flowId, `flow.${extension}`, flowSource(extension, flowId, title))
-
-      const result = runDryFlow(root, flowId)
-      const output = stripAnsi(`${result.stdout}\n${result.stderr}`)
-
-      assert.notEqual(result.status, 0)
-      assert.match(output, /Blocked executable config file in safe mode/)
       assert.equal(fs.existsSync(path.join(root, '.nax')), false)
     })
   }
@@ -185,30 +189,21 @@ test('CLI dry run loads nax config files across supported syntaxes', async (t) =
 
       assert.equal(result.status, 0, result.stderr || result.stdout)
       assert.match(stdout, /Multi step agent workflow:/)
-      assert.match(stdout, new RegExp(`"${title}"`))
+      assert.match(stdout, new RegExp(label))
+      assert.match(stdout, /Config Flow/)
       assert.match(stdout, /Dry run only/)
       assert.equal(fs.existsSync(path.join(root, '.nax')), false)
     })
   }
 })
 
-test('CLI dry run blocks executable nax config files', async (t) => {
-  for (const { label, extension } of EXECUTABLE_SYNTAX_CASES) {
-    await t.test(label, () => {
-      const root = tmpRoot()
-      const flowsDir = 'custom-flows'
-      const flowId = `config-${extension}`
-      const title = `${label} Config Flow`
-
-      fs.writeFileSync(path.join(root, `nax.config.${extension}`), configSource(extension, flowsDir))
-      writeFlow(root, flowsDir, flowId, 'flow.yml', flowSource('yml', flowId, title))
-
-      const result = runDryFlow(root, flowId)
-      const output = stripAnsi(`${result.stdout}\n${result.stderr}`)
-
-      assert.notEqual(result.status, 0)
-      assert.match(output, /Blocked executable config file in safe mode/)
-      assert.equal(fs.existsSync(path.join(root, '.nax')), false)
-    })
+test('CLI dry run blocks dynamic JavaScript and TypeScript configs', () => {
+  for (const extension of ['js', 'ts']) {
+    const root = tmpRoot()
+    fs.writeFileSync(path.join(root, `nax.config.${extension}`), 'export default getConfig()\n')
+    const result = runDryFlow(root, 'review')
+    const output = stripAnsi(`${result.stdout}\n${result.stderr}`)
+    assert.notEqual(result.status, 0)
+    assert.match(output, /Dynamic executable config is blocked in safe mode/)
   }
 })

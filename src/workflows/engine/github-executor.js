@@ -340,7 +340,7 @@ async function executeGithubFlow({ flow, steps, options, runState, completedStep
       ...options,
       repo,
       date,
-      models: step.agents.join(','),
+      agents: step.agents.join(','),
       issues: targetIssues || options.issues,
       issue: targetIssues || options.issue,
       fromIssues,

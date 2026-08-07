@@ -25,8 +25,8 @@ test('workflowCommand renders the direct runner command shape', () => {
       netlifySiteId: 'runner-site',
       filter: 'frontend-app',
       branch: 'main',
-      models: ['codex'],
-      stepModels: {
+      agents: ['codex'],
+      stepAgents: {
         review: ['claude', 'codex'],
         synthesize: ['codex'],
       },
@@ -49,11 +49,11 @@ test('workflowCommand renders the direct runner command shape', () => {
     'frontend-app',
     '--branch',
     'main',
-    '--models',
+    '--agents',
     'codex',
-    '--step-models',
+    '--step-agents',
     'review=claude,codex',
-    '--step-models',
+    '--step-agents',
     'synthesize=codex',
   ])
 })
@@ -68,7 +68,7 @@ test('runWorkflow executes dry-run in-process with structured events and no arti
     options: {
       transport: 'netlify-api',
       branch: 'dry-run-branch',
-      models: ['codex'],
+      agents: ['codex'],
     },
     eventSink: (event) => events.push(event),
   })
@@ -99,7 +99,7 @@ test('runWorkflow dry-run preserves the CLI dry-run contract', async () => {
     'netlify-api',
     '--branch',
     'parity-branch',
-    '--models',
+    '--agents',
     'codex',
   ], {
     cwd: cliRoot,
@@ -112,7 +112,7 @@ test('runWorkflow dry-run preserves the CLI dry-run contract', async () => {
     options: {
       transport: 'netlify-api',
       branch: 'parity-branch',
-      models: ['codex'],
+      agents: ['codex'],
     },
   })
 

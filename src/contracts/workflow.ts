@@ -7,6 +7,8 @@ export type WorkflowStep = {
   action: string
   submit: string
   agents: string[]
+  models: Record<string, string>
+  efforts: Record<string, string>
   input: Array<Record<string, unknown>>
   waitFor: string
   review?: Record<string, unknown> | null
@@ -53,7 +55,10 @@ export type WorkflowGraphNodeData = {
   selectedAgents?: string[]
   agentStatuses?: Record<string, string>
   agentInteraction?: 'toggle' | 'view-result'
-  onToggleAgent?: (stepId: string, agent: string, allAgents: string[]) => void
+  models?: Record<string, string>
+  efforts?: Record<string, string>
+  onToggleAgent?: (stepId: string, agent: string, allAgents: string[], declaredAgents?: string[]) => void
+  onConfigureAgent?: (stepId: string, agent: string, config: { model: string; effort: string }) => void
   onViewAgentResult?: (node: WorkflowGraphNodeData, agent: string) => void
 }
 

@@ -5,7 +5,7 @@ description: Safe-mode settings and file-root restrictions for workflow loading.
 
 # Security policies
 
-`nax` loads workflow files and `nax.config.*` files through Configorama safe mode. This means static config files can still use supported data-flow variables, but JavaScript and TypeScript execution is blocked while workflows are discovered.
+`nax` loads workflow files and `nax.config.*` files through Configorama safe mode. Static JavaScript and TypeScript object exports are parsed as JSON5-compatible data; project code is never executed while workflows are discovered.
 
 The internal loader is equivalent to:
 
@@ -25,14 +25,24 @@ await configorama(configPath, {
 | `safeMode` | `true` | Enables safe inspection and blocking policy while `nax` loads configs. |
 | `allowedFileRoots` | config directory | Roots for file/text references. |
 | `restrictFileRoots` | `true` | Blocks traversal outside allowed roots. |
-| `blockExecutableFiles` | `true` | Blocks JavaScript, TypeScript, ESM, and CJS execution. |
+| `blockExecutableFiles` | `true` | Blocks JavaScript, TypeScript, ESM, and CJS execution. NAX parses static object exports before entering Configorama. |
 | `blockCustomResolvers` | `true` | Blocks user resolver code. |
 | `blockCustomFunctions` | `true` | Blocks user function code. |
 | `blockDotEnv` | `true` | Blocks dotenv mutation. |
 
-Use `flow.yml`, `flow.yaml`, `flow.json`, or `flow.toml` for project workflows. `nax.config.yml`, `nax.config.yaml`, `nax.config.json`, and `nax.config.toml` are supported for project flow-root discovery.
+Use YAML, JSON, TOML, or a static JavaScript/TypeScript object export for project workflows and project flow-root discovery. Static module files must contain only one of these shapes:
 
-`eval(...)` and `if(...)` are sandboxed data-flow expressions in Configorama, so safe mode does not treat them like executable config. Prefer static workflow files and data-flow expressions for comparisons, arithmetic, ternaries, and boolean checks before reaching for JavaScript or TypeScript files.
+```js
+module.exports = { flowsDirs: ['.github/nax-flows'] }
+```
+
+```ts
+export default { flowsDirs: ['.github/nax-flows'] } as const
+```
+
+Imports, variable declarations, function calls, computed values, and exported functions remain blocked.
+
+`eval(...)` and `if(...)` are sandboxed data-flow expressions in Configorama, so safe mode does not treat them like executable config. Prefer YAML, JSON, or TOML for dynamic data-flow expressions.
 
 ## See also
 

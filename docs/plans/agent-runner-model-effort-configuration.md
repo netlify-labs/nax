@@ -1114,6 +1114,19 @@ Use a bounded test site and harmless prompts:
 Do not use the user's production example site as an automated canary unless the
 user explicitly places it in scope.
 
+**Observed backend limitation (2026-08-06).** Canary item 5 holds for initial
+runs (all three fields echoed) but not for completed follow-up sessions: the
+backend accepts `effort` on the follow-up request and returns the session
+`agent_config` with `agent` and `model` but without `effort`. Reproduced
+through both the public v1 and bb-api routes with
+`scripts/probe-agent-runner-model-effort.mjs`. NAX sends follow-up `effort`,
+stores it as run intent, and replays it exactly on retry and resume, so this is
+a backend response-persistence gap rather than a NAX/SDK defect. This program's
+acceptance is therefore revised: **item 5 requires full `agent_config` on
+initial runs, and requires only that NAX preserve the requested follow-up
+`effort` as run intent** until the backend echoes follow-up effort. The backend
+gap is tracked separately and documented in `concepts/artifacts.mdx`.
+
 ## 15. Verification commands
 
 During focused implementation:
@@ -1174,7 +1187,10 @@ dashboard assets correspond to the final source state.
   only by `models`; old provider-style model flags and dashboard requests fail.
 - GitHub transport rejects unsupported pinned configuration before mutation.
 - Netlify API canaries verify create, follow-up, response persistence, and
-  retry/resume.
+  retry/resume. Initial-run responses persist all three fields; follow-up
+  response persistence of `effort` is a tracked backend gap, and NAX's
+  preservation of requested follow-up `effort` as run intent is the accepted
+  bar until the backend echoes it.
 - Required SDK, repository, CLI-help, dashboard build, and dashboard smoke
   checks pass.
 - SDK `0.3.0` and NAX `2.0.0` are handed to the user for publication; no

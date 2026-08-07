@@ -21,6 +21,7 @@ export function isDoneStatus(status: string): boolean {
 }
 
 export function agentLabel(agent: string): string {
+  if (agent.toLowerCase() === 'opencode') return 'OpenCode'
   return agent.replace(/(^|-)([a-z])/g, (_match, prefix, char) => `${prefix}${char.toUpperCase()}`)
 }
 

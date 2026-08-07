@@ -9,7 +9,42 @@ import { Callout, FileTree } from 'nextra/components'
 
 Every `nax` run writes a durable local record under `.nax/`. The artifact tree is the handoff surface between workflow steps, the dashboard, follow-up prompts, and later debugging sessions.
 
-For multi-model workflows, artifacts are the evidence trail. They let you inspect the workflow config, prompts, per-model responses, cross-review notes, consensus summaries, generated patches, and token or cost metadata when available.
+For multi-agent workflows, artifacts are the evidence trail. They let you inspect the workflow config, prompts, per-agent responses, cross-review notes, consensus summaries, generated patches, and token or cost metadata when available.
+
+Resolved request intent is stored on each agent run as `agent`, optional
+`model`, and optional `effort`. The backend-observed session configuration is
+stored separately:
+
+```json
+{
+  "agent": "opencode",
+  "model": "z-ai/glm-5.2",
+  "effort": "xhigh",
+  "agent_config": {
+    "agent": "opencode",
+    "model": "z-ai/glm-5.2",
+    "effort": "xhigh"
+  }
+}
+```
+
+If requested and observed values differ, session JSON includes
+`configurationMismatch` diagnostics instead of overwriting the request.
+Historical artifacts without model or effort mean that backend defaults were
+used. Friendly Markdown renders `xhigh` as Max while JSON retains the wire
+value.
+
+<Callout type="warning">
+Known backend limitation: on a **completed follow-up session**, the Agent
+Runner backend currently returns `agent_config` with `agent` and `model` but
+without `effort`, even when the follow-up request pinned an effort. This is a
+backend response-persistence gap, not a NAX omission — NAX sends the requested
+`effort` on the follow-up, stores it as run intent, and replays it exactly on
+retry and resume. Until the backend echoes follow-up effort, read the run's
+requested `effort` as the source of truth for a follow-up's configured effort;
+the observed session `agent_config` may under-report it. Initial runs echo all
+three fields correctly.
+</Callout>
 
 ## Artifact layout
 

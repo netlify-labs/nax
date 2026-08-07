@@ -162,6 +162,8 @@ function normalizeFollowupRun({ run = {}, promptText = '', source = {}, timestam
   return {
     transport: run.transport || 'netlify-api',
     agent: run.agent || '',
+    ...(run.model ? { model: run.model } : {}),
+    ...(run.effort ? { effort: run.effort } : {}),
     status: run.status || 'submitted',
     promptText: run.promptText || promptText,
     compactPromptText: run.compactPromptText || '',
@@ -284,7 +286,7 @@ function freshAgentFlow({ title = 'Agent Run', stepTitle = 'Fresh Agent Runner' 
   return {
     id: 'agent-run',
     title,
-    description: 'One-off Netlify agent runner launched from dashboard follow-up.',
+    description: 'One-off Netlify agent runner launched from the dashboard.',
     source: 'dashboard',
     sourceLabel: 'dashboard',
     steps: [{
@@ -324,6 +326,8 @@ function persistFreshPseudoWorkflow({
   stepTitle = 'Fresh Agent Runner',
 }) {
   const agents = uniqueAgents(runs)
+  const models = Object.fromEntries(runs.filter((run) => run?.agent && run?.model).map((run) => [run.agent, run.model]))
+  const efforts = Object.fromEntries(runs.filter((run) => run?.agent && run?.effort).map((run) => [run.agent, run.effort]))
   const status = submittedStepStatus(runs)
   const flow = freshAgentFlow({ title, stepTitle })
   flow.steps[0].agents = agents
@@ -334,28 +338,34 @@ function persistFreshPseudoWorkflow({
     transport: 'netlify-api',
     target,
     options: {
-      models: agents,
+      agents,
+      models,
+      efforts,
       context: '',
       dashboardFollowup: true,
     },
     now,
   })
   const timestamp = now.toISOString()
-  state.status = status
-  state.source = {
+  const stepSource = {
     type: 'dashboard-followup',
     mode: 'fresh-runner',
     ...source,
   }
+  state.status = status
+  state.source = stepSource
   state.steps = [{
     id: 'fresh-agent-runner',
     title: stepTitle,
     status,
     agents,
     promptText,
+    source: stepSource,
     runs: runs.map((run) => ({
       transport: run.transport || 'netlify-api',
       agent: run.agent || '',
+      ...(run.model ? { model: run.model } : {}),
+      ...(run.effort ? { effort: run.effort } : {}),
       status: run.status || 'submitted',
       promptText: run.promptText || promptText,
       compactPromptText: run.compactPromptText || '',
@@ -401,7 +411,7 @@ async function syncSubmittedFollowupRunsToWorkflow({
   const steps = titleNormalization.steps
   const candidates = []
   for (const step of steps) {
-    if (step?.source?.type !== 'dashboard-followup') continue
+    if (!['dashboard-followup', 'dashboard-ad-hoc'].includes(String(step?.source?.type || ''))) continue
     for (const run of Array.isArray(step.runs) ? step.runs : []) {
       if (!isActiveFollowupStatus(run?.status) || !run?.runnerId) continue
       candidates.push({ step, run })
@@ -435,7 +445,7 @@ async function syncSubmittedFollowupRunsToWorkflow({
 
   let changed = titleNormalization.changed
   const nextSteps = candidates.length === 0 ? steps : steps.map((step) => {
-    if (step?.source?.type !== 'dashboard-followup') return step
+    if (!['dashboard-followup', 'dashboard-ad-hoc'].includes(String(step?.source?.type || ''))) return step
     let stepChanged = false
     const nextRuns = (Array.isArray(step.runs) ? step.runs : []).map((run) => {
       if (!isActiveFollowupStatus(run?.status) || !run?.runnerId) return run

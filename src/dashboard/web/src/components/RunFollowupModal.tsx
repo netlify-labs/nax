@@ -1,13 +1,15 @@
 import { useEffect, useMemo, useState } from 'react'
 import { ActionIcon, Alert, Anchor, Badge, Box, Button, Checkbox, Code, Group, Modal, Paper, ScrollArea, SegmentedControl, Select, Spoiler, Stack, Text, Textarea, Tooltip } from '@mantine/core'
+import { useDisclosure } from '@mantine/hooks'
 import { notifications } from '@mantine/notifications'
-import { Check, CheckCircle2, ExternalLink, FileSearch, Play, RefreshCw } from 'lucide-react'
+import { Check, CheckCircle2, ExternalLink, FileSearch, Play, RefreshCw, Settings2 } from 'lucide-react'
 import { openLocalFile } from '../api'
 import { useStartRunFollowupMutation } from '../queries/dashboard-mutations'
 import { agentLabel, workflowName } from '../run-format'
-import { buildRunFollowupRequest, defaultFollowupArtifactIds, defaultFollowupMode, defaultFollowupModels, defaultFollowupTarget, defaultFollowupThreadTarget, followupPlanLine, followupThreadTargets, formatArtifactBytes, selectedFollowupArtifacts, SUPPORTED_FOLLOWUP_MODELS } from '../run-followup-composer'
-import type { RunDetails, RunFollowupResponse, DashboardRun } from '../types'
+import { buildRunFollowupRequest, defaultFollowupArtifactIds, defaultFollowupConfiguration, defaultFollowupMode, defaultFollowupAgents, defaultFollowupTarget, defaultFollowupThreadTarget, followupPlanLine, followupThreadTargets, formatArtifactBytes, selectedFollowupArtifacts } from '../run-followup-composer'
+import type { RunDetails, RunFollowupResponse, DashboardRun, DashboardCapabilities } from '../types'
 import { AgentIcon } from './AgentIcon'
+import { AgentConfigDrawer } from './AgentConfigDrawer'
 
 type RunFollowupModalProps = {
   opened: boolean
@@ -15,6 +17,7 @@ type RunFollowupModalProps = {
   canOpenLocalFiles?: boolean
   run: DashboardRun
   details: RunDetails
+  agentConfiguration: DashboardCapabilities['agentConfiguration']
   onSubmitted: (response: RunFollowupResponse) => void | Promise<void>
 }
 
@@ -120,13 +123,16 @@ function notifyFollowupSubmitted(response: RunFollowupResponse, canOpenLocalFile
   })
 }
 
-export function RunFollowupContent({ canOpenLocalFiles = true, onClose, run, details, onSubmitted, closeLabel = 'Back to results', onSubmittingChange, submittedResponse = null }: RunFollowupContentProps) {
+export function RunFollowupContent({ canOpenLocalFiles = true, onClose, run, details, agentConfiguration, onSubmitted, closeLabel = 'Back to results', onSubmittingChange, submittedResponse = null }: RunFollowupContentProps) {
   const initialThreadTarget = useMemo(() => defaultFollowupThreadTarget(details), [details])
   const initialTarget = useMemo(() => initialThreadTarget || defaultFollowupTarget(details), [details, initialThreadTarget])
   const threadTargets = useMemo(() => followupThreadTargets(details), [details])
   const [targetId, setTargetId] = useState(initialTarget?.id || '')
   const [mode, setMode] = useState<'follow-up-thread' | 'fresh-runner'>(defaultFollowupMode(details))
-  const [models, setModels] = useState<string[]>(defaultFollowupModels(initialTarget))
+  const [agents, setAgents] = useState<string[]>(defaultFollowupAgents(initialTarget))
+  const [models, setModels] = useState<Record<string, string>>(() => defaultFollowupConfiguration(initialTarget).models)
+  const [efforts, setEfforts] = useState<Record<string, string>>(() => defaultFollowupConfiguration(initialTarget).efforts)
+  const [agentConfigOpened, { open: openAgentConfig, close: closeAgentConfig }] = useDisclosure(false)
   const [artifactIds, setArtifactIds] = useState<string[]>(defaultFollowupArtifactIds(details))
   const [noContextConfirmed, setNoContextConfirmed] = useState(false)
   const [prompt, setPrompt] = useState('')
@@ -141,7 +147,10 @@ export function RunFollowupContent({ canOpenLocalFiles = true, onClose, run, det
     const target = threadTarget || defaultFollowupTarget(details)
     setTargetId(target?.id || '')
     setMode(defaultFollowupMode(details))
-    setModels(defaultFollowupModels(target))
+    setAgents(defaultFollowupAgents(target))
+    const configuration = defaultFollowupConfiguration(target)
+    setModels(configuration.models)
+    setEfforts(configuration.efforts)
     setArtifactIds(defaultFollowupArtifactIds(details))
     setNoContextConfirmed(false)
     setPrompt('')
@@ -170,13 +179,13 @@ export function RunFollowupContent({ canOpenLocalFiles = true, onClose, run, det
   const totalArtifactBytes = selectedArtifacts.reduce((sum, artifact) => sum + (artifact.sizeBytes || 0), 0)
   const targetUrl = targetNetlifyUrl(target)
   const artifactSelectionValid = selectedArtifacts.length > 0 || noContextConfirmed
-  const submitDisabled = submitting || Boolean(success) || !target || !prompt.trim() || models.length === 0 || !artifactSelectionValid
+  const submitDisabled = submitting || Boolean(success) || !target || !prompt.trim() || agents.length === 0 || !artifactSelectionValid
 
-  const toggleModel = (model: string) => {
-    setModels((value) => (
-      value.includes(model)
-        ? value.filter((item) => item !== model)
-        : [...value, model]
+  const toggleAgent = (agent: string) => {
+    setAgents((value) => (
+      value.includes(agent)
+        ? value.filter((item) => item !== agent)
+        : [...value, agent]
     ))
   }
 
@@ -187,7 +196,10 @@ export function RunFollowupContent({ canOpenLocalFiles = true, onClose, run, det
     const nextTarget = target?.runnerId ? target : initialThreadTarget
     if (!nextTarget) return
     setTargetId(nextTarget.id)
-    setModels(defaultFollowupModels(nextTarget))
+    setAgents(defaultFollowupAgents(nextTarget))
+    const configuration = defaultFollowupConfiguration(nextTarget)
+    setModels((current) => ({ ...current, ...configuration.models }))
+    setEfforts((current) => ({ ...current, ...configuration.efforts }))
   }
 
   const submit = async () => {
@@ -200,7 +212,9 @@ export function RunFollowupContent({ canOpenLocalFiles = true, onClose, run, det
         mode,
         prompt,
         target,
+        agents,
         models,
+        efforts,
         artifacts: selectedArtifacts,
       }) })
       setSuccess(response)
@@ -308,7 +322,10 @@ export function RunFollowupContent({ canOpenLocalFiles = true, onClose, run, det
                     onChange={(value) => {
                       const nextTarget = threadTargets.find((candidate) => candidate.id === value)
                       setTargetId(value || '')
-                      setModels(defaultFollowupModels(nextTarget || null))
+                      setAgents(defaultFollowupAgents(nextTarget || null))
+                      const configuration = defaultFollowupConfiguration(nextTarget || null)
+                      setModels((current) => ({ ...current, ...configuration.models }))
+                      setEfforts((current) => ({ ...current, ...configuration.efforts }))
                     }}
                     renderOption={({ option, checked }) => {
                       const optionTarget = threadTargets.find((candidate) => candidate.id === option.value)
@@ -335,21 +352,32 @@ export function RunFollowupContent({ canOpenLocalFiles = true, onClose, run, det
                 ) : null}
 
                 <Box>
-                  <Text size="xs" fw={800} c="dimmed" className="run-followup-section-label">Models</Text>
-                  <Group className="run-followup-model-row" gap="xs" mt={6} role="group" aria-label="Models">
-                    {SUPPORTED_FOLLOWUP_MODELS.map((model) => {
-                      const active = models.includes(model)
+                  <Group justify="space-between" align="center">
+                    <Text size="xs" fw={800} c="dimmed" className="run-followup-section-label">Agents</Text>
+                    <Button
+                      size="compact-xs"
+                      variant="subtle"
+                      color="gray"
+                      leftSection={<Settings2 size={13} />}
+                      onClick={openAgentConfig}
+                    >
+                      Configure
+                    </Button>
+                  </Group>
+                  <Group className="run-followup-agent-row" gap="xs" mt={6} role="group" aria-label="Agents">
+                    {agentConfiguration.catalog.providers.map(({ id: agent }) => {
+                      const active = agents.includes(agent)
                       return (
                         <button
-                          key={model}
+                          key={agent}
                           type="button"
-                          className={`agent-chip run-followup-model-chip ${model}${active ? '' : ' inactive'}`}
+                          className={`agent-chip run-followup-agent-chip ${agent}${active ? '' : ' inactive'}`}
                           aria-pressed={active}
-                          aria-label={agentLabel(model)}
-                          onClick={() => toggleModel(model)}
+                          aria-label={agentLabel(agent)}
+                          onClick={() => toggleAgent(agent)}
                         >
-                          <AgentIcon agent={model} />
-                          <span>{agentLabel(model)}</span>
+                          <AgentIcon agent={agent} />
+                          <span>{agentLabel(agent)}</span>
                         </button>
                       )
                     })}
@@ -372,16 +400,16 @@ export function RunFollowupContent({ canOpenLocalFiles = true, onClose, run, det
             <Paper className="run-followup-plan" withBorder>
               <Stack gap={4}>
                 <Text size="xs" fw={800} c="dimmed" className="run-followup-section-label">Submission plan</Text>
-                {models.length > 0 && target ? models.map((model) => (
-                  <Text key={model} size="sm">
-                    {targetUrl && mode === 'follow-up-thread' && target.agent === model ? (
+                {agents.length > 0 && target ? agents.map((agent) => (
+                  <Text key={agent} size="sm">
+                    {targetUrl && mode === 'follow-up-thread' && target.agent === agent ? (
                       <Anchor href={targetUrl} target="_blank" rel="noreferrer">
-                        {followupPlanLine(model, mode, target)}
+                        {followupPlanLine(agent, mode, target)}
                       </Anchor>
-                    ) : followupPlanLine(model, mode, target)}
+                    ) : followupPlanLine(agent, mode, target)}
                   </Text>
                 )) : (
-                  <Text size="sm" c="dimmed">Select a target and at least one model.</Text>
+                  <Text size="sm" c="dimmed">Select a target and at least one agent.</Text>
                 )}
                 {mode === 'follow-up-thread' && target?.runnerId ? (
                   <Text size="xs" c="dimmed">
@@ -465,11 +493,25 @@ export function RunFollowupContent({ canOpenLocalFiles = true, onClose, run, det
         </Group>
         <Button variant="subtle" color="gray" onClick={onClose} disabled={submitting}>{closeLabel}</Button>
       </Group>
+      <AgentConfigDrawer
+        opened={agentConfigOpened}
+        onClose={closeAgentConfig}
+        agents={agents}
+        catalog={agentConfiguration.catalog}
+        models={models}
+        efforts={efforts}
+        transport="netlify-api"
+        title="Follow-up agent configuration"
+        onChange={(configuration) => {
+          setModels(configuration.models)
+          setEfforts(configuration.efforts)
+        }}
+      />
     </Stack>
   )
 }
 
-export function RunFollowupModal({ opened, onClose, canOpenLocalFiles = true, run, details, onSubmitted }: RunFollowupModalProps) {
+export function RunFollowupModal({ opened, onClose, canOpenLocalFiles = true, run, details, agentConfiguration, onSubmitted }: RunFollowupModalProps) {
   const [submitting, setSubmitting] = useState(false)
 
   return (
@@ -487,6 +529,7 @@ export function RunFollowupModal({ opened, onClose, canOpenLocalFiles = true, ru
         onClose={onClose}
         run={run}
         details={details}
+        agentConfiguration={agentConfiguration}
         onSubmitted={onSubmitted}
         closeLabel="Close"
         onSubmittingChange={setSubmitting}

@@ -1,7 +1,7 @@
-const { DEFAULT_MODELS } = require('../constants')
+const { DEFAULT_AGENT_PROVIDERS } = require('../constants')
 
 /**
- * Parsed model override for one workflow step.
+ * Parsed agent-provider override for one workflow step.
  * @typedef {{
  *   error: string,
  *   stepId?: never,
@@ -10,18 +10,18 @@ const { DEFAULT_MODELS } = require('../constants')
  *   error?: undefined,
  *   stepId: string,
  *   agents: string[],
- * }} StepModelParseResult
+ * }} StepAgentParseResult
  *
  * Agent lists keyed by workflow step id.
- * @typedef {Record<string, string[]>} StepModelMap
+ * @typedef {Record<string, string[]>} StepAgentMap
  *
- * Raw step model override input accepted from CLI flags and config.
- * @typedef {string | string[] | Record<string, unknown>} StepModelInput
+ * Raw step agent override input accepted from CLI flags and config.
+ * @typedef {string | string[] | Record<string, unknown>} StepAgentInput
  *
  * User-selected agent filters for a workflow run.
  * @typedef {{
- *   models?: unknown,
- *   stepModels?: StepModelInput,
+ *   agents?: unknown,
+ *   stepAgents?: StepAgentInput,
  * }} AgentSelection
  *
  * Agent names that are valid for flow declarations.
@@ -54,19 +54,19 @@ function normalizeAgentList(value) {
   return out
 }
 
-/** @param {unknown} entry @returns {StepModelParseResult} */
-function parseStepModelEntry(entry) {
+/** @param {unknown} entry @returns {StepAgentParseResult} */
+function parseStepAgentEntry(entry) {
   const text = String(entry || '')
   const index = text.indexOf('=')
   if (index === -1) {
     return {
-      error: `Step model override "${text}" must use step=agent,agent syntax.`,
+      error: `Step agent override "${text}" must use step=agent,agent syntax.`,
     }
   }
   const stepId = text.slice(0, index).trim()
   if (!stepId) {
     return {
-      error: `Step model override "${text}" is missing a step id.`,
+      error: `Step agent override "${text}" is missing a step id.`,
     }
   }
   return {
@@ -75,23 +75,23 @@ function parseStepModelEntry(entry) {
   }
 }
 
-/** @param {unknown} value @returns {StepModelMap} */
-function normalizeStepModels(value) {
+/** @param {unknown} value @returns {StepAgentMap} */
+function normalizeStepAgents(value) {
   if (!value) {
-    /** @type {StepModelMap} */
+    /** @type {StepAgentMap} */
     const empty = {}
     return empty
   }
-  /** @type {StepModelMap} */
+  /** @type {StepAgentMap} */
   const out = {}
   if (typeof value === 'string') {
-    const parsed = parseStepModelEntry(value)
+    const parsed = parseStepAgentEntry(value)
     if (!parsed.error) out[parsed.stepId] = parsed.agents
     return out
   }
   if (Array.isArray(value)) {
     for (const entry of value) {
-      const parsed = parseStepModelEntry(entry)
+      const parsed = parseStepAgentEntry(entry)
       if (!parsed.error) out[parsed.stepId] = parsed.agents
     }
     return out
@@ -106,25 +106,25 @@ function normalizeStepModels(value) {
   return out
 }
 
-/** @param {unknown} entries @returns {StepModelMap} */
-function parseStepModelsEntries(entries) {
+/** @param {unknown} entries @returns {StepAgentMap} */
+function parseStepAgentsEntries(entries) {
   if (entries && typeof entries === 'object' && !Array.isArray(entries)) {
-    return normalizeStepModels(entries)
+    return normalizeStepAgents(entries)
   }
   const values = Array.isArray(entries) ? entries : entries ? [entries] : []
-  /** @type {StepModelMap} */
+  /** @type {StepAgentMap} */
   const out = {}
   for (const entry of values) {
-    const parsed = parseStepModelEntry(entry)
+    const parsed = parseStepAgentEntry(entry)
     if (parsed.error) throw new Error(parsed.error)
     out[parsed.stepId] = parsed.agents
   }
   return out
 }
 
-/** @param {unknown} stepModels @returns {string[]} */
-function stepModelsToEntries(stepModels) {
-  return Object.entries(normalizeStepModels(stepModels))
+/** @param {unknown} stepAgents @returns {string[]} */
+function stepAgentsToEntries(stepAgents) {
+  return Object.entries(normalizeStepAgents(stepAgents))
     .map(([stepId, agents]) => `${stepId}=${agents.join(',')}`)
 }
 
@@ -143,7 +143,7 @@ function flowAgentSet(flow = {}) {
  * @param {AgentSelectionValidationOptions} [options]
  * @returns {AgentSelectionValidationError[]}
  */
-function flowDeclaredAgentValidationErrors(flow = {}, { knownAgents = DEFAULT_MODELS } = {}) {
+function flowDeclaredAgentValidationErrors(flow = {}, { knownAgents = DEFAULT_AGENT_PROVIDERS } = {}) {
   const errors = []
   const known = new Set(normalizeAgentList(knownAgents))
   const knownLabel = [...known].join(', ') || 'none'
@@ -177,25 +177,25 @@ function flowDeclaredAgentValidationErrors(flow = {}, { knownAgents = DEFAULT_MO
 function selectionValidationErrors(flow = {}, selection = {}, options = {}) {
   const errors = flowDeclaredAgentValidationErrors(flow, options)
   const flowAgents = flowAgentSet(flow)
-  for (const model of normalizeAgentList(selection.models)) {
-    if (!flowAgents.has(model)) {
-      errors.push({ code: 'invalid_model', message: `Unknown model "${model}" for flow "${flow.id}".` })
+  for (const agent of normalizeAgentList(selection.agents)) {
+    if (!flowAgents.has(agent)) {
+      errors.push({ code: 'invalid_agent', message: `Unknown agent "${agent}" for flow "${flow.id}".` })
     }
   }
 
   const steps = new Map((flow.steps || []).map((step) => [step.id, step]))
-  for (const [stepId, agents] of Object.entries(normalizeStepModels(selection.stepModels))) {
+  for (const [stepId, agents] of Object.entries(normalizeStepAgents(selection.stepAgents))) {
     const step = steps.get(stepId)
     if (!step) {
-      errors.push({ code: 'invalid_step_models', message: `Unknown step "${stepId}" in flow "${flow.id}".` })
+      errors.push({ code: 'invalid_step_agents', message: `Unknown step "${stepId}" in flow "${flow.id}".` })
       continue
     }
     const stepAgents = new Set(normalizeAgentList(step.agents))
     for (const agent of agents) {
       if (!stepAgents.has(agent)) {
         errors.push({
-          code: 'invalid_step_model',
-          message: `Model "${agent}" is not configured for step "${stepId}" in flow "${flow.id}".`,
+          code: 'invalid_step_agent',
+          message: `Agent "${agent}" is not configured for step "${stepId}" in flow "${flow.id}".`,
         })
       }
     }
@@ -225,12 +225,12 @@ function assertValidAgentSelection(flow, selection = {}, options = {}) {
  * @returns {import('../../types').WorkflowFlow}
  */
 function applyAgentSelection(flow = {}, selection = {}) {
-  const globalAgents = normalizeAgentList(selection.models)
+  const globalAgents = normalizeAgentList(selection.agents)
   const globalSelected = globalAgents.length > 0 ? new Set(globalAgents) : null
-  const stepModels = normalizeStepModels(selection.stepModels)
-  const hasStepOverride = (stepId) => Object.prototype.hasOwnProperty.call(stepModels, stepId)
+  const stepAgents = normalizeStepAgents(selection.stepAgents)
+  const hasStepOverride = (stepId) => Object.prototype.hasOwnProperty.call(stepAgents, stepId)
 
-  if (!globalSelected && Object.keys(stepModels).length === 0) return flow
+  if (!globalSelected && Object.keys(stepAgents).length === 0) return flow
 
   return {
     ...flow,
@@ -243,7 +243,7 @@ function applyAgentSelection(flow = {}, selection = {}) {
     steps: (flow.steps || []).map((step) => {
       const originalAgents = normalizeAgentList(step.agents)
       const agents = hasStepOverride(step.id)
-        ? stepModels[step.id].filter((agent) => originalAgents.includes(agent))
+        ? stepAgents[step.id].filter((agent) => originalAgents.includes(agent))
         : globalSelected
           ? originalAgents.filter((agent) => globalSelected.has(agent))
           : originalAgents
@@ -261,8 +261,8 @@ module.exports = {
   flowAgentSet,
   flowDeclaredAgentValidationErrors,
   normalizeAgentList,
-  normalizeStepModels,
-  parseStepModelsEntries,
+  normalizeStepAgents,
+  parseStepAgentsEntries,
   selectionValidationErrors,
-  stepModelsToEntries,
+  stepAgentsToEntries,
 }

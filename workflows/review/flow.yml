@@ -9,11 +9,12 @@ defaults:
     - claude
     - gemini
     - codex
+    - opencode
 
 steps:
   - id: review
     title: Review
-    description: Explore, review, and improve the current setup with three independent agents.
+    description: Explore, review, and improve the current setup with independent agents.
     prompt: prompts/1_review.md
     action: issue
     submit: new-run
@@ -21,11 +22,12 @@ steps:
       - claude
       - gemini
       - codex
+      - opencode
     waitFor: agent-results
 
   - id: cross-review
     title: Cross Review
-    description: Cross-check the first-round Claude/Gemini/Codex review findings against each other.
+    description: Cross-check the first-round review findings against each other.
     prompt: prompts/2_cross-review.md
     action: comment
     submit: follow-up
@@ -33,6 +35,7 @@ steps:
       - claude
       - gemini
       - codex
+      - opencode
     input:
       - step: review
         results: all

@@ -1,4 +1,10 @@
 const { normalizeAgentList } = require('../../core/agents/selection')
+const {
+  getAgentProviderLabel,
+  normalizeProviderEffortMap,
+  normalizeProviderModelMap,
+  resolveAgentRunConfig,
+} = require('../../core/agents/configuration')
 const { isNetlifyApiTransport } = require('../../core/runs/resumable')
 const { isTerminalRunStatus } = require('../../core/status')
 const { targetBranch } = require('../../integrations/git/target')
@@ -8,7 +14,7 @@ const { saveRunState } = require('../../storage/local/run-state')
 const { buildFollowupContextPackage } = require('../../workflows/followups/context')
 const { prepareFollowupContextDelivery } = require('../../workflows/followups/delivery')
 const { buildFollowupSubmissionPlan } = require('../../workflows/followups/plan')
-const { buildFollowupPrompt, submitFollowupPlan } = require('../../workflows/followups/runner')
+const { buildFollowupPrompt, submitFollowupPlan, submitFreshAgentRunner } = require('../../workflows/followups/runner')
 const { appendFollowupRunsToWorkflow, cancelFollowupRunInWorkflow, persistFreshPseudoWorkflow } = require('../../workflows/followups/persistence')
 const { addLocalRunLinks } = require('../../workflows/engine/local-executor')
 const { cancelHumanReviewGate } = require('../../workflows/human-review')
@@ -40,6 +46,112 @@ function cancelReviewGate({ runState, body = {} }) {
 /**
  * @typedef {{
  *   projectRoot: string,
+ *   body?: Record<string, unknown>,
+ *   env: NodeJS.ProcessEnv,
+ *   siteId: string,
+ *   siteName: string,
+ *   netlifyFilter: string,
+ *   submitRun?: import('../../workflows/followups/runner').HandoffSubmitRun,
+ *   linkSubmittedRun: (input: { siteName: string }) => (run?: Record<string, unknown>) => Record<string, unknown>,
+ * }} SubmitAdHocAgentRunInput
+ */
+
+/** @param {SubmitAdHocAgentRunInput} input */
+async function submitAdHocAgentRun({
+  projectRoot,
+  body = {},
+  env,
+  siteId,
+  siteName,
+  netlifyFilter,
+  submitRun,
+  linkSubmittedRun,
+}) {
+  const prompt = stringValue(body.prompt).trim()
+  if (!prompt) throw requestError(400, 'missing_prompt', 'Enter instructions before starting an agent run.')
+  const agents = normalizeAgentList(body.agent || body.agents)
+  if (agents.length !== 1) throw requestError(400, 'single_agent_required', 'Select exactly one agent provider.')
+  const transport = stringValue(body.transport || 'netlify-api').trim().toLowerCase()
+  if (!['auto', 'netlify-api'].includes(transport)) {
+    throw requestError(409, 'unsupported_agent_run_transport', 'Single-agent dashboard runs require the Netlify API transport.')
+  }
+
+  let configuration
+  try {
+    configuration = resolveAgentRunConfig(agents[0], {
+      globalCli: {
+        models: normalizeProviderModelMap(body.models),
+        efforts: normalizeProviderEffortMap(body.efforts),
+      },
+    })
+  } catch (error) {
+    throw requestError(
+      400,
+      error && typeof error === 'object' && 'code' in error ? stringValue(error.code) : 'invalid_agent_configuration',
+      error instanceof Error ? error.message : String(error),
+    )
+  }
+
+  const branch = stringValue(body.branch).trim()
+  const sourceId = `agent-run-${Date.now().toString(36)}`
+  const submitted = await submitFreshAgentRunner({
+    projectRoot,
+    agent: configuration.agent,
+    model: configuration.model,
+    effort: configuration.effort,
+    promptText: prompt,
+    branch,
+    siteId,
+    netlifyFilter,
+    env,
+    submitRun,
+    linkRun: linkSubmittedRun({ siteName }),
+    source: {
+      id: sourceId,
+      type: 'dashboard-ad-hoc',
+      mode: 'fresh-runner',
+    },
+    raw: {
+      dashboardAdHoc: {
+        id: sourceId,
+      },
+    },
+  })
+  const warnings = [...configuration.warnings, ...(submitted.warnings || [])]
+  const persisted = persistFreshPseudoWorkflow({
+    projectRoot,
+    runs: [submitted.run],
+    promptText: prompt,
+    target: {
+      branch,
+      sourceType: 'dashboard-ad-hoc',
+    },
+    source: {
+      id: sourceId,
+      type: 'dashboard-ad-hoc',
+      mode: 'fresh-runner',
+    },
+    title: `${titleCaseAgent(configuration.agent)} agent run`,
+    stepTitle: `${titleCaseAgent(configuration.agent)} agent run`,
+  })
+  return {
+    workflow: persisted.flow,
+    run: publicRunState(persisted),
+    submission: {
+      agent: submitted.run.agent,
+      model: submitted.run.model || '',
+      effort: submitted.run.effort || '',
+      runnerId: submitted.run.runnerId || '',
+      sessionId: submitted.run.sessionId || '',
+      status: submitted.run.status || 'submitted',
+    },
+    warnings,
+  }
+}
+
+/**
+ * @typedef {{
+ *   projectRoot: string,
  *   sourceRunId: string,
  *   durable: Record<string, unknown>,
  *   body?: Record<string, unknown>,
@@ -60,7 +172,9 @@ function cancelReviewGate({ runState, body = {} }) {
  *   target: Record<string, unknown> & { id: string },
  *   artifacts: Array<{ id: string, kind?: string }>,
  *   mode: string,
- *   models: Array<string>,
+ *   agents: Array<string>,
+ *   models: import('../../types').StringMap,
+ *   efforts: import('../../types').StringMap,
  *   targetSha: string,
  *   targetBranch: string,
  * }} FollowupRequest
@@ -292,9 +406,11 @@ async function submitFollowup({
   const plan = buildFollowupSubmissionPlan({
     requestedMode: normalized.mode,
     target: normalized.target,
+    agents: normalized.agents,
     models: normalized.models,
-    fallbackModels: normalizeAgentList(
-      durableOptions.models ||
+    efforts: normalized.efforts,
+    fallbackAgents: normalizeAgentList(
+      durableOptions.agents ||
       durableSteps.flatMap((step) => Array.isArray(step.agents) ? step.agents : []) ||
       ['codex']
     ),
@@ -515,9 +631,7 @@ async function cancelRun({
 }
 
 function titleCaseAgent(agent = '') {
-  const value = String(agent || '').trim()
-  if (!value) return 'Agent'
-  return `${value.slice(0, 1).toUpperCase()}${value.slice(1)}`
+  return getAgentProviderLabel(String(agent || '').trim())
 }
 
 module.exports = {
@@ -525,5 +639,6 @@ module.exports = {
   cancelReviewGate,
   cancelRun,
   retryAgentRun,
+  submitAdHocAgentRun,
   submitFollowup,
 }

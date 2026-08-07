@@ -307,7 +307,7 @@ function createNetlifyApiClient({
   }
 
   return {
-    /** @param {{ siteId?: string, promptText?: string, agent?: string, branch?: string, source?: Record<string, unknown> }} input */
+    /** @param {{ siteId?: string, promptText?: string, agent?: string, model?: string, effort?: string, branch?: string, source?: Record<string, unknown> }} input */
     async createAgentRunner(input = {}) {
       const resolvedSiteId = input.siteId || defaultSiteId
       if (!resolvedSiteId) throw requestError('runner_validation_failed', 'Netlify site ID is required to create an Agent Runner.')
@@ -316,6 +316,8 @@ function createNetlifyApiClient({
           siteId: resolvedSiteId,
           prompt: input.promptText || '',
           agent: input.agent || 'claude',
+          ...(input.model ? { model: input.model } : {}),
+          ...(input.effort ? { effort: input.effort } : {}),
           ...(input.branch ? { branch: input.branch } : {}),
           land: 'none',
         })
@@ -326,7 +328,7 @@ function createNetlifyApiClient({
         return normalizedSdkRunner(runner, session, handle)
       })
     },
-    /** @param {{ runnerId?: string, promptText?: string, agent?: string, siteId?: string, sdkHandle?: import('nax-agent-runner-sdk').Handle }} input */
+    /** @param {{ runnerId?: string, promptText?: string, agent?: string, model?: string, effort?: string, siteId?: string, sdkHandle?: import('nax-agent-runner-sdk').Handle }} input */
     async createAgentSession(input = {}) {
       const runnerId = input.runnerId || ''
       if (!runnerId) throw requestError('runner_validation_failed', 'Agent Runner ID is required to create a follow-up session.')
@@ -338,6 +340,8 @@ function createNetlifyApiClient({
             sdkHandle: input.sdkHandle,
             netlifySiteId: input.siteId || defaultSiteId,
             agent: input.agent,
+            model: input.model,
+            effort: input.effort,
             promptText: input.promptText,
           },
           siteId: input.siteId || defaultSiteId,
@@ -345,6 +349,8 @@ function createNetlifyApiClient({
         const handle = await runnerSdk.followUp(base, {
           prompt: input.promptText || '',
           agent: input.agent || base.agent,
+          ...(input.model ? { model: input.model } : {}),
+          ...(input.effort ? { effort: input.effort } : {}),
         })
         const [runner, session] = await Promise.all([
           runnerSdk.transport.getRunner(handle.runnerId),

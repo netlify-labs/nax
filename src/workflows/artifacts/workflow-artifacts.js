@@ -1,6 +1,7 @@
 const fs = require('fs')
 const path = require('path')
 const { artifactMeta } = require('../../core/artifact-metadata')
+const { formatAgentConfigLabel } = require('../../core/agents/configuration')
 const { formatFileChangesSummary, formatUsageSummary, usageSummariesForRunState } = require('../results/agent-run-results')
 const { persistAgentRunnerArtifact } = require('./agent-runner-artifacts')
 const { persistAgentSessionArtifact } = require('./agent-session-artifacts')
@@ -165,6 +166,8 @@ function buildAgentJson({ runState = {}, step = {}, run = {}, attemptNumber = nu
     stepTitle: step.title || step.id || '',
     stepOrdinal: stepOrdinal(runState, step),
     agent: run.agent || '',
+    ...(run.model ? { model: run.model } : {}),
+    ...(run.effort ? { effort: run.effort } : {}),
     status: run.status || '',
     runnerId: run.runnerId || '',
     sessionId: run.sessionId || '',
@@ -191,6 +194,7 @@ function buildAgentMarkdown({ runState, step, run }) {
     '',
     `- Status: ${run.status || 'unknown'}`,
   ]
+  if (run.agent) lines.push(`- Configuration: ${formatAgentConfigLabel(run)}`)
   if (run.runnerId) lines.push(`- Runner ID: \`${run.runnerId}\``)
   if (run.sessionId) lines.push(`- Session ID: \`${run.sessionId}\``)
   const usage = formatUsageSummary(run.usage || {})
@@ -431,6 +435,8 @@ function buildStepJson({ runState = {}, step = {}, ordinal = stepOrdinal(runStat
       const agent = safeArtifactName(run.agent || 'agent')
       return {
         agent: run.agent || '',
+        ...(run.model ? { model: run.model } : {}),
+        ...(run.effort ? { effort: run.effort } : {}),
         status: run.status || '',
         runnerId: run.runnerId || '',
         sessionId: run.sessionId || '',

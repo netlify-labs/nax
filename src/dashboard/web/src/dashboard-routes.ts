@@ -28,6 +28,21 @@ export const defaultDashboardCapabilities: DashboardCapabilities = {
   canStreamRunEvents: true,
   canServeStaticAssets: true,
   requiresAuth: true,
+  agentConfiguration: {
+    catalog: {
+      provenance: {
+        source: 'dashboard capability unavailable',
+        commit: '',
+        syncedAt: '',
+      },
+      providers: [],
+    },
+    transports: {
+      auto: { models: true, efforts: true },
+      'netlify-api': { models: true, efforts: true },
+      github: { models: false, efforts: false },
+    },
+  },
 }
 
 export type DashboardRouteMatch = {

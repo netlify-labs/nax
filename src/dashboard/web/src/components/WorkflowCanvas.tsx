@@ -15,7 +15,9 @@ import {
 import '@xyflow/react/dist/style.css'
 import { activeOrCompletedStatuses, completedStatuses } from '../run-projection'
 import type { WorkflowGraph, WorkflowGraphNodeData } from '../types'
+import { AgentCatalogProvider } from '../agent-catalog-context'
 import { WorkflowNode } from './WorkflowNode'
+import type { AgentCatalog } from './ModelEffortFields'
 
 const nodeTypes = {
   workflowStep: WorkflowNode,
@@ -28,7 +30,14 @@ type Props = {
   loading: boolean
   mode: 'configure' | 'inspect'
   selectedNode: WorkflowGraphNodeData | null
-  onToggleStepAgent: (stepId: string, agent: string, allAgents: string[]) => void
+  catalog: AgentCatalog
+  transport: string
+  models: Record<string, string>
+  efforts: Record<string, string>
+  stepModels: Record<string, Record<string, string>>
+  stepEfforts: Record<string, Record<string, string>>
+  onToggleStepAgent: (stepId: string, agent: string, allAgents: string[], declaredAgents?: string[]) => void
+  onConfigureStepAgent: (stepId: string, agent: string, config: { model: string; effort: string }) => void
   onSelectNode: (node: WorkflowGraphNodeData | null) => void
   onViewNodeDetails: (node: WorkflowGraphNodeData) => void
   onViewAgentResult: (node: WorkflowGraphNodeData, agent: string) => void
@@ -228,17 +237,38 @@ export function WorkflowCanvas(props: Props) {
           data: {
             ...node.data,
             agentInteraction,
+            models: { ...props.models, ...(props.stepModels[node.data.stepId] || {}) },
+            efforts: { ...props.efforts, ...(props.stepEfforts[node.data.stepId] || {}) },
             onToggleAgent: props.onToggleStepAgent,
+            onConfigureAgent: props.mode === 'inspect' ? undefined : props.onConfigureStepAgent,
             onViewAgentResult: props.mode === 'inspect' ? props.onViewAgentResult : undefined,
           },
         }
       }),
     }
-  }, [props.graph, props.mode, props.selectedNode, props.onToggleStepAgent, props.onViewAgentResult])
+  }, [
+    props.graph,
+    props.mode,
+    props.selectedNode,
+    props.models,
+    props.efforts,
+    props.stepModels,
+    props.stepEfforts,
+    props.onToggleStepAgent,
+    props.onConfigureStepAgent,
+    props.onViewAgentResult,
+  ])
+
+  const supportedProviders = useMemo(
+    () => props.catalog.providers.map((provider) => provider.id),
+    [props.catalog],
+  )
 
   return (
-    <Box component="section" className="canvas-shell" aria-label="Workflow graph">
-      <FlowBody {...props} graph={nodesGraph} fitViewKey={fitViewKey} />
-    </Box>
+    <AgentCatalogProvider value={{ catalog: props.catalog, transport: props.transport, supportedProviders }}>
+      <Box component="section" className="canvas-shell" aria-label="Workflow graph">
+        <FlowBody {...props} graph={nodesGraph} fitViewKey={fitViewKey} />
+      </Box>
+    </AgentCatalogProvider>
   )
 }

@@ -8,7 +8,7 @@ description: >-
 
 # nax Workflows
 
-`nax` runs multi-step Netlify Agent Runner workflows across Claude, Gemini, and Codex. Use this skill when a user asks to run one of the bundled flows, recover a stuck workflow, diagnose Agent Runner failures, or add a new flow.
+`nax` runs multi-step Netlify Agent Runner workflows across Claude, Codex, Gemini, and OpenCode. Use this skill when a user asks to run one of the bundled flows, recover a stuck workflow, diagnose Agent Runner failures, or add a new flow.
 
 ## Core Commands
 
@@ -17,7 +17,7 @@ nax run review
 nax run ideas
 nax run do-next
 nax run <flow>
-nax run agent <claude|codex|gemini> "<prompt>"
+nax run agent <claude|codex|gemini|opencode> "<prompt>"
 nax run --retry <run-id>
 nax init
 nax handoff
@@ -34,8 +34,12 @@ Useful flags:
 --transport github-actions      # same GitHub Actions transport, older explicit name
 --transport netlify-api         # orchestrate through Netlify CLI/API from this machine
 --branch <branch-or-pr>     # branch name or PR selector like '#123'
---models <list>             # override agents for runnable steps
---step-models <step=models> # override agents for a specific step
+--agents <list>                       # select providers for runnable steps
+--models <agent=model>                # assign a real model; repeatable
+--efforts <agent=effort>              # assign reasoning effort; repeatable
+--step-agents <step=agents>           # select providers for one step
+--step-models <step:agent=model>      # assign one step model; repeatable
+--step-efforts <step:agent=effort>    # assign one step effort; repeatable
 --step <id>                 # run only one step
 --from-step <id>            # continue from a step through the end
 --timeout-minutes <n>       # per-step wait timeout
@@ -57,7 +61,7 @@ Useful flags:
 Use for code review. Steps:
 
 1. `review` - Claude, Gemini, and Codex independently review.
-2. `cross-review` - each model critiques the other models' findings.
+2. `cross-review` - each agent critiques the other agents' findings.
 3. `synthesize` - Codex synthesizes the final consensus.
 
 ### `ideas`
@@ -65,8 +69,8 @@ Use for code review. Steps:
 Use for project improvement ideation. Steps:
 
 1. `ideate` - Claude, Gemini, and Codex propose ideas.
-2. `cross-score` - each model scores the other models' ideas.
-3. `react` - each model reacts to criticism and defends or concedes.
+2. `cross-score` - each agent scores the other agents' ideas.
+3. `react` - each agent reacts to criticism and defends or concedes.
 4. `synthesize` - Codex produces a ranked plan.
 
 ### `do-next`
@@ -80,6 +84,7 @@ Use to pick the next best task. Steps:
 
 - Prefer `--transport netlify-api` when the user wants live local progress, resume state, or direct Netlify API control.
 - Prefer `--transport github` / `--transport github-actions` when the user wants remote reproducibility and GitHub Actions logs.
+- Pinned model or effort settings require `netlify-api`; Auto omits both fields.
 - Warn that local uncommitted/unpushed changes are invisible to remote Netlify agent runners.
 - Use `--branch '#123'` for PR-specific runs when the user references a PR number.
 - Use `--step` only for deliberate partial reruns; otherwise resume/retry saved Netlify API state.
@@ -167,9 +172,9 @@ Flows live in:
 <flows-dir>/<id>/prompts/*.md
 ```
 
-Flow files can be YAML, JSON, JavaScript, TypeScript, or TOML. TypeScript flow
-files need a TypeScript runtime such as `tsx` or `ts-node` available in the
-project.
+Flow files can be YAML, JSON, TOML, or a JavaScript/TypeScript module containing
+a single JSON5-compatible static object export. Dynamic module code is blocked
+by workflow discovery safe mode.
 
 Each step declares:
 
@@ -179,6 +184,8 @@ Each step declares:
 - `action`: `issue` or `comment`
 - `submit`: `new-run` or `follow-up`
 - `agents`
+- `models` (provider-keyed real model IDs)
+- `efforts` (provider-keyed reasoning settings)
 - optional `input` from earlier steps
 - `waitFor: agent-results`
 

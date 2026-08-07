@@ -27,7 +27,9 @@ nax list --flows-dir tools/nax/flows
 NAX_FLOWS_DIRS=tools/nax/flows,.github/nax-flows nax list
 ```
 
-Project config files may be `nax.config.yml`, `nax.config.yaml`, `nax.config.json`, or `nax.config.toml`. JavaScript and TypeScript config files are blocked by safe mode during flow discovery.
+Project config files may use YAML, JSON, TOML, or a JavaScript/TypeScript file
+containing a single JSON5-compatible static object export. Dynamic module code
+is blocked during flow discovery.
 
 ## Prompt delivery
 

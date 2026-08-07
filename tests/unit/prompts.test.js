@@ -14,7 +14,7 @@ const fakePrompt = {
 test('buildIssueBody renders Resolves #N footer when resolves array is provided', () => {
   const out = buildIssueBody({
     runner: '@netlify',
-    model: 'claude',
+    agent: 'claude',
     prompt: fakePrompt,
     context: '',
     roundResults: '',
@@ -32,7 +32,7 @@ test('buildIssueBody renders Resolves #N footer when resolves array is provided'
 test('buildIssueBody Resolves footer sits before the workflow-prompt marker', () => {
   const out = buildIssueBody({
     runner: '@netlify',
-    model: 'claude',
+    agent: 'claude',
     prompt: fakePrompt,
     context: '',
     roundResults: '',
@@ -49,7 +49,7 @@ test('buildIssueBody Resolves footer sits before the workflow-prompt marker', ()
 test('buildIssueBody omits Resolves footer when array is empty or missing', () => {
   const without = buildIssueBody({
     runner: '@netlify',
-    model: 'claude',
+    agent: 'claude',
     prompt: fakePrompt,
     context: '',
     roundResults: '',
@@ -59,7 +59,7 @@ test('buildIssueBody omits Resolves footer when array is empty or missing', () =
 
   const empty = buildIssueBody({
     runner: '@netlify',
-    model: 'claude',
+    agent: 'claude',
     prompt: fakePrompt,
     context: '',
     roundResults: '',
@@ -73,29 +73,29 @@ test('buildIssueTitle uses the standard format for non-summarize prompts', () =>
   const reviewPrompt = { name: 'review', title: 'Review' }
   const out = buildIssueTitle({
     date: '2026-05-09',
-    model: 'claude',
+    agent: 'claude',
     prompt: reviewPrompt,
-    sourceModels: ['claude', 'gemini', 'codex'],
+    sourceAgents: ['claude', 'gemini', 'codex'],
   })
   assert.equal(out, '2026-05-09 Claude Review')
 })
 
-test('buildIssueTitle for summarize-consensus lists source models and synthesizer', () => {
+test('buildIssueTitle for summarize-consensus lists source agents and synthesizer', () => {
   const out = buildIssueTitle({
     date: '2026-05-09',
-    model: 'codex',
+    agent: 'codex',
     prompt: fakePrompt,
-    sourceModels: ['claude', 'gemini', 'codex'],
+    sourceAgents: ['claude', 'gemini', 'codex'],
   })
   assert.equal(out, '2026-05-09 Summarize Claude/Gemini/Codex Consensus using Codex')
 })
 
-test('buildIssueTitle for summarize-consensus falls back to default format when sourceModels is empty', () => {
+test('buildIssueTitle for summarize-consensus falls back to default format when sourceAgents is empty', () => {
   const out = buildIssueTitle({
     date: '2026-05-09',
-    model: 'codex',
+    agent: 'codex',
     prompt: fakePrompt,
-    sourceModels: [],
+    sourceAgents: [],
   })
   assert.equal(out, '2026-05-09 Codex Summarize Consensus')
 })
@@ -103,10 +103,10 @@ test('buildIssueTitle for summarize-consensus falls back to default format when 
 test('buildIssueTitle honors an explicit --title even for summarize-consensus', () => {
   const out = buildIssueTitle({
     date: '2026-05-09',
-    model: 'codex',
+    agent: 'codex',
     prompt: fakePrompt,
     title: 'Custom Title',
-    sourceModels: ['claude', 'gemini', 'codex'],
+    sourceAgents: ['claude', 'gemini', 'codex'],
   })
   assert.equal(out, '2026-05-09 Codex Custom Title')
 })

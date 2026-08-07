@@ -40,7 +40,7 @@ const ROUND_LABEL_BY_PROMPT = {
  *   fromIssues?: string,
  *   fromIssue?: string,
  *   allReplies?: boolean,
- *   models?: string,
+ *   agents?: string,
  *   labels?: string,
  *   label?: string,
  *   date?: string,
@@ -60,7 +60,7 @@ const ROUND_LABEL_BY_PROMPT = {
  *
  * GitHub issue creation plan item.
  * @typedef {{
- *   model: string,
+ *   agent: string,
  *   promptName: string,
  *   title: string,
  *   body: string,
@@ -304,10 +304,10 @@ function loadPullRequestMeta({ repo, prNumber }) {
 }
 
 /** @param {string} title @returns {string} */
-function inferModelFromIssueTitle(title) {
-  const match = String(title).match(/\b(claude|gemini|codex)\b/i)
+function inferAgentFromIssueTitle(title) {
+  const match = String(title).match(/\b(claude|gemini|codex|opencode)\b/i)
   if (!match) {
-    throw new Error(`Could not infer model from issue title "${title}"`)
+    throw new Error(`Could not infer agent from issue title "${title}"`)
   }
   return match[1].toLowerCase()
 }
@@ -396,7 +396,7 @@ function printPlan(plan, { dryRun }) {
   console.log(`\n${dryRun ? 'Dry run' : 'Create issues'}: ${plan.repo}`)
   for (const issue of plan.issues) {
     console.log(`\n- ${issue.title}`)
-    console.log(`  model: ${issue.model}`)
+    console.log(`  agent: ${issue.agent}`)
     console.log(`  prompt: ${issue.promptName}`)
     console.log(`  body: ${issue.body.length} chars / ${utf8ByteLength(issue.body).toLocaleString()} bytes`)
   }
@@ -413,7 +413,7 @@ function printCommentPlan(plan, { dryRun }) {
     } else {
       console.log(`  target: issue #${issue.targetNumber}`)
     }
-    console.log(`  model: ${issue.model}`)
+    console.log(`  agent: ${issue.agent}`)
     console.log(`  prompt: ${issue.promptName}`)
     console.log(`  body: ${issue.body.length} chars / ${utf8ByteLength(issue.body).toLocaleString()} bytes`)
   }
@@ -433,7 +433,7 @@ function printCommentPlan(plan, { dryRun }) {
  */
 function buildPlan({ promptName, prompt: promptOverride, options, context = '', roundResults = '', roundResultsRaw = [] }) {
   const prompt = promptOverride || loadPrompt(promptName)
-  const models = parseCsv(options.models).length > 0 ? parseCsv(options.models) : ['claude', 'gemini', 'codex']
+  const agents = parseCsv(options.agents).length > 0 ? parseCsv(options.agents) : ['claude', 'gemini', 'codex']
   const labels = parseCsv(options.labels || options.label)
   const date = options.date || getLocalDate()
   const repo = resolveRepo(options.repo)
@@ -444,15 +444,15 @@ function buildPlan({ promptName, prompt: promptOverride, options, context = '', 
           .map((result) => result?.issueNumber)
           .filter((number) => Number.isFinite(number))
       : []
-  const sourceModels = Array.isArray(roundResultsRaw)
-    ? roundResultsRaw.map((result) => result?.model).filter(Boolean)
+  const sourceAgents = Array.isArray(roundResultsRaw)
+    ? roundResultsRaw.map((result) => result?.agent).filter(Boolean)
     : []
 
-  const issues = models.map((model) => ({
-    model,
+  const issues = agents.map((agent) => ({
+    agent,
     promptName: String(prompt.name || promptName),
-    title: buildIssueTitle({ date, model, prompt, title: options.title, sourceModels }),
-    body: buildIssueBody({ runner, model, prompt, context, roundResults, date, resolves }),
+    title: buildIssueTitle({ date, agent, prompt, title: options.title, sourceAgents }),
+    body: buildIssueBody({ runner, agent, prompt, context, roundResults, date, resolves }),
   }))
 
   return { repo, labels, issues }
@@ -482,7 +482,7 @@ function buildCommentPlan({ promptName, prompt: promptOverride, options, context
 
   const issues = issueNumbers.map((issueNumber) => {
     const target = resolveCommentTarget({ repo, issueNumber })
-    const model = inferModelFromIssueTitle(target.sourceIssueTitle)
+    const agent = inferAgentFromIssueTitle(target.sourceIssueTitle)
     return {
       issueNumber,
       issueTitle: target.sourceIssueTitle,
@@ -493,10 +493,10 @@ function buildCommentPlan({ promptName, prompt: promptOverride, options, context
       targetNumber: target.targetNumber,
       targetTitle: target.targetTitle,
       targetUrl: target.targetUrl,
-      model,
+      agent,
       promptName: String(prompt.name || promptName),
       title: target.sourceIssueTitle,
-      body: buildIssueBody({ runner, model, prompt, context, roundResults, date }),
+      body: buildIssueBody({ runner, agent, prompt, context, roundResults, date }),
     }
   })
 
@@ -519,7 +519,7 @@ function githubResultsToSourceRuns(results = []) {
         ].filter(Boolean).join('\n\n')).join('\n\n')
       : 'No agent reply was found.'
     runs.push({
-      agent: result.model || inferModelFromIssueTitle(result.issueTitle) || 'agent',
+      agent: result.agent || inferAgentFromIssueTitle(result.issueTitle) || 'agent',
       sourceStep: result.issueNumber ? `issue #${result.issueNumber}` : '',
       runnerId: result.issueUrl || '',
       resultText: body,
@@ -545,7 +545,7 @@ module.exports = {
   fetchRoundResultsForOptions,
   formatGithubRoundResults,
   githubResultsToSourceRuns,
-  inferModelFromIssueTitle,
+  inferAgentFromIssueTitle,
   joinContext,
   loadIssueMeta,
   loadPullRequestMeta,

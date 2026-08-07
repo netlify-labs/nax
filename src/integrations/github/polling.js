@@ -168,7 +168,7 @@ function githubActionRunMatchesResult(actionRun, result, run = {}) {
   const issueTitle = normalizeGithubActionTitle(result?.issueTitle)
   if (issueTitle && title === issueTitle) return true
   if (issueTitle && title.includes(issueTitle)) return true
-  const agent = normalizeGithubActionTitle(run.agent || result?.model)
+  const agent = normalizeGithubActionTitle(run.agent || result?.agent)
   return Boolean(agent && title.includes(agent))
 }
 
@@ -287,7 +287,7 @@ function findGithubActionRunFailures({
     failures.push({
       issueNumber: item.result.issueNumber,
       issueTitle: item.result.issueTitle,
-      agent: item.run.agent || item.result.model || '',
+      agent: item.run.agent || item.result.agent || '',
       url: actionRun.url || '',
       actionRunId: actionRun.databaseId || '',
       createdAt: actionRun.createdAt || '',

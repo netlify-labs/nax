@@ -55,7 +55,7 @@ test('projectWorkflowGraph fills missing selected agent statuses from active ste
       status: 'running',
       runs: [{ agent: 'codex', status: 'completed' }],
     }),
-    stepModels: {},
+    stepAgents: {},
     stepStatuses: {},
     stepAgentStatuses: {},
   })
@@ -75,7 +75,7 @@ test('projectWorkflowGraph completes active step when all selected agents are co
       selectedAgents: ['codex'],
       runs: [{ agent: 'codex', status: 'submitted' }],
     }),
-    stepModels: {},
+    stepAgents: {},
     stepStatuses: {},
     stepAgentStatuses: {
       review: { codex: 'completed' },
@@ -93,7 +93,7 @@ test('projectWorkflowGraph keeps terminal step status ahead of stale active run 
       selectedAgents: ['codex'],
       runs: [{ agent: 'codex', status: 'submitted', runnerId: 'runner-1' }],
     }),
-    stepModels: {},
+    stepAgents: {},
     stepStatuses: {
       review: 'completed',
     },

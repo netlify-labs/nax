@@ -31,11 +31,6 @@ steps:
     prompt: prompts/2_cross-score.md
     action: comment
     submit: follow-up
-    agents:
-      - claude
-      - gemini
-      - codex
-      - opencode
     input:
       - step: ideate
         results: all
@@ -47,11 +42,6 @@ steps:
     prompt: prompts/3_react.md
     action: comment
     submit: follow-up
-    agents:
-      - claude
-      - gemini
-      - codex
-      - opencode
     input:
       - step: ideate
         results: all

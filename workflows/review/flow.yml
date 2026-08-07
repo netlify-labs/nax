@@ -31,11 +31,6 @@ steps:
     prompt: prompts/2_cross-review.md
     action: comment
     submit: follow-up
-    agents:
-      - claude
-      - gemini
-      - codex
-      - opencode
     input:
       - step: review
         results: all

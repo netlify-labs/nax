@@ -128,15 +128,37 @@ function clampEffortForModel(agent, model, effort) {
  * Resolve a lineup into unique, validated agent instances (two-pass: intent -> transport -> resolve).
  *
  * @param {Array<string|Record<string, unknown>>} lineup
- * @param {{ requestedTransport?: string }} [options]
+ * @param {{
+ *   requestedTransport?: string,
+ *   models?: Record<string, string>,
+ *   efforts?: Record<string, string>,
+ * }} [options]
  * @returns {ResolvedLineup}
  */
-function resolveLineup(lineup, { requestedTransport = 'auto' } = {}) {
+function resolveLineup(lineup, { requestedTransport = 'auto', models = {}, efforts = {} } = {}) {
   if (!Array.isArray(lineup)) throw instanceError('invalid_lineup', 'Lineup must be an array of entries.')
 
   // ---- Pass 1: normalize intent (transport-independent) ----
   const entries = lineup.map((entry) => expandEntry(entry))
   const flat = entries.flat()
+
+  // Legacy bridge: provider-keyed models/efforts maps apply to OPEN (bare) instances,
+  // single-per-provider. A provider used more than once makes the map ambiguous.
+  const mapProviders = new Set([...Object.keys(models || {}), ...Object.keys(efforts || {})])
+  if (mapProviders.size) {
+    const counts = {}
+    for (const it of flat) counts[it.agent] = (counts[it.agent] || 0) + 1
+    for (const agent of mapProviders) {
+      if ((counts[agent] || 0) > 1) {
+        throw instanceError('ambiguous_provider_map', `Provider "${agent}" appears more than once in this step; its models/efforts map entry is ambiguous. Put the model/effort inline on each object entry instead.`)
+      }
+    }
+    for (const it of flat) {
+      if (!cleaned(it.model) && models && models[it.agent] != null) it.model = String(models[it.agent])
+      if (!cleaned(it.effort) && efforts && efforts[it.agent] != null) it.effort = String(efforts[it.agent])
+    }
+  }
+
   const providerCounts = {}
   let anyPinnedIntent = false
   for (const it of flat) {

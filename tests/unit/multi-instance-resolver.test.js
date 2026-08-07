@@ -120,3 +120,30 @@ test('agentInstanceId encodes auto placeholders', () => {
   assert.equal(agentInstanceId('claude', undefined, undefined), 'claude:auto:auto')
   assert.equal(agentInstanceId('claude', 'claude-opus-5', undefined), 'claude:claude-opus-5:auto')
 })
+
+test('legacy models/efforts map bridges to the single bare instance of a provider', () => {
+  const r = resolveLineup(['claude', 'gemini'], {
+    models: { claude: 'claude-opus-4-8' },
+    efforts: { claude: 'high' },
+  })
+  assert.equal(r.instances[0].id, 'claude:claude-opus-4-8:high')
+  assert.equal(r.instances[0].resolvedFrom, 'pinned')
+  assert.equal(r.instances[1].id, 'gemini:auto:auto') // untouched (no map entry)
+  assert.equal(r.forcedNetlifyApi, true) // bridged model is a pin
+})
+
+test('legacy map is ambiguous when a provider appears more than once', () => {
+  assert.throws(
+    () => resolveLineup([{ agent: 'claude', models: ['claude-opus-5', 'claude-opus-4-8'] }], {
+      models: { claude: 'claude-fable-5' },
+    }),
+    { code: 'ambiguous_provider_map' },
+  )
+})
+
+test('inline model on an object entry wins over the legacy map', () => {
+  const r = resolveLineup([{ agent: 'claude', model: 'claude-opus-5' }], {
+    models: { claude: 'claude-fable-5' },
+  })
+  assert.equal(r.instances[0].id, 'claude:claude-opus-5:auto')
+})

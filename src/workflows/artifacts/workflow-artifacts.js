@@ -25,6 +25,22 @@ function safeArtifactName(value, fallback = 'run') {
   return slug || fallback
 }
 
+/**
+ * Base filename for a run's artifacts. A step with a single instance of a provider keeps the
+ * legacy provider-named path (`claude`) for back-compat; a provider with multiple instances in
+ * the step gets an instance-scoped slug (`claude__opus-5__high`) so the runs never collide.
+ * @param {{ runs?: Array<{ agent?: string }> } | undefined} step
+ * @param {{ agent?: string, model?: string, effort?: string, instanceId?: string }} run
+ * @returns {string}
+ */
+function runArtifactBase(step, run) {
+  const provider = safeArtifactName(run.agent || 'agent')
+  const runs = Array.isArray(step && step.runs) ? step.runs : []
+  const sameProvider = runs.filter((candidate) => (candidate.agent || '') === (run.agent || ''))
+  if (sameProvider.length <= 1 || !run.instanceId) return provider
+  return `${provider}__${safeArtifactName(run.model || 'auto')}__${safeArtifactName(run.effort || 'auto')}`
+}
+
 function stepDirectoryName(step = {}, ordinal = 1) {
   return `${String(ordinal).padStart(2, '0')}-${safeArtifactName(step.id || step.title, 'step')}`
 }
@@ -485,7 +501,7 @@ function buildStepMarkdown({ runState, step, linkPrefix = '' }) {
       }
       if (canonicalLinks.length > 0) lines.push(`- Canonical artifacts: ${canonicalLinks.join(', ')}`)
     }
-    const filePath = path.join(runsArtifactsDir(runState, step), `${safeArtifactName(run.agent || 'agent')}.md`)
+    const filePath = path.join(runsArtifactsDir(runState, step), `${runArtifactBase(step, run)}.md`)
     const markdown = readFileIfExists(filePath).trim()
     if (markdown) {
       const nestedMarkdown = markdown.replace(/^# .+\n+/, '').trim()
@@ -592,7 +608,7 @@ function writeAgentFiles(runState, step, run, options = {}) {
   const dir = runsArtifactsDir(runState, step)
   ensureDir(dir)
   const canonical = persistCanonicalAgentArtifacts(runState, step, run, options)
-  const agent = safeArtifactName(run.agent || 'agent')
+  const agent = runArtifactBase(step, run)
   let attemptNumber = attemptNumberForRun(dir, run)
   if (!attemptNumber) attemptNumber = nextAttemptNumber(dir, agent)
   const json = buildAgentJson({ runState, step, run, attemptNumber })
@@ -733,6 +749,7 @@ module.exports = {
   persistStepArtifacts,
   persistWorkflowArtifacts,
   resultUrlForRun,
+  runArtifactBase,
   safeArtifactName,
   stepArtifactsDir,
   stepDirectoryName,

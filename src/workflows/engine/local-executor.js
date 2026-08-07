@@ -61,6 +61,7 @@ const {
   startSubmissionHeartbeat,
   submissionFailureSummary,
 } = require('./progress')
+const { MAX_PARALLEL_RUNS, mapInWaves } = require('./wave-scheduler')
 
 /**
  * CLI/workflow options consumed by local Netlify API execution.
@@ -813,7 +814,7 @@ async function executeLocalFlow({ flow, steps, options, runState, projectRoot, c
     })
     let submissions
     try {
-      submissions = await Promise.allSettled(runs.map(async (run, index) => {
+      submissions = await mapInWaves(runs, MAX_PARALLEL_RUNS, async (run, index) => {
         const label = `${titleCase(run.agent)} ${prompt.title}`
         pendingSubmissionLabels.add(label)
         console.log(`- ${label}: submitting${run.existingRunnerId ? ' follow-up' : ''}...`)
@@ -872,7 +873,7 @@ async function executeLocalFlow({ flow, steps, options, runState, projectRoot, c
         } finally {
           pendingSubmissionLabels.delete(label)
         }
-      }))
+      })
     } finally {
       stopSubmissionHeartbeat()
     }

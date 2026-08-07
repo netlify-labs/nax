@@ -1972,6 +1972,23 @@ test('localRetryCandidates finds failed local runs by step and agent', () => {
   assert.equal(candidates[0].runIndex, 0)
 })
 
+test('localRetryCandidates scopes retries to one same-provider instance', () => {
+  const runState = {
+    steps: [{
+      id: 'review',
+      runs: [
+        { agent: 'claude', instanceId: 'claude:opus:high', runnerId: 'runner-opus', status: 'failed' },
+        { agent: 'claude', instanceId: 'claude:sonnet:high', runnerId: 'runner-sonnet', status: 'failed' },
+        { agent: 'claude', instanceId: 'claude:haiku:low', runnerId: 'runner-haiku', status: 'completed' },
+      ],
+    }],
+  }
+
+  const candidates = localRetryCandidates(runState, { instanceId: 'claude:sonnet:high' })
+  assert.equal(candidates.length, 1)
+  assert.equal(candidates[0].run.runnerId, 'runner-sonnet')
+})
+
 test('completeLocalStep saves workflow state as each local agent finishes', async () => {
   const projectRoot = tmpRoot()
   const runState = {

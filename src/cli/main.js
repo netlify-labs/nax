@@ -2296,9 +2296,10 @@ function handleClean(target = '', options = {}) {
  *   flowId?: string,
  *   stepId?: string,
  *   agent?: string,
+ *   instanceId?: string,
  * }} [options]
  */
-function findRunStateForRetry(projectRoot, { runId, flowId, stepId, agent } = {}) {
+function findRunStateForRetry(projectRoot, { runId, flowId, stepId, agent, instanceId } = {}) {
   const states = listRunStates(projectRoot)
   if (runId) {
     const matched = states.find((state) => state.runId === runId)
@@ -2308,7 +2309,7 @@ function findRunStateForRetry(projectRoot, { runId, flowId, stepId, agent } = {}
   const matched = states.find((state) => {
     if (!isNetlifyApiTransport(state.transport)) return false
     if (flowId && state.flowId !== flowId) return false
-    return localRetryCandidates(state, { stepId, agent }).length > 0
+    return localRetryCandidates(state, { stepId, agent, instanceId }).length > 0
   })
   if (!matched) throw new Error('Could not find a failed Netlify API run to retry. Pass a run id explicitly.')
   return matched
@@ -2321,6 +2322,7 @@ async function handleRetry(runId, options) {
     flowId: options.flow,
     stepId: options.step,
     agent: options.agent,
+    instanceId: options.instance,
   })
   if (!isNetlifyApiTransport(runState.transport)) {
     throw new Error(`Run ${runState.runId} uses ${runState.transport || 'unknown'} transport; retry currently supports Netlify API runs only.`)
@@ -2333,17 +2335,19 @@ async function handleRetry(runId, options) {
   const candidates = localRetryCandidates(runState, {
     stepId: options.step,
     agent: options.agent,
+    instanceId: options.instance,
   })
   if (candidates.length === 0) {
     throw new Error(`No retryable failed agents found for ${runState.runId}. Use nax handoff ${runState.runId} to work from completed results.`)
   }
   if (candidates.length > 1) {
-    const choices = candidates.map(({ step, run }) => `${step.id}:${run.agent}`).join(', ')
-    throw new Error(`More than one failed Netlify API runner can be retried (${choices}). Pass --step and --agent.`)
+    const choices = candidates.map(({ step, run }) => `${step.id}:${run.instanceId || run.agent}`).join(', ')
+    throw new Error(`More than one failed Netlify API runner can be retried (${choices}). Pass --step and --instance.`)
   }
 
   trackRunState(runState)
   const [{ step, stepIndex, run, runIndex }] = candidates
+  const retryingPartialStep = step.status === 'completed_with_failures'
   const flowStep = flow.steps.find((candidate) => candidate.id === step.id)
   if (!flowStep) throw new Error(`Flow ${flow.id} no longer contains step ${step.id}.`)
 
@@ -2376,7 +2380,7 @@ async function handleRetry(runId, options) {
     throw new Error(`Could not build a shorter prompt for ${run.agent} ${step.id}.`)
   }
 
-  console.log(`Retrying ${titleCase(run.agent)} ${step.title}`)
+  console.log(`Retrying ${run.instanceLabel || run.instanceId || titleCase(run.agent)} ${step.title}`)
   console.log(`Run: ${runState.runId}`)
   console.log(`Runner: ${run.runnerId}`)
   console.log(`Prompt: ${String(run.promptText || '').length} -> ${compactPromptText.length} chars`)
@@ -2457,8 +2461,20 @@ async function handleRetry(runId, options) {
   }
   saveRunState(runState)
 
-  if (step.status !== 'completed') {
+  if (completedRun.status !== 'completed') {
     throw new Error(`Retried ${run.agent} run did not complete successfully.`)
+  }
+
+  if (retryingPartialStep) {
+    if ((runState.steps || []).some((candidate) => candidate.status === 'completed_with_failures' || candidate.status === 'failed')) {
+      runState.status = 'completed_with_failures'
+      saveRunState(runState)
+    } else {
+      markRunCompleted(runState)
+    }
+    clearTrackedRunState(runState)
+    printSuccessBox({ flow, runState, transport: NETLIFY_API_TRANSPORT, projectRoot })
+    return
   }
 
   const completedStepStates = completedStepMapFromRunState(runState)

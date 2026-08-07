@@ -10,13 +10,14 @@ const path = require('node:path')
 const ROOT = path.join(__dirname, '..', '..')
 const read = (rel) => fs.readFileSync(path.join(ROOT, rel), 'utf8')
 
-test('provider-keyed anchors still present (re-key tripwires)', () => {
-  // follow-up continuation currently matches by provider
-  assert.match(read('src/workflows/followups/plan.js'), /agent === targetAgent/)
-  // step status is currently binary
+test('multi-instance execution anchors stay instance-aware', () => {
+  // follow-up planning retains instance identity
+  assert.match(read('src/workflows/engine/local-executor.js'), /sourceRun\.instanceId === instance\.id/)
+  // step status derives partial success across instances
   assert.match(read('src/workflows/engine/local-executor.js'), /function localStepStatus/)
-  // submissions currently fan out unbounded
-  assert.match(read('src/workflows/engine/local-executor.js'), /Promise\.allSettled\(runs\.map/)
+  assert.match(read('src/workflows/engine/local-executor.js'), /waitForLocalRunSubset/)
+  // each scheduler worker holds its slot through result readiness
+  assert.match(read('src/workflows/engine/local-executor.js'), /mapInWaves[\s\S]+waitForLocalRunSubset/)
   // transport currently derived from materialized config
   assert.match(read('src/cli/main.js'), /materializedAgentConfigurations/)
   // multi-input source collector preserves the source step

@@ -435,7 +435,7 @@ test('loadFlow rejects unsupported wait modes', async () => {
 })
 
 test('validateFlowStructure accepts a valid bundled resolved flow', async () => {
-  const flow = await loadFlow('error-handling')
+  const flow = await loadFlow('review')
   assert.deepEqual(validateFlowStructure(flow), { errors: [], warnings: [] })
 })
 

@@ -1,5 +1,5 @@
-// Wave scheduler tests (nax-2rx6.4.3): bounds max simultaneous in-flight workers to the cap,
-// preserves order, and returns Promise.allSettled-shaped results.
+// Lifecycle-slot scheduler tests (nax-2rx6.4.3): bounds non-terminal workers to the cap,
+// refills a slot immediately, preserves order, and returns Promise.allSettled-shaped results.
 const assert = require('node:assert/strict')
 const { test } = require('node:test')
 const { mapInWaves, MAX_PARALLEL_RUNS } = require('../../src/workflows/engine/wave-scheduler')
@@ -38,16 +38,39 @@ test('returns Promise.allSettled-shaped results incl. rejections', async () => {
   assert.equal(results[2].status, 'fulfilled')
 })
 
-test('a step within the cap is a single wave (no behavior change)', async () => {
-  let waves = 0
+test('a step within the cap starts every lifecycle worker immediately', async () => {
+  let starts = 0
   let inFlight = 0
   const items = [1, 2, 3, 4]
-  await mapInWaves(items, MAX_PARALLEL_RUNS, async (item) => {
-    if (inFlight === 0) waves += 1
+  const scheduled = mapInWaves(items, MAX_PARALLEL_RUNS, async (item) => {
+    starts += 1
     inFlight += 1
     await new Promise((resolve) => setTimeout(resolve, 2))
     inFlight -= 1
     return item
   })
-  assert.equal(waves, 1, '<= cap items should submit in one wave')
+  await new Promise((resolve) => setImmediate(resolve))
+  assert.equal(starts, 4)
+  await scheduled
+})
+
+test('starts the sixth lifecycle as soon as one of the first five becomes terminal', async () => {
+  /** @type {Array<() => void>} */
+  const finish = []
+  const started = []
+  const scheduled = mapInWaves(Array.from({ length: 9 }, (_, index) => index), 5, async (item) => {
+    started.push(item)
+    await new Promise((resolve) => { finish[item] = () => resolve() })
+    return item
+  })
+
+  await new Promise((resolve) => setImmediate(resolve))
+  assert.deepEqual(started, [0, 1, 2, 3, 4])
+  finish[2]()
+  await new Promise((resolve) => setImmediate(resolve))
+  assert.deepEqual(started, [0, 1, 2, 3, 4, 5])
+  for (const item of started) finish[item]()
+  await new Promise((resolve) => setImmediate(resolve))
+  for (let item = 6; item < 9; item += 1) finish[item]()
+  await scheduled
 })

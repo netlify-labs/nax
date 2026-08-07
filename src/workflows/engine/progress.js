@@ -249,7 +249,7 @@ function agentStepCompletionSummary({ stepTitle, runs = [], failedCount = 0 } = 
   const rows = runs.map((run) => {
     const usage = run.usage || {}
     return {
-      agent: `${titleCase(run.agent || 'agent')}:`,
+      agent: `${run.instanceLabel || run.instanceId || titleCase(run.agent || 'agent')}:`,
       status: run.status === 'completed' ? 'complete' : run.status || 'unknown',
       duration: formatDurationMs(runDurationMs(run)),
       credits: formatCreditsValue(usage.totalCreditsCost),
@@ -307,7 +307,7 @@ function shouldPollLocalRun(run) {
 /**
  * Finds failed local runs eligible for retry.
  * @param {ProgressWorkflowRunState} runState
- * @param {{ stepId?: string, agent?: string }} [options]
+ * @param {{ stepId?: string, agent?: string, instanceId?: string }} [options]
  * @returns {Array<{
  *   step: ProgressWorkflowStep,
  *   stepIndex: number,
@@ -315,8 +315,9 @@ function shouldPollLocalRun(run) {
  *   runIndex: number,
  * }>}
  */
-function localRetryCandidates(runState, { stepId, agent } = {}) {
+function localRetryCandidates(runState, { stepId, agent, instanceId } = {}) {
   const requestedAgent = String(agent || '').trim().toLowerCase()
+  const requestedInstanceId = String(instanceId || '').trim()
   return (runState.steps || []).flatMap((step, stepIndex) => {
     if (stepId && step.id !== stepId) return []
     return (step.runs || []).map((run, runIndex) => ({
@@ -326,6 +327,7 @@ function localRetryCandidates(runState, { stepId, agent } = {}) {
       runIndex,
     })).filter(({ run }) => {
       if (requestedAgent && String(run.agent || '').toLowerCase() !== requestedAgent) return false
+      if (requestedInstanceId && String(run.instanceId || '') !== requestedInstanceId) return false
       if (!run.runnerId) return false
       return run.status === 'failed' || run.status === 'timeout'
     })
@@ -568,7 +570,7 @@ function formatDidYouKnowLines(useCase, {
 /** @param {ProgressRunEvent} [event] @param {{ agentWidth?: number, stateWidth?: number }} [options] @returns {string} */
 function formatNonTtyRunStatusMessage(event = {}, { agentWidth = 0, stateWidth = 0 } = {}) {
   const run = event.run || {}
-  const agent = String(run.agent || 'agent')
+  const agent = String(run.instanceLabel || run.instanceId || run.agent || 'agent')
   const id = run.runnerId || run.issueNumber || ''
   const state = String(event.state || run.status || 'unknown')
   return `${agent.padEnd(agentWidth)} ${id}: ${state.padEnd(stateWidth)}`
@@ -790,7 +792,7 @@ function makeStepProgressReporter({
       redraw()
     },
     updateRun: (event) => {
-      const row = rowForAgent(event.run?.agent)
+      const row = rowForAgent(event.run?.instanceLabel || event.run?.instanceId || event.run?.agent)
       row.hasRunUpdate = true
       row.state = event.state || row.state
       if (event.terminalSuccess || event.run?.status === 'completed') {

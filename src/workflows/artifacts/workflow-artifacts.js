@@ -124,8 +124,8 @@ function readJsonIfExists(filePath) {
   }
 }
 
-function attemptNumberForRun(runsDir, run) {
-  const agent = safeArtifactName(run.agent || 'agent')
+function attemptNumberForRun(runsDir, step, run) {
+  const agent = runArtifactBase(step, run)
   const attempts = existingAttemptFiles(runsDir, agent)
   for (const attempt of attempts) {
     const parsed = readJsonIfExists(path.join(runsDir, attempt.name))
@@ -405,7 +405,7 @@ function attemptsForAgent(runsDir, agent) {
 
 function runArtifactLinks(runState, step, run, linkPrefix = '') {
   const runsDir = runsArtifactsDir(runState, step)
-  const agent = safeArtifactName(run.agent || 'agent')
+  const agent = runArtifactBase(step, run)
   const links = []
   const latestMarkdown = path.join(runsDir, `${agent}.md`)
   const latestJson = path.join(runsDir, `${agent}.json`)
@@ -448,7 +448,7 @@ function buildStepJson({ runState = {}, step = {}, ordinal = stepOrdinal(runStat
     agents: step.agents || [],
     usage,
     runs: (step.runs || []).map((run) => {
-      const agent = safeArtifactName(run.agent || 'agent')
+      const agent = runArtifactBase(step, run)
       return {
         agent: run.agent || '',
         ...(run.model ? { model: run.model } : {}),
@@ -609,7 +609,7 @@ function writeAgentFiles(runState, step, run, options = {}) {
   ensureDir(dir)
   const canonical = persistCanonicalAgentArtifacts(runState, step, run, options)
   const agent = runArtifactBase(step, run)
-  let attemptNumber = attemptNumberForRun(dir, run)
+  let attemptNumber = attemptNumberForRun(dir, step, run)
   if (!attemptNumber) attemptNumber = nextAttemptNumber(dir, agent)
   const json = buildAgentJson({ runState, step, run, attemptNumber })
   const markdown = buildAgentMarkdown({ runState, step, run })

@@ -233,6 +233,7 @@ function addRetryOptions(command) {
   return command
     .option('--retry [run-id]', 'Retry one failed Netlify API agent run and continue the workflow')
     .addOption(hiddenOption('--agent <name>', 'Failed agent to retry, e.g. claude'))
+    .addOption(hiddenOption('--instance <id>', 'Exact failed instance to retry, e.g. claude:claude-opus-5:high'))
 }
 
 /**

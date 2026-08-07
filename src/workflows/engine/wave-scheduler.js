@@ -1,9 +1,6 @@
-// Bounded-concurrency wave scheduler for agent runs (Arena program nax-2rx6.4.3).
-// The Agent Runner backend caps concurrent runs (~5, not user-tunable); running more than that
-// at once risks the API falling over. mapInWaves runs a worker over items in waves of at most
-// `concurrency`, awaiting each wave fully before starting the next, so the maximum number of
-// simultaneously in-flight workers never exceeds the cap. A step with <= cap runs is one wave,
-// identical to the previous fire-all behaviour.
+// Bounded-concurrency scheduler for agent runs (Arena program nax-2rx6.4.3).
+// The worker owns one slot until the remote run reaches a terminal state. As soon as a worker
+// settles, the next queued item starts; a slow run therefore does not hold up unrelated slots.
 
 /** Hardcoded backend parallel-run cap (observed default; not auto-detected, not user-tunable). */
 const MAX_PARALLEL_RUNS = 5
@@ -18,14 +15,21 @@ const MAX_PARALLEL_RUNS = 5
 async function mapInWaves(items, concurrency, worker) {
   const size = Math.max(1, Math.floor(concurrency) || 1)
   /** @type {Array<PromiseSettledResult<Awaited<R>>>} */
-  const results = []
-  for (let start = 0; start < items.length; start += size) {
-    const wave = items.slice(start, start + size)
-    const waveResults = await Promise.allSettled(
-      wave.map((item, offset) => Promise.resolve().then(() => worker(item, start + offset))),
-    )
-    results.push(...waveResults)
+  const results = new Array(items.length)
+  let nextIndex = 0
+  const takeNext = async () => {
+    while (nextIndex < items.length) {
+      const index = nextIndex
+      nextIndex += 1
+      try {
+        const value = await worker(items[index], index)
+        results[index] = { status: 'fulfilled', value: /** @type {Awaited<R>} */ (value) }
+      } catch (reason) {
+        results[index] = { status: 'rejected', reason }
+      }
+    }
   }
+  await Promise.all(Array.from({ length: Math.min(size, items.length) }, () => takeNext()))
   return results
 }
 

@@ -1083,12 +1083,13 @@ async function waitForLocalAgentRuns({
   const syncRefreshedRuns = () => {
     const refreshed = typeof refreshRuns === 'function' ? refreshRuns() : []
     if (!Array.isArray(refreshed) || refreshed.length === 0) return
-    const previousByAgent = new Map(trackedRuns.filter((item) => item?.agent).map((item) => [item.agent, item]))
+    const identityFor = (item) => String(item?.instanceId || item?.runnerId || item?.agent || '').trim()
+    const previousByIdentity = new Map(trackedRuns.filter(identityFor).map((item) => [identityFor(item), item]))
     for (const refreshedRun of refreshed) {
       const runnerId = String(refreshedRun?.runnerId || '').trim()
       const agent = String(refreshedRun?.agent || '').trim()
       if (!runnerId || !agent) continue
-      const previous = previousByAgent.get(agent)
+      const previous = previousByIdentity.get(identityFor(refreshedRun))
       const previousRunnerId = String(previous?.runnerId || '').trim()
       if (previousRunnerId && previousRunnerId !== runnerId) {
         pending.delete(previousRunnerId)

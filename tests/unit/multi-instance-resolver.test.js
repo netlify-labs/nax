@@ -147,3 +147,17 @@ test('inline model on an object entry wins over the legacy map', () => {
   })
   assert.equal(r.instances[0].id, 'claude:claude-opus-5:auto')
 })
+
+test('latest is resolved to a concrete model at materialize (replay-safe for retry/resume)', () => {
+  // A stored run keeps the resolved concrete model, never the alias — so a retry/resume that
+  // replays the stored config never re-resolves. resolvedFrom records the origin.
+  const r = resolveLineup([{ agent: 'claude', model: 'latest', effort: 'high' }])
+  const inst = r.instances[0]
+  assert.notEqual(inst.model, 'latest')
+  assert.equal(inst.model, 'claude-fable-5')
+  assert.equal(inst.effort, 'high')
+  assert.equal(inst.resolvedFrom, 'latest')
+  // Deterministic within a catalog: a fresh run (re-resolve) yields the same concrete today.
+  const again = resolveLineup([{ agent: 'claude', model: 'latest', effort: 'high' }])
+  assert.equal(again.instances[0].model, inst.model)
+})

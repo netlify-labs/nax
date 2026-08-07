@@ -76,6 +76,8 @@ test('Netlify API client constructs authenticated create runner requests', async
   const run = await client.createAgentRunner({
     promptText: 'Do work',
     agent: 'codex',
+    model: 'gpt-5.6-sol',
+    effort: 'high',
     branch: 'main',
   })
 
@@ -88,6 +90,8 @@ test('Netlify API client constructs authenticated create runner requests', async
   assert.deepEqual(body, {
     prompt: body.prompt,
     agent: 'codex',
+    model: 'gpt-5.6-sol',
+    effort: 'high',
     branch: 'main',
   })
   assert.equal(

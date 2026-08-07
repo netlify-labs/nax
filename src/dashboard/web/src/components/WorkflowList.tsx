@@ -3,7 +3,7 @@ import { Badge, Box, Group, NavLink, ScrollArea, Stack, Text, TextInput, Title }
 import { Search } from 'lucide-react'
 import type { Workflow } from '../types'
 
-function modelSummary(workflow: Workflow): string {
+function agentSummary(workflow: Workflow): string {
   const seen = new Set<string>()
   for (const step of workflow.steps) {
     for (const agent of step.agents) seen.add(agent)
@@ -28,7 +28,7 @@ export function WorkflowList({ workflows, selectedWorkflowId, loading, onSelect 
       workflow.title,
       workflow.description,
       workflow.sourceLabel,
-      modelSummary(workflow),
+      agentSummary(workflow),
     ].join(' ').toLowerCase().includes(normalized))
   }, [query, workflows])
 
@@ -65,7 +65,7 @@ export function WorkflowList({ workflows, selectedWorkflowId, loading, onSelect 
             label={<Text fw={700} size="sm" truncate>{workflow.title}</Text>}
             description={(
               <Stack gap={2}>
-                <Text size="xs" c="dimmed" truncate>{workflow.steps.length} steps · {modelSummary(workflow) || 'no agents'}</Text>
+                <Text size="xs" c="dimmed" truncate>{workflow.steps.length} steps · {agentSummary(workflow) || 'no agents'}</Text>
                 {workflow.source !== 'bundled' ? (
                   <Badge variant="light" color="indigo" size="xs">{workflow.sourceLabel || workflow.source}</Badge>
                 ) : null}

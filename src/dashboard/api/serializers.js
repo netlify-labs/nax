@@ -1,6 +1,12 @@
 const path = require('path')
 
-const { normalizeAgentList, normalizeStepModels } = require('../../core/agents/selection')
+const { normalizeAgentList, normalizeStepAgents } = require('../../core/agents/selection')
+const {
+  normalizeProviderEffortMap,
+  normalizeProviderModelMap,
+  normalizeStepProviderEffortMap,
+  normalizeStepProviderModelMap,
+} = require('../../core/agents/configuration')
 const { isActiveProjectedStatus, projectRunSnapshot } = require('./run-state-projection')
 
 /** @typedef {import('../../contracts').DashboardRun} DashboardRun */
@@ -33,6 +39,8 @@ function publicFlow(flow = {}) {
         action: step.action || '',
         submit: step.submit || '',
         agents: Array.isArray(step.agents) ? step.agents : [],
+        models: step.models || {},
+        efforts: step.efforts || {},
         input: Array.isArray(step.input) ? step.input : [],
         waitFor: step.waitFor || '',
         review: step.review || null,
@@ -76,8 +84,12 @@ function publicRunOptions(runState = {}) {
     branch: options.branch || runState.branch || '',
     target: runState.target || options.target || null,
     transport: options.transport || runState.transport || '',
-    models: normalizeAgentList(options.models),
-    stepModels: normalizeStepModels(options.stepModels),
+    agents: normalizeAgentList(options.agents),
+    stepAgents: normalizeStepAgents(options.stepAgents),
+    models: normalizeProviderModelMap(options.models),
+    efforts: normalizeProviderEffortMap(options.efforts),
+    stepModels: normalizeStepProviderModelMap(options.stepModels),
+    stepEfforts: normalizeStepProviderEffortMap(options.stepEfforts),
     context: options.context || '',
     step: options.step || '',
     fromStep: options.fromStep || '',

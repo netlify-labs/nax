@@ -13,7 +13,7 @@ const {
 test('renderPromptMarker emits the canonical shape for valid segments', () => {
   const out = renderPromptMarker({
     promptName: 'cross-review',
-    model: 'claude',
+    agent: 'claude',
     date: '2026-05-07',
   })
   assert.equal(out, '<!-- netlify-workflow-prompt:cross-review:claude:2026-05-07 -->')
@@ -22,15 +22,15 @@ test('renderPromptMarker emits the canonical shape for valid segments', () => {
 
 test('renderPromptMarker rejects segments that violate the id format', () => {
   assert.throws(
-    () => renderPromptMarker({ promptName: 'cross review', model: 'claude', date: '2026-05-07' }),
+    () => renderPromptMarker({ promptName: 'cross review', agent: 'claude', date: '2026-05-07' }),
     /Invalid promptName/,
   )
   assert.throws(
-    () => renderPromptMarker({ promptName: 'cross-review', model: 'claude!', date: '2026-05-07' }),
-    /Invalid model/,
+    () => renderPromptMarker({ promptName: 'cross-review', agent: 'claude!', date: '2026-05-07' }),
+    /Invalid agent/,
   )
   assert.throws(
-    () => renderPromptMarker({ promptName: 'cross-review', model: 'claude', date: '' }),
+    () => renderPromptMarker({ promptName: 'cross-review', agent: 'claude', date: '' }),
     /Invalid date/,
   )
 })
@@ -38,13 +38,13 @@ test('renderPromptMarker rejects segments that violate the id format', () => {
 test('parsePromptMarker round-trips with renderPromptMarker', () => {
   const marker = renderPromptMarker({
     promptName: 'summarize-consensus',
-    model: 'gemini',
+    agent: 'gemini',
     date: '2026-05-07',
   })
   const body = `Some prefix\n\n${marker}\n\nSome suffix`
   assert.deepEqual(parsePromptMarker(body), {
     promptName: 'summarize-consensus',
-    model: 'gemini',
+    agent: 'gemini',
     date: '2026-05-07',
   })
 })
@@ -56,7 +56,7 @@ test('parsePromptMarker returns null for bodies without the marker', () => {
 })
 
 test('bodyHasPromptMarker is true only when the marker is present', () => {
-  const marker = renderPromptMarker({ promptName: 'review', model: 'codex', date: '2026-05-07' })
+  const marker = renderPromptMarker({ promptName: 'review', agent: 'codex', date: '2026-05-07' })
   assert.equal(bodyHasPromptMarker(`anything ${marker}`), true)
   assert.equal(bodyHasPromptMarker('## A reply with no marker'), false)
 })

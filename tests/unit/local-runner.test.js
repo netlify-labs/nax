@@ -152,6 +152,8 @@ test('submission creates a fresh SDK run and persists its exact handle', async (
     run: {
       transport: 'netlify-api',
       agent: 'codex',
+      model: 'gpt-5.6-sol',
+      effort: 'high',
       status: 'pending',
       promptText: 'Review this repo',
       raw: {},
@@ -165,6 +167,8 @@ test('submission creates a fresh SDK run and persists its exact handle', async (
   const start = calls.find(([operation]) => operation === 'start')
   assert.equal(start[1].siteId, 'site-1')
   assert.equal(start[1].prompt, 'Review this repo')
+  assert.equal(start[1].model, 'gpt-5.6-sol')
+  assert.equal(start[1].effort, 'high')
   assert.equal(start[1].branch, 'feature/sdk')
   assert.equal(start[1].deadlineMs, 12 * 60 * 1000)
   assert.equal(start[1].retryBudget.capacity, 1)
@@ -186,6 +190,8 @@ test('follow-up submission resumes the persisted handle and records the new sess
   const submitted = await submitLocalAgentRun({
     run: {
       agent: 'codex',
+      model: 'gpt-5.6-sol',
+      effort: 'high',
       promptText: 'Continue the review',
       existingRunnerId: 'runner-1',
       netlifySiteId: 'site-1',
@@ -201,6 +207,8 @@ test('follow-up submission resumes the persisted handle and records the new sess
   assert.deepEqual(followUp[2], {
     prompt: 'Continue the review',
     agent: 'codex',
+    model: 'gpt-5.6-sol',
+    effort: 'high',
   })
   assert.equal(submitted.runnerId, 'runner-1')
   assert.equal(submitted.sessionId, 'session-2')

@@ -7,6 +7,7 @@ const os = require('os')
 const path = require('path')
 
 const { _private, startDashboardServer } = require('../../src/dashboard/server')
+const { localDashboardCapabilities } = require('../../src/dashboard/api/capabilities')
 const { buildRunDetails } = require('../../src/dashboard/shared/run-details')
 const { appendFollowupRunsToWorkflow } = require('../../src/workflows/followups/persistence')
 const { appendEventLog } = require('../../src/workflows/events/runner-event-log')
@@ -150,7 +151,7 @@ function writeFollowupRunFixture(projectRoot, runId = 'fixture-followup-run') {
     options: {
       branch: 'main',
       transport: 'netlify-api',
-      stepModels: {
+      stepAgents: {
         review: ['codex'],
       },
     },
@@ -322,14 +323,7 @@ test('dashboard server exposes health, workflow list, and graph routes', async (
     assert.equal(health.payload.ok, true)
     assert.equal(Object.hasOwn(health.payload, 'projectRoot'), false)
     assert.equal(health.payload.tokenRequiredForSensitiveReads, true)
-    assert.deepEqual(health.payload.capabilities, {
-      deploymentMode: 'local',
-      canStartRuns: true,
-      canDryRun: true,
-      canOpenLocalFiles: true,
-      canStreamRunEvents: true,
-      requiresAuth: true,
-    })
+    assert.deepEqual(health.payload.capabilities, localDashboardCapabilities())
 
     const workflows = await requestJson(`${base}/api/workflows`)
     assert.equal(workflows.statusCode, 401)
@@ -532,19 +526,19 @@ test('dashboard dry-run requires token and validates options', async () => {
     assert.equal(invalidStep.statusCode, 400)
     assert.equal(invalidStep.payload.error.code, 'invalid_step')
 
-    const invalidModel = await postJson(`${base}/api/workflows/review/dry-run`, server.token, {
-      models: ['watson'],
+    const invalidAgent = await postJson(`${base}/api/workflows/review/dry-run`, server.token, {
+      agents: ['watson'],
     })
-    assert.equal(invalidModel.statusCode, 400)
-    assert.equal(invalidModel.payload.error.code, 'invalid_model')
+    assert.equal(invalidAgent.statusCode, 400)
+    assert.equal(invalidAgent.payload.error.code, 'invalid_agent')
 
-    const invalidStepModel = await postJson(`${base}/api/workflows/review/dry-run`, server.token, {
-      stepModels: {
+    const invalidStepAgent = await postJson(`${base}/api/workflows/review/dry-run`, server.token, {
+      stepAgents: {
         synthesize: ['claude'],
       },
     })
-    assert.equal(invalidStepModel.statusCode, 400)
-    assert.equal(invalidStepModel.payload.error.code, 'invalid_step_model')
+    assert.equal(invalidStepAgent.statusCode, 400)
+    assert.equal(invalidStepAgent.payload.error.code, 'invalid_step_agent')
   } finally {
     await server.close()
   }
@@ -557,7 +551,7 @@ test('dashboard dry-run returns preview output without writing artifacts', async
     const response = await postJson(`http://127.0.0.1:${server.port}/api/workflows/review/dry-run`, server.token, {
       transport: 'netlify-api',
       branch: 'master',
-      stepModels: {
+      stepAgents: {
         review: ['claude', 'codex'],
         'cross-review': ['gemini'],
         synthesize: ['codex'],
@@ -570,11 +564,11 @@ test('dashboard dry-run returns preview output without writing artifacts', async
     assert.match(response.payload.dryRun.stdout, /Multi step agent workflow: "Review"/)
     assert.match(response.payload.dryRun.stdout, /Dry run only/)
     assert.deepEqual(response.payload.dryRun.command.slice(-6), [
-      '--step-models',
+      '--step-agents',
       'review=claude,codex',
-      '--step-models',
+      '--step-agents',
       'cross-review=gemini',
-      '--step-models',
+      '--step-agents',
       'synthesize=codex',
     ])
     assert.equal(fs.existsSync(path.join(projectRoot, '.nax')), false)
@@ -675,7 +669,7 @@ test('dashboard real-run endpoint starts a tracked process and replays events', 
     const started = await postJson(`${base}/api/workflows/review/runs`, server.token, {
       transport: 'auto',
       branch: 'master',
-      models: ['codex'],
+      agents: ['codex'],
     })
     assert.equal(started.statusCode, 202)
     assert.equal(started.payload.workflow.id, 'review')
@@ -757,7 +751,7 @@ test('dashboard real-run endpoint does not expose pending run ids while waiting 
     const pendingStart = postJson(`${base}/api/workflows/review/runs`, server.token, {
       transport: 'auto',
       branch: 'master',
-      models: ['codex'],
+      agents: ['codex'],
     })
     await childStarted
     const runs = await requestJson(`${base}/api/runs?limit=50`, { token: server.token })
@@ -923,7 +917,7 @@ test('dashboard runs API reads durable workflow state from .nax', async () => {
     options: {
       branch: 'main',
       transport: 'netlify-api',
-      stepModels: {
+      stepAgents: {
         review: ['codex'],
       },
     },
@@ -1042,7 +1036,7 @@ test('dashboard runs API reads durable workflow state from .nax', async () => {
     const graph = await requestJson(`${base}/api/runs/${runId}/graph`, { token: server.token })
     assert.equal(graph.statusCode, 200)
     assert.equal(graph.payload.run.runId, runId)
-    assert.deepEqual(graph.payload.run.options.stepModels, { review: ['codex'] })
+    assert.deepEqual(graph.payload.run.options.stepAgents, { review: ['codex'] })
     assert.equal(graph.payload.run.options.target.branch, 'main')
     assert.equal(graph.payload.workflow.id, 'review')
     assert.equal(graph.payload.graph.metadata.hasRunState, true)
@@ -1093,6 +1087,61 @@ test('dashboard runs API paginates durable workflow state with opaque cursors', 
   }
 })
 
+test('dashboard standalone agent endpoint submits and persists exact model and effort', async () => {
+  const projectRoot = tmpRoot()
+  const submissions = []
+  const server = await startDashboardServer({
+    projectRoot,
+    followupSubmitRun: async ({ run, branch }) => {
+      submissions.push({ run, branch })
+      return {
+        ...run,
+        status: 'submitted',
+        runnerId: 'runner-standalone',
+        sessionId: 'session-standalone',
+        createdAt: '2026-08-06T12:00:00.000Z',
+        updatedAt: '2026-08-06T12:00:00.000Z',
+      }
+    },
+  })
+  try {
+    const base = `http://127.0.0.1:${server.port}`
+    const request = {
+      prompt: 'Audit the services directory.',
+      agent: 'opencode',
+      models: { opencode: 'z-ai/glm-5.2' },
+      efforts: { opencode: 'max' },
+      branch: 'main',
+      transport: 'netlify-api',
+    }
+    const anonymous = await postJson(`${base}/api/agent-runs`, '', request)
+    assert.equal(anonymous.statusCode, 401)
+
+    const started = await postJson(`${base}/api/agent-runs`, server.token, request)
+    assert.equal(started.statusCode, 202)
+    assert.equal(submissions.length, 1)
+    assert.equal(submissions[0].branch, 'main')
+    assert.equal(submissions[0].run.agent, 'opencode')
+    assert.equal(submissions[0].run.model, 'z-ai/glm-5.2')
+    assert.equal(submissions[0].run.effort, 'xhigh')
+    assert.equal(started.payload.submission.model, 'z-ai/glm-5.2')
+    assert.equal(started.payload.submission.effort, 'xhigh')
+    assert.equal(started.payload.run.flowId, 'agent-run')
+    assert.equal(started.payload.run.steps[0].runs[0].model, 'z-ai/glm-5.2')
+    assert.equal(started.payload.run.steps[0].runs[0].effort, 'xhigh')
+
+    const runId = started.payload.run.runId
+    const graph = await requestJson(`${base}/api/runs/${runId}/graph`, { token: server.token })
+    assert.equal(graph.statusCode, 200)
+    assert.deepEqual(graph.payload.run.options.models, { opencode: 'z-ai/glm-5.2' })
+    assert.deepEqual(graph.payload.run.options.efforts, { opencode: 'xhigh' })
+    assert.equal(graph.payload.graph.nodes[0].data.runs[0].model, 'z-ai/glm-5.2')
+    assert.equal(graph.payload.graph.nodes[0].data.runs[0].effort, 'xhigh')
+  } finally {
+    await server.close()
+  }
+})
+
 test('dashboard follow-up endpoint validates auth, prompt, artifact IDs, and run ID', async () => {
   const projectRoot = tmpRoot()
   const { runId } = writeFollowupRunFixture(projectRoot)
@@ -1130,7 +1179,7 @@ test('dashboard follow-up endpoint validates auth, prompt, artifact IDs, and run
   }
 })
 
-test('dashboard follow-up endpoint submits matching runner and fresh additional models', async () => {
+test('dashboard follow-up endpoint submits matching runner and fresh additional agents', async () => {
   const projectRoot = tmpRoot()
   const { runId } = writeFollowupRunFixture(projectRoot)
   const submissions = []
@@ -1169,7 +1218,7 @@ test('dashboard follow-up endpoint submits matching runner and fresh additional 
       prompt: 'Verify the proposed fix and explain any risk.',
       mode: 'follow-up-thread',
       targetId: 'agent-result:review:runner-1:session-1:codex',
-      models: ['codex', 'gemini'],
+      agents: ['codex', 'gemini'],
     })
 
     assert.equal(response.statusCode, 202, response.payload?.error?.message)
@@ -1312,7 +1361,7 @@ test('dashboard follow-up endpoint delegates oversized context to SDK delivery',
       prompt: 'Fix the confirmed security issues.',
       mode: 'follow-up-thread',
       targetId: 'agent-result:review:runner-1:session-1:codex',
-      models: ['codex'],
+      agents: ['codex'],
     })
 
     assert.equal(response.statusCode, 202, response.payload?.error?.message)

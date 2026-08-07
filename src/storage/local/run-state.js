@@ -17,6 +17,8 @@ const STATE_WRITE_DURABLE_FIELDS = [
   'runnerId',
   'sessionId',
   'sdkHandle',
+  'model',
+  'effort',
   'issueNumber',
   'issueUrl',
   'submittedAfterSeconds',

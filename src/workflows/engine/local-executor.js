@@ -42,6 +42,7 @@ const {
   prepareLocalPromptDelivery,
 } = require('./prompt-delivery')
 const { utf8ByteLength } = require('../../core/prompts/budget')
+const { formatAgentConfigLabel, resolveAgentRunConfig } = require('../../core/agents/configuration')
 const {
   completedStepMapFromRunState,
   contextForRunState,
@@ -70,6 +71,10 @@ const {
  *   filter?: string,
  *   netlifyConfig?: string,
  *   netlifySiteId?: string,
+ *   models?: Record<string, string>,
+ *   efforts?: Record<string, string>,
+ *   stepModels?: Record<string, Record<string, string>>,
+ *   stepEfforts?: Record<string, Record<string, string>>,
  *   outputBudget?: boolean,
  *   outputBudgetBytes?: number | string,
  *   siteId?: string,
@@ -705,6 +710,24 @@ async function executeLocalFlow({ flow, steps, options, runState, projectRoot, c
       hasFutureSteps: stepIndex < steps.length - 1,
     })
     const runs = step.agents.map((agent) => {
+      const resolvedConfig = resolveAgentRunConfig(agent, {
+        defaults: {
+          models: flow.defaults?.models,
+          efforts: flow.defaults?.efforts,
+        },
+        step: {
+          models: step.models,
+          efforts: step.efforts,
+        },
+        globalCli: {
+          models: options.models,
+          efforts: options.efforts,
+        },
+        stepCli: {
+          models: options.stepModels?.[step.id],
+          efforts: options.stepEfforts?.[step.id],
+        },
+      })
       const followUpRun = step.submit === 'follow-up'
         ? sourceRuns.find((sourceRun) => sourceRun.agent === agent && sourceRun.runnerId)
         : null
@@ -721,6 +744,8 @@ async function executeLocalFlow({ flow, steps, options, runState, projectRoot, c
       return {
         transport: NETLIFY_API_TRANSPORT,
         agent,
+        ...(resolvedConfig.model ? { model: resolvedConfig.model } : {}),
+        ...(resolvedConfig.effort ? { effort: resolvedConfig.effort } : {}),
         status: options.dryRun ? 'dry-run' : 'pending',
         promptText: delivery.promptText,
         compactPromptText: delivery.compactPromptText && utf8ByteLength(delivery.compactPromptText) < utf8ByteLength(delivery.promptText) ? delivery.compactPromptText : '',
@@ -739,13 +764,14 @@ async function executeLocalFlow({ flow, steps, options, runState, projectRoot, c
           workflowRunId: runState.runId,
           stepId: step.id,
           promptName: prompt.name,
+          ...(resolvedConfig.warnings.length > 0 ? { configurationWarnings: resolvedConfig.warnings } : {}),
         },
       }
     })
 
     console.log(`\nRun Netlify API agents: ${step.title}`)
     for (const run of runs) {
-      console.log(`\n- ${titleCase(run.agent)} ${prompt.title}`)
+      console.log(`\n- ${formatAgentConfigLabel(run)} ${prompt.title}`)
       console.log(`  prompt: ${prompt.name}`)
       console.log(`  body: ${run.promptText.length} chars / ${utf8ByteLength(run.promptText).toLocaleString()} bytes`)
       if (run.promptDelivery?.mode && run.promptDelivery.mode !== 'inline') {

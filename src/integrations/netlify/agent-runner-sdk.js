@@ -160,6 +160,8 @@ function parsePersistedHandle(value) {
  *   runnerId?: string,
  *   siteId?: string,
  *   agent?: string,
+ *   model?: string,
+ *   effort?: string,
  *   promptText?: string,
  *   branch?: string,
  *   deadlineMs?: number,
@@ -172,6 +174,8 @@ async function resolveRunHandle({
   runnerId = run.runnerId || run.existingRunnerId,
   siteId = run.netlifySiteId,
   agent = run.agent,
+  model = run.model,
+  effort = run.effort,
   promptText = run.promptText,
   branch,
   deadlineMs = DEFAULT_DEADLINE_MS,
@@ -208,6 +212,8 @@ async function resolveRunHandle({
       siteId,
       prompt: promptText || current.prompt || 'Resume legacy nax Agent Runner.',
       agent: agent || current.agent || 'claude',
+      ...(model || current.model ? { model: model || current.model } : {}),
+      ...(effort || current.effort ? { effort: effort || current.effort } : {}),
       ...(branch ? { branch } : {}),
       land: 'none',
       deadlineMs: resolvedDeadlineMs,
@@ -251,6 +257,11 @@ function runnerArtifactPayload(runner) {
 
 /** @param {Session} session */
 function sessionArtifactPayload(session) {
+  const agentConfig = {
+    ...(session.agent ? { agent: session.agent } : {}),
+    ...(session.model ? { model: session.model } : {}),
+    ...(session.effort ? { effort: session.effort } : {}),
+  }
   return {
     id: session.sessionId,
     agent_runner_id: session.runnerId,
@@ -258,8 +269,7 @@ function sessionArtifactPayload(session) {
     ...(session.prompt !== undefined ? { prompt: session.prompt } : {}),
     ...(session.resultText !== undefined ? { result: session.resultText } : {}),
     ...(session.title ? { title: session.title } : {}),
-    ...(session.agent ? { agent_config: { agent: session.agent } } : {}),
-    ...(session.model ? { model: session.model } : {}),
+    ...(Object.keys(agentConfig).length > 0 ? { agent_config: agentConfig } : {}),
     ...(session.mode ? { mode: session.mode } : {}),
     ...(session.fileKeys ? { attached_file_keys: session.fileKeys } : {}),
     ...(session.createdAt !== undefined ? { created_at: new Date(session.createdAt).toISOString() } : {}),

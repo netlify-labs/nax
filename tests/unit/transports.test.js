@@ -10,6 +10,7 @@ const {
   hasNetlifyAuthToken,
   hasLocalNetlifySite,
   resolveTransport,
+  resolveTransportForAgentConfigurations,
   formatTransportSetupHelp,
 } = require('../../src/integrations/transports')
 
@@ -76,6 +77,43 @@ test('resolveTransport rejects auto when no transports are available', () => {
     { id: 'github', available: false },
     { id: 'netlify-api', available: false },
   ]), /No runnable transport detected/)
+})
+
+test('pinned model or effort forces Netlify API and explicit GitHub fails closed', () => {
+  /** @type {Array<{ id: 'github' | 'netlify-api', available: boolean }>} */
+  const detections = [
+    { id: 'github', available: true },
+    { id: 'netlify-api', available: true },
+  ]
+  assert.equal(resolveTransportForAgentConfigurations({
+    requested: 'auto',
+    detections,
+    configurations: [{ agent: 'claude', model: 'claude-opus-4-8', effort: 'high' }],
+  }), 'netlify-api')
+  assert.throws(
+    () => resolveTransportForAgentConfigurations({
+      requested: 'github',
+      detections,
+      configurations: [{ agent: 'claude', model: 'claude-opus-4-8', effort: 'high' }],
+    }),
+    /require --transport netlify-api/,
+  )
+  assert.equal(resolveTransportForAgentConfigurations({
+    requested: 'auto',
+    detections,
+    configurations: [{ agent: 'claude' }],
+  }), 'github')
+  assert.throws(
+    () => resolveTransportForAgentConfigurations({
+      requested: 'auto',
+      detections: [
+        { id: 'github', available: true },
+        { id: 'netlify-api', available: false },
+      ],
+      configurations: [{ agent: 'codex', model: 'gpt-5.6-sol' }],
+    }),
+    /Netlify API transport.*unavailable/,
+  )
 })
 
 test('detectTransports returns github and netlify-api entries', () => {

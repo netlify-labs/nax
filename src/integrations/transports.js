@@ -162,6 +162,45 @@ function resolveTransport(requested, detections) {
 }
 
 /**
+ * Resolves transport capabilities for already-materialized run configuration.
+ *
+ * @param {{
+ *   requested?: string,
+ *   detections: Array<Pick<TransportDetection, 'id' | 'available'>>,
+ *   configurations?: Array<{ agent?: string, model?: string, effort?: string }>,
+ * }} input
+ * @returns {TransportId}
+ */
+function resolveTransportForAgentConfigurations({
+  requested = 'auto',
+  detections,
+  configurations = [],
+}) {
+  const pinned = configurations.find((configuration) => configuration.model || configuration.effort)
+  const requestedKey = /** @type {TransportRequest} */ (String(requested || 'auto'))
+  const normalized = TRANSPORT_ALIASES[requestedKey]
+  if (!normalized) return resolveTransport(requested, detections)
+  if (pinned && normalized === 'github') {
+    const setting = [pinned.model ? `model "${pinned.model}"` : '', pinned.effort ? `effort "${pinned.effort}"` : '']
+      .filter(Boolean)
+      .join(' and ')
+    throw new Error(
+      `Agent "${pinned.agent || 'unknown'}" pins ${setting}. Provider-specific model and effort settings require --transport netlify-api; GitHub Actions supports provider selection only.`,
+    )
+  }
+  if (pinned && normalized === 'auto') {
+    const netlifyApi = detections.find((transport) => transport.id === NETLIFY_API_TRANSPORT)
+    if (!netlifyApi?.available) {
+      throw new Error(
+        'Pinned model or effort configuration requires the Netlify API transport, but that transport is unavailable.',
+      )
+    }
+    return NETLIFY_API_TRANSPORT
+  }
+  return resolveTransport(requested, detections)
+}
+
+/**
  * @param {Array<Pick<TransportDetection, 'id' | 'title' | 'reason'>>} detections
  * @returns {string}
  */
@@ -200,4 +239,5 @@ module.exports = {
   hasNetlifyCli,
   isNetlifyApiTransport,
   resolveTransport,
+  resolveTransportForAgentConfigurations,
 }

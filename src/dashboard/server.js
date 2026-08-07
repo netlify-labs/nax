@@ -8,7 +8,14 @@ const { artifactMeta } = require('../core/artifact-metadata')
 const { listFlows, loadFlow } = require('../workflows/catalog/flows')
 const { listRunStates, listWorkflowStatePage, saveRunState } = require('../storage/local/run-state')
 const { flowToGraph } = require('./shared/graph')
-const { normalizeAgentList, normalizeStepModels, selectionValidationErrors } = require('../core/agents/selection')
+const { applyAgentSelection, normalizeAgentList, normalizeStepAgents, selectionValidationErrors } = require('../core/agents/selection')
+const {
+  normalizeProviderEffortMap,
+  normalizeProviderModelMap,
+  normalizeStepProviderEffortMap,
+  normalizeStepProviderModelMap,
+  resolveAgentRunConfig,
+} = require('../core/agents/configuration')
 const { buildRunDetails } = require('./shared/run-details')
 const { appendEventLog, eventLogPathForRunState, readEventLog } = require('../workflows/events/runner-event-log')
 const { formatAgentRunUrl } = require('../workflows/results/agent-run-results')
@@ -37,6 +44,7 @@ const {
   cancelReviewGate: cancelReviewGateService,
   cancelRun: cancelRunService,
   retryAgentRun: retryAgentRunService,
+  submitAdHocAgentRun: submitAdHocAgentRunService,
   submitFollowup: submitFollowupService,
 } = require('./services/mutations')
 const { dryRunWorkflow, resumeWorkflowRun } = require('./transports/local-in-process')
@@ -292,7 +300,7 @@ function isReadOnlyDashboardApiPath(pathname) {
 
 /** @param {string} pathname */
 function isMutationDashboardApiPath(pathname) {
-  if (pathname === '/api/files/open') return true
+  if (pathname === '/api/files/open' || pathname === '/api/agent-runs') return true
   if (/^\/api\/workflows\/[^/]+\/(?:dry-run|runs)$/.test(pathname)) return true
   return /^\/api\/runs\/[^/]+\/(?:cancel|review\/approve|review\/cancel|followups|followups\/cancel)$/.test(pathname)
 }
@@ -418,7 +426,9 @@ function normalizeFollowupRequest(body = {}, details = {}, runState = {}) {
   }
   const artifacts = defaultFollowupArtifacts(details, body.artifacts)
   const mode = String(body.mode || target.defaultMode || 'follow-up-thread')
-  const models = normalizeAgentList(body.models)
+  const agents = normalizeAgentList(body.agents)
+  const models = normalizeProviderModelMap(body.models)
+  const efforts = normalizeProviderEffortMap(body.efforts)
   const targetSha = String(body.targetSha || body.target?.sha || runState.target?.sha || '')
   const targetBranch = String(body.targetBranch || body.target?.branch || runState.branch || runState.target?.branch || '')
   return {
@@ -426,7 +436,9 @@ function normalizeFollowupRequest(body = {}, details = {}, runState = {}) {
     target,
     artifacts,
     mode,
+    agents,
     models,
+    efforts,
     targetSha,
     targetBranch,
   }
@@ -438,6 +450,8 @@ function submissionResponseItem(result = {}) {
     id: result.submission?.id || '',
     mode: result.submission?.mode || '',
     agent: run.agent || result.submission?.agent || '',
+    model: run.model || result.submission?.model || '',
+    effort: run.effort || result.submission?.effort || '',
     runnerId: run.runnerId || result.submission?.runnerId || '',
     sessionId: run.sessionId || result.submission?.sessionId || '',
     status: run.status || 'submitted',
@@ -590,12 +604,49 @@ function normalizeDryRunOptions(raw = {}, flow = {}) {
     throw requestError(400, 'invalid_from_step', `Unknown fromStep "${out.fromStep}" in flow "${flow.id}".`)
   }
 
-  const models = normalizeAgentList(raw.models)
-  out.models = models
-  out.stepModels = normalizeStepModels(raw.stepModels)
+  const agents = normalizeAgentList(raw.agents)
+  out.agents = agents
+  out.stepAgents = normalizeStepAgents(raw.stepAgents)
   const errors = selectionValidationErrors(flow, out)
   if (errors.length > 0) {
     throw requestError(400, errors[0].code, errors[0].message)
+  }
+  try {
+    out.models = normalizeProviderModelMap(raw.models)
+    out.efforts = normalizeProviderEffortMap(raw.efforts)
+    out.stepModels = normalizeStepProviderModelMap(raw.stepModels)
+    out.stepEfforts = normalizeStepProviderEffortMap(raw.stepEfforts)
+    const configuredFlow = applyAgentSelection(flow, out)
+    const stepIds = new Set((configuredFlow.steps || []).map((step) => step.id))
+    for (const stepId of new Set([...Object.keys(out.stepModels), ...Object.keys(out.stepEfforts)])) {
+      if (!stepIds.has(stepId)) throw new Error(`Unknown step "${stepId}" in model/effort configuration.`)
+    }
+    for (const step of configuredFlow.steps || []) {
+      for (const agent of step.agents || []) {
+        resolveAgentRunConfig(agent, {
+          defaults: {
+            models: configuredFlow.defaults?.models,
+            efforts: configuredFlow.defaults?.efforts,
+          },
+          step: {
+            models: step.models,
+            efforts: step.efforts,
+          },
+          globalCli: {
+            models: out.models,
+            efforts: out.efforts,
+          },
+          stepCli: {
+            models: out.stepModels[step.id],
+            efforts: out.stepEfforts[step.id],
+          },
+        })
+      }
+    }
+  } catch (error) {
+    const code = error && typeof error === 'object' && 'code' in error ? String(error.code) : 'invalid_agent_configuration'
+    const message = error instanceof Error ? error.message : String(error)
+    throw requestError(400, code, message)
   }
   return out
 }
@@ -950,7 +1001,7 @@ function createRequestHandler(options = {}) {
     },
   })
   const capabilities = localServerCapabilities(env)
-  const healthCapabilities = legacyHealthCapabilities(env)
+  const healthCapabilities = capabilities
   const readOnlyApi = createDashboardApi({
     runtime: {
       mode: 'local-node',
@@ -1015,6 +1066,19 @@ function createRequestHandler(options = {}) {
           },
         }
       },
+      startAgentRun: async (body) => ({
+        statusCode: 202,
+        body: await submitAdHocAgentRunService({
+          projectRoot,
+          body,
+          env,
+          siteId: followupSiteId,
+          siteName: followupSiteName,
+          netlifyFilter: followupNetlifyFilter,
+          submitRun: followupSubmitRun,
+          linkSubmittedRun: linkSubmittedRunFactory,
+        }),
+      }),
       cancelRun: async (id) => {
         const requestedRunId = safeDecode(id)
         const run = liveRunRegistry.getRawRun(requestedRunId)

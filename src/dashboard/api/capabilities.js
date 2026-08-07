@@ -1,4 +1,5 @@
 /** @typedef {import('../../contracts').DashboardCapabilities} DashboardCapabilities */
+const { AGENT_CONFIGURATION_CATALOG } = require('../../core/agents/configuration')
 
 /**
  * @param {Partial<DashboardCapabilities>} [overrides]
@@ -20,6 +21,14 @@ function localDashboardCapabilities(overrides = {}) {
     canOpenLocalFiles: true,
     canServeStaticAssets: true,
     requiresAuth: true,
+    agentConfiguration: {
+      catalog: AGENT_CONFIGURATION_CATALOG,
+      transports: {
+        auto: { models: true, efforts: true },
+        'netlify-api': { models: true, efforts: true },
+        github: { models: false, efforts: false },
+      },
+    },
     ...overrides,
   }
 }
@@ -44,6 +53,14 @@ function hostedPlaceholderCapabilities(overrides = {}) {
     canOpenLocalFiles: false,
     canServeStaticAssets: false,
     requiresAuth: true,
+    agentConfiguration: {
+      catalog: AGENT_CONFIGURATION_CATALOG,
+      transports: {
+        auto: { models: true, efforts: true },
+        'netlify-api': { models: true, efforts: true },
+        github: { models: false, efforts: false },
+      },
+    },
     ...overrides,
   }
 }

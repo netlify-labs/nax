@@ -10,8 +10,8 @@ const { localDashboardCapabilities } = require('./capabilities')
  *   mode?: 'local-node' | 'netlify-function',
  *   deploymentMode?: 'local' | 'desktop' | 'web',
  *   projectRoot?: string,
- *   capabilities?: Record<string, boolean | string>,
- *   healthCapabilities?: Record<string, boolean | string>,
+ *   capabilities?: Partial<import('../../contracts').DashboardCapabilities>,
+ *   healthCapabilities?: Partial<import('../../contracts').DashboardCapabilities>,
  *   netlifyAccess?: Record<string, unknown>,
  *   netlifyContext?: Record<string, unknown>,
  * }} DashboardApiRuntime
@@ -219,7 +219,7 @@ function isJsonObject(value) {
 }
 
 /**
- * @param {Record<string, boolean | string>} capabilities
+ * @param {Record<string, unknown>} capabilities
  * @param {string} key
  */
 function requireCapability(capabilities, key) {
@@ -453,6 +453,14 @@ function createDashboardApi({
     requireCapability(capabilities, 'canStartRuns')
     if (typeof mutations.startWorkflow !== 'function') throw requestError(501, 'unsupported_capability', 'Starting workflow runs is not available in this runtime.')
     const result = mutationResult(await mutations.startWorkflow(c.req.param('id'), await honoJsonBody(c)))
+    return json(c, result.body, result.statusCode)
+  })
+
+  app.post('/api/agent-runs', async (c) => {
+    assertHonoToken(c, token)
+    requireCapability(capabilities, 'canStartRuns')
+    if (typeof mutations.startAgentRun !== 'function') throw requestError(501, 'unsupported_capability', 'Starting single-agent runs is not available in this runtime.')
+    const result = mutationResult(await mutations.startAgentRun(await honoJsonBody(c)))
     return json(c, result.body, result.statusCode)
   })
 

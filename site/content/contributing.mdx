@@ -36,14 +36,20 @@ npm link
 ## Required checks
 
 ```sh
-npm run check
-npm test
-npm run dashboard:build
+npm run release:verify
 ```
 
 <Callout type="important">
   Run `npm run dashboard:build` after every UI change.
 </Callout>
+
+## Releases
+
+Package publication is a human handoff. Prepare the exact version, run the
+release verification command, and inspect `npm pack --dry-run`. A human then
+runs `npm publish` from the repository root. Do not automate registry
+publication, create or push the release tag, or continue a downstream rollout
+until that person confirms the package is published.
 
 ## Code conventions
 

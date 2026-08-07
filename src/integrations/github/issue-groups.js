@@ -1,6 +1,6 @@
 const { spawnSync } = require('child_process')
 
-const TITLE_PATTERN = /^(\d{4}-\d{2}-\d{2})\s+(Claude|Gemini|Codex)\s+(.+)$/i
+const TITLE_PATTERN = /^(\d{4}-\d{2}-\d{2})\s+(Claude|Gemini|Codex|OpenCode)\s+(.+)$/i
 
 /**
  * GitHub issue row used for workflow grouping.
@@ -12,15 +12,15 @@ const TITLE_PATTERN = /^(\d{4}-\d{2}-\d{2})\s+(Claude|Gemini|Codex)\s+(.+)$/i
  *   createdAt?: string,
  * }} IssueListItem
  *
- * Grouped issue member with parsed model metadata.
- * @typedef {IssueListItem & { model: string }} IssueGroupMember
+ * Grouped issue member with parsed agent metadata.
+ * @typedef {IssueListItem & { agent: string }} IssueGroupMember
  *
  * Workflow issue group.
  * @typedef {{
  *   date: string,
  *   promptTitle: string,
  *   members: IssueGroupMember[],
- *   models?: string[],
+ *   agents?: string[],
  *   issueNumbers?: number[],
  * }} IssueGroup
  *
@@ -43,7 +43,7 @@ function parseWorkflowTitle(title) {
   if (!match) return null
   return {
     date: match[1],
-    model: match[2].toLowerCase(),
+    agent: match[2].toLowerCase(),
     promptTitle: match[3].trim(),
   }
 }
@@ -88,7 +88,7 @@ function buildGroups(issues) {
     }
     map.get(key).members.push({
       number: issue.number,
-      model: parsed.model,
+      agent: parsed.agent,
       title: issue.title,
       url: issue.url,
       state: issue.state,
@@ -98,7 +98,7 @@ function buildGroups(issues) {
 
   for (const group of map.values()) {
     group.members.sort((a, b) => a.number - b.number)
-    group.models = group.members.map((m) => m.model)
+    group.agents = group.members.map((m) => m.agent)
     group.issueNumbers = group.members.map((m) => m.number)
   }
 
@@ -115,7 +115,7 @@ function listRecentIssueGroups({ repo, limit = 60, state = 'all', loader = listR
 
 function formatGroupHint(group) {
   return group.members
-    .map((member) => `${member.model[0].toUpperCase() + member.model.slice(1)} #${member.number}`)
+    .map((member) => `${member.agent[0].toUpperCase() + member.agent.slice(1)} #${member.number}`)
     .join(', ')
 }
 

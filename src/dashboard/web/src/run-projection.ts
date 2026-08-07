@@ -22,7 +22,7 @@ type StepStatusInput = {
 
 type ProjectWorkflowGraphOptions = {
   graph: WorkflowGraph | null
-  stepModels: Record<string, string[]>
+  stepAgents: Record<string, string[]>
   stepStatuses: Record<string, string>
   stepAgentStatuses: Record<string, Record<string, string>>
 }
@@ -126,7 +126,7 @@ export function projectWorkflowNodeData(
 
 export function projectWorkflowGraph({
   graph,
-  stepModels,
+  stepAgents,
   stepStatuses,
   stepAgentStatuses,
 }: ProjectWorkflowGraphOptions): WorkflowGraph | null {
@@ -136,8 +136,8 @@ export function projectWorkflowGraph({
     nodes: graph.nodes.map((node) => ({
       ...node,
       data: projectWorkflowNodeData(node.data, {
-        selectedAgents: Object.prototype.hasOwnProperty.call(stepModels, node.data.stepId)
-          ? stepModels[node.data.stepId]
+        selectedAgents: Object.prototype.hasOwnProperty.call(stepAgents, node.data.stepId)
+          ? stepAgents[node.data.stepId]
           : node.data.selectedAgents || node.data.agents,
         stepStatus: stepStatuses[node.data.stepId] || node.data.status,
         liveAgentStatuses: stepAgentStatuses[node.data.stepId] || {},

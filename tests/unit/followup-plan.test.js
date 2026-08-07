@@ -4,8 +4,8 @@ const assert = require('node:assert/strict')
 const {
   FollowupPlanError,
   buildFollowupSubmissionPlan,
-  defaultModelsForTarget,
-  normalizeModels,
+  defaultAgentsForTarget,
+  normalizeAgents,
 } = require('../../src/workflows/followups/plan')
 
 const codexTarget = {
@@ -16,11 +16,11 @@ const codexTarget = {
   sessionId: 'session-1',
 }
 
-test('follow-up plan continues matching prior runner model', () => {
+test('follow-up plan continues matching prior runner agent', () => {
   const plan = buildFollowupSubmissionPlan({
     requestedMode: 'follow-up-thread',
     target: codexTarget,
-    models: ['codex'],
+    agents: ['codex'],
     sourceArtifactIds: ['artifact-1'],
     targetSha: 'abc123',
     targetBranch: 'main',
@@ -36,11 +36,11 @@ test('follow-up plan continues matching prior runner model', () => {
   assert.deepEqual(plan.summary, ['Codex: follow-up session'])
 })
 
-test('follow-up plan turns additional models into fresh runners', () => {
+test('follow-up plan turns additional agents into fresh runners', () => {
   const plan = buildFollowupSubmissionPlan({
     requestedMode: 'follow-up-thread',
     target: codexTarget,
-    models: ['codex', 'claude', 'gemini'],
+    agents: ['codex', 'claude', 'gemini'],
   })
 
   assert.deepEqual(plan.submissions.map((submission) => [submission.agent, submission.mode]), [
@@ -55,11 +55,11 @@ test('follow-up plan turns additional models into fresh runners', () => {
   ])
 })
 
-test('follow-up plan uses fresh runner for non-matching single model', () => {
+test('follow-up plan uses fresh runner for non-matching single agent', () => {
   const plan = buildFollowupSubmissionPlan({
     requestedMode: 'follow-up-thread',
     target: codexTarget,
-    models: ['claude'],
+    agents: ['claude'],
   })
 
   assert.equal(plan.submissions.length, 1)
@@ -68,11 +68,11 @@ test('follow-up plan uses fresh runner for non-matching single model', () => {
   assert.equal(plan.submissions[0].runnerId, '')
 })
 
-test('fresh-runner requested mode makes every model fresh', () => {
+test('fresh-runner requested mode makes every agent fresh', () => {
   const plan = buildFollowupSubmissionPlan({
     requestedMode: 'fresh-runner',
     target: codexTarget,
-    models: ['codex', 'claude'],
+    agents: ['codex', 'claude'],
   })
 
   assert.deepEqual(plan.submissions.map((submission) => [submission.agent, submission.mode]), [
@@ -81,18 +81,18 @@ test('fresh-runner requested mode makes every model fresh', () => {
   ])
 })
 
-test('target without a runner makes all models fresh', () => {
+test('target without a runner makes all agents fresh', () => {
   const plan = buildFollowupSubmissionPlan({
     requestedMode: 'follow-up-thread',
     target: { id: 'step-summary:review', agent: '', runnerId: '' },
-    models: ['codex'],
+    agents: ['codex'],
   })
 
   assert.equal(plan.submissions[0].mode, 'fresh-runner')
 })
 
-test('follow-up plan defaults to prior target model', () => {
-  assert.deepEqual(defaultModelsForTarget(codexTarget), ['codex'])
+test('follow-up plan defaults to prior target agent', () => {
+  assert.deepEqual(defaultAgentsForTarget(codexTarget), ['codex'])
   const plan = buildFollowupSubmissionPlan({
     requestedMode: 'follow-up-thread',
     target: codexTarget,
@@ -100,23 +100,46 @@ test('follow-up plan defaults to prior target model', () => {
   assert.deepEqual(plan.submissions.map((submission) => submission.agent), ['codex'])
 })
 
-test('model normalization dedupes and lowercases selections', () => {
-  assert.deepEqual(normalizeModels([' Codex ', 'codex', 'CLAUDE', '']), ['codex', 'claude'])
+test('agent normalization dedupes and lowercases selections', () => {
+  assert.deepEqual(normalizeAgents([' Codex ', 'codex', 'CLAUDE', '']), ['codex', 'claude'])
 })
 
-test('follow-up plan rejects unsupported models', () => {
+test('follow-up plan rejects unsupported agents', () => {
   assert.throws(
     () => buildFollowupSubmissionPlan({
       requestedMode: 'follow-up-thread',
       target: codexTarget,
-      models: ['watson'],
+      agents: ['watson'],
     }),
     /** @param {unknown} error */
     (error) => {
       assert.equal(error instanceof FollowupPlanError, true)
       if (!(error instanceof FollowupPlanError)) return false
-      assert.equal(error.code, 'invalid_model')
+      assert.equal(error.code, 'invalid_agent')
       return true
     },
   )
+})
+
+test('follow-up initializes from source configuration and allows an intentional override', () => {
+  const target = {
+    ...codexTarget,
+    model: 'gpt-5.6-sol',
+    effort: 'high',
+  }
+  const inherited = buildFollowupSubmissionPlan({
+    target,
+    agents: ['codex'],
+  })
+  assert.equal(inherited.submissions[0].model, 'gpt-5.6-sol')
+  assert.equal(inherited.submissions[0].effort, 'high')
+
+  const overridden = buildFollowupSubmissionPlan({
+    target,
+    agents: ['codex'],
+    models: { codex: 'gpt-5.6-terra' },
+    efforts: { codex: 'low' },
+  })
+  assert.equal(overridden.submissions[0].model, 'gpt-5.6-terra')
+  assert.equal(overridden.submissions[0].effort, 'low')
 })

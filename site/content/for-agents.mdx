@@ -7,7 +7,7 @@ import { Callout } from 'nextra/components'
 
 # Agents
 
-This page is for AI coding agents that need to operate `nax` non-interactively. `nax` runs Netlify Agent Runner jobs for Claude, Gemini, and Codex, then records workflow state and artifacts for inspection, handoff, and follow-up runs.
+This page is for AI coding agents that need to operate `nax` non-interactively. `nax` runs Netlify Agent Runner jobs through Claude, Codex, Gemini, and OpenCode, then records workflow state and artifacts for inspection, handoff, and follow-up runs.
 
 <Callout type="warning">
   Agent Runner jobs can spend Netlify resources and can create GitHub issues, comments, or workflow runs. Use `--dry --force` first unless the user explicitly asked for a real run.
@@ -141,11 +141,22 @@ cd "$PROJECT_ROOT"
 nax run agent codex --prompt "Inspect the current branch for regressions." --transport netlify-api --force
 ```
 
-Use another supported model when appropriate:
+Use another supported agent provider when appropriate:
 
 ```sh
 nax run agent claude --prompt "Propose a minimal fix for the failing tests." --transport netlify-api --force
 nax run agent gemini --prompt "Check the docs for broken links and stale setup steps." --transport netlify-api --force
+```
+
+Pin a real model and effort when the task requires it:
+
+```sh
+nax run agent claude \
+  --prompt "Audit the services directory." \
+  --model claude-opus-4-8 \
+  --effort high \
+  --transport netlify-api \
+  --force
 ```
 
 Add branch and context when the target is not the current default:
@@ -190,11 +201,22 @@ Run the workflow:
 nax run review --transport netlify-api --force
 ```
 
-Override the model set for a cheaper or more targeted run:
+Override the agent providers, then optionally configure their real models:
 
 ```sh
-nax run review --models codex,claude --transport netlify-api --force
+nax run review \
+  --agents codex,claude \
+  --models codex=gpt-5.6-sol \
+  --efforts codex=high \
+  --transport netlify-api \
+  --force
 ```
+
+Provider lists belong only in `--agents` and `--step-agents`. Model and effort
+flags require explicit provider mappings and can be repeated. `auto` clears a
+pin and becomes omission on the wire. Unknown future IDs pass through with a
+warning; known incompatible pairs fail before mutation. Pinned configuration
+requires the Netlify API transport.
 
 Run part of a workflow:
 
@@ -245,4 +267,4 @@ nax admin sync last
 - [Get started](/get-started) for human-oriented setup.
 - [Run workflows](/guides/run-workflows) for workflow execution flags.
 - [Workflow file reference](/reference/workflow-files) for flow schema.
-- [Council pattern](/concepts/council-pattern) for multi-model workflow design.
+- [Council pattern](/concepts/council-pattern) for multi-agent workflow design.

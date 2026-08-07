@@ -8,7 +8,7 @@ import { agentLabel, isDoneStatus, recordList, recordValue, runId, statusBadgeSt
 import { extractMarkdownToc } from '../run-details-toc'
 import { selectRunDetailsSection, selectorKey, type RunDetailsSelector } from '../run-details-selection'
 import { displayAgentStatuses, displayStepStatus } from '../run-projection'
-import type { RunDetailsResponse, RunDetailsSection, RunFollowupResponse, Target, DashboardRun } from '../types'
+import type { RunDetailsResponse, RunDetailsSection, RunFollowupResponse, Target, DashboardRun, DashboardCapabilities } from '../types'
 import { isActiveStatus, isTerminalStatus, statusKey } from '../status-model'
 import { AgentIcon } from './AgentIcon'
 import { MarkdownRenderer } from './MarkdownRenderer'
@@ -29,6 +29,7 @@ type RunDetailsModalProps = {
   opened: boolean
   onClose: () => void
   canOpenLocalFiles?: boolean
+  agentConfiguration: DashboardCapabilities['agentConfiguration']
   runId?: string
   initialSelector?: RunDetailsSelector
   liveContext?: RunDetailsLiveContext | null
@@ -70,15 +71,15 @@ function normalizedStringList(value: unknown): string[] {
 
 function stepAgentOverride(run: DashboardRun | undefined, stepId: string): string[] | null {
   const options = unknownRecord(run?.options)
-  const stepModels = unknownRecord(options?.stepModels)
-  if (!stepModels || !Object.prototype.hasOwnProperty.call(stepModels, stepId)) return null
-  return normalizedStringList(stepModels[stepId])
+  const stepAgents = unknownRecord(options?.stepAgents)
+  if (!stepAgents || !Object.prototype.hasOwnProperty.call(stepAgents, stepId)) return null
+  return normalizedStringList(stepAgents[stepId])
 }
 
 function activeStepAgents(run: DashboardRun | undefined, stepId: string, agents: string[]): string[] {
   const options = unknownRecord(run?.options)
-  const globalModels = normalizedStringList(options?.models)
-  const override = stepAgentOverride(run, stepId) || (globalModels.length > 0 ? globalModels : null)
+  const globalAgents = normalizedStringList(options?.agents)
+  const override = stepAgentOverride(run, stepId) || (globalAgents.length > 0 ? globalAgents : null)
   if (!override) return agents
   return agents.filter((agent) => override.includes(agent))
 }
@@ -623,6 +624,7 @@ export function RunDetailsModal({
   opened,
   onClose,
   canOpenLocalFiles = true,
+  agentConfiguration,
   runId: detailsRunId = '',
   initialSelector,
   liveContext,
@@ -859,6 +861,7 @@ export function RunDetailsModal({
             }}
             run={followupRun}
             details={details}
+            agentConfiguration={agentConfiguration}
             onSubmittingChange={setFollowupSubmitting}
             submittedResponse={followupSuccess}
             onSubmitted={(_response: RunFollowupResponse) => {

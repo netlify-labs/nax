@@ -10,7 +10,7 @@ const {
   collectOption,
   mergeCommandOptions,
 } = require('./commands/options')
-const { DEFAULT_MODELS } = require('../core/constants')
+const { DEFAULT_AGENT_PROVIDERS } = require('../core/constants')
 const {
   buildIssueBody,
   buildIssueTitle,
@@ -113,7 +113,14 @@ const {
   listBundledSkills,
   updateSkills,
 } = require('../integrations/skills')
-const { NETLIFY_API_TRANSPORT, detectTransports, formatTransportSetupHelp, isNetlifyApiTransport, resolveTransport } = require('../integrations/transports')
+const {
+  NETLIFY_API_TRANSPORT,
+  detectTransports,
+  formatTransportSetupHelp,
+  isNetlifyApiTransport,
+  resolveTransport,
+  resolveTransportForAgentConfigurations,
+} = require('../integrations/transports')
 const { readNetlifyProject } = require('../integrations/netlify/init')
 const { enforceRunPreflight } = require('../integrations/netlify/preflight')
 const {
@@ -202,8 +209,23 @@ const {
 const {
   applyAgentSelection,
   assertValidAgentSelection,
-  parseStepModelsEntries,
+  parseStepAgentsEntries,
 } = require('../core/agents/selection')
+const {
+  SUPPORTED_AGENT_PROVIDERS,
+  formatAgentConfigLabel,
+  getAgentEffortOptions,
+  getAgentModelOptions,
+  getAgentProviderLabel,
+  getBestModelForProvider,
+  getEffortAvailabilityNotice,
+  getHighestEffortForModel,
+  normalizeProviderEffortMap,
+  normalizeProviderModelMap,
+  normalizeStepProviderEffortMap,
+  normalizeStepProviderModelMap,
+  resolveAgentRunConfig,
+} = require('../core/agents/configuration')
 const {
   archiveAgentRun,
   buildNetlifyEnv,
@@ -248,7 +270,7 @@ const {
   extractLinkedPullRequest,
   fetchRoundResultsForOptions,
   githubResultsToSourceRuns,
-  inferModelFromIssueTitle,
+  inferAgentFromIssueTitle,
   joinContext,
   loadIssueMeta,
   loadPullRequestMeta,
@@ -310,6 +332,10 @@ function loadDashboardServer() {
  *   fetchResults?: boolean,
  *   dryRun?: boolean,
  *   run?: string,
+ *   model?: string,
+ *   effort?: string,
+ *   models?: Record<string, string>,
+ *   efforts?: Record<string, string>,
  * }} AdHocRunOptions
  *
  * Input for submitting one ad-hoc Netlify agent run.
@@ -740,7 +766,7 @@ async function handlePreviewSpinner(options) {
   const tickMs = Number.parseInt(options.tickMs || '10000', 10)
   const stepTitle = options.label || 'Review'
   const parsed = parseCsv(options.agents)
-  const agents = parsed.length > 0 ? parsed : DEFAULT_MODELS
+  const agents = parsed.length > 0 ? parsed : DEFAULT_AGENT_PROVIDERS
   const flavorMinMs = Number.parseInt(options.flavorMinMs || '10000', 10)
   const flavorMaxMs = Number.parseInt(options.flavorMaxMs || '15000', 10)
   console.log(`TTY: ${process.stdout.isTTY ? 'yes (spinner + flavor)' : 'no (plain logs)'}`)
@@ -778,6 +804,18 @@ async function runSingleNetlifyAgent({
   startLabel,
 } = {}) {
   const branch = options.branch || currentGitBranch(projectRoot)
+  const directModels = options.model !== undefined
+    ? { [agent]: options.model }
+    : options.models
+  const directEfforts = options.effort !== undefined
+    ? { [agent]: options.effort }
+    : options.efforts
+  const resolvedConfig = resolveAgentRunConfig(agent, {
+    globalCli: {
+      models: directModels,
+      efforts: directEfforts,
+    },
+  })
   const netlify = resolveNetlifyProjectTarget({
     projectRoot,
     siteId: options.netlifySiteId,
@@ -789,6 +827,8 @@ async function runSingleNetlifyAgent({
   const run = {
     transport: NETLIFY_API_TRANSPORT,
     agent,
+    ...(resolvedConfig.model ? { model: resolvedConfig.model } : {}),
+    ...(resolvedConfig.effort ? { effort: resolvedConfig.effort } : {}),
     status: 'pending',
     promptText,
     compactPromptText: '',
@@ -801,6 +841,7 @@ async function runSingleNetlifyAgent({
     raw: {
       stepId: safeArtifactName(runTitle).toLowerCase(),
       promptName: safeArtifactName(runTitle).toLowerCase(),
+      ...(resolvedConfig.warnings.length > 0 ? { configurationWarnings: resolvedConfig.warnings } : {}),
       ...raw,
     },
   }
@@ -810,7 +851,7 @@ async function runSingleNetlifyAgent({
   maybeReportNetlifySite(resolvedNetlifyOptions)
   maybeReportNetlifyConfig(resolvedNetlifyOptions)
   maybeReportNetlifyFilter(netlifyFilter)
-  console.log(`\nStarting ${titleCase(agent)} ${startLabel || runTitle.toLowerCase()}...`)
+  console.log(`\nStarting ${formatAgentConfigLabel(run)} ${startLabel || runTitle.toLowerCase()}...`)
   const startedAt = Date.now()
   const submitted = await submitLocalAgentRun({
     run,
@@ -934,7 +975,7 @@ async function runSingleGithubAgent({ projectRoot, agent, promptText, source, op
   const title = `${date} ${titleCase(agent)} Netlify Agent Run`
   const body = buildIssueBody({
     runner,
-    model: agent,
+    agent,
     prompt,
     context: '',
     roundResults: '',
@@ -1131,7 +1172,7 @@ async function handleHandoff(runId, options) {
   if (action === 'fresh') {
     const agent = options.agent || await clack.select({
       message: 'Choose agent',
-      options: DEFAULT_MODELS.map((model) => ({ value: model, label: titleCase(model) })),
+      options: DEFAULT_AGENT_PROVIDERS.map((agent) => ({ value: agent, label: titleCase(agent) })),
     })
     if (clack.isCancel(agent)) return
     await runFreshHandoffAgent({
@@ -1170,6 +1211,7 @@ async function handlePreviewBoxes(flowId, options) {
     transport,
     branch: options.branch || 'master',
     context: options.context || '',
+    options,
   })
   const lastStep = steps[steps.length - 1]
   const fakeRunState = {
@@ -1222,7 +1264,7 @@ async function chooseAdHocAgentInteractively(initialAgent) {
   const clack = await loadClack()
   const selected = await clack.select({
     message: 'Choose agent',
-    options: DEFAULT_MODELS.map((model) => ({ value: model, label: titleCase(model) })),
+    options: SUPPORTED_AGENT_PROVIDERS.map((agent) => ({ value: agent, label: titleCase(agent) })),
   })
   if (clack.isCancel(selected)) process.exit(0)
   return selected
@@ -1343,17 +1385,243 @@ function flowAgents(flow) {
 }
 
 function withSelectedAgents(flow, selectedAgents) {
-  return applyAgentSelection(flow, { models: selectedAgents })
+  return applyAgentSelection(flow, { agents: selectedAgents })
 }
 
-function withSelectedStepModels(flow, options = {}) {
-  const models = parseCsv(options.models)
-  const stepModels = selectedStepModels(options)
-  const selection = { models, stepModels }
+/**
+ * @param {import('../types').WorkflowFlow} flow
+ * @param {import('../types').JsonMap} options
+ * @returns {{
+ *   models: Record<string, string>,
+ *   efforts: Record<string, string>,
+ *   stepModels: Record<string, Record<string, string>>,
+ *   stepEfforts: Record<string, Record<string, string>>,
+ * }}
+ */
+function selectedAgentConfiguration(flow, options = {}) {
+  const models = normalizeProviderModelMap(options.models)
+  const efforts = normalizeProviderEffortMap(options.efforts)
+  const stepModels = normalizeStepProviderModelMap(options.stepModels)
+  const stepEfforts = normalizeStepProviderEffortMap(options.stepEfforts)
+  const steps = new Map((flow.steps || []).map((step) => [step.id, step]))
+
+  for (const stepId of new Set([...Object.keys(stepModels), ...Object.keys(stepEfforts)])) {
+    if (!steps.has(stepId)) {
+      throw new Error(`Unknown step "${stepId}" in model/effort configuration for flow "${flow.id}".`)
+    }
+  }
+
+  const selectedByStep = new Map((flow.steps || []).map((step) => [
+    step.id,
+    new Set(Array.isArray(step.agents) ? step.agents : []),
+  ]))
+  const selectedAnywhere = new Set(
+    [...selectedByStep.values()].flatMap((agents) => [...agents]),
+  )
+  for (const agent of new Set([...Object.keys(models), ...Object.keys(efforts)])) {
+    if (!selectedAnywhere.has(agent)) {
+      throw new Error(`Agent "${agent}" has a model or effort override but is not selected. Add it with --agents.`)
+    }
+  }
+  for (const [stepId, configured] of Object.entries(stepModels)) {
+    for (const agent of Object.keys(configured)) {
+      if (!selectedByStep.get(stepId)?.has(agent)) {
+        throw new Error(`Agent "${agent}" has a model override for step "${stepId}" but is not selected. Add it with --step-agents.`)
+      }
+    }
+  }
+  for (const [stepId, configured] of Object.entries(stepEfforts)) {
+    for (const agent of Object.keys(configured)) {
+      if (!selectedByStep.get(stepId)?.has(agent)) {
+        throw new Error(`Agent "${agent}" has an effort override for step "${stepId}" but is not selected. Add it with --step-agents.`)
+      }
+    }
+  }
+
+  for (const step of flow.steps || []) {
+    for (const agent of step.agents || []) {
+      resolveAgentRunConfig(agent, {
+        defaults: {
+          models: flow.defaults?.models,
+          efforts: flow.defaults?.efforts,
+        },
+        step: {
+          models: step.models,
+          efforts: step.efforts,
+        },
+        globalCli: { models, efforts },
+        stepCli: {
+          models: stepModels[step.id],
+          efforts: stepEfforts[step.id],
+        },
+      })
+    }
+  }
+
+  return { models, efforts, stepModels, stepEfforts }
+}
+
+/**
+ * @param {import('../types').WorkflowFlow} flow
+ * @param {import('../types').JsonMap} options
+ * @returns {Array<{ agent: string, model?: string, effort?: string }>}
+ */
+function materializedAgentConfigurations(flow, options = {}) {
+  const configurations = []
+  for (const step of flow.steps || []) {
+    for (const agent of step.agents || []) {
+      const resolved = resolveAgentRunConfig(agent, {
+        defaults: {
+          models: flow.defaults?.models,
+          efforts: flow.defaults?.efforts,
+        },
+        step: {
+          models: step.models,
+          efforts: step.efforts,
+        },
+        globalCli: {
+          models: options.models,
+          efforts: options.efforts,
+        },
+        stepCli: {
+          models: options.stepModels?.[step.id],
+          efforts: options.stepEfforts?.[step.id],
+        },
+      })
+      configurations.push({
+        agent: resolved.agent,
+        ...(resolved.model ? { model: resolved.model } : {}),
+        ...(resolved.effort ? { effort: resolved.effort } : {}),
+      })
+    }
+  }
+  return configurations
+}
+
+/**
+ * @param {{
+ *   clack: { confirm: (input: Record<string, unknown>) => Promise<unknown>, select: (input: Record<string, unknown>) => Promise<unknown>, isCancel: (value: unknown) => boolean },
+ *   flow: import('../types').WorkflowFlow,
+ *   options: import('../types').JsonMap,
+ *   agents: string[],
+ *   exit?: (code: number) => never,
+ * }} input
+ * @returns {Promise<{ models: Record<string, string>, efforts: Record<string, string> }>}
+ */
+/**
+ * Prompt model then effort for a single ad hoc agent, pre-selecting the best model and its
+ * highest effort. Auto stays available but is not the default. Returns provider-keyed maps.
+ * @param {{
+ *   clack: {
+ *     select: (input: Record<string, unknown>) => Promise<unknown>,
+ *     isCancel: (value: unknown) => boolean,
+ *   },
+ *   agent: string,
+ *   exit?: (code?: number) => never,
+ * }} input
+ * @returns {Promise<{ models: Record<string, string>, efforts: Record<string, string> }>}
+ */
+async function chooseSingleAgentConfigInteractively({ clack, agent, exit = process.exit }) {
+  const providerLabel = getAgentProviderLabel(agent)
+  const modelOptions = getAgentModelOptions(agent)
+  const selectedModel = await clack.select({
+    message: `${providerLabel} model`,
+    options: modelOptions.map((option) => ({ value: option.id, label: option.label })),
+    initialValue: getBestModelForProvider(agent),
+  })
+  if (clack.isCancel(selectedModel)) exit(0)
+  const model = String(selectedModel)
+  if (model === 'auto') return { models: { [agent]: 'auto' }, efforts: { [agent]: 'auto' } }
+
+  const effortOptions = getAgentEffortOptions(agent, model)
+  if (effortOptions.length === 1) {
+    const notice = getEffortAvailabilityNotice(agent, model)
+    if (notice) console.log(`${providerLabel}: ${notice}`)
+    return { models: { [agent]: model }, efforts: { [agent]: 'auto' } }
+  }
+  const selectedEffort = await clack.select({
+    message: `${providerLabel} reasoning effort`,
+    options: effortOptions.map((option) => ({ value: option.id, label: option.label })),
+    initialValue: getHighestEffortForModel(agent, model),
+  })
+  if (clack.isCancel(selectedEffort)) exit(0)
+  return { models: { [agent]: model }, efforts: { [agent]: String(selectedEffort) } }
+}
+
+async function configureAgentsInteractively({ clack, flow, options, agents, exit = process.exit }) {
+  const models = normalizeProviderModelMap(options.models)
+  const efforts = normalizeProviderEffortMap(options.efforts)
+  if (Object.keys(models).length > 0 || Object.keys(efforts).length > 0) return { models, efforts }
+
+  const configure = await clack.confirm({
+    message: 'Configure model and reasoning effort for selected agents?',
+    initialValue: false,
+  })
+  if (clack.isCancel(configure)) exit(0)
+  if (!configure) return { models, efforts }
+
+  for (const agent of agents) {
+    const agentLabel = getAgentProviderLabel(agent)
+    const step = (flow.steps || []).find((candidate) => (candidate.agents || []).includes(agent))
+    const inherited = resolveAgentRunConfig(agent, {
+      defaults: {
+        models: flow.defaults?.models,
+        efforts: flow.defaults?.efforts,
+      },
+      step: {
+        models: step?.models,
+        efforts: step?.efforts,
+      },
+    })
+    const modelOptions = getAgentModelOptions(agent, { includeModel: inherited.model })
+    const selectedModel = await clack.select({
+      message: `${agentLabel} model`,
+      options: modelOptions.map((option) => ({ value: option.id, label: option.label })),
+      initialValue: inherited.model || 'auto',
+    })
+    if (clack.isCancel(selectedModel)) exit(0)
+    models[agent] = String(selectedModel)
+
+    if (models[agent] === 'auto') {
+      efforts[agent] = 'auto'
+      continue
+    }
+    const effortOptions = getAgentEffortOptions(agent, models[agent], {
+      includeEffort: inherited.effort,
+    })
+    if (effortOptions.length === 1) {
+      efforts[agent] = 'auto'
+      const notice = getEffortAvailabilityNotice(agent, models[agent])
+      if (notice) console.log(`${agentLabel}: ${notice}`)
+      continue
+    }
+    const inheritedEffort = inherited.effort === 'xhigh' ? 'max' : inherited.effort
+    const initialEffort = models[agent] === inherited.model &&
+      effortOptions.some((option) => option.id === inheritedEffort)
+      ? inheritedEffort
+      : 'auto'
+    const selectedEffort = await clack.select({
+      message: `${agentLabel} reasoning effort`,
+      options: effortOptions.map((option) => ({ value: option.id, label: option.label })),
+      initialValue: initialEffort,
+    })
+    if (clack.isCancel(selectedEffort)) exit(0)
+    efforts[agent] = String(selectedEffort)
+  }
+  return { models, efforts }
+}
+
+function withSelectedStepAgents(flow, options = {}) {
+  const agents = parseCsv(options.agents)
+  const stepAgents = selectedStepAgents(options)
+  const selection = { agents, stepAgents }
   assertValidAgentSelection(flow, selection)
+  const configuredFlow = applyAgentSelection(flow, selection)
+  const configuration = selectedAgentConfiguration(configuredFlow, options)
   return {
-    flow: applyAgentSelection(flow, selection),
-    stepModels,
+    flow: configuredFlow,
+    stepAgents,
+    ...configuration,
   }
 }
 
@@ -1361,7 +1629,18 @@ function runnableSteps(flow, options) {
   return findStepRange(flow, options).filter((step) => isHumanReviewStep(step) || normalizeArray(step.agents).length > 0)
 }
 
-function printFlowPlan({ flow, steps, transport, branch, context, runState = null }) {
+/**
+ * @param {{
+ *   flow: import('../types').WorkflowFlow,
+ *   steps: import('../types').WorkflowStep[],
+ *   transport: string,
+ *   branch: string,
+ *   context?: string,
+ *   runState?: import('../types').WorkflowRunState | null,
+ *   options?: import('../types').JsonMap,
+ * }} input
+ */
+function printFlowPlan({ flow, steps, transport, branch, context, runState = null, options = {} }) {
   const terminalWidth = process.stdout.columns || 100
   const outerMaxWidth = Math.max(60, Math.floor(terminalWidth * OUTER_TERMINAL_RATIO))
   const decorations = resumeStepDecorations({ steps, runState })
@@ -1384,12 +1663,33 @@ function printFlowPlan({ flow, steps, transport, branch, context, runState = nul
     return stateLabel ? `${stateLabel} · ${label}` : label
   })
   const descriptions = steps.map((step) => resolveStepDescription(flow, step))
-  const chipsWidth = (agents) =>
-    agents.reduce((sum, a) => sum + titleCase(a).length + 4, 0) + Math.max(0, agents.length - 1)
+  const agentLabelsByStep = new Map(steps.map((step) => [
+    step.id,
+    (step.agents || []).map((agent) => formatAgentConfigLabel(resolveAgentRunConfig(agent, {
+      defaults: {
+        models: flow.defaults?.models,
+        efforts: flow.defaults?.efforts,
+      },
+      step: {
+        models: step.models,
+        efforts: step.efforts,
+      },
+      globalCli: {
+        models: options.models,
+        efforts: options.efforts,
+      },
+      stepCli: {
+        models: options.stepModels?.[step.id],
+        efforts: options.stepEfforts?.[step.id],
+      },
+    }))),
+  ]))
+  const chipsWidth = (labels) =>
+    labels.reduce((sum, label) => sum + label.length + 4, 0) + Math.max(0, labels.length - 1)
   const naturalStepInner = Math.max(
     ...headings.map((h, i) => h.length + actionLabels[i].length + 2),
     ...descriptions.map((d) => d.length),
-    ...steps.map((step) => chipsWidth(step.agents)),
+    ...steps.map((step) => chipsWidth(agentLabelsByStep.get(step.id) || [])),
   )
   const targetStepInner = Math.min(naturalStepInner, STEP_MAX_WIDTH - 6, outerMaxWidth - 12)
   const wrappedDescriptions = descriptions.map((d) => (d ? wordWrap(d, targetStepInner) : ''))
@@ -1406,9 +1706,9 @@ function printFlowPlan({ flow, steps, transport, branch, context, runState = nul
       projectRoot: runState?.projectRoot || process.cwd(),
     })
     const chips = makeHorizontalBoxes(
-      step.agents.map((agent) => {
+      step.agents.map((agent, agentIndex) => {
         const color = resumeStatusColor(savedAgentStatus(savedStep, agent))
-        const label = titleCase(agent)
+        const label = agentLabelsByStep.get(step.id)?.[agentIndex] || titleCase(agent)
         return {
           content: color ? colorText(label, color) : label,
           borderStyle: 'rounded',
@@ -1520,10 +1820,21 @@ function printPartialArtifactHint(runState) {
 
 async function prepareInteractiveFlowRun({ flow, options, transport, projectRoot }) {
   if (!process.stdin.isTTY || options.yes) {
-    const { flow: configuredFlow, stepModels } = withSelectedStepModels(flow, options)
+    const {
+      flow: configuredFlow,
+      stepAgents,
+      models,
+      efforts,
+      stepModels,
+      stepEfforts,
+    } = withSelectedStepAgents(flow, options)
     const configuredOptions = {
       ...options,
+      stepAgents,
+      models,
+      efforts,
       stepModels,
+      stepEfforts,
     }
     const steps = runnableSteps(configuredFlow, configuredOptions)
     if (steps.length === 0) {
@@ -1539,14 +1850,14 @@ async function prepareInteractiveFlowRun({ flow, options, transport, projectRoot
 
   const clack = await loadClack()
   const agents = flowAgents(flow)
-  const requestedStepModels = selectedStepModels(options)
-  let selectedAgents = parseCsv(options.models)
-  if (selectedAgents.length === 0 && Object.keys(requestedStepModels).length > 0) {
+  const requestedStepAgents = selectedStepAgents(options)
+  let selectedAgents = parseCsv(options.agents)
+  if (selectedAgents.length === 0 && Object.keys(requestedStepAgents).length > 0) {
     selectedAgents = agents
   }
   if (selectedAgents.length === 0) {
     const selected = await clack.multiselect({
-      message: 'Choose Netlify agent models',
+      message: 'Choose Netlify agent providers',
       options: agents.map((agent) => ({
         value: agent,
         label: titleCase(agent),
@@ -1557,6 +1868,12 @@ async function prepareInteractiveFlowRun({ flow, options, transport, projectRoot
     if (clack.isCancel(selected)) process.exit(0)
     selectedAgents = selected
   }
+  const interactiveConfiguration = await configureAgentsInteractively({
+    clack,
+    flow,
+    options,
+    agents: selectedAgents,
+  })
 
   let manualContext = readManualContext(options)
   if (!manualContext && options.contextPrompt !== false) {
@@ -1569,17 +1886,20 @@ async function prepareInteractiveFlowRun({ flow, options, transport, projectRoot
   const configuredOptions = {
     ...options,
     context: manualContext || options.context,
-    models: selectedAgents.join(','),
-    stepModels: requestedStepModels,
+    agents: selectedAgents.join(','),
+    stepAgents: requestedStepAgents,
+    models: interactiveConfiguration.models,
+    efforts: interactiveConfiguration.efforts,
   }
   assertValidAgentSelection(flow, {
-    models: selectedAgents,
-    stepModels: configuredOptions.stepModels,
+    agents: selectedAgents,
+    stepAgents: configuredOptions.stepAgents,
   })
   const configuredFlow = applyAgentSelection(flow, {
-    models: selectedAgents,
-    stepModels: configuredOptions.stepModels,
+    agents: selectedAgents,
+    stepAgents: configuredOptions.stepAgents,
   })
+  Object.assign(configuredOptions, selectedAgentConfiguration(configuredFlow, configuredOptions))
   const steps = runnableSteps(configuredFlow, configuredOptions)
   if (steps.length === 0) {
     throw new Error('No workflow steps have selected agents.')
@@ -1597,6 +1917,7 @@ async function prepareInteractiveFlowRun({ flow, options, transport, projectRoot
     transport,
     branch: configuredOptions.branch,
     context: manualContext,
+    options: configuredOptions,
   })
 
   if (configuredOptions.dryRun) {
@@ -1753,8 +2074,8 @@ function normalizeArray(value) {
   return Array.isArray(value) ? value : []
 }
 
-function selectedStepModels(options = {}) {
-  return parseStepModelsEntries(options.stepModels || [])
+function selectedStepAgents(options = {}) {
+  return parseStepAgentsEntries(options.stepAgents || [])
 }
 
 function resolveStepDescription(flow, step) {
@@ -2157,16 +2478,41 @@ async function handleRetry(runId, options) {
 async function handleAdHocAgentRun(options = {}) {
   const invocationDir = path.resolve(options.invocationDir || process.cwd())
   const projectRoot = resolveProjectRoot(options.projectRoot, { cwd: invocationDir })
-  const transport = await chooseSingleRunTransportInteractively({
-    requested: options.transport || 'auto',
-    projectRoot,
-  })
   const agent = await chooseAdHocAgentInteractively(options.agent)
+  let configuredOptions = options
+  if (process.stdin.isTTY && options.model === undefined && options.effort === undefined) {
+    const clack = await loadClack()
+    const interactiveConfiguration = await chooseSingleAgentConfigInteractively({ clack, agent })
+    configuredOptions = {
+      ...options,
+      models: interactiveConfiguration.models,
+      efforts: interactiveConfiguration.efforts,
+    }
+  }
   const promptText = await promptForAdHocAgentPrompt(options.prompt || options.context)
-  if (options.dryRun) {
+  const resolvedConfig = resolveAgentRunConfig(agent, {
+    globalCli: {
+      models: configuredOptions.model === undefined ? configuredOptions.models : { [agent]: configuredOptions.model },
+      efforts: configuredOptions.effort === undefined ? configuredOptions.efforts : { [agent]: configuredOptions.effort },
+    },
+  })
+  const pinnedConfiguration = Boolean(resolvedConfig.model || resolvedConfig.effort)
+  const transport = pinnedConfiguration
+    ? resolveTransportForAgentConfigurations({
+        requested: configuredOptions.transport || 'auto',
+        detections: configuredOptions.dryRun
+          ? [{ id: 'github', available: true }, { id: NETLIFY_API_TRANSPORT, available: true }]
+          : detectTransports({ projectRoot }),
+        configurations: [resolvedConfig],
+      })
+    : await chooseSingleRunTransportInteractively({
+        requested: configuredOptions.transport || 'auto',
+        projectRoot,
+      })
+  if (configuredOptions.dryRun) {
     console.log('Netlify agent run preview')
     console.log(`Transport: ${transport}`)
-    console.log(`Agent: ${titleCase(agent)}`)
+    console.log(`Agent: ${formatAgentConfigLabel(resolvedConfig)}`)
     console.log(`Prompt: ${promptText.length} chars`)
     console.log('')
     console.log(promptText)
@@ -2174,7 +2520,7 @@ async function handleAdHocAgentRun(options = {}) {
   }
 
   if (isNetlifyApiTransport(transport)) {
-    const netlifyOptions = await chooseNetlifyFilterOption({ projectRoot, invocationDir, options })
+    const netlifyOptions = await chooseNetlifyFilterOption({ projectRoot, invocationDir, options: configuredOptions })
     await runSingleNetlifyAgent({
       projectRoot,
       agent,
@@ -2204,7 +2550,7 @@ async function handleAdHocAgentRun(options = {}) {
       transport: 'github',
       promptLength: promptText.length,
     },
-    options,
+    options: configuredOptions,
   })
 }
 
@@ -2240,8 +2586,9 @@ async function maybeResumeUnfinishedRun({ projectRoot, options = {}, flow = null
     steps: resumableSteps.length > 0 ? resumableSteps : resumableFlow.steps,
     transport: resumable.transport || 'github',
     branch: targetBranch(resumable) || currentGitBranch(projectRoot),
-    context: resumable.options?.context || '',
+    context: String(resumable.options?.context || ''),
     runState: resumable,
+    options: resumable.options || {},
   })
   const resumeAfterPreview = await clack.confirm({
     message: `Resume ${resumableFlow.title} from saved run ${resumable.runId}?`,
@@ -2305,17 +2652,34 @@ async function handleRunEngine(flowId, options) {
 
   const flowOptions = await collectFlowOptions(flow, options)
   const requestedTransport = flowOptions.transport || flow.defaults.transport
+  const configurationPreview = withSelectedStepAgents(flow, flowOptions)
+  const previewConfigurations = materializedAgentConfigurations(
+    configurationPreview.flow,
+    { ...flowOptions, ...configurationPreview },
+  )
   let transport
   if (flowOptions.dryRun) {
-    transport = resolveDryRunTransport({ requestedTransport, projectRoot })
+    transport = resolveTransportForAgentConfigurations({
+      requested: requestedTransport,
+      detections: [
+        { id: 'github', available: true },
+        { id: NETLIFY_API_TRANSPORT, available: true },
+      ],
+      configurations: previewConfigurations,
+    })
   } else {
     const detections = detectTransports({ projectRoot })
     if ((requestedTransport === 'auto' || !requestedTransport) && detections.every((candidate) => !candidate.available)) {
       throw new Error(formatTransportSetupHelp(detections))
     }
-    transport = process.stdin.isTTY
+    const hasPinnedConfiguration = previewConfigurations.some((configuration) => configuration.model || configuration.effort)
+    transport = process.stdin.isTTY && !hasPinnedConfiguration
       ? await chooseTransportInteractively({ requested: requestedTransport, projectRoot })
-      : resolveTransport(requestedTransport, detections)
+      : resolveTransportForAgentConfigurations({
+          requested: requestedTransport,
+          detections,
+          configurations: previewConfigurations,
+        })
     const selectedDetection = detections.find((candidate) => candidate.id === transport)
     if (!selectedDetection?.available) {
       throw new Error(unavailableTransportMessage(transport, detections))
@@ -2353,6 +2717,7 @@ async function handleRunEngine(flowId, options) {
         transport,
         branch: configuredOptions.branch,
         context: configuredOptions.context,
+        options: configuredOptions,
       })
       console.log('Dry run only. No issues, comments, Agent Runner jobs, or .nax artifacts will be created.')
     }
@@ -2599,11 +2964,13 @@ module.exports = {
   createDiscussionComment,
   buildProgram,
   cancelLocalWorkflowRunnersForInterrupt,
+  chooseSingleAgentConfigInteractively,
+  configureAgentsInteractively,
   createIssue,
   createPullRequestComment,
   extractLinkedPullRequest,
   flowAgents,
-  inferModelFromIssueTitle,
+  inferAgentFromIssueTitle,
   findRunStateForRetry,
   handleAdHocAgentRun,
   handleHandoff,
@@ -2621,7 +2988,7 @@ module.exports = {
   printSuccessBox,
   runnableSteps,
   withSelectedAgents,
-  withSelectedStepModels,
+  withSelectedStepAgents,
   parseGitHubPullRequestUrl,
   resolveCommentTarget,
   resumeRunById,

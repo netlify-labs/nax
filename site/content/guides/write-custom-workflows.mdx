@@ -95,7 +95,8 @@ nax run conversion-audit --dry --force
 - Use a single synthesis step when you want a concise artifact for human review.
 
 <Callout type="warning">
-  JavaScript and TypeScript flow files are executable project code and are blocked by safe mode. Use YAML, JSON, or TOML for project workflows.
+  JavaScript and TypeScript flow files must contain a single static object
+  export. NAX parses that object as data and rejects dynamic executable code.
 </Callout>
 
 ## See also

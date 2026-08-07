@@ -23,10 +23,12 @@ import {
   useMantineColorScheme,
 } from '@mantine/core'
 import { useDisclosure, type UseSplitterReturnValue } from '@mantine/hooks'
-import { BookOpen, Check, Copy, FolderGit2, GitBranch, Moon, RefreshCw, Sun } from 'lucide-react'
+import { BookOpen, Bot, Check, Copy, FolderGit2, GitBranch, Moon, RefreshCw, Settings2, Sun } from 'lucide-react'
 import { ReactFlowProvider } from '@xyflow/react'
 import { runEventsStream, type RunEventStream } from './api'
 import { WorkflowOutputTabs } from './components/DryRunPanel'
+import { AgentConfigDrawer } from './components/AgentConfigDrawer'
+import { AgentRunModal } from './components/AgentRunModal'
 import { Inspector } from './components/Inspector'
 import { NetlifyTargetMenu } from './components/NetlifyTargetMenu'
 import { RecentRuns } from './components/RecentRuns'
@@ -47,7 +49,7 @@ import {
 import { appendBoundedOutput, initialLiveRunState, liveRunReducer, visualStatus } from './liveRunReducer'
 import { dashboardQueryKeys } from './query-keys'
 import { invalidateDashboardLists, invalidateRunViews, sameRun, upsertRunInDashboardCache } from './queries/dashboard-cache'
-import { useCancelWorkflowRunMutation, useDryRunWorkflowMutation, useStartWorkflowRunMutation } from './queries/dashboard-mutations'
+import { useCancelWorkflowRunMutation, useDryRunWorkflowMutation, useStartAgentRunMutation, useStartWorkflowRunMutation } from './queries/dashboard-mutations'
 import { useDashboardHealthQuery, useRunGraphQuery, useRunsQuery, useWorkflowGraphQuery, useWorkflowsQuery } from './queries/dashboard-queries'
 import { applyRunnerEventToDashboardCache } from './queries/query-event-bridge'
 import { dashboardRouteSpec } from './route-spec'
@@ -55,7 +57,7 @@ import { projectWorkflowGraph, workflowGraphNodeByStepId } from './run-projectio
 import { recordValue } from './run-format'
 import type { RunDetailsSelector } from './run-details-selection'
 import { isActiveStatus, isTerminalStatus, statusKey } from './status-model'
-import type { DryRunOptions, DryRunResult, RunFollowupResponse, RunnerEvent, DashboardRun, Workflow, WorkflowGraph, WorkflowGraphNodeData } from './types'
+import type { AgentRunRequest, DryRunOptions, DryRunResult, RunFollowupResponse, RunnerEvent, DashboardRun, Workflow, WorkflowGraph, WorkflowGraphNodeData } from './types'
 
 type ContextModalAction = '' | 'dry-run' | 'run'
 type DetailsModalContext = {
@@ -73,7 +75,7 @@ function parseRunEvent(event: Event): RunnerEvent {
   }
 }
 
-function stepModelsFromRunGraph(graph: WorkflowGraph): Record<string, string[]> {
+function stepAgentsFromRunGraph(graph: WorkflowGraph): Record<string, string[]> {
   const out: Record<string, string[]> = {}
   for (const node of graph.nodes) {
     const agents = node.data.agents || []
@@ -218,12 +220,18 @@ export default function App() {
   const legacyWorkflowId = useMemo(() => legacyWorkflowFromUrl(), [])
   const [navbarOpened, { toggle: toggleNavbar }] = useDisclosure(false)
   const [eventDiagnosticsOpened, { open: openEventDiagnostics, close: closeEventDiagnostics }] = useDisclosure(false)
+  const [agentConfigOpened, { open: openAgentConfig, close: closeAgentConfig }] = useDisclosure(false)
+  const [agentRunOpened, { open: openAgentRun, close: closeAgentRun }] = useDisclosure(false)
   const { colorScheme, toggleColorScheme } = useMantineColorScheme()
   const [dryRunOptions, setDryRunOptions] = useState<DryRunOptions>({
     branch: 'master',
     transport: 'netlify-api',
-    models: [],
+    agents: [],
+    stepAgents: {},
+    models: {},
+    efforts: {},
     stepModels: {},
+    stepEfforts: {},
     context: '',
     step: '',
     fromStep: '',
@@ -236,6 +244,7 @@ export default function App() {
   const [runRunning, setRunRunning] = useState(false)
   const [cancelRunning, setCancelRunning] = useState(false)
   const [runError, setRunError] = useState('')
+  const [agentRunError, setAgentRunError] = useState('')
   const [netlifyAccessDismissed, setNetlifyAccessDismissed] = useState(false)
   const [liveRunState, dispatchLiveRun] = useReducer(liveRunReducer, initialLiveRunState())
   const [lastWorkflowGraph, setLastWorkflowGraph] = useState<WorkflowGraph | null>(null)
@@ -268,6 +277,7 @@ export default function App() {
   })
   const dryRunMutation = useDryRunWorkflowMutation()
   const startWorkflowRunMutation = useStartWorkflowRunMutation()
+  const startAgentRunMutation = useStartAgentRunMutation()
   const cancelWorkflowRunMutation = useCancelWorkflowRunMutation()
   const workflows = workflowsQuery.data?.items || []
   const projectRoot = healthQuery.data?.projectRoot || ''
@@ -396,8 +406,8 @@ export default function App() {
     const nextStepDelayMs = 700
 
     selectedNodes.forEach((node) => {
-      const selectedAgents = Object.prototype.hasOwnProperty.call(options.stepModels, node.data.stepId)
-        ? options.stepModels[node.data.stepId]
+      const selectedAgents = Object.prototype.hasOwnProperty.call(options.stepAgents, node.data.stepId)
+        ? options.stepAgents[node.data.stepId]
         : node.data.selectedAgents || node.data.agents
       const completionOrder = ['claude', 'codex', 'gemini']
       const activeAgents = node.data.agents
@@ -500,8 +510,12 @@ export default function App() {
     setDryRunOptions((options) => ({
       ...options,
       context: '',
-      models: [],
+      agents: [],
+      stepAgents: {},
+      models: {},
+      efforts: {},
       stepModels: {},
+      stepEfforts: {},
       step: '',
       fromStep: '',
     }))
@@ -550,8 +564,12 @@ export default function App() {
       context: '',
       step: typeof runOptions.step === 'string' ? runOptions.step : '',
       fromStep: typeof runOptions.fromStep === 'string' ? runOptions.fromStep : '',
-      models: [],
-      stepModels: stepModelsFromRunGraph(response.graph),
+      agents: [],
+      stepAgents: stepAgentsFromRunGraph(response.graph),
+      models: runOptions.models || {},
+      efforts: runOptions.efforts || {},
+      stepModels: runOptions.stepModels || {},
+      stepEfforts: runOptions.stepEfforts || {},
     }))
     setError('')
   }, [closeRunEvents, runGraphQuery.data, selectedRunId, setLiveAgentStatuses, setLiveStepStatuses])
@@ -579,23 +597,44 @@ export default function App() {
     return () => window.clearInterval(interval)
   }, [queryClient, runRunning, visibleRunActive])
 
-  const toggleStepAgent = useCallback((stepId: string, agent: string, allAgents: string[]) => {
+  const toggleStepAgent = useCallback((stepId: string, agent: string, allAgents: string[], declaredAgents?: string[]) => {
+    const declared = declaredAgents ?? allAgents
     setDryRunOptions((options) => {
-      const current = Object.prototype.hasOwnProperty.call(options.stepModels, stepId)
-        ? options.stepModels[stepId]
-        : allAgents
+      const current = Object.prototype.hasOwnProperty.call(options.stepAgents, stepId)
+        ? options.stepAgents[stepId]
+        : declared
       const next = current.includes(agent)
         ? current.filter((candidate) => candidate !== agent)
         : [...current, agent].filter((candidate, index, list) => list.indexOf(candidate) === index)
       const ordered = allAgents.filter((candidate) => next.includes(candidate))
-      const nextStepModels = { ...options.stepModels }
-      if (ordered.length === allAgents.length) delete nextStepModels[stepId]
-      else nextStepModels[stepId] = ordered
+      const nextStepAgents = { ...options.stepAgents }
+      const isDeclaredDefault = ordered.length === declared.length &&
+        declared.every((candidate) => ordered.includes(candidate))
+      if (isDeclaredDefault) delete nextStepAgents[stepId]
+      else nextStepAgents[stepId] = ordered
       return {
         ...options,
-        models: [],
-        stepModels: nextStepModels,
+        agents: [],
+        stepAgents: nextStepAgents,
       }
+    })
+  }, [])
+
+  const configureStepAgent = useCallback((stepId: string, agent: string, config: { model: string; effort: string }) => {
+    setDryRunOptions((options) => {
+      const nextStepModels = { ...options.stepModels }
+      const nextStepEfforts = { ...options.stepEfforts }
+      const models = { ...(nextStepModels[stepId] || {}) }
+      const efforts = { ...(nextStepEfforts[stepId] || {}) }
+      if (!config.model || config.model === 'auto') delete models[agent]
+      else models[agent] = config.model
+      if (!config.effort || config.effort === 'auto') delete efforts[agent]
+      else efforts[agent] = config.effort
+      if (Object.keys(models).length > 0) nextStepModels[stepId] = models
+      else delete nextStepModels[stepId]
+      if (Object.keys(efforts).length > 0) nextStepEfforts[stepId] = efforts
+      else delete nextStepEfforts[stepId]
+      return { ...options, stepModels: nextStepModels, stepEfforts: nextStepEfforts }
     })
   }, [])
 
@@ -647,8 +686,8 @@ export default function App() {
       setRunError('Run actions are not available in this dashboard deployment.')
       return
     }
-    const stepOverrideCount = Object.keys(optionsOverride.stepModels).length
-    const models = stepOverrideCount > 0 ? `${stepOverrideCount} step override${stepOverrideCount === 1 ? '' : 's'}` : 'all configured agents'
+    const stepOverrideCount = Object.keys(optionsOverride.stepAgents).length
+    const agents = stepOverrideCount > 0 ? `${stepOverrideCount} step override${stepOverrideCount === 1 ? '' : 's'}` : 'all configured agents'
     const netlifyTarget = optionsOverride.transport === 'netlify-api' ? netlifyContext?.target : null
     const allowed = confirmed || window.confirm([
       `Start "${workflow.title}"?`,
@@ -659,7 +698,7 @@ export default function App() {
         `Agent Runner site: ${netlifyTarget.name}`,
         `Selected because: ${netlifyTarget.reason}`,
       ] : []),
-      `Models: ${models}`,
+      `Agents: ${agents}`,
       '',
       'This can create remote work and spend Netlify agent credits.',
     ].join('\n'))
@@ -746,6 +785,18 @@ export default function App() {
     } catch (err) {
       setRunError(err instanceof Error ? err.message : String(err))
       setRunRunning(false)
+    }
+  }
+
+  const runSingleAgent = async (request: AgentRunRequest) => {
+    setAgentRunError('')
+    try {
+      const response = await startAgentRunMutation.mutateAsync(request)
+      setActiveRun(response.run)
+      closeAgentRun()
+      navigateRun(response.run.runId || response.run.id)
+    } catch (err) {
+      setAgentRunError(err instanceof Error ? err.message : String(err))
     }
   }
 
@@ -885,8 +936,8 @@ export default function App() {
   }, [liveStepStatuses, startupNode])
   const projectedAgentStatuses = useMemo(() => {
     if (!startupNode?.node.stepId) return liveAgentStatuses
-    const selectedAgents = Object.prototype.hasOwnProperty.call(dryRunOptions.stepModels, startupNode.node.stepId)
-      ? dryRunOptions.stepModels[startupNode.node.stepId]
+    const selectedAgents = Object.prototype.hasOwnProperty.call(dryRunOptions.stepAgents, startupNode.node.stepId)
+      ? dryRunOptions.stepAgents[startupNode.node.stepId]
       : startupNode.node.selectedAgents || startupNode.node.agents
     return {
       ...liveAgentStatuses,
@@ -895,13 +946,17 @@ export default function App() {
         ...Object.fromEntries(selectedAgents.map((agent) => [agent, startupNode.status])),
       },
     }
-  }, [dryRunOptions.stepModels, liveAgentStatuses, startupNode])
+  }, [dryRunOptions.stepAgents, liveAgentStatuses, startupNode])
   const projectedGraph = useMemo(() => projectWorkflowGraph({
     graph,
-    stepModels: dryRunOptions.stepModels,
+    stepAgents: dryRunOptions.stepAgents,
     stepStatuses: projectedStepStatuses,
     stepAgentStatuses: projectedAgentStatuses,
-  }), [dryRunOptions.stepModels, graph, projectedAgentStatuses, projectedStepStatuses])
+  }), [dryRunOptions.stepAgents, graph, projectedAgentStatuses, projectedStepStatuses])
+  const configurableAgents = useMemo(() => {
+    const agents = projectedGraph?.nodes.flatMap((node) => node.data.selectedAgents || node.data.agents) || []
+    return agents.filter((agent, index) => agents.indexOf(agent) === index)
+  }, [projectedGraph])
   const selectedWorkflowStepId = routeWorkflowStepId(routeState)
   const selectedNode = useMemo(
     () => workflowGraphNodeByStepId(projectedGraph, selectedWorkflowStepId),
@@ -1072,13 +1127,34 @@ export default function App() {
         <AppShell.Header>
           <Group h="100%" px="md" justify="space-between" wrap="nowrap">
             <Group gap="sm" wrap="nowrap" miw={0} className="header-title-group">
-              <Burger opened={navbarOpened} onClick={toggleNavbar} hiddenFrom="sm" size="sm" />
+              <Burger
+                aria-label="Toggle workflow navigation"
+                opened={navbarOpened}
+                onClick={toggleNavbar}
+                hiddenFrom="sm"
+                size="sm"
+              />
               <NetlifyLogo />
               <Box miw={0} className="header-title-wrap">
                 <Title order={1} size="h4" lh={1.15} className="header-title">Netlify Agent Executor</Title>
               </Box>
             </Group>
             <Group gap="xs" wrap="nowrap" className="header-actions">
+              <Button
+                aria-label="Run agent"
+                className="header-agent-run"
+                size="xs"
+                variant="light"
+                color="violet"
+                leftSection={<Bot size={15} />}
+                onClick={() => {
+                  setAgentRunError('')
+                  openAgentRun()
+                }}
+                disabled={!capabilities.canStartRuns}
+              >
+                Run agent
+              </Button>
               <Tooltip label={projectRoot || 'Project root'}>
                 <Group gap={6} wrap="nowrap" className="header-repo">
                   <FolderGit2 size={15} />
@@ -1183,7 +1259,14 @@ export default function App() {
                         loading={loadingGraph}
                         mode={workflowCanvasMode}
                         selectedNode={selectedNode}
+                        catalog={capabilities.agentConfiguration.catalog}
+                        transport={dryRunOptions.transport}
+                        models={dryRunOptions.models}
+                        efforts={dryRunOptions.efforts}
+                        stepModels={dryRunOptions.stepModels}
+                        stepEfforts={dryRunOptions.stepEfforts}
                         onToggleStepAgent={toggleStepAgent}
+                        onConfigureStepAgent={configureStepAgent}
                         onSelectNode={selectCanvasNode}
                         onViewNodeDetails={openNodeDetails}
                         onViewAgentResult={openAgentResult}
@@ -1260,18 +1343,54 @@ export default function App() {
               This can create remote work and spend Netlify agent credits.
             </Text>
           ) : null}
-          <Group justify="flex-end">
-            <Button variant="subtle" color="gray" onClick={closeContextModal}>Cancel</Button>
+          <Group justify="space-between">
             <Button
-              color={contextModalAction === 'run' ? 'violet' : undefined}
-              onClick={submitContextModal}
-              loading={contextModalAction === 'run' ? runRunning : dryRunRunning}
+              variant="light"
+              color="gray"
+              leftSection={<Settings2 size={16} />}
+              onClick={openAgentConfig}
             >
-              {contextModalAction === 'run' ? 'Run' : 'Dry Run'}
+              Configure agents
             </Button>
+            <Group gap="xs">
+              <Button variant="subtle" color="gray" onClick={closeContextModal}>Cancel</Button>
+              <Button
+                color={contextModalAction === 'run' ? 'violet' : undefined}
+                onClick={submitContextModal}
+                loading={contextModalAction === 'run' ? runRunning : dryRunRunning}
+              >
+                {contextModalAction === 'run' ? 'Run' : 'Dry Run'}
+              </Button>
+            </Group>
           </Group>
         </Stack>
       </Modal>
+      <AgentConfigDrawer
+        opened={agentConfigOpened}
+        onClose={closeAgentConfig}
+        agents={configurableAgents}
+        catalog={capabilities.agentConfiguration.catalog}
+        models={dryRunOptions.models}
+        efforts={dryRunOptions.efforts}
+        transport={dryRunOptions.transport}
+        onChange={({ models, efforts }) => setDryRunOptions((options) => ({
+          ...options,
+          models,
+          efforts,
+        }))}
+      />
+      <AgentRunModal
+        opened={agentRunOpened}
+        onClose={closeAgentRun}
+        catalog={capabilities.agentConfiguration.catalog}
+        branch={dryRunOptions.branch}
+        transport={dryRunOptions.transport}
+        loading={startAgentRunMutation.isPending}
+        error={agentRunError}
+        onSubmit={(request) => {
+          void runSingleAgent(request)
+        }}
+      />
       <Modal
         opened={eventDiagnosticsOpened}
         onClose={closeEventDiagnostics}
@@ -1334,6 +1453,7 @@ export default function App() {
         opened={runDetailsModalOpened}
         onClose={closeRunDetails}
         canOpenLocalFiles={capabilities.canOpenLocalFiles}
+        agentConfiguration={capabilities.agentConfiguration}
         runId={runDetailsModalRunId || renderedRunDetailsModalProps.runId}
         initialSelector={runDetailsInitialSelector || renderedRunDetailsModalProps.initialSelector}
         liveContext={detailsModalLiveContext || renderedRunDetailsModalProps.liveContext}

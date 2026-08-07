@@ -7,7 +7,7 @@ const {
   parsePromptMarker,
 } = require('../integrations/github/comment-markers')
 
-const PROMPT_HEADER_PATTERN = /^@\S+\s+(claude|gemini|codex)\b/i
+const PROMPT_HEADER_PATTERN = /^@\S+\s+(claude|gemini|codex|opencode)\b/i
 const STRUCTURED_HEADING_PATTERN = /^##\s+2\.\s+Structured\s+(Findings|Consensus)[^\n]*$/m
 const NEXT_SECTION_PATTERN = /^##\s+3\./m
 const FENCED_JSON_PATTERN = /```json\s*\n([\s\S]*?)\n```/
@@ -27,7 +27,7 @@ const CHAINING_NOISE_SECTION_NAMES = new Set([
  *   issueNumber?: string | number,
  *   issueTitle?: string,
  *   issueUrl?: string,
- *   model?: string | null,
+ *   agent?: string | null,
  *   replies?: import('../types').GitHubComment[],
  *   reply?: import('../types').GitHubComment,
  *   comments?: import('../types').GitHubComment[],
@@ -124,15 +124,15 @@ function pickAgentReplyComment(comments) {
   return reply || null
 }
 
-function inferModelFromTitle(title) {
-  const match = String(title || '').match(/\b(claude|gemini|codex)\b/i)
+function inferAgentFromTitle(title) {
+  const match = String(title || '').match(/\b(claude|gemini|codex|opencode)\b/i)
   if (!match) return null
   return match[1].toLowerCase()
 }
 
-function modelLabel(model) {
-  if (!model) return 'Unknown'
-  return model.charAt(0).toUpperCase() + model.slice(1)
+function agentLabel(agent) {
+  if (!agent) return 'Unknown'
+  return agent.charAt(0).toUpperCase() + agent.slice(1)
 }
 
 /** @param {FetchRoundResultsInput} param0 */
@@ -175,7 +175,7 @@ function fetchRoundResults({
       issueNumber: issue.number,
       issueTitle: issue.title,
       issueUrl: issue.url,
-      model: inferModelFromTitle(issue.title),
+      agent: inferAgentFromTitle(issue.title),
       replies,
       comments: issue.comments || [],
     }
@@ -301,7 +301,7 @@ function formatRoundResults({ heading = 'Prior Round Outputs', results, structur
   }
 
   for (const result of results) {
-    const label = modelLabel(result.model)
+    const label = agentLabel(result.agent)
     const replies = Array.isArray(result.replies)
       ? result.replies
       : result.reply
@@ -410,9 +410,9 @@ module.exports = {
   findCrossReviewPromptIndex,
   findRunnerResultAfter,
   formatRoundResults,
-  inferModelFromTitle,
+  inferAgentFromTitle,
   loadIssueWithComments,
-  modelLabel,
+  agentLabel,
   pickAgentReplyComment,
   pickAgentReplyComments,
   rawIssuesFromResults,

@@ -839,12 +839,16 @@ async function submitLocalAgentRun({
           {
             prompt: run.promptText,
             agent: run.agent,
+            ...(run.model ? { model: run.model } : {}),
+            ...(run.effort ? { effort: run.effort } : {}),
           },
         )
       : await client.start({
           siteId: resolvedSiteId,
           prompt: run.promptText,
           agent: run.agent,
+          ...(run.model ? { model: run.model } : {}),
+          ...(run.effort ? { effort: run.effort } : {}),
           ...(branch ? { branch } : {}),
           land: 'none',
           deadlineMs,
@@ -1166,6 +1170,8 @@ async function waitForLocalAgentRuns({
       : await retryClient.followUp(handle, {
           prompt: promptText,
           agent: runState.agent,
+          ...(runState.model ? { model: runState.model } : {}),
+          ...(runState.effort ? { effort: runState.effort } : {}),
         })
     const retriedSession = await retryClient.transport.getSession(
       retriedHandle.runnerId,

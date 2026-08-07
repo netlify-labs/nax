@@ -1,7 +1,7 @@
 const fs = require('fs')
 const path = require('path')
 const { renderPromptMarker } = require('../../integrations/github/comment-markers')
-const { DEFAULT_MODELS } = require('../../core/constants')
+const { DEFAULT_AGENT_PROVIDERS } = require('../../core/constants')
 const { titleCase } = require('../../core/strings/title-case')
 const { runGh } = require('../../integrations/github/gh-cli')
 
@@ -28,16 +28,16 @@ const PROMPT_ORDER = ['review', 'cross-review', 'summarize-consensus']
  * Issue title build options.
  * @typedef {{
  *   date?: string,
- *   model?: string,
+ *   agent?: string,
  *   prompt: PromptTitleDefinition,
  *   title?: string,
- *   sourceModels?: string[],
+ *   sourceAgents?: string[],
  * }} BuildIssueTitleInput
  *
  * Issue body build options.
  * @typedef {{
  *   runner?: string,
- *   model?: string,
+ *   agent?: string,
  *   prompt: PromptDefinition,
  *   context?: string,
  *   roundResults?: string,
@@ -150,22 +150,22 @@ function listPromptNames(promptsDir = PROMPTS_DIR) {
 }
 
 /** @param {BuildIssueTitleInput} param0 */
-function buildIssueTitle({ date, model, prompt, title, sourceModels = [] }) {
+function buildIssueTitle({ date, agent, prompt, title, sourceAgents = [] }) {
   if (title && title.trim()) {
-    return `${date} ${titleCase(model)} ${title.trim()}`
+    return `${date} ${titleCase(agent)} ${title.trim()}`
   }
-  if (prompt.name === 'summarize-consensus' && Array.isArray(sourceModels) && sourceModels.length > 0) {
-    const sources = sourceModels.map(titleCase).join('/')
-    return `${date} Summarize ${sources} Consensus using ${titleCase(model)}`
+  if (prompt.name === 'summarize-consensus' && Array.isArray(sourceAgents) && sourceAgents.length > 0) {
+    const sources = sourceAgents.map(titleCase).join('/')
+    return `${date} Summarize ${sources} Consensus using ${titleCase(agent)}`
   }
-  return `${date} ${titleCase(model)} ${prompt.title}`
+  return `${date} ${titleCase(agent)} ${prompt.title}`
 }
 
 /** @param {BuildIssueBodyInput} param0 */
-function buildIssueBody({ runner, model, prompt, context, roundResults, date, resolves = [] }) {
+function buildIssueBody({ runner, agent, prompt, context, roundResults, date, resolves = [] }) {
   const summaryLabel = `${titleCase(prompt.name)} instructions`
   const parts = [
-    `${runner} ${model} ${prompt.instruction}`.trim(),
+    `${runner} ${agent} ${prompt.instruction}`.trim(),
     '',
     '<details>',
     `<summary>${summaryLabel}</summary>`,
@@ -188,7 +188,7 @@ function buildIssueBody({ runner, model, prompt, context, roundResults, date, re
   }
 
   if (date) {
-    parts.push('', renderPromptMarker({ promptName: prompt.name, model, date }))
+    parts.push('', renderPromptMarker({ promptName: prompt.name, agent, date }))
   }
 
   return parts.join('\n')
@@ -212,7 +212,7 @@ function resolveRepo(explicitRepo) {
 }
 
 module.exports = {
-  DEFAULT_MODELS,
+  DEFAULT_AGENT_PROVIDERS,
   PROMPTS_DIR,
   buildIssueBody,
   buildIssueTitle,

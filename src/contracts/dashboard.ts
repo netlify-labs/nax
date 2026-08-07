@@ -17,6 +17,23 @@ export type DashboardCapabilities = {
   canStreamRunEvents: boolean
   canServeStaticAssets: boolean
   requiresAuth: boolean
+  agentConfiguration: {
+    catalog: {
+      provenance: { source: string, commit: string, syncedAt: string }
+      providers: Array<{
+        id: string
+        label: string
+        models: Array<{
+          id: string
+          label: string
+          efforts: Array<{ id: string, label: string, wireValue?: string }>
+          aliasFor?: string
+          upstreamDefaultEffort?: string
+        }>
+      }>
+    }
+    transports: Record<string, { models: boolean, efforts: boolean }>
+  }
 }
 
 export type NetlifyAccessVerdict = {
@@ -71,8 +88,12 @@ export type Target = {
 export type DryRunOptions = {
   branch: string
   transport: string
-  models: string[]
-  stepModels: Record<string, string[]>
+  agents: string[]
+  stepAgents: Record<string, string[]>
+  models: Record<string, string>
+  efforts: Record<string, string>
+  stepModels: Record<string, Record<string, string>>
+  stepEfforts: Record<string, Record<string, string>>
   context: string
   step: string
   fromStep: string
@@ -112,6 +133,9 @@ export type DashboardRun = {
   flowId: string
   flowTitle?: string
   status: string
+  agent?: string
+  model?: string
+  effort?: string
   transport?: string
   branch?: string
   target?: Target | null
@@ -140,6 +164,27 @@ export type DashboardRun = {
 export type StartRunResponse = {
   workflow: Workflow
   run: DashboardRun
+}
+
+export type AgentRunRequest = {
+  prompt: string
+  agent: string
+  models: Record<string, string>
+  efforts: Record<string, string>
+  branch: string
+  transport: string
+}
+
+export type AgentRunResponse = StartRunResponse & {
+  submission?: {
+    agent: string
+    model: string
+    effort: string
+    runnerId: string
+    sessionId: string
+    status: string
+  }
+  warnings?: string[]
 }
 
 export type RunsPagination = {
@@ -175,6 +220,8 @@ export type RunDetailsSection = {
   stepId: string
   stepTitle: string
   agent: string
+  model?: string
+  effort?: string
   status: string
   runnerId: string
   sessionId: string
@@ -199,6 +246,8 @@ export type RunFollowupTarget = {
   kind: 'workflow-summary' | 'step-summary' | 'agent-result' | 'runner-summary' | 'session-result'
   label: string
   agent: string
+  model?: string
+  effort?: string
   stepId: string
   stepNumber: number
   stepTitle: string
@@ -277,13 +326,17 @@ export type RunFollowupRequest = {
   mode: 'follow-up-thread' | 'fresh-runner'
   prompt: string
   targetId: string
-  models: string[]
+  agents: string[]
+  models: Record<string, string>
+  efforts: Record<string, string>
   artifacts: Array<{ id: string; kind: string }>
 }
 
 export type RunRetryRequest = {
   stepId: string
   agent: string
+  model?: string
+  effort?: string
   runnerId?: string
   sessionId?: string
   reason?: string

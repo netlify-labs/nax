@@ -1,11 +1,21 @@
 const path = require('path')
-const { normalizeStepModels, stepModelsToEntries } = require('../../core/agents/selection')
+const { normalizeStepAgents, stepAgentsToEntries } = require('../../core/agents/selection')
+const {
+  normalizeProviderEffortMap,
+  normalizeProviderModelMap,
+  normalizeStepProviderEffortMap,
+  normalizeStepProviderModelMap,
+  providerEffortMapToEntries,
+  providerModelMapToEntries,
+  stepProviderEffortMapToEntries,
+  stepProviderModelMapToEntries,
+} = require('../../core/agents/configuration')
 
 function noop(..._args) {}
 
-function normalizeModels(models) {
-  if (Array.isArray(models)) return models.map(String).filter(Boolean).join(',')
-  return models || ''
+function normalizeAgents(agents) {
+  if (Array.isArray(agents)) return agents.map(String).filter(Boolean).join(',')
+  return agents || ''
 }
 
 /**
@@ -19,8 +29,12 @@ function normalizeModels(models) {
  *   notifyEvents?: string | string[],
  *   step?: string,
  *   fromStep?: string,
- *   models?: string | string[],
+ *   agents?: string | string[],
+ *   stepAgents?: unknown,
+ *   models?: unknown,
+ *   efforts?: unknown,
  *   stepModels?: unknown,
+ *   stepEfforts?: unknown,
  *   siteId?: string,
  *   netlifySiteId?: string,
  *   filter?: string,
@@ -54,10 +68,14 @@ function workflowCommand(input) {
   if (options.notifyEvents) args.push('--notify-events', Array.isArray(options.notifyEvents) ? options.notifyEvents.join(',') : options.notifyEvents)
   if (options.step) args.push('--step', options.step)
   if (options.fromStep) args.push('--from-step', options.fromStep)
-  if (options.models?.length) args.push('--models', Array.isArray(options.models) ? options.models.join(',') : options.models)
-  for (const entry of stepModelsToEntries(options.stepModels)) {
-    args.push('--step-models', entry)
+  if (options.agents?.length) args.push('--agents', Array.isArray(options.agents) ? options.agents.join(',') : options.agents)
+  for (const entry of stepAgentsToEntries(options.stepAgents)) {
+    args.push('--step-agents', entry)
   }
+  for (const entry of providerModelMapToEntries(options.models)) args.push('--models', entry)
+  for (const entry of providerEffortMapToEntries(options.efforts)) args.push('--efforts', entry)
+  for (const entry of stepProviderModelMapToEntries(options.stepModels)) args.push('--step-models', entry)
+  for (const entry of stepProviderEffortMapToEntries(options.stepEfforts)) args.push('--step-efforts', entry)
   return args
 }
 
@@ -265,8 +283,12 @@ async function runWorkflow(input) {
   const options = {
     ...(input.options || {}),
     dryRun: resolvedDryRun,
-    models: normalizeModels(input.options?.models),
-    stepModels: normalizeStepModels(input.options?.stepModels),
+    agents: normalizeAgents(input.options?.agents),
+    stepAgents: normalizeStepAgents(input.options?.stepAgents),
+    models: normalizeProviderModelMap(input.options?.models),
+    efforts: normalizeProviderEffortMap(input.options?.efforts),
+    stepModels: normalizeStepProviderModelMap(input.options?.stepModels),
+    stepEfforts: normalizeStepProviderEffortMap(input.options?.stepEfforts),
     ...(projectRoot ? { projectRoot } : {}),
     ...(forceNonInteractive ? { force: true, yes: true } : {}),
     ...(input.runnerEventSink ? { runnerEventSink: input.runnerEventSink } : {}),

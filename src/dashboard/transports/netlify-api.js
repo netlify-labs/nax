@@ -1,8 +1,13 @@
 const crypto = require('crypto')
+const {
+  normalizeProviderEffortMap,
+  normalizeProviderModelMap,
+  resolveAgentRunConfig,
+} = require('../../core/agents/configuration')
 
 /**
  * @typedef {{
- *   createAgentRunner: (input: { siteId?: string, promptText?: string, agent?: string, branch?: string, source?: Record<string, unknown> }) => Promise<import('../../integrations/netlify/api-client').NormalizedAgentRunner>,
+ *   createAgentRunner: (input: { siteId?: string, promptText?: string, agent?: string, model?: string, effort?: string, branch?: string, source?: Record<string, unknown> }) => Promise<import('../../integrations/netlify/api-client').NormalizedAgentRunner>,
  *   cancelAgentRunner: (input: { runnerId?: string }) => Promise<import('../../integrations/netlify/api-client').NormalizedAgentRunner>,
  *   getAgentRunner: (input: { runnerId?: string, sdkHandle?: import('nax-agent-runner-sdk').Handle }) => Promise<import('../../integrations/netlify/api-client').NormalizedAgentRunner>,
  * }} HostedNetlifyApiClient
@@ -62,11 +67,32 @@ function stringMap(value) {
 
 /** @param {Record<string, unknown>} body */
 function hostedAgents(body) {
-  const models = stringList(body.models)
-  if (models.length > 0) return models
   const agents = stringList(body.agents)
   if (agents.length > 0) return agents
-  return [stringValue(body.agent || body.model || 'codex').trim() || 'codex']
+  return [stringValue(body.agent || 'codex').trim() || 'codex']
+}
+
+/**
+ * @param {Record<string, unknown>} body
+ * @param {string} agent
+ */
+function hostedRequestedConfiguration(body, agent) {
+  const models = normalizeProviderModelMap(body.models)
+  const efforts = normalizeProviderEffortMap(body.efforts)
+  const singularModel = stringValue(body.model).trim()
+  const singularEffort = stringValue(body.effort).trim()
+  return resolveAgentRunConfig(agent, {
+    globalCli: {
+      models: {
+        ...models,
+        ...(singularModel ? { [agent]: singularModel } : {}),
+      },
+      efforts: {
+        ...efforts,
+        ...(singularEffort ? { [agent]: singularEffort } : {}),
+      },
+    },
+  })
 }
 
 /** @param {unknown} value */
@@ -158,15 +184,27 @@ function hostedRunMarkdown(remote) {
 
 /** @param {import('../../integrations/netlify/api-client').NormalizedAgentRunner} remote */
 function hostedRunAgent(remote) {
+  return hostedRunConfiguration(remote).agent
+}
+
+/** @param {import('../../integrations/netlify/api-client').NormalizedAgentRunner} remote */
+function hostedRunConfiguration(remote) {
   const raw = objectValue(remote.raw)
   const latest = objectValue(raw.latest_session)
-  return stringValue(raw.agent || raw.model || latest.agent || latest.model || 'codex') || 'codex'
+  const rawConfig = objectValue(raw.agent_config)
+  const latestConfig = objectValue(latest.agent_config)
+  const handleInput = objectValue(remote.sdkHandle?.input)
+  return {
+    agent: stringValue(latestConfig.agent || rawConfig.agent || latest.agent || raw.agent || handleInput.agent || 'codex') || 'codex',
+    model: stringValue(latestConfig.model || rawConfig.model || latest.model || raw.model || handleInput.model),
+    effort: stringValue(latestConfig.effort || rawConfig.effort || latest.effort || raw.effort || handleInput.effort),
+  }
 }
 
 /** @param {import('../../integrations/netlify/api-client').NormalizedAgentRunner} remote */
 function hostedRunDetails(remote) {
   const run = hostedRunDto(remote)
-  const agent = hostedRunAgent(remote)
+  const { agent, model, effort } = hostedRunConfiguration(remote)
   const markdown = hostedRunMarkdown(remote)
   const artifacts = rawArtifactItems(remote.raw).map((artifact, index) => hostedDetailArtifact(artifact, index, run))
   const target = {
@@ -174,6 +212,8 @@ function hostedRunDetails(remote) {
     kind: 'agent-result',
     label: `${agent} hosted runner`,
     agent,
+    model,
+    effort,
     stepId: 'hosted-runner',
     stepNumber: 1,
     stepTitle: 'Hosted Agent Runner',
@@ -193,6 +233,8 @@ function hostedRunDetails(remote) {
     stepId: 'hosted-runner',
     stepTitle: 'Hosted Agent Runner',
     agent,
+    model,
+    effort,
     status: run.status,
     runnerId: run.runnerId,
     sessionId: run.sessionId,
@@ -313,7 +355,11 @@ function idempotencyKey(workflowId, body) {
     .update(JSON.stringify({
       workflowId,
       prompt: hostedPrompt(body),
-      agent: stringValue(body.agent || body.model || 'codex'),
+      agent: stringValue(body.agent || 'codex'),
+      models: objectValue(body.models),
+      efforts: objectValue(body.efforts),
+      model: stringValue(body.model),
+      effort: stringValue(body.effort),
       branch: stringValue(body.branch || ''),
     }))
     .digest('hex')
@@ -322,6 +368,7 @@ function idempotencyKey(workflowId, body) {
 /** @param {import('../../integrations/netlify/api-client').NormalizedAgentRunner} remote */
 function hostedRunDto(remote) {
   const status = dashboardStatus(remote.status || remote.state || 'submitted')
+  const { agent, model, effort } = hostedRunConfiguration(remote)
   return {
     id: remote.runnerId,
     runId: remote.runnerId,
@@ -342,6 +389,9 @@ function hostedRunDto(remote) {
     cancellable: !['completed', 'failed', 'cancelled'].includes(status),
     runnerId: remote.runnerId,
     sessionId: remote.sessionId,
+    agent,
+    model,
+    effort,
     sdkHandle: remote.sdkHandle || null,
     links: remote.links,
     raw: /** @type {Record<string, unknown>} */ ({
@@ -495,10 +545,14 @@ function createHostedNetlifyApiTransport({ client, siteId = '', initialRunnerIds
           },
         }
       }
+      const agent = stringValue(body.agent || 'codex')
+      const configuration = hostedRequestedConfiguration(body, agent)
       const remote = await client.createAgentRunner({
         siteId,
         promptText,
-        agent: stringValue(body.agent || body.model || 'codex'),
+        agent: configuration.agent,
+        ...(configuration.model ? { model: configuration.model } : {}),
+        ...(configuration.effort ? { effort: configuration.effort } : {}),
         branch: stringValue(body.branch || ''),
         source: {
           idempotencyKey: key,
@@ -516,9 +570,10 @@ function createHostedNetlifyApiTransport({ client, siteId = '', initialRunnerIds
         statusCode: 202,
         body: {
           workflow: { id: workflowId, title: workflowId, source: 'hosted' },
-          run,
-          duplicate: false,
-          idempotencyKey: key,
+            run,
+            duplicate: false,
+            idempotencyKey: key,
+            warnings: configuration.warnings,
         },
       }
     },
@@ -634,10 +689,14 @@ function createHostedNetlifyApiTransport({ client, siteId = '', initialRunnerIds
       const warnings = []
 
       for (const agent of agents) {
+        const configuration = hostedRequestedConfiguration(body, agent)
+        warnings.push(...configuration.warnings)
         const remote = await client.createAgentRunner({
           siteId,
           promptText,
-          agent,
+          agent: configuration.agent,
+          ...(configuration.model ? { model: configuration.model } : {}),
+          ...(configuration.effort ? { effort: configuration.effort } : {}),
           branch: stringValue(body.branch || body.targetBranch || objectValue(body.target).branch),
           source: {
             id,
@@ -667,6 +726,8 @@ function createHostedNetlifyApiTransport({ client, siteId = '', initialRunnerIds
           id: run.runnerId,
           mode: 'fresh-runner',
           agent,
+          ...(configuration.model ? { model: configuration.model } : {}),
+          ...(configuration.effort ? { effort: configuration.effort } : {}),
           runnerId: run.runnerId,
           sessionId: run.sessionId,
           status: run.status,
@@ -692,7 +753,15 @@ function createHostedNetlifyApiTransport({ client, siteId = '', initialRunnerIds
         },
         plan: {
           requestedMode,
-          submissions: agents.map((agent) => ({ mode: 'fresh-runner', agent })),
+          submissions: agents.map((agent) => {
+            const configuration = hostedRequestedConfiguration(body, agent)
+            return {
+              mode: 'fresh-runner',
+              agent,
+              ...(configuration.model ? { model: configuration.model } : {}),
+              ...(configuration.effort ? { effort: configuration.effort } : {}),
+            }
+          }),
         },
         submissions,
         sourceWorkflow: null,

@@ -1,6 +1,7 @@
 const { makeBox } = require('@davidwells/box-logger')
 const { Command, Option } = require('commander')
-const { DEFAULT_MODEL_CSV, DEFAULT_MODELS } = require('../../core/constants')
+const { DEFAULT_AGENT_CSV, DEFAULT_AGENT_PROVIDERS } = require('../../core/constants')
+const { SUPPORTED_AGENT_PROVIDERS } = require('../../core/agents/configuration')
 const { terminalTrafficLights } = require('../display/terminal')
 
 const TEAL_COLOR = '#0d9488'
@@ -172,14 +173,17 @@ function addAdvancedOutputBudgetOptions(command, defaultOutputBudgetBytes) {
 /**
  * Adds the compact run flags shared by workflow and single-agent runs.
  * @param {CommanderCommand} command
+ * @param {CollectOption} collectOption
  * @returns {CommanderCommand}
  */
-function addPublicRunOptions(command) {
+function addPublicRunOptions(command, collectOption) {
   return command
     .option('--branch <branch-or-pr>', 'Git branch or PR number to run in Netlify agent runners')
     .option('--context <text>', 'Additional context appended to each prompt')
     .option('--context-file <path>', 'Read additional context from a file')
-    .option('--models <list>', 'Comma-separated agent models for workflow steps')
+    .option('--agents <list>', 'Comma-separated agent providers for workflow steps')
+    .option('--models <agent=model>', 'Assign a model to an agent provider; repeatable', collectOption, [])
+    .option('--efforts <agent=effort>', 'Assign reasoning effort to an agent provider; repeatable', collectOption, [])
     .option('--step <id>', 'Run only one flow step')
     .option('--from-step <id>', 'Run from a flow step through the end')
     .option('--transport <transport>', 'Where to run: auto, github, netlify-api', 'auto')
@@ -215,7 +219,9 @@ function addAdvancedRunOptions(command, collectOption, defaultOutputBudgetBytes)
     .addOption(hiddenOption('--notify-events <list>', 'Comma-separated notification events to send'))
     .addOption(hiddenOption('--no-auto-context', 'Do not inject the automatic review contract, pinned SHA snapshot, or PR ledger'))
     .addOption(hiddenOption('--no-fetch-results', 'Do not fetch round results from prior steps'))
-    .addOption(hiddenOption('--step-models <step=models>', 'Agent models for one workflow step; repeatable').argParser(collectOption).default([])), collectOption), defaultOutputBudgetBytes)
+    .addOption(hiddenOption('--step-agents <step=agents>', 'Agent providers for one workflow step; repeatable').argParser(collectOption).default([]))
+    .addOption(hiddenOption('--step-models <step:agent=model>', 'Model assignment for one workflow step; repeatable').argParser(collectOption).default([]))
+    .addOption(hiddenOption('--step-efforts <step:agent=effort>', 'Effort assignment for one workflow step; repeatable').argParser(collectOption).default([])), collectOption), defaultOutputBudgetBytes)
 }
 
 /**
@@ -278,12 +284,12 @@ function editDistance(left, right) {
  */
 function validateAgentName(agent) {
   const normalized = String(agent || '').trim().toLowerCase()
-  if (DEFAULT_MODELS.includes(normalized)) return normalized
-  const suggested = DEFAULT_MODELS
+  if (SUPPORTED_AGENT_PROVIDERS.includes(/** @type {import('../../core/agents/configuration').AgentProvider} */ (normalized))) return normalized
+  const suggested = SUPPORTED_AGENT_PROVIDERS
     .map((candidate) => ({ candidate, distance: editDistance(normalized, candidate) }))
     .sort((left, right) => left.distance - right.distance)[0]
   const hint = suggested && suggested.distance <= 2 ? ` Did you mean ${suggested.candidate}?` : ''
-  throw new Error(`Unknown agent "${agent}". Expected one of: ${DEFAULT_MODELS.join(', ')}.${hint}`)
+  throw new Error(`Unknown agent "${agent}". Expected one of: ${SUPPORTED_AGENT_PROVIDERS.join(', ')}.${hint}`)
 }
 
 /**
@@ -389,7 +395,7 @@ function buildNaxProgram({
     content: [
       'NAX runs repeatable multi-step agent workflows for Netlify Agent Runners.',
       '',
-      'Use Claude, Gemini, and Codex across implementations, reviews, handoffs, and custom flows.',
+      'Use Claude, Codex, Gemini, and OpenCode across implementations, reviews, handoffs, and custom flows.',
       '',
       'Docs: https://netlify-agent-executor.netlify.app/',
     ].join('\n'),
@@ -452,7 +458,7 @@ function buildNaxProgram({
   const runCommand = addRetryOptions(addAdvancedRunOptions(addPublicRunOptions(program
     .command('run [flow]')
     .description('Start a workflow or single-agent run')
-    .usage('[workflow]')), collectOption, defaultOutputBudgetBytes))
+    .usage('[workflow]'), collectOption), collectOption, defaultOutputBudgetBytes))
     .action((flow, options, command) => {
       const resolvedOptions = actionOptions(options, command)
       const retry = resolveRetryValue(resolvedOptions.retry)
@@ -471,7 +477,9 @@ function buildNaxProgram({
   addAdvancedRunOptions(addPublicRunOptions(runCommand
     .command('agent <type> [prompt...]')
     .description('Run one Netlify agent directly')
-    .option('--prompt <text>', 'Prompt text for the agent run')), collectOption, defaultOutputBudgetBytes)
+    .option('--prompt <text>', 'Prompt text for the agent run')
+    .option('--model <id>', 'Model for this agent; Auto omits the model')
+    .option('--effort <level>', 'Reasoning effort for this agent; Auto omits effort'), collectOption), collectOption, defaultOutputBudgetBytes)
     .action((type, promptParts, options, command) => {
       const agent = validateAgentName(type)
       const resolvedOptions = actionOptions(options, command)
@@ -591,7 +599,7 @@ function buildNaxProgram({
   program
     .command('issue [prompt]', { hidden: true })
     .description('Create issues for a prompt')
-    .option('--models <list>', `Comma-separated models (default: ${DEFAULT_MODELS.join(',')})`)
+    .option('--agents <list>', `Comma-separated agents (default: ${DEFAULT_AGENT_PROVIDERS.join(',')})`)
     .option('--repo <owner/name>', 'GitHub repo; defaults to gh repo view')
     .option('--date <yyyy-mm-dd>', 'Issue title date prefix; defaults to local date')
     .option('--title <title>', 'Issue title suffix; defaults to prompt title')
@@ -659,7 +667,7 @@ function buildNaxProgram({
     .option('--flavor-min-ms <ms>', 'Minimum delay between flavor rotations', '10000')
     .option('--flavor-max-ms <ms>', 'Maximum delay between flavor rotations', '15000')
     .option('--label <label>', 'Step title to display', 'Review')
-    .option('--agents <list>', 'Comma-separated agent names', DEFAULT_MODEL_CSV)
+    .option('--agents <list>', 'Comma-separated agent names', DEFAULT_AGENT_CSV)
     .option('--orchestrator <name>', 'Orchestrator label prefixed to agent', defaultOrchestrator)
     .action((options, command) => settleAction(handlers.previewSpinner(actionOptions(options, command))))
 

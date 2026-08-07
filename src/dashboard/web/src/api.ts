@@ -1,4 +1,4 @@
-import type { DryRunOptions, DryRunResponse, HealthResponse, RunDetailsResponse, RunFollowupRequest, RunFollowupResponse, RunGraphResponse, RunRetryRequest, RunRetryResponse, RunsResponse, StartRunResponse, WorkflowGraphResponse, WorkflowListResponse, DashboardRun } from './types'
+import type { AgentRunRequest, AgentRunResponse, DryRunOptions, DryRunResponse, HealthResponse, RunDetailsResponse, RunFollowupRequest, RunFollowupResponse, RunGraphResponse, RunRetryRequest, RunRetryResponse, RunsResponse, StartRunResponse, WorkflowGraphResponse, WorkflowListResponse, DashboardRun } from './types'
 
 type DashboardWindow = Window & {
   NAX_DASHBOARD_API_BASE?: string
@@ -142,6 +142,16 @@ export async function runWorkflowDryRun(id: string, options: DryRunOptions): Pro
 
 export async function startWorkflowRun(id: string, options: DryRunOptions): Promise<StartRunResponse> {
   return fetchJson<StartRunResponse>(`/api/workflows/${encodeURIComponent(id)}/runs`, {
+    method: 'POST',
+    headers: {
+      'content-type': 'application/json',
+    },
+    body: JSON.stringify(options),
+  })
+}
+
+export async function startAgentRun(options: AgentRunRequest): Promise<AgentRunResponse> {
+  return fetchJson<AgentRunResponse>('/api/agent-runs', {
     method: 'POST',
     headers: {
       'content-type': 'application/json',

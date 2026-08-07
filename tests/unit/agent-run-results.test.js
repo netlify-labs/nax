@@ -212,6 +212,61 @@ test('agent session and runner JSON keep normalized file-change metadata', () =>
   })
 })
 
+test('agent session JSON preserves requested configuration and reports observed drift', () => {
+  const session = buildAgentSessionJson({
+    run: {
+      agent: 'claude',
+      model: 'claude-opus-4-8',
+      effort: 'high',
+      runnerId: 'runner-config',
+      sessionId: 'session-config',
+      status: 'completed',
+      rawResult: {
+        latestSession: {
+          agent_config: {
+            agent: 'claude',
+            model: 'claude-sonnet-5',
+            effort: 'medium',
+          },
+        },
+      },
+    },
+  })
+
+  assert.equal(session.agent, 'claude')
+  assert.equal(session.model, 'claude-opus-4-8')
+  assert.equal(session.effort, 'high')
+  assert.deepEqual(session.agent_config, {
+    agent: 'claude',
+    model: 'claude-sonnet-5',
+    effort: 'medium',
+  })
+  assert.deepEqual(session.configurationMismatch, {
+    requested: {
+      agent: 'claude',
+      model: 'claude-opus-4-8',
+      effort: 'high',
+    },
+    observed: {
+      agent: 'claude',
+      model: 'claude-sonnet-5',
+      effort: 'medium',
+    },
+    fields: [
+      {
+        field: 'model',
+        requested: 'claude-opus-4-8',
+        observed: 'claude-sonnet-5',
+      },
+      {
+        field: 'effort',
+        requested: 'high',
+        observed: 'medium',
+      },
+    ],
+  })
+})
+
 test('normalizeGithubRunResult standardizes action marker usage and links', () => {
   const body = [
     '### [Run #1 | codex | Agent Run completed](https://app.netlify.com/projects/site/agent-runs/runner-97?session=session-97)',

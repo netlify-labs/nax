@@ -18,11 +18,11 @@ function validateSegment(field, value) {
 }
 
 /** @param {import('../../types').JsonMap} param0 */
-function renderPromptMarker({ promptName, model, date }) {
+function renderPromptMarker({ promptName, agent, date }) {
   validateSegment('promptName', promptName)
-  validateSegment('model', model)
+  validateSegment('agent', agent)
   validateSegment('date', date)
-  return `${MARKER_PREFIX}${promptName}:${model}:${date}${MARKER_SUFFIX}`
+  return `${MARKER_PREFIX}${promptName}:${agent}:${date}${MARKER_SUFFIX}`
 }
 
 function parsePromptMarker(body) {
@@ -30,7 +30,7 @@ function parsePromptMarker(body) {
   if (!match) return null
   return {
     promptName: match[1],
-    model: match[2],
+    agent: match[2],
     date: match[3],
   }
 }

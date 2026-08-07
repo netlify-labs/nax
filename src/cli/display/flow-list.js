@@ -145,21 +145,21 @@ function formatFlowListJson(flows = []) {
 }
 
 /**
- * Returns title-cased unique agent models used by a flow.
+ * Returns title-cased unique agent providers used by a flow.
  * @param {FlowListFlow} [flow]
  * @returns {string[]}
  */
-function flowListModels(flow = {}) {
-  const models = []
+function flowListAgents(flow = {}) {
+  const agents = []
   const seen = new Set()
   for (const step of flow.steps || []) {
     for (const agent of step.agents || []) {
       if (seen.has(agent)) continue
       seen.add(agent)
-      models.push(titleCase(agent))
+      agents.push(titleCase(agent))
     }
   }
-  return models
+  return agents
 }
 
 /**
@@ -190,11 +190,11 @@ function formatFlowListBox(flow = {}, { width = 100, verbose = false, baseDir = 
   if (flow.description) lines.push(wordWrap(flow.description, innerWidth))
   if (verbose) {
     const steps = Array.isArray(flow.steps) ? flow.steps.length : 0
-    const models = flowListModels(flow).join(', ') || 'none'
+    const agents = flowListAgents(flow).join(', ') || 'none'
     const directory = formatFlowDirectory(flow, baseDir)
     if (lines.length > 0) lines.push('')
     lines.push(`Steps:      ${steps}`)
-    lines.push(`Models:     ${models}`)
+    lines.push(`Agents:     ${agents}`)
     if (directory) lines.push(`Location:   ${directory}`)
   }
   return {
@@ -285,7 +285,7 @@ module.exports = {
   absolutePathOrEmpty,
   compactWorkflowDescription,
   flowListJsonItem,
-  flowListModels,
+  flowListAgents,
   formatFlowDirectory,
   formatFlowList,
   formatFlowListBox,

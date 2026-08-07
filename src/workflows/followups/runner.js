@@ -37,10 +37,12 @@ function buildFollowupPrompt({ instructions = '', contextText = '' } = {}) {
   ].filter(Boolean).join('\n')
 }
 
-function baseRun({ agent, promptText, raw = {}, existingRunnerId = '' }) {
+function baseRun({ agent, model, effort, promptText, raw = {}, existingRunnerId = '' }) {
   return {
     transport: 'netlify-api',
     agent,
+    ...(model ? { model } : {}),
+    ...(effort ? { effort } : {}),
     status: 'pending',
     promptText,
     compactPromptText: '',
@@ -160,6 +162,8 @@ function persistSubmittedArtifacts({
  * @typedef {{
  *   projectRoot?: string,
  *   agent?: string,
+ *   model?: string,
+ *   effort?: string,
  *   promptText?: string,
  *   source?: import('../../types').JsonMap,
  *   raw?: import('../../types').JsonMap,
@@ -182,6 +186,8 @@ function persistSubmittedArtifacts({
 async function submitAgentRun({
   projectRoot,
   agent,
+  model,
+  effort,
   promptText,
   source = { type: 'dashboard-followup' },
   raw = {},
@@ -198,7 +204,7 @@ async function submitAgentRun({
   persistSession,
   persistRunner,
 } = {}) {
-  const run = baseRun({ agent, promptText, raw, existingRunnerId })
+  const run = baseRun({ agent, model, effort, promptText, raw, existingRunnerId })
   logger.info?.(`Submitting ${agent}${existingRunnerId ? ' follow-up session' : ' fresh runner'}.`)
   const submitted = await submitRun({
     run,
@@ -257,6 +263,9 @@ function submitFollowupSession(options = {}) {
  * @typedef {{
  *   mode?: string,
  *   agent?: string,
+ *   model?: string,
+ *   effort?: string,
+ *   warnings?: string[],
  *   runnerId?: string,
  *   sourceTargetId?: string,
  *   sourceArtifactIds?: string[],
@@ -285,6 +294,8 @@ async function submitFollowupPlan({
       ...shared,
       projectRoot,
       agent: submission.agent,
+      model: submission.model,
+      effort: submission.effort,
       promptText,
       existingRunnerId: submission.runnerId || '',
       source: {
@@ -297,7 +308,11 @@ async function submitFollowupPlan({
         followupSubmission: submission,
       },
     })
-    results.push({ submission, ...result })
+    results.push({
+      submission,
+      ...result,
+      warnings: [...(submission.warnings || []), ...(result.warnings || [])],
+    })
   }
   return results
 }

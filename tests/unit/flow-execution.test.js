@@ -83,7 +83,7 @@ const {
   orderSingleRunTransports,
   runnableSteps,
   withSelectedAgents,
-  withSelectedStepModels,
+  withSelectedStepAgents,
 } = require('../../src/cli/main')
 const { printSuccessBox } = require('../../src/cli/commands/run')
 const {
@@ -368,7 +368,7 @@ test('buildAndMaybeFallbackPlan offloads oversized GitHub issue prompts', () => 
     promptName: 'synthesize',
     prompt: { name: 'synthesize', title: 'Synthesize', instruction: 'synthesize', body: 'Use prior work.' },
     options: {
-      models: 'codex',
+      agents: 'codex',
       repo: 'owner/repo',
       runner: '@netlify',
       date: '2026-06-20',
@@ -380,7 +380,7 @@ test('buildAndMaybeFallbackPlan offloads oversized GitHub issue prompts', () => 
       issueNumber: 29,
       issueTitle: '2026-06-20 Codex Review',
       issueUrl: 'https://github.com/owner/repo/issues/29',
-      model: 'codex',
+      agent: 'codex',
       replies: [{ body: largeReply, url: 'https://github.com/owner/repo/issues/29#issuecomment-1' }],
     }],
     runState,
@@ -406,7 +406,7 @@ test('ensureGithubPlanBlobOffload tolerates missing stepState for standalone iss
       issueNumber: 29,
       issueTitle: 'Prior',
       issueUrl: 'https://github.com/owner/repo/issues/29',
-      model: 'codex',
+      agent: 'codex',
       replies: [{ body: `Prior prose ${'A'.repeat(2000)}` }],
     }],
     fullRoundResults: `Prior prose ${'A'.repeat(2000)}`,
@@ -465,7 +465,7 @@ test('buildAndMaybeFallbackPlan offloads oversized GitHub comment-shaped prompts
       targetRepo: 'owner/repo',
       targetKind: 'issue',
       targetNumber: 29,
-      model: 'codex',
+      agent: 'codex',
       promptName: prompt.name,
       body: `@netlify codex ${prompt.instruction}\n\n${roundResults}`,
     }],
@@ -475,7 +475,7 @@ test('buildAndMaybeFallbackPlan offloads oversized GitHub comment-shaped prompts
     promptName: 'cross-review',
     prompt: { name: 'cross-review', title: 'Cross Review', instruction: 'cross review', body: 'Compare prior work.' },
     options: {
-      models: 'codex',
+      agents: 'codex',
       repo: 'owner/repo',
       runner: '@netlify',
       date: '2026-06-20',
@@ -488,7 +488,7 @@ test('buildAndMaybeFallbackPlan offloads oversized GitHub comment-shaped prompts
       issueNumber: 29,
       issueTitle: '2026-06-20 Codex Review',
       issueUrl: 'https://github.com/owner/repo/issues/29',
-      model: 'codex',
+      agent: 'codex',
       replies: [{ body: largeReply, url: 'https://github.com/owner/repo/issues/29#issuecomment-1' }],
     }],
     runState,
@@ -515,7 +515,7 @@ test('buildAndMaybeFallbackPlan offloads oversized GitHub first-step prompts wit
     promptName: 'ideate',
     prompt: { name: 'ideate', title: 'Ideate', instruction: 'ideate', body: largeBody },
     options: {
-      models: 'codex',
+      agents: 'codex',
       repo: 'owner/repo',
       runner: '@netlify',
       date: '2026-06-20',
@@ -535,8 +535,8 @@ test('buildAndMaybeFallbackPlan offloads oversized GitHub first-step prompts wit
   const promptDelivery = promptDeliveryForTest(plan.issues[0].promptDelivery)
   assert.equal(promptDelivery.mode, 'blob')
   assert.equal(promptDelivery.kind, 'full-prompt')
-  assert.match(body, /^@netlify codex fetch and follow the complete offloaded prompt/)
-  assert.match(body, /\/opt\/buildhome\/node-deps\/node_modules\/\.bin\/netlify blobs:get nax-github-first-run ideate-codex-full-prompt/)
+  assert.match(body, /^@netlify agent fetch and follow the complete offloaded prompt/)
+  assert.match(body, /\/opt\/buildhome\/node-deps\/node_modules\/\.bin\/netlify blobs:get nax-github-first-run ideate-agent-full-prompt/)
   assert.equal(body.includes('github-tail'), false)
   assert.equal(body.includes(stepState.promptBlobRef.sentinel), false)
   assert.ok(Buffer.byteLength(body, 'utf8') <= 5000)
@@ -2205,7 +2205,7 @@ test('githubActionTriggerTextMetrics measures the environment string that GitHub
 test('enforceGithubActionPromptBudget rejects prompts that would exceed the GitHub Actions env string limit', () => {
   const plan = {
     issues: [{
-      model: 'claude',
+      agent: 'claude',
       promptName: 'react',
       issueTitle: '2026-06-03 Claude Generate Ideas',
       body: 'x'.repeat(134626),
@@ -2765,7 +2765,7 @@ test('withSelectedAgents filters each workflow step and runnableSteps drops empt
   assert.deepEqual(runnableSteps(filtered, {}).map((step) => step.id), ['review'])
 })
 
-test('withSelectedStepModels applies step-specific agent overrides', () => {
+test('withSelectedStepAgents applies step-specific agent overrides', () => {
   const flow = {
     id: 'review',
     defaults: { agents: ['claude', 'gemini', 'codex'] },
@@ -2775,12 +2775,12 @@ test('withSelectedStepModels applies step-specific agent overrides', () => {
     ],
   }
 
-  const configured = withSelectedStepModels(flow, {
-    models: 'claude',
-    stepModels: ['review=gemini,codex', 'summarize='],
+  const configured = withSelectedStepAgents(flow, {
+    agents: 'claude',
+    stepAgents: ['review=gemini,codex', 'summarize='],
   })
 
-  assert.deepEqual(configured.stepModels, {
+  assert.deepEqual(configured.stepAgents, {
     review: ['gemini', 'codex'],
     summarize: [],
   })
@@ -2856,9 +2856,9 @@ test('formatFlowList verbose output includes workflow metadata', () => {
 
   assert.match(output, /Location:\s+\.\/flows\/review/)
   assert.match(output, /Steps:\s+2/)
-  assert.match(output, /Models:\s+Claude, Gemini, Codex/)
+  assert.match(output, /Agents:\s+Claude, Gemini, Codex/)
   assert.match(output, /agents\.\s+│\n│\s+│\n│\s+Steps:/)
-  assert.match(output, /Steps:\s+2\s+│\n│\s+Models:\s+Claude, Gemini, Codex\s+│\n│\s+Location:/)
+  assert.match(output, /Steps:\s+2\s+│\n│\s+Agents:\s+Claude, Gemini, Codex\s+│\n│\s+Location:/)
 })
 
 test('formatFlowList verbose output keeps external workflow directories absolute', () => {

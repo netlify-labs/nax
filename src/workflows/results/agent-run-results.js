@@ -1,4 +1,5 @@
 const { artifactMeta } = require('../../core/artifact-metadata')
+const { formatAgentConfigLabel } = require('../../core/agents/configuration')
 
 const ID_FORMAT = /^[A-Za-z0-9_-]{1,128}$/
 const TERMINAL_STATUSES = new Set(['completed', 'failed', 'timeout', 'cancelled', 'canceled', 'dry-run'])
@@ -9,7 +10,7 @@ const NETLIFY_CREDITS_PER_USD = 180
  * @typedef {Record<string, unknown> & {
  *   id?: string,
  *   agent_runner_id?: string,
- *   agent_config?: { agent?: string },
+ *   agent_config?: { agent?: string, model?: string, effort?: string },
  *   result?: string,
  *   deploy_url?: string,
  *   pr_url?: string,
@@ -379,10 +380,11 @@ function sessionArtifactId({ sessionId, agent, createdAt, updatedAt } = {}) {
 }
 
 function buildAgentSessionJson(input = {}) {
+  const observedSession = input.session || input.run?.rawResult?.latestSession || input.run?.rawResult?.session || input.rawResult?.latestSession || input.rawResult?.session || {}
   const run = normalizeAgentRunResult({
     run: input.run || input,
     runner: input.runner || input.run?.rawResult?.runner || input.rawResult?.runner || {},
-    session: input.session || input.run?.rawResult?.latestSession || input.run?.rawResult?.session || input.rawResult?.latestSession || input.rawResult?.session || {},
+    session: observedSession,
     status: input.status || input.run?.status || input.status,
     usage: input.usage || input.run?.usage,
     fileChanges: input.fileChanges || input.run?.fileChanges,
@@ -396,6 +398,26 @@ function buildAgentSessionJson(input = {}) {
     createdAt,
     updatedAt,
   })
+  const observedAgentConfig = observedSession.agent_config && typeof observedSession.agent_config === 'object'
+    ? observedSession.agent_config
+    : {}
+  const requestedAgentConfig = {
+    agent: input.agent || run.agent || '',
+    ...(input.model || run.model ? { model: input.model || run.model } : {}),
+    ...(input.effort || run.effort ? { effort: input.effort || run.effort } : {}),
+  }
+  const agentConfig = {
+    ...(observedAgentConfig.agent ? { agent: String(observedAgentConfig.agent) } : {}),
+    ...(observedAgentConfig.model ? { model: String(observedAgentConfig.model) } : {}),
+    ...(observedAgentConfig.effort ? { effort: String(observedAgentConfig.effort) } : {}),
+  }
+  const mismatches = Object.entries(agentConfig)
+    .filter(([key, value]) => requestedAgentConfig[key] && requestedAgentConfig[key] !== value)
+    .map(([key, observed]) => ({
+      field: key,
+      requested: requestedAgentConfig[key],
+      observed,
+    }))
   return {
     ...artifactMeta(),
     sessionId,
@@ -403,6 +425,16 @@ function buildAgentSessionJson(input = {}) {
     runnerId: input.runnerId || run.runnerId || '',
     netlifySiteId: input.netlifySiteId || siteIdAlias(input) || run.netlifySiteId || run.rawResult?.runner?.site_id || run.rawResult?.runner?.siteId || '',
     agent: input.agent || run.agent || '',
+    ...(input.model || run.model ? { model: input.model || run.model } : {}),
+    ...(input.effort || run.effort ? { effort: input.effort || run.effort } : {}),
+    agent_config: agentConfig,
+    ...(mismatches.length > 0 ? {
+      configurationMismatch: {
+        requested: requestedAgentConfig,
+        observed: agentConfig,
+        fields: mismatches,
+      },
+    } : {}),
     status: input.status || run.status || '',
     createdAt,
     updatedAt,
@@ -446,6 +478,15 @@ function buildAgentSessionMarkdown(input = {}) {
     `- Status: ${session.status || 'unknown'}`,
   ]
   if (session.agent) lines.push(`- Agent: ${titleCaseLocal(session.agent)}`)
+  if (session.agent) lines.push(`- Requested configuration: ${formatAgentConfigLabel(session)}`)
+  if (session.agent_config?.agent) {
+    lines.push(`- Observed configuration: ${formatAgentConfigLabel({
+      agent: session.agent_config.agent,
+      model: session.agent_config.model,
+      effort: session.agent_config.effort,
+    })}`)
+  }
+  if (session.configurationMismatch) lines.push('- Configuration mismatch: see `configurationMismatch` in [agent-session.json](agent-session.json)')
   if (session.runnerId) lines.push(`- Runner ID: \`${session.runnerId}\``)
   if (session.sessionId) lines.push(`- Session ID: \`${session.sessionId}\``)
   if (session.netlifySiteId) lines.push(`- Netlify site ID: \`${session.netlifySiteId}\``)

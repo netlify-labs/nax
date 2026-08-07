@@ -1,8 +1,14 @@
 const fs = require('fs')
 const path = require('path')
 const configorama = require('configorama')
+const JSON5 = require('json5')
 const { loadPromptFile } = require('./prompts')
 const { HUMAN_REVIEW_ACTION, HUMAN_REVIEW_SUBMIT, HUMAN_REVIEW_WAIT_FOR, isHumanReviewStep } = require('../human-review')
+const {
+  normalizeProviderEffortMap,
+  normalizeProviderModelMap,
+  resolveAgentRunConfig,
+} = require('../../core/agents/configuration')
 
 const FLOWS_DIR = path.join(__dirname, '..', '..', '..', 'workflows')
 const DEFAULT_PROJECT_FLOWS_DIRS = ['.github/nax-flows']
@@ -17,7 +23,7 @@ const ALLOWED_STEP_SUBMITS = ['new-run', 'follow-up', HUMAN_REVIEW_SUBMIT]
  * @typedef {{ stepId: string, code: string, message: string, hint: string }} FlowDiagnostic
  * @typedef {{ errors: FlowDiagnostic[], warnings: FlowDiagnostic[] }} FlowValidation
  * @typedef {import('../../types').WorkflowFlow} WorkflowFlow
- * @typedef {{ safeMode: true, allowedFileRoots: string[] }} SafeConfigoramaOptions
+ * @typedef {{ safeMode: true, allowedFileRoots: string[], configDir?: string }} SafeConfigoramaOptions
  * @typedef {{
  *   projectRoot?: string,
  *   flowsDir?: string | string[],
@@ -57,6 +63,52 @@ function safeConfigOptions(filePath) {
   return {
     safeMode: true,
     allowedFileRoots: [path.dirname(filePath)],
+    configDir: path.dirname(filePath),
+  }
+}
+
+const STATIC_MODULE_EXTENSIONS = new Set(['.js', '.cjs', '.mjs', '.ts', '.mts', '.cts'])
+
+/**
+ * Parse a JavaScript or TypeScript config whose complete module body is a
+ * static object export. JSON5 provides object-literal conveniences without
+ * evaluating project code.
+ *
+ * @param {string} source
+ * @param {string} filePath
+ * @returns {Record<string, unknown>}
+ */
+function parseStaticModuleConfig(source, filePath) {
+  const withoutBom = source.replace(/^\uFEFF/, '').trim()
+  const match = withoutBom.match(/^(?:module\.exports\s*=\s*|export\s+default\s+)([\s\S]+?)\s*;?\s*$/)
+  if (!match) {
+    throw new Error(
+      `Dynamic executable config is blocked in safe mode: ${filePath}. ` +
+      'Use a single static "module.exports = { ... }" or "export default { ... }" object export.',
+    )
+  }
+
+  let objectSource = match[1].trim()
+  objectSource = objectSource.replace(/\s+(?:as\s+const|satisfies\s+[A-Za-z_$][\w$<>,.[\] |&]*)\s*$/u, '').trim()
+  if (!objectSource.startsWith('{') || !objectSource.endsWith('}')) {
+    throw new Error(
+      `Dynamic executable config is blocked in safe mode: ${filePath}. ` +
+      'The exported value must be a static object literal.',
+    )
+  }
+
+  try {
+    const parsed = JSON5.parse(objectSource)
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+      throw new Error('the exported value is not an object')
+    }
+    return parsed
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : String(error)
+    throw new Error(
+      `Dynamic executable config is blocked in safe mode: ${filePath}. ` +
+      `Only JSON5-compatible static object exports are allowed (${reason}).`,
+    )
   }
 }
 
@@ -65,6 +117,11 @@ function safeConfigOptions(filePath) {
  * @returns {Promise<WorkflowFlow>}
  */
 async function loadConfigFile(filePath) {
+  if (STATIC_MODULE_EXTENSIONS.has(path.extname(filePath).toLowerCase())) {
+    const staticConfig = parseStaticModuleConfig(fs.readFileSync(filePath, 'utf8'), filePath)
+    const resolved = await configorama(staticConfig, safeConfigOptions(filePath))
+    return resolved && typeof resolved === 'object' && !Array.isArray(resolved) ? resolved : {}
+  }
   const config = await configorama(filePath, safeConfigOptions(filePath))
   return config && typeof config === 'object' && !Array.isArray(config) ? config : {}
 }
@@ -95,6 +152,26 @@ function normalizeList(value) {
     return value.split(',').map((item) => item.trim()).filter(Boolean)
   }
   return []
+}
+
+/**
+ * @param {unknown} value
+ * @param {'models' | 'efforts'} field
+ * @param {string} configPath
+ * @returns {Record<string, string>}
+ */
+function normalizeAgentConfigurationMap(value, field, configPath) {
+  try {
+    return field === 'models'
+      ? normalizeProviderModelMap(value)
+      : normalizeProviderEffortMap(value)
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    /** @type {Error & { code?: string }} */
+    const configurationError = new Error(`${configPath}: ${message}`)
+    configurationError.code = 'invalid_agent_configuration'
+    throw configurationError
+  }
 }
 
 function normalizeFlowDirs(value) {
@@ -236,6 +313,15 @@ function validateFlowStructure(flow, { existsSync = fs.existsSync } = {}) {
   const warnings = []
   const steps = Array.isArray(flow.steps) ? flow.steps : []
   const stepIds = new Map()
+  const defaults = flow.defaults || {}
+
+  if (Object.prototype.hasOwnProperty.call(defaults, 'agentConfig')) {
+    errors.push(flowDiagnostic({
+      code: 'invalid_agent_config_wrapper',
+      message: 'defaults.agentConfig is not supported.',
+      hint: 'Use first-class defaults.models and defaults.efforts maps.',
+    }))
+  }
 
   for (let index = 0; index < steps.length; index += 1) {
     const step = steps[index]
@@ -256,6 +342,14 @@ function validateFlowStructure(flow, { existsSync = fs.existsSync } = {}) {
     const step = steps[index]
     const stepId = String(step.id || `step-${index + 1}`)
     const humanReview = isHumanReviewStep(step)
+    if (Object.prototype.hasOwnProperty.call(step, 'agentConfig')) {
+      errors.push(flowDiagnostic({
+        stepId,
+        code: 'invalid_agent_config_wrapper',
+        message: `steps[${index}].agentConfig is not supported.`,
+        hint: 'Use first-class step.models and step.efforts maps.',
+      }))
+    }
     if (!humanReview && !step.prompt) {
       errors.push(flowDiagnostic({
         stepId,
@@ -350,6 +444,35 @@ function validateFlowStructure(flow, { existsSync = fs.existsSync } = {}) {
         }))
       }
     }
+
+    const configuredAgents = new Set([
+      ...Object.keys(defaults.models || {}),
+      ...Object.keys(defaults.efforts || {}),
+      ...Object.keys(step.models || {}),
+      ...Object.keys(step.efforts || {}),
+    ])
+    for (const agent of configuredAgents) {
+      try {
+        resolveAgentRunConfig(agent, {
+          defaults: {
+            models: defaults.models,
+            efforts: defaults.efforts,
+          },
+          step: {
+            models: step.models,
+            efforts: step.efforts,
+          },
+        })
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error)
+        errors.push(flowDiagnostic({
+          stepId,
+          code: /** @type {{ code?: string }} */ (error)?.code || 'invalid_agent_configuration',
+          message: `steps[${index}] configuration for "${agent}" is invalid: ${message}`,
+          hint: 'Use a model owned by the provider and an effort supported by that model, or set both to auto.',
+        }))
+      }
+    }
   }
 
   return { errors, warnings }
@@ -405,6 +528,14 @@ function normalizeFlow(raw, { id, dir, file, source = {} }) {
   const flowId = String(raw.id || id || path.basename(dir))
   const defaults = raw.defaults && typeof raw.defaults === 'object' ? raw.defaults : {}
   const steps = Array.isArray(raw.steps) ? raw.steps : []
+  if (Object.prototype.hasOwnProperty.call(defaults, 'agentConfig')) {
+    /** @type {Error & { code?: string }} */
+    const error = new Error('defaults.agentConfig is not supported. Use first-class defaults.models and defaults.efforts maps.')
+    error.code = 'invalid_agent_config_wrapper'
+    throw error
+  }
+  const defaultModels = normalizeAgentConfigurationMap(defaults.models, 'models', 'defaults.models')
+  const defaultEfforts = normalizeAgentConfigurationMap(defaults.efforts, 'efforts', 'defaults.efforts')
   if (steps.length === 0) {
     throw new Error(`Flow "${flowId}" has no steps in ${file}`)
   }
@@ -423,9 +554,17 @@ function normalizeFlow(raw, { id, dir, file, source = {} }) {
       transport: defaults.transport || 'auto',
       notify: defaults.notify === true,
       agents: normalizeList(defaults.agents),
+      models: defaultModels,
+      efforts: defaultEfforts,
     },
     options: raw.options && typeof raw.options === 'object' ? raw.options : {},
     steps: steps.map((step, index) => {
+      if (Object.prototype.hasOwnProperty.call(step, 'agentConfig')) {
+        /** @type {Error & { code?: string }} */
+        const error = new Error(`steps[${index}].agentConfig is not supported. Use first-class step.models and step.efforts maps.`)
+        error.code = 'invalid_agent_config_wrapper'
+        throw error
+      }
       const stepId = String(step.id || `step-${index + 1}`)
       const action = String(step.action || step.type || 'issue')
       const humanReview = action === HUMAN_REVIEW_ACTION
@@ -439,6 +578,8 @@ function normalizeFlow(raw, { id, dir, file, source = {} }) {
         action,
         submit: step.submit || (humanReview ? HUMAN_REVIEW_SUBMIT : 'new-run'),
         agents: humanReview ? [] : normalizeList(step.agents).length > 0 ? normalizeList(step.agents) : normalizeList(defaults.agents),
+        models: normalizeAgentConfigurationMap(step.models, 'models', `steps[${index}].models`),
+        efforts: normalizeAgentConfigurationMap(step.efforts, 'efforts', `steps[${index}].efforts`),
         input: step.input === undefined ? [] : step.input,
         waitFor,
         review: step.review && typeof step.review === 'object' ? step.review : null,
@@ -524,6 +665,7 @@ module.exports = {
   loadFlow,
   loadStepPrompt,
   normalizeFlow,
+  parseStaticModuleConfig,
   projectFlowDirs,
   validateFlowStructure,
 }

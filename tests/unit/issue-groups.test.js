@@ -3,15 +3,15 @@ const assert = require('node:assert/strict')
 
 const { buildGroups, parseWorkflowTitle, formatGroupHint } = require('../../src/integrations/github/issue-groups')
 
-test('parseWorkflowTitle extracts date, model, and prompt title', () => {
+test('parseWorkflowTitle extracts date, agent, and prompt title', () => {
   assert.deepEqual(parseWorkflowTitle('2026-05-07 Claude Review'), {
     date: '2026-05-07',
-    model: 'claude',
+    agent: 'claude',
     promptTitle: 'Review',
   })
   assert.deepEqual(parseWorkflowTitle('2026-05-07 Gemini Summarize Consensus'), {
     date: '2026-05-07',
-    model: 'gemini',
+    agent: 'gemini',
     promptTitle: 'Summarize Consensus',
   })
 })
@@ -22,7 +22,7 @@ test('parseWorkflowTitle returns null for non-matching titles', () => {
   assert.equal(parseWorkflowTitle('2026-05-07 Llama Review'), null)
 })
 
-test('buildGroups groups same-date same-prompt issues across models, sorted desc', () => {
+test('buildGroups groups same-date same-prompt issues across agents, sorted desc', () => {
   const issues = [
     { number: 64, title: '2026-05-07 Codex Review', url: 'https://x/64', state: 'OPEN' },
     { number: 62, title: '2026-05-07 Claude Review', url: 'https://x/62', state: 'OPEN' },
@@ -36,7 +36,7 @@ test('buildGroups groups same-date same-prompt issues across models, sorted desc
   assert.equal(groups.length, 2)
   assert.equal(groups[0].date, '2026-05-07')
   assert.deepEqual(groups[0].issueNumbers, [62, 63, 64])
-  assert.deepEqual(groups[0].models, ['claude', 'gemini', 'codex'])
+  assert.deepEqual(groups[0].agents, ['claude', 'gemini', 'codex'])
   assert.equal(groups[1].date, '2026-04-25')
   assert.deepEqual(groups[1].issueNumbers, [29, 31])
 })
@@ -55,9 +55,9 @@ test('buildGroups separates groups that share a date but differ in prompt title'
 test('formatGroupHint renders a friendly summary', () => {
   const group = {
     members: [
-      { number: 62, model: 'claude' },
-      { number: 63, model: 'gemini' },
-      { number: 64, model: 'codex' },
+      { number: 62, agent: 'claude' },
+      { number: 63, agent: 'gemini' },
+      { number: 64, agent: 'codex' },
     ],
   }
   assert.equal(formatGroupHint(group), 'Claude #62, Gemini #63, Codex #64')

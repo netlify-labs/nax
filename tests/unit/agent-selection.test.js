@@ -5,14 +5,14 @@ const {
   applyAgentSelection,
   assertValidAgentSelection,
   flowDeclaredAgentValidationErrors,
-  normalizeStepModels,
-  parseStepModelsEntries,
+  normalizeStepAgents,
+  parseStepAgentsEntries,
   selectionValidationErrors,
-  stepModelsToEntries,
+  stepAgentsToEntries,
 } = require('../../src/core/agents/selection')
 
-test('parseStepModelsEntries parses repeatable step=model overrides', () => {
-  assert.deepEqual(parseStepModelsEntries([
+test('parseStepAgentsEntries parses repeatable step=agent overrides', () => {
+  assert.deepEqual(parseStepAgentsEntries([
     'review=claude,codex',
     'summarize=codex',
     'cross-review=',
@@ -23,7 +23,7 @@ test('parseStepModelsEntries parses repeatable step=model overrides', () => {
   })
 })
 
-test('applyAgentSelection lets per-step models override global models', () => {
+test('applyAgentSelection lets per-step agents override global agents', () => {
   const flow = {
     defaults: { agents: ['claude', 'gemini', 'codex'] },
     steps: [
@@ -34,8 +34,8 @@ test('applyAgentSelection lets per-step models override global models', () => {
   }
 
   const selected = applyAgentSelection(flow, {
-    models: ['claude'],
-    stepModels: {
+    agents: ['claude'],
+    stepAgents: {
       'cross-review': ['gemini', 'codex'],
       summarize: [],
     },
@@ -48,8 +48,8 @@ test('applyAgentSelection lets per-step models override global models', () => {
   ])
 })
 
-test('stepModelsToEntries renders command-ready entries', () => {
-  assert.deepEqual(stepModelsToEntries(normalizeStepModels({
+test('stepAgentsToEntries renders command-ready entries', () => {
+  assert.deepEqual(stepAgentsToEntries(normalizeStepAgents({
     review: ['claude', 'codex'],
     summarize: ['codex'],
   })), [
@@ -97,13 +97,13 @@ test('valid selected agents pass and invalid CLI selections still fail', () => {
     ],
   }
 
-  assert.deepEqual(selectionValidationErrors(flow, { models: ['claude'], stepModels: { summarize: ['codex'] } }), [])
+  assert.deepEqual(selectionValidationErrors(flow, { agents: ['claude'], stepAgents: { summarize: ['codex'] } }), [])
   assert.throws(
-    () => assertValidAgentSelection(flow, { models: ['openai'] }),
-    /Unknown model "openai" for flow "review"./,
+    () => assertValidAgentSelection(flow, { agents: ['openai'] }),
+    /Unknown agent "openai" for flow "review"./,
   )
   assert.throws(
-    () => assertValidAgentSelection(flow, { stepModels: { summarize: ['claude'] } }),
-    /Model "claude" is not configured for step "summarize"/,
+    () => assertValidAgentSelection(flow, { stepAgents: { summarize: ['claude'] } }),
+    /Agent "claude" is not configured for step "summarize"/,
   )
 })

@@ -23,7 +23,7 @@ const { createHostedNetlifyApiTransport } = require('../transports/netlify-api')
  *
  * @typedef {{
  *   token?: string,
- *   capabilities?: Record<string, boolean | string>,
+ *   capabilities?: Partial<import('../../contracts').DashboardCapabilities>,
  *   netlifyApiClient?: import('../transports/netlify-api').HostedNetlifyApiClient,
  *   siteId?: string,
  *   initialRunnerIds?: string[],
@@ -33,13 +33,14 @@ const { createHostedNetlifyApiTransport } = require('../transports/netlify-api')
 /** @param {NetlifyDashboardFunctionOptions} [options] */
 function createHostedDashboardApi({ token = '', capabilities, netlifyApiClient, siteId = '', initialRunnerIds = [] } = {}) {
   const transport = netlifyApiClient ? createHostedNetlifyApiTransport({ client: netlifyApiClient, siteId, initialRunnerIds }) : null
-  const resolvedCapabilities = capabilities || hostedPlaceholderCapabilities({
+  const resolvedCapabilities = hostedPlaceholderCapabilities({
     canReadRuns: Boolean(transport),
     canReadRunDetails: Boolean(transport),
     canReadEventsJson: Boolean(transport),
     canStartRuns: Boolean(transport),
     canCancelRuns: Boolean(transport),
     canSubmitFollowups: Boolean(transport),
+    ...(capabilities || {}),
   })
   return createDashboardApi({
     runtime: {
@@ -65,6 +66,7 @@ function createHostedDashboardApi({ token = '', capabilities, netlifyApiClient, 
     mutations: transport
       ? {
           startWorkflow: (id, body) => transport.startWorkflowRun(id, body),
+          startAgentRun: (body) => transport.startWorkflowRun('agent-run', body),
           cancelRun: (id) => transport.cancelRun(id),
           submitFollowup: (id, body) => transport.submitFollowup(id, body),
           cancelFollowup: (id, body) => transport.cancelFollowup(id, body),

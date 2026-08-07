@@ -1,4 +1,4 @@
-const { DEFAULT_MODELS } = require('../../core/constants')
+const { DEFAULT_AGENT_PROVIDERS } = require('../../core/constants')
 const { formatGroupHint, listRecentIssueGroups } = require('../../integrations/github/issue-groups')
 const { resolveProjectRoot } = require('../../integrations/netlify/project-selection')
 const { listPrompts, resolveRepo, titleCase } = require('../../workflows/catalog/prompts')
@@ -175,24 +175,24 @@ async function chooseInteractively(initialPromptName, options, { loadClack = def
   }
 
   const isSummarize = promptName === 'summarize-consensus'
-  const modelOrder = isSummarize
-    ? ['codex', ...DEFAULT_MODELS.filter((model) => model !== 'codex')]
-    : DEFAULT_MODELS
-  const defaultModelInitialValues = isSummarize ? ['codex'] : DEFAULT_MODELS
+  const agentOrder = isSummarize
+    ? ['codex', ...DEFAULT_AGENT_PROVIDERS.filter((agent) => agent !== 'codex')]
+    : DEFAULT_AGENT_PROVIDERS
+  const defaultAgentInitialValues = isSummarize ? ['codex'] : DEFAULT_AGENT_PROVIDERS
 
-  let models = parseCsv(options.models)
-  if (models.length === 0) {
-    const selectedModels = await clack.multiselect({
-      message: 'Choose Netlify agent models',
-      options: modelOrder.map((model) => ({
-        value: model,
-        label: titleCase(model),
+  let agents = parseCsv(String(options.agents || ''))
+  if (agents.length === 0) {
+    const selectedAgents = await clack.multiselect({
+      message: 'Choose Netlify agent providers',
+      options: agentOrder.map((agent) => ({
+        value: agent,
+        label: titleCase(agent),
       })),
-      initialValues: defaultModelInitialValues,
+      initialValues: defaultAgentInitialValues,
       required: true,
     })
-    exitIfCancel(clack, exit, selectedModels)
-    models = Array.isArray(selectedModels) ? selectedModels.map(String) : []
+    exitIfCancel(clack, exit, selectedAgents)
+    agents = Array.isArray(selectedAgents) ? selectedAgents.map(String) : []
   }
 
   const optionsWithFrom = { ...options, fromIssues }
@@ -213,7 +213,7 @@ async function chooseInteractively(initialPromptName, options, { loadClack = def
     promptName,
     options: {
       ...optionsWithFrom,
-      models: models.join(','),
+      agents: agents.join(','),
     },
     context,
     roundResultsRaw,
@@ -428,7 +428,7 @@ function createIssueHandlers({ buildAndMaybeFallbackPlan, loadClack = defaultLoa
           const target = issue.targetKind === 'pr'
             ? `PR #${issue.targetNumber} ${issue.targetTitle}`
             : `issue #${issue.targetNumber}`
-          return `  • ${issue.model} → ${target}`
+          return `  • ${issue.agent} → ${target}`
         })
         .join('\n')
       const noun = plan.issues.length === 1 ? 'comment' : 'comments'

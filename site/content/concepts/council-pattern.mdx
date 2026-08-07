@@ -1,15 +1,15 @@
 ---
 title: Council Pattern
-description: Use independent model passes, cross-review, and consensus synthesis for repeatable agent workflows.
+description: Use independent agent passes, cross-review, and consensus synthesis for repeatable workflows.
 ---
 
 import { CouncilViz } from '../../components/council-viz'
 
 # Council pattern
 
-The core `nax` workflow shape is a council of agents: run selected models independently, pass their findings into a cross-review step, then synthesize only the claims with enough evidence or useful disagreement.
+The core `nax` workflow shape is a council of agents: run selected providers independently, pass their findings into a cross-review step, then synthesize only the claims with enough evidence or useful disagreement.
 
-This is not majority voting. The goal is to preserve independent judgment before the models influence each other, then make disagreements inspectable before a person acts on the result.
+This is not majority voting. The goal is to preserve independent judgment before the agents influence each other, then make disagreements inspectable before a person acts on the result.
 
 Step through a full council run below — or press play.
 
@@ -64,16 +64,19 @@ Use the council pattern for work that benefits from structured disagreement befo
 - Bake-offs: ask agents for competing implementation plans, then compare complexity, risk, and expected quality.
 - PR repair: analyze a failing PR, build a fix plan, then let one agent implement after review.
 
-## Runtime model choice
+## Runtime agent and model choice
 
-Model choice is part of the run, not only part of the workflow file:
+Provider, model, and effort choice can all be part of the run:
 
 ```sh
-nax run review --models claude,codex
-nax run review --step-models cross-review=gemini --step-models synthesize=codex
+nax run review \
+  --agents claude,codex \
+  --models claude=claude-opus-4-8 \
+  --efforts claude=high
+nax run review --step-agents cross-review=gemini --step-agents synthesize=codex
 ```
 
-Use the full council when a task is high risk or ambiguous. Use a smaller model set for cheap triage, targeted follow-up, or quick checks before spending more tokens.
+Use the full council when a task is high risk or ambiguous. Use a smaller agent set for cheap triage, targeted follow-up, or quick checks before spending more tokens.
 
 ## Human authority
 

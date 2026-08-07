@@ -7,10 +7,36 @@ const fs = require('node:fs')
 const path = require('node:path')
 const yaml = require('js-yaml')
 
-const { resolveLineup, agentInstanceId } = require('../../src/core/agents/instances')
+const {
+  agentInstanceId,
+  formatAgentInstanceSpec,
+  parseAgentInstanceList,
+  parseAgentInstanceSpec,
+  resolveLineup,
+} = require('../../src/core/agents/instances')
 
 const FIX = path.join(__dirname, '..', 'fixtures', 'multi-instance')
 const goldens = JSON.parse(fs.readFileSync(path.join(FIX, 'goldens.json'), 'utf8'))
+
+test('CLI instance syntax parses bare, pinned, latest, effort sweeps, and repeatable lists', () => {
+  assert.deepEqual(parseAgentInstanceList([
+    'claude:claude-opus-5:low,claude:claude-opus-5:high',
+    'codex:latest',
+    'gemini',
+  ]), [
+    { agent: 'claude', model: 'claude-opus-5', effort: 'low' },
+    { agent: 'claude', model: 'claude-opus-5', effort: 'high' },
+    { agent: 'codex', model: 'latest' },
+    { agent: 'gemini' },
+  ])
+  assert.equal(formatAgentInstanceSpec(parseAgentInstanceSpec('claude:claude-opus-5:high')), 'claude:claude-opus-5:high')
+})
+
+test('CLI instance syntax rejects unsupported providers, extra fields, and effort without model', () => {
+  assert.throws(() => parseAgentInstanceSpec('bogus:model:high'), { code: 'unsupported_agent' })
+  assert.throws(() => parseAgentInstanceSpec('claude:model:high:extra'), { code: 'invalid_instance_spec' })
+  assert.throws(() => parseAgentInstanceSpec('claude::high'), { code: 'invalid_instance_spec' })
+})
 
 /** Load a fixture flow's single-step lineup. */
 function lineupOf(fixture) {

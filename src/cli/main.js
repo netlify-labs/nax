@@ -227,6 +227,11 @@ const {
   resolveAgentRunConfig,
 } = require('../core/agents/configuration')
 const {
+  formatAgentInstanceSpec,
+  parseAgentInstanceList,
+  resolveLineup,
+} = require('../core/agents/instances')
+const {
   archiveAgentRun,
   buildNetlifyEnv,
   currentGitBranch,
@@ -304,6 +309,7 @@ const DEFAULT_LOCAL_SAFE_PROMPT_BYTES = 16384
 const AD_HOC_RUN_TARGET = '__ad_hoc_agent_run__'
 const STEP_MAX_WIDTH = 200
 const OUTER_TERMINAL_RATIO = 0.8
+const INSTANCE_SOFT_CAP = 6
 
 let clackModulePromise
 
@@ -1389,6 +1395,39 @@ function withSelectedAgents(flow, selectedAgents) {
 }
 
 /**
+ * Resolve one workflow step with every declaration and CLI override applied in precedence order.
+ * @param {import('../types').WorkflowFlow} flow
+ * @param {import('../types').WorkflowStep} step
+ * @param {import('../types').JsonMap} [options]
+ * @param {string} [requestedTransport]
+ */
+function resolvedLineupForStep(flow, step, options = {}, requestedTransport) {
+  const models = normalizeProviderModelMap(options.models)
+  const efforts = normalizeProviderEffortMap(options.efforts)
+  const stepModels = normalizeStepProviderModelMap(options.stepModels)
+  const stepEfforts = normalizeStepProviderEffortMap(options.stepEfforts)
+  const transport = requestedTransport ||
+    (typeof options.transport === 'string' ? options.transport : '') ||
+    flow.defaults?.transport ||
+    'auto'
+  return resolveLineup(Array.isArray(step.lineup) ? step.lineup : step.agents || [], {
+    requestedTransport: transport,
+    models: {
+      ...normalizeProviderModelMap(flow.defaults?.models),
+      ...normalizeProviderModelMap(step.models),
+      ...models,
+      ...(stepModels[step.id] || {}),
+    },
+    efforts: {
+      ...normalizeProviderEffortMap(flow.defaults?.efforts),
+      ...normalizeProviderEffortMap(step.efforts),
+      ...efforts,
+      ...(stepEfforts[step.id] || {}),
+    },
+  })
+}
+
+/**
  * @param {import('../types').WorkflowFlow} flow
  * @param {import('../types').JsonMap} options
  * @returns {{
@@ -1438,25 +1477,8 @@ function selectedAgentConfiguration(flow, options = {}) {
     }
   }
 
-  for (const step of flow.steps || []) {
-    for (const agent of step.agents || []) {
-      resolveAgentRunConfig(agent, {
-        defaults: {
-          models: flow.defaults?.models,
-          efforts: flow.defaults?.efforts,
-        },
-        step: {
-          models: step.models,
-          efforts: step.efforts,
-        },
-        globalCli: { models, efforts },
-        stepCli: {
-          models: stepModels[step.id],
-          efforts: stepEfforts[step.id],
-        },
-      })
-    }
-  }
+  const configuredOptions = { ...options, models, efforts, stepModels, stepEfforts }
+  for (const step of flow.steps || []) resolvedLineupForStep(flow, step, configuredOptions)
 
   return { models, efforts, stepModels, stepEfforts }
 }
@@ -1469,45 +1491,12 @@ function selectedAgentConfiguration(flow, options = {}) {
 function materializedAgentConfigurations(flow, options = {}) {
   const configurations = []
   for (const step of flow.steps || []) {
-    for (const agent of step.agents || []) {
-      const resolved = resolveAgentRunConfig(agent, {
-        defaults: {
-          models: flow.defaults?.models,
-          efforts: flow.defaults?.efforts,
-        },
-        step: {
-          models: step.models,
-          efforts: step.efforts,
-        },
-        globalCli: {
-          models: options.models,
-          efforts: options.efforts,
-        },
-        stepCli: {
-          models: options.stepModels?.[step.id],
-          efforts: options.stepEfforts?.[step.id],
-        },
-      })
-      configurations.push({
-        agent: resolved.agent,
-        ...(resolved.model ? { model: resolved.model } : {}),
-        ...(resolved.effort ? { effort: resolved.effort } : {}),
-      })
-    }
+    const resolved = resolvedLineupForStep(flow, step, options)
+    configurations.push(...resolved.instances)
   }
   return configurations
 }
 
-/**
- * @param {{
- *   clack: { confirm: (input: Record<string, unknown>) => Promise<unknown>, select: (input: Record<string, unknown>) => Promise<unknown>, isCancel: (value: unknown) => boolean },
- *   flow: import('../types').WorkflowFlow,
- *   options: import('../types').JsonMap,
- *   agents: string[],
- *   exit?: (code: number) => never,
- * }} input
- * @returns {Promise<{ models: Record<string, string>, efforts: Record<string, string> }>}
- */
 /**
  * Prompt model then effort for a single ad hoc agent, pre-selecting the best model and its
  * highest effort. Auto stays available but is not the default. Returns provider-keyed maps.
@@ -1548,6 +1537,60 @@ async function chooseSingleAgentConfigInteractively({ clack, agent, exit = proce
   return { models: { [agent]: model }, efforts: { [agent]: String(selectedEffort) } }
 }
 
+/**
+ * Offer zero or more additional instances for providers already selected in the workflow.
+ * Each added instance uses the flagship model and highest supported effort as its defaults.
+ * @param {{
+ *   clack: {
+ *     confirm: (input: Record<string, unknown>) => Promise<unknown>,
+ *     select: (input: Record<string, unknown>) => Promise<unknown>,
+ *     isCancel: (value: unknown) => boolean,
+ *   },
+ *   agents: string[],
+ *   exit?: (code?: number) => never,
+ * }} input
+ * @returns {Promise<Array<{ agent: string, model?: string, effort?: string }>>}
+ */
+async function addAgentInstancesInteractively({ clack, agents, exit = process.exit }) {
+  /** @type {Array<{ agent: string, model?: string, effort?: string }>} */
+  const added = []
+  while (agents.length > 0) {
+    const shouldAdd = await clack.confirm({
+      message: 'Add another agent instance?',
+      initialValue: false,
+    })
+    if (clack.isCancel(shouldAdd)) exit(0)
+    if (!shouldAdd) break
+
+    const selectedAgent = await clack.select({
+      message: 'Choose provider for the additional instance',
+      options: agents.map((agent) => ({ value: agent, label: getAgentProviderLabel(agent) })),
+      initialValue: agents[0],
+    })
+    if (clack.isCancel(selectedAgent)) exit(0)
+    const agent = String(selectedAgent)
+    const configured = await chooseSingleAgentConfigInteractively({ clack, agent, exit })
+    const model = configured.models[agent]
+    const effort = configured.efforts[agent]
+    added.push({
+      agent,
+      ...(model && model !== 'auto' ? { model } : {}),
+      ...(model && model !== 'auto' && effort && effort !== 'auto' ? { effort } : {}),
+    })
+  }
+  return added
+}
+
+/**
+ * @param {{
+ *   clack: { confirm: (input: Record<string, unknown>) => Promise<unknown>, select: (input: Record<string, unknown>) => Promise<unknown>, isCancel: (value: unknown) => boolean },
+ *   flow: import('../types').WorkflowFlow,
+ *   options: import('../types').JsonMap,
+ *   agents: string[],
+ *   exit?: (code: number) => never,
+ * }} input
+ * @returns {Promise<{ models: Record<string, string>, efforts: Record<string, string> }>}
+ */
 async function configureAgentsInteractively({ clack, flow, options, agents, exit = process.exit }) {
   const models = normalizeProviderModelMap(options.models)
   const efforts = normalizeProviderEffortMap(options.efforts)
@@ -1630,6 +1673,47 @@ function runnableSteps(flow, options) {
 }
 
 /**
+ * @param {import('../types').WorkflowFlow} flow
+ * @param {import('../types').WorkflowStep[]} steps
+ * @param {import('../types').JsonMap} options
+ * @param {string} transport
+ * @returns {Array<{ stepId: string, title: string, count: number }>}
+ */
+function lineupSoftCapViolations(flow, steps, options, transport) {
+  return steps.flatMap((step) => {
+    if (isHumanReviewStep(step)) return []
+    const count = resolvedLineupForStep(flow, step, options, transport).instances.length
+    return count > INSTANCE_SOFT_CAP ? [{ stepId: step.id, title: step.title, count }] : []
+  })
+}
+
+/** @param {Array<{ title: string, count: number }>} violations @returns {string} */
+function formatLineupSoftCap(violations) {
+  return violations.map((entry) => `${entry.title} (${entry.count})`).join(', ')
+}
+
+/**
+ * @param {{
+ *   clack: { confirm: (input: Record<string, unknown>) => Promise<unknown>, isCancel: (value: unknown) => boolean },
+ *   violations: Array<{ title: string, count: number }>,
+ *   force?: boolean,
+ *   exit?: (code?: number) => never,
+ * }} input
+ */
+async function confirmLineupSoftCapInteractively({ clack, violations, force = false, exit = process.exit }) {
+  if (force || violations.length === 0) return
+  const confirmed = await clack.confirm({
+    message: `Run steps with more than ${INSTANCE_SOFT_CAP} instances: ${formatLineupSoftCap(violations)}?`,
+    initialValue: false,
+  })
+  if (clack.isCancel(confirmed)) exit(0)
+  if (!confirmed) {
+    console.log('Cancelled')
+    exit(0)
+  }
+}
+
+/**
  * @param {{
  *   flow: import('../types').WorkflowFlow,
  *   steps: import('../types').WorkflowStep[],
@@ -1649,6 +1733,14 @@ function printFlowPlan({ flow, steps, transport, branch, context, runState = nul
   const flowDescriptionLines = flow.description
     ? wordWrap(flow.description, outerMaxWidth - 6).split('\n')
     : []
+  const lineupsByStep = new Map(steps.map((step) => [
+    step.id,
+    isHumanReviewStep(step)
+      ? { instances: [], warnings: [] }
+      : resolvedLineupForStep(flow, step, options, transport),
+  ]))
+  const lineupWarningLines = steps.flatMap((step) =>
+    (lineupsByStep.get(step.id)?.warnings || []).map((warning) => `Warning: ${step.id}: ${warning.message}`))
   const metaLines = [
     ...flowDescriptionLines,
     ...(flowDescriptionLines.length > 0 ? [''] : []),
@@ -1656,6 +1748,7 @@ function printFlowPlan({ flow, steps, transport, branch, context, runState = nul
     `Branch: ${branch}`,
     ...(hasContext ? ['Additional context: yes'] : []),
     ...((flow.warnings || []).map((warning) => `Warning: ${warning.stepId ? `${warning.stepId}: ` : ''}${warning.message || warning.code || 'workflow warning'}`)),
+    ...lineupWarningLines,
   ]
   const headings = steps.map((step, i) => `${i + 1}. ${step.title}`)
   const actionLabels = steps.map((step) => {
@@ -1666,24 +1759,7 @@ function printFlowPlan({ flow, steps, transport, branch, context, runState = nul
   const descriptions = steps.map((step) => resolveStepDescription(flow, step))
   const agentLabelsByStep = new Map(steps.map((step) => [
     step.id,
-    (step.agents || []).map((agent) => formatAgentConfigLabel(resolveAgentRunConfig(agent, {
-      defaults: {
-        models: flow.defaults?.models,
-        efforts: flow.defaults?.efforts,
-      },
-      step: {
-        models: step.models,
-        efforts: step.efforts,
-      },
-      globalCli: {
-        models: options.models,
-        efforts: options.efforts,
-      },
-      stepCli: {
-        models: options.stepModels?.[step.id],
-        efforts: options.stepEfforts?.[step.id],
-      },
-    }))),
+    (lineupsByStep.get(step.id)?.instances || []).map(formatAgentConfigLabel),
   ]))
   const chipsWidth = (labels) =>
     labels.reduce((sum, label) => sum + label.length + 4, 0) + Math.max(0, labels.length - 1)
@@ -1707,9 +1783,9 @@ function printFlowPlan({ flow, steps, transport, branch, context, runState = nul
       projectRoot: runState?.projectRoot || process.cwd(),
     })
     const chips = makeHorizontalBoxes(
-      step.agents.map((agent, agentIndex) => {
-        const color = resumeStatusColor(savedAgentStatus(savedStep, agent))
-        const label = agentLabelsByStep.get(step.id)?.[agentIndex] || titleCase(agent)
+      (agentLabelsByStep.get(step.id) || []).map((label, agentIndex) => {
+        const instance = lineupsByStep.get(step.id)?.instances[agentIndex]
+        const color = resumeStatusColor(savedAgentStatus(savedStep, instance?.id || instance?.agent))
         return {
           content: color ? colorText(label, color) : label,
           borderStyle: 'rounded',
@@ -1841,6 +1917,13 @@ async function prepareInteractiveFlowRun({ flow, options, transport, projectRoot
     if (steps.length === 0) {
       throw new Error('No workflow steps have selected agents.')
     }
+    const violations = lineupSoftCapViolations(configuredFlow, steps, configuredOptions, transport)
+    if (!configuredOptions.dryRun && configuredOptions.force !== true && violations.length > 0) {
+      throw new Error(
+        `More than ${INSTANCE_SOFT_CAP} agent instances are configured for ${formatLineupSoftCap(violations)}. ` +
+        'Review the lineup and re-run with --force to approve it in non-interactive mode.',
+      )
+    }
     return {
       flow: configuredFlow,
       options: configuredOptions,
@@ -1867,14 +1950,42 @@ async function prepareInteractiveFlowRun({ flow, options, transport, projectRoot
       required: true,
     })
     if (clack.isCancel(selected)) process.exit(0)
-    selectedAgents = selected
+    selectedAgents = Array.isArray(selected) ? selected.map(String) : []
   }
-  const interactiveConfiguration = await configureAgentsInteractively({
+  const selectedInstances = parseAgentInstanceList(selectedAgents)
+  const selectedProviders = [...new Set(selectedInstances.map((instance) => instance.agent))]
+  const hasInlineConfiguration = selectedInstances.some((instance) => instance.model || instance.effort)
+  let interactiveConfiguration = hasInlineConfiguration
+    ? {
+        models: normalizeProviderModelMap(options.models),
+        efforts: normalizeProviderEffortMap(options.efforts),
+      }
+    : await configureAgentsInteractively({
+        clack,
+        flow,
+        options,
+        agents: selectedProviders,
+      })
+  const addedInstances = await addAgentInstancesInteractively({
     clack,
-    flow,
-    options,
-    agents: selectedAgents,
+    agents: selectedProviders,
   })
+  if (addedInstances.length > 0) {
+    const baseInstances = selectedInstances.map((instance) => {
+      if (instance.model || instance.effort) return instance
+      const model = interactiveConfiguration.models[instance.agent]
+      const effort = interactiveConfiguration.efforts[instance.agent]
+      return {
+        agent: instance.agent,
+        ...(model && model !== 'auto' ? { model } : {}),
+        ...(model && model !== 'auto' && effort && effort !== 'auto' ? { effort } : {}),
+      }
+    })
+    selectedAgents = [...baseInstances, ...addedInstances].map(formatAgentInstanceSpec)
+    interactiveConfiguration = { models: {}, efforts: {} }
+  } else {
+    selectedAgents = selectedInstances.map(formatAgentInstanceSpec)
+  }
 
   let manualContext = readManualContext(options)
   if (!manualContext && options.contextPrompt !== false) {
@@ -1905,6 +2016,7 @@ async function prepareInteractiveFlowRun({ flow, options, transport, projectRoot
   if (steps.length === 0) {
     throw new Error('No workflow steps have selected agents.')
   }
+  materializedAgentConfigurations(configuredFlow, { ...configuredOptions, transport })
 
   await confirmRemoteRunnerCanMissLocalChanges({
     projectRoot,
@@ -1930,6 +2042,13 @@ async function prepareInteractiveFlowRun({ flow, options, transport, projectRoot
       previewPrinted: true,
     }
   }
+
+  const violations = lineupSoftCapViolations(configuredFlow, steps, configuredOptions, transport)
+  await confirmLineupSoftCapInteractively({
+    clack,
+    violations,
+    force: configuredOptions.force === true,
+  })
 
   const confirmed = await clack.confirm({
     message: `Start the "${configuredFlow.title}" agent workflow?`,
@@ -2975,6 +3094,7 @@ if (require.main === module) {
 }
 
 module.exports = {
+  addAgentInstancesInteractively,
   buildCommentPlan,
   buildPlan,
   createComment,
@@ -2983,6 +3103,7 @@ module.exports = {
   cancelLocalWorkflowRunnersForInterrupt,
   chooseSingleAgentConfigInteractively,
   configureAgentsInteractively,
+  confirmLineupSoftCapInteractively,
   createIssue,
   createPullRequestComment,
   extractLinkedPullRequest,
@@ -3004,6 +3125,7 @@ module.exports = {
   printFlowPlan,
   printSuccessBox,
   runnableSteps,
+  lineupSoftCapViolations,
   withSelectedAgents,
   withSelectedStepAgents,
   parseGitHubPullRequestUrl,

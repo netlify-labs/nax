@@ -40,6 +40,49 @@ function agentInstanceId(agent, model, effort) {
   return `${agent}:${model || AUTO_CONFIGURATION_VALUE}:${effort || AUTO_CONFIGURATION_VALUE}`
 }
 
+/**
+ * Parses CLI instance syntax: provider[:model[:effort]].
+ * @param {unknown} value
+ * @returns {{ agent: string, model?: string, effort?: string }}
+ */
+function parseAgentInstanceSpec(value) {
+  const text = String(value || '').trim()
+  if (!text) throw instanceError('invalid_instance_spec', 'Agent instance cannot be empty.')
+  const parts = text.split(':')
+  if (parts.length > 3) {
+    throw instanceError('invalid_instance_spec', `Agent instance "${text}" must use provider[:model[:effort]] syntax.`)
+  }
+  const agent = normalizeAgentProvider(parts[0])
+  if (!agent) throw instanceError('unsupported_agent', `Unsupported agent provider "${parts[0]}".`)
+  const model = cleaned(parts[1])
+  const effort = cleaned(parts[2])
+  if (effort && !model) {
+    throw instanceError('invalid_instance_spec', `Agent instance "${text}" cannot set effort without a model.`)
+  }
+  return {
+    agent,
+    ...(model ? { model } : {}),
+    ...(effort ? { effort } : {}),
+  }
+}
+
+/**
+ * @param {unknown} value
+ * @returns {Array<{ agent: string, model?: string, effort?: string }>}
+ */
+function parseAgentInstanceList(value) {
+  const values = Array.isArray(value)
+    ? value.flatMap((entry) => String(entry || '').split(','))
+    : String(value || '').split(',')
+  return values.map((entry) => String(entry).trim()).filter(Boolean).map(parseAgentInstanceSpec)
+}
+
+/** @param {{ agent: string, model?: string, effort?: string }} instance @returns {string} */
+function formatAgentInstanceSpec(instance) {
+  if (!instance.model) return instance.agent
+  return [instance.agent, instance.model, instance.effort].filter((value) => value !== undefined && value !== '').join(':')
+}
+
 /** @param {unknown} value @returns {string|undefined} */
 function cleaned(value) {
   const text = String(value == null ? '' : value).trim()
@@ -240,7 +283,10 @@ function resolveLineup(lineup, { requestedTransport = 'auto', models = {}, effor
 
 module.exports = {
   agentInstanceId,
-  expandEntry,
   clampEffortForModel,
+  expandEntry,
+  formatAgentInstanceSpec,
+  parseAgentInstanceList,
+  parseAgentInstanceSpec,
   resolveLineup,
 }

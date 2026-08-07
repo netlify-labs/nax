@@ -1669,7 +1669,9 @@ function withSelectedStepAgents(flow, options = {}) {
 }
 
 function runnableSteps(flow, options) {
-  return findStepRange(flow, options).filter((step) => isHumanReviewStep(step) || normalizeArray(step.agents).length > 0)
+  return findStepRange(flow, options).filter((step) => (
+    isHumanReviewStep(step) || step.submit === 'follow-up' || normalizeArray(step.agents).length > 0
+  ))
 }
 
 /**
@@ -2928,6 +2930,7 @@ async function handleRunEngine(flowId, options) {
     printPostSuccessHandoffHint(runState, projectRoot)
   } catch (error) {
     if (error?.code === AWAITING_REVIEW) {
+      clearTrackedRunState(runState)
       persistWorkflowArtifacts(runState, { summaryOnly: true })
       emitWorkflowArtifacts(runtimeEvents, runState)
       writeGithubStepSummary(runState)
@@ -2935,6 +2938,7 @@ async function handleRunEngine(flowId, options) {
       return AWAITING_REVIEW
     }
     runState.status = 'failed'
+    clearTrackedRunState(runState)
     try {
       cleanupWorkflowBlobsForRun({
         runState,

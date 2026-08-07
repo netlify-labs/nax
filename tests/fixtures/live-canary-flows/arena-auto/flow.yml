@@ -1,0 +1,13 @@
+id: arena-auto-canary
+title: Arena bare-provider Auto canary
+defaults:
+  transport: netlify-api
+  notify: false
+steps:
+  - id: council
+    title: Bare-provider council
+    prompt: prompts/check.md
+    action: issue
+    submit: new-run
+    agents: [claude, gemini, codex]
+    waitFor: agent-results

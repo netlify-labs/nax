@@ -1,0 +1,23 @@
+id: arena-all-failed-canary
+title: Arena all-failed canary
+defaults:
+  transport: netlify-api
+  notify: false
+steps:
+  - id: rejected
+    title: Two rejected configurations
+    prompt: prompts/check.md
+    action: issue
+    submit: new-run
+    agents:
+      - { agent: claude, model: nax-canary-unsupported-model-all-failed-a }
+      - { agent: codex, model: nax-canary-unsupported-model-all-failed-b }
+    waitFor: agent-results
+
+  - id: must-not-run
+    title: Halt sentinel
+    prompt: prompts/sentinel.md
+    action: issue
+    submit: new-run
+    agents: [claude]
+    waitFor: agent-results

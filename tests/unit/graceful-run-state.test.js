@@ -10,6 +10,7 @@ const {
   persistActiveRunState,
   trackRunState,
 } = require('../../src/storage/local/graceful-run-state')
+const { saveRunState } = require('../../src/storage/local/run-state')
 
 function runState(tmp, overrides = {}) {
   const runId = overrides.runId || 'run-1'
@@ -63,6 +64,24 @@ test('markRunCompleted persists completed status before cleanup', () => {
   const saved = readSaved(state)
   assert.equal(saved.status, 'completed')
   assert.equal(saved.completedAt, '2026-05-12T02:00:00.000Z')
+  assert.equal(saved.interruptedAt, undefined)
+})
+
+test('process-exit persistence does not overwrite a durable failed status', () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'nax-graceful-state-failed-test-'))
+  const state = runState(tmp, {
+    steps: [{ id: 'ideate', status: 'failed', runs: [{ runnerId: 'runner-1', status: 'failed' }] }],
+  })
+  state.status = 'failed'
+  saveRunState(state)
+
+  trackRunState(state)
+  const persisted = persistActiveRunState('process-exit', new Date('2026-05-12T02:00:00.000Z'))
+  clearTrackedRunState(state)
+
+  assert.equal(persisted, null)
+  const saved = readSaved(state)
+  assert.equal(saved.status, 'failed')
   assert.equal(saved.interruptedAt, undefined)
 })
 

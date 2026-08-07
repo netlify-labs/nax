@@ -2765,12 +2765,13 @@ test('waitForGithubStep surfaces failed GitHub Actions runs before status commen
   assert.equal(run.promptEnvBytes, 134639)
 })
 
-test('withSelectedAgents filters each workflow step and runnableSteps drops empty steps', () => {
+test('withSelectedAgents filters each workflow step, retaining inheritance-only follow-ups', () => {
   const flow = {
     defaults: { agents: ['claude', 'gemini', 'codex'] },
     steps: [
       { id: 'review', agents: ['claude', 'gemini', 'codex'] },
       { id: 'synthesize', agents: ['codex'] },
+      { id: 'cross-review', agents: [], submit: 'follow-up', input: [{ step: 'review', results: 'all' }] },
     ],
   }
 
@@ -2779,7 +2780,7 @@ test('withSelectedAgents filters each workflow step and runnableSteps drops empt
   const filtered = withSelectedAgents(flow, ['claude', 'gemini'])
   assert.deepEqual(filtered.steps[0].agents, ['claude', 'gemini'])
   assert.deepEqual(filtered.steps[1].agents, [])
-  assert.deepEqual(runnableSteps(filtered, {}).map((step) => step.id), ['review'])
+  assert.deepEqual(runnableSteps(filtered, {}).map((step) => step.id), ['review', 'cross-review'])
 })
 
 test('withSelectedStepAgents applies step-specific agent overrides', () => {

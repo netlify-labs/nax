@@ -1,12 +1,16 @@
 # Multi-Instance Agent Configuration ("Arena")
 
-**Status:** Spec v4 — interview-complete (rounds 5–7) + adversarial review integrated
+**Status:** NAX 2.1 implementation complete and live-verified; awaiting required human publication gates. NAX 2.2 Arena UI deferred.
 **Date:** 2026-08-07
 **Scope:** `nax` core, CLI, workflow files, execution scheduler, follow-ups, persistence/artifacts, dashboard, docs
-**Builds on:** `docs/plans/agent-runner-model-effort-configuration.md` (shipped as NAX 2.0)
+**Builds on:** `docs/plans/agent-runner-model-effort-configuration.md` (implemented as NAX 2.0; publication pending)
 **Target versions:** **NAX 2.1** = multi-instance execution + config + distinct per-instance artifacts. **NAX 2.2** = Arena comparison UI (port of PR #25842).
 **SDK impact:** expected none — SDK is per-run and catalog-free (confirmed in Phase 0)
 **Related:** arena UI = netlify-react-ui **PR #25842** (closed/unmerged; pin source commit `0e33fcd18b204e5587e7c1c30d5940bfd0b9fba2`); deferred sampling = netlify-labs/nax **issue #45**
+
+**Verification:** `npm run release:verify` passed, including the dashboard build and 15/15
+Playwright tests. The gated live canary passed all four use cases plus partial-failure and
+all-failed scenarios; see [the canary evidence](../ai/multi-instance-live-canary-evidence.md).
 
 ---
 
@@ -185,9 +189,11 @@ the identical instance twice is Best-of-N (issue #45), which will add an occurre
 discriminator to the identity.
 
 ### 5.3 Artifact slug
-Readable prefix + short hash of the full id: `claude__opus-5__high__<8hex>`. Survives
-non-filesystem-safe model ids (`z-ai/glm-5.2`, `~deepseek/…`) and guarantees no collisions.
-See §11 for the single-instance provider-path alias.
+When a provider appears more than once in a step, sanitize the resolved tuple components
+into `provider__model__effort`, for example `claude__claude-opus-5__high`. This safely
+normalizes non-filesystem-safe catalog model ids (`z-ai/glm-5.2`, `~deepseek/…`); exact
+tuples are rejected and the supported catalog tuples remain distinct. See §11 for the
+single-instance provider-path alias.
 
 ### 5.4 Per-provider defaults
 `defaultModel` per provider (`claude → claude-fable-5`, `gemini → gemini-3.1-pro-preview`,
@@ -409,25 +415,27 @@ that bare providers remain Auto (§4).
 
 ## 16. Implementation phases
 
-- **Phase 0 —** SDK two-same-provider confirmation; fixtures for the four use cases;
+- **Phase 0 — Complete.** SDK two-same-provider confirmation; fixtures for the four use cases;
   inventory + guard-tests for every provider-keyed map/status/selection/transport site.
-- **Phase 1 —** `AgentInstance`, tuple id, dedupe, labels, `resolvedFrom`; per-provider
+- **Phase 1 — Complete.** `AgentInstance`, tuple id, dedupe, labels, `resolvedFrom`; per-provider
   `defaultModel`; `latest`; the resolution pipeline (§6) + effort clamping; fan-out;
   validation; restructure `main.js` intent → transport → resolve.
-- **Phase 2 —** string-or-object + fan-out across formats; legacy-map bridge + ambiguity;
+- **Phase 2 — Complete.** String-or-object + fan-out across formats; legacy-map bridge + ambiguity;
   migrate bundled follow-up steps to inherit.
-- **Phase 3 —** wave scheduler (non-terminal cap 5, result-ready slot release); one run per
+- **Phase 3 — Complete.** Wave scheduler (non-terminal cap 5, result-ready slot release); one run per
   instance; instance-id status keying; `(sourceStepId, instanceId)` continuation;
   partial-failure state machine (survivors proceed, all-failed halts, exit codes);
   instance-slug artifacts + single-instance provider alias; retry/resume replay.
-- **Phase 4 —** CLI instance syntax; back-compat; interactive Add-instance; preview + soft
+- **Phase 4 — Complete.** CLI instance syntax; back-compat; interactive Add-instance; preview + soft
   cap.
-- **Phase 5 —** dashboard config: per-instance chips (Auto on load) + edit/remove;
+- **Phase 5 — Complete.** Dashboard config: per-instance chips (Auto on load) + edit/remove;
   Add-instance picker (flagship pre-select) + presets + soft cap; inherited follow-up
   display; re-keyed contracts; `completed_with_failures`; build + typecheck + Playwright.
-- **Phase 6 —** docs, canary (incl. a partial-failure and an all-failed run), 2.1 human
-  release gate.
-- **Phase 7 (NAX 2.2) —** Arena comparison port of PR #25842 (@ `0e33fcd…`); own release gate.
+- **Phase 6 — Awaiting human publication.** Docs and live canary are complete, including
+  partial-failure and all-failed runs. NAX 2.0 must pass its human publication gate before
+  the NAX 2.1 publication gate can proceed.
+- **Phase 7 (NAX 2.2) — Not started.** Arena comparison port of PR #25842 (@ `0e33fcd…`);
+  blocked on the NAX 2.1 human publication gate and followed by its own release gate.
 
 ---
 

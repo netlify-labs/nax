@@ -4,9 +4,10 @@ const { saveRunState } = require('./run-state')
 let activeRunState = null
 let activeInterruptHandler = null
 let installed = false
+const SETTLED_RUN_STATUSES = new Set(['completed', 'failed', 'awaiting_review'])
 
 function persistInterruptedState(reason, now = new Date()) {
-  if (!activeRunState || activeRunState.status === 'completed') return null
+  if (!activeRunState || SETTLED_RUN_STATUSES.has(String(activeRunState.status || ''))) return null
   activeRunState.status = 'interrupted'
   activeRunState.interruptedAt = now.toISOString()
   activeRunState.interruptReason = reason
@@ -14,7 +15,7 @@ function persistInterruptedState(reason, now = new Date()) {
 }
 
 function persistActiveRunState(reason, now = new Date()) {
-  if (!activeRunState || activeRunState.status === 'completed') return null
+  if (!activeRunState || SETTLED_RUN_STATUSES.has(String(activeRunState.status || ''))) return null
   if (
     activeInterruptHandler
     && activeInterruptHandler.constructor?.name !== 'AsyncFunction'
@@ -37,7 +38,7 @@ function persistActiveRunState(reason, now = new Date()) {
 }
 
 async function persistActiveRunStateAsync(reason, now = new Date()) {
-  if (!activeRunState || activeRunState.status === 'completed') return null
+  if (!activeRunState || SETTLED_RUN_STATUSES.has(String(activeRunState.status || ''))) return null
   if (activeInterruptHandler) {
     try {
       await activeInterruptHandler({ runState: activeRunState, reason })

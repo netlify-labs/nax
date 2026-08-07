@@ -1,0 +1,25 @@
+id: arena-partial-canary
+title: Arena partial-failure canary
+defaults:
+  transport: netlify-api
+  notify: false
+steps:
+  - id: mixed
+    title: One survivor and one rejected configuration
+    prompt: prompts/check.md
+    action: issue
+    submit: new-run
+    agents:
+      - { agent: codex, model: gpt-5.4-mini, effort: low }
+      - { agent: claude, model: nax-canary-unsupported-model-partial }
+    waitFor: agent-results
+
+  - id: survivor-continues
+    title: Continue only the survivor
+    prompt: prompts/follow-up.md
+    action: comment
+    submit: follow-up
+    input:
+      - step: mixed
+        results: all
+    waitFor: agent-results

@@ -283,6 +283,21 @@ function localStepStatus(stepState) {
 }
 
 /**
+ * Runs of a follow-up step's single continuation source — the FIRST input step. Additional
+ * input steps supply read-only context only and do not create continuations (Arena nax-2rx6.4.4).
+ * @param {import('../../types').WorkflowStep} step
+ * @param {Map<string, { runs?: import('../../types').AgentRun[] }>} completedStepStates
+ * @returns {import('../../types').AgentRun[]}
+ */
+function continuationSourceRuns(step, completedStepStates) {
+  const inputs = Array.isArray(step.input) ? step.input : []
+  const first = inputs.find((entry) => entry && entry.step)
+  if (!first) return []
+  const source = completedStepStates.get(String(first.step))
+  return Array.isArray(source && source.runs) ? source.runs : []
+}
+
+/**
  * @param {import('../../types').WorkflowRunState} runState
  * @param {import('../../types').WorkflowStep} stepState
  * @returns {Error & { code?: string, runId?: string, stepId?: string }}
@@ -727,13 +742,37 @@ async function executeLocalFlow({ flow, steps, options, runState, projectRoot, c
       ...(options.efforts || {}),
       ...(options.stepEfforts?.[step.id] || {}),
     }
-    const resolvedLineup = resolveLineup(stepLineup, {
-      requestedTransport: NETLIFY_API_TRANSPORT,
-      models: mergedModels,
-      efforts: mergedEfforts,
-    })
-    const lineupWarnings = resolvedLineup.warnings.map((warning) => warning.message)
-    const runs = resolvedLineup.instances.map((instance) => {
+    // Follow-up steps INHERIT their lineup from the continuation source (the first input step)
+    // and continue each of its instances' own sessions by (sourceStepId, instanceId). This is a
+    // no-op for single-instance-per-provider flows (ids already match) and is what lets a
+    // multi-instance step (e.g. two Claude models) each continue its own session.
+    const inheritedRuns = step.submit === 'follow-up'
+      ? continuationSourceRuns(step, completedStepStates).filter((sourceRun) => sourceRun.runnerId)
+      : []
+    /** @type {Array<import('../../core/agents/instances').AgentInstance>} */
+    let instances
+    /** @type {string[]} */
+    let lineupWarnings
+    if (inheritedRuns.length > 0) {
+      instances = inheritedRuns.map((sourceRun) => ({
+        agent: sourceRun.agent,
+        ...(sourceRun.model ? { model: sourceRun.model } : {}),
+        ...(sourceRun.effort ? { effort: sourceRun.effort } : {}),
+        id: sourceRun.instanceId || `${sourceRun.agent}:auto:auto`,
+        resolvedFrom: sourceRun.resolvedFrom || 'open',
+        ...(sourceRun.instanceLabel ? { label: sourceRun.instanceLabel } : {}),
+      }))
+      lineupWarnings = []
+    } else {
+      const resolvedLineup = resolveLineup(stepLineup, {
+        requestedTransport: NETLIFY_API_TRANSPORT,
+        models: mergedModels,
+        efforts: mergedEfforts,
+      })
+      instances = resolvedLineup.instances
+      lineupWarnings = resolvedLineup.warnings.map((warning) => warning.message)
+    }
+    const runs = instances.map((instance) => {
       const agent = instance.agent
       const followUpRun = step.submit === 'follow-up'
         ? sourceRuns.find((sourceRun) => sourceRun.runnerId

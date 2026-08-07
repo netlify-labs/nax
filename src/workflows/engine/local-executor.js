@@ -275,11 +275,24 @@ function buildCompactLocalPromptForRetry({ flow, step, runState, run }) {
   return compactLocalTextByBytes(savedPrompt, safeBytes, 'Local agent prompt')
 }
 
-/** @param {import('../../types').WorkflowStep} stepState @returns {string} */
+/**
+ * Instance-aware step status (Arena nax-2rx6.4.5). A step with a mix of succeeded and failed
+ * instances is `completed_with_failures` and the workflow proceeds with the survivors; a step
+ * where every instance failed is `failed` and the workflow halts (no cascade).
+ * @param {import('../../types').WorkflowStep} stepState @returns {string}
+ */
 function localStepStatus(stepState) {
-  return stepState.runs.every((run) => run.status === 'completed' || run.status === 'dry-run')
-    ? 'completed'
-    : 'failed'
+  const runs = stepState.runs || []
+  if (runs.length === 0) return 'completed'
+  const succeeded = runs.filter((run) => run.status === 'completed' || run.status === 'dry-run')
+  if (succeeded.length === runs.length) return 'completed'
+  if (succeeded.length === 0) return 'failed'
+  return 'completed_with_failures'
+}
+
+/** A step status that lets the workflow proceed to the next step. */
+function localStepProceeds(status) {
+  return status === 'completed' || status === 'dry-run' || status === 'completed_with_failures'
 }
 
 /**
@@ -509,7 +522,7 @@ async function archiveEligibleCompletedLocalRuns({ runState, flowSteps, currentS
   for (const stepState of runState.steps || []) {
     const step = stepById.get(stepState.id)
     if (!shouldArchiveCompletedStep({ step, options, flowSteps, currentStepIndex })) continue
-    if (stepState.status !== 'completed') continue
+    if (stepState.status !== 'completed' && stepState.status !== 'completed_with_failures') continue
     if (futureFollowUpReferencesStep(flowSteps, currentStepIndex, stepState.id)) continue
 
     for (const run of stepState.runs || []) {
@@ -747,7 +760,7 @@ async function executeLocalFlow({ flow, steps, options, runState, projectRoot, c
     // no-op for single-instance-per-provider flows (ids already match) and is what lets a
     // multi-instance step (e.g. two Claude models) each continue its own session.
     const inheritedRuns = step.submit === 'follow-up'
-      ? continuationSourceRuns(step, completedStepStates).filter((sourceRun) => sourceRun.runnerId)
+      ? continuationSourceRuns(step, completedStepStates).filter((sourceRun) => sourceRun.runnerId && sourceRun.status === 'completed')
       : []
     /** @type {import('../../types').AgentInstance[]} */
     let instances
@@ -948,8 +961,8 @@ async function executeLocalFlow({ flow, steps, options, runState, projectRoot, c
     completedStepStates.set(step.id, stepState)
     saveRunState(runState)
 
-    if (stepState.status !== 'completed' && stepState.status !== 'dry-run') {
-      throw new Error(`Local step "${step.id}" did not complete successfully.`)
+    if (!localStepProceeds(stepState.status)) {
+      throw new Error(`Local step "${step.id}" failed: every agent instance failed.`)
     }
     console.log(`\n${nextLocalStepMessage(steps, stepIndex)}`)
   }
@@ -1014,8 +1027,8 @@ async function resumeLocalFlow({ flow, runState, projectRoot }) {
     })
     completedStepStates.set(step.id, stepState)
     saveRunState(runState)
-    if (stepState.status !== 'completed' && stepState.status !== 'dry-run') {
-      throw new Error(`Local step "${step.id}" did not complete successfully.`)
+    if (!localStepProceeds(stepState.status)) {
+      throw new Error(`Local step "${step.id}" failed: every agent instance failed.`)
     }
     await executeLocalFlow({
       flow,
@@ -1048,6 +1061,8 @@ module.exports = {
   archiveEligibleCompletedLocalRuns,
   buildCompactLocalPromptForRetry,
   completeLocalStep,
+  localStepStatus,
+  localStepProceeds,
   emitRunArtifact,
   emitStepArtifacts,
   emitWorkflowArtifacts,

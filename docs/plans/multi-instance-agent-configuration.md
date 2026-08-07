@@ -1,65 +1,98 @@
 # Multi-Instance Agent Configuration ("Arena")
 
-**Status:** Interview-complete spec (v2) — ready for GPT Pro refinement / beads conversion
+**Status:** Spec v3 — interview-complete + adversarial-review integrated
 **Date:** 2026-08-07
 **Scope:** `nax` core, CLI, workflow files, execution scheduler, follow-ups, persistence/artifacts, dashboard, docs
 **Builds on:** `docs/plans/agent-runner-model-effort-configuration.md` (provider/model/effort program, shipped as NAX 2.0)
-**Target version:** NAX **2.1** (additive, back-compat; ships after 2.0 is published)
-**SDK impact:** expected none — `nax-agent-runner-sdk` is already per-run and catalog-free (confirmed in Phase 0)
-**Related:** upstream arena UI = netlify-react-ui **PR #25842**; deferred sampling idea = netlify-labs/nax **issue #45**
+**Target versions:** **NAX 2.1** = multi-instance execution + config (+ distinct per-instance artifacts). **NAX 2.2** = Arena comparison UI (port of PR #25842). Arena does **not** ship in 2.1.
+**SDK impact:** expected none — `nax-agent-runner-sdk` is per-run and catalog-free (confirmed in Phase 0)
+**Related:** upstream arena UI = netlify-react-ui **PR #25842** (closed/unmerged; pin source commit `0e33fcd18b204e5587e7c1c30d5940bfd0b9fba2`); deferred sampling = netlify-labs/nax **issue #45**
 
 ---
 
-## 0. Decisions log (from design interview, 2026-08-07)
+## 0. Decisions log
 
-These are settled; the body elaborates each.
+From the design interview (2026-08-07) and the adversarial review that followed. The
+review's seven findings are integrated below and marked **[R#]**.
 
-1. **Unit = agent instance** (`{provider, model, effort}` with a stable id). Run identity, status, selection, artifacts, and follow-up continuation re-key from provider → instance id.
-2. **Follow-up steps inherit** their lineup from the step they take `input` from and continue each instance's own session; they do not declare their own lineup.
-3. **Default model is configurable per provider** (catalog `defaultModel`): `claude → claude-fable-5`, `gemini → gemini-3.1-pro-preview`, `codex → gpt-5.6-sol`, `opencode → moonshotai/kimi-k3`. "Best/flagship" is data, not list position.
-4. **Open instance resolution is transport-aware.** On Netlify API a bare provider resolves to its default model (pinned). On the GitHub Action transport it stays Auto/omit (the Action can't carry a model). This changes existing council behavior **on Netlify API only** (they now pin the default model).
-5. **`latest`/`default` alias resolves at launch** to the provider default; the resolved concrete model is recorded on the run/artifact (rot-proof flows, reproducible runs).
-6. **Comparison = "arena mode"** — port netlify-react-ui PR #25842's side-by-side comparison (`ComparisonPage`/`CompareHero`/`CompareRunnerColumn`) into the nax dashboard, plus keep distinct per-instance artifacts. **Documented here; built in a later phase, not now.**
-7. **Cross-review stays N-runs-per-step.** Step 1 = each instance reviews; step 2 = each instance re-reads the *others'* step-1 results once (via inheritance + `input: results: all`). Not N×N pairwise.
-8. **Fan-out cost guard = soft cap + confirm.** Preview always lists every instance; above **6** instances/step require an explicit confirm. No hard block.
-9. **Execution runs in waves.** The backend caps parallel runs (~5) and users can't change it. NAX gets a **bounded wave scheduler with a hardcoded cap of 5** (not auto-detected — the API may not report it reliably), replacing today's fire-all.
-10. **Synthesis relies on SDK prompt blob-offload** for large multi-instance inputs; no new truncation.
-11. **Partial failure isolates & continues.** A failed instance doesn't fail the step; the follow-up inherits only continuable instances; failures are reported/skipped.
-12. **GitHub transport: full support is deferred, not dropped.** Netlify API gets everything now. GitHub keeps working provider-only (as today); pinned model/effort or multi-instance on GitHub **fails closed** with a "supported once the Action is updated" message. Updating the external GitHub Action is a separate later effort, out of scope here.
-13. **Best-of-N (identical-instance sampling) is a non-goal now** — instances are unique by `provider:model:effort`; tracked as issue #45.
+1. **Unit = agent instance** (`{provider, model, effort}` with a stable id). Run identity,
+   status, selection, artifacts, and follow-up continuation re-key provider → instance id.
+2. **Follow-up steps inherit** their lineup from a single designated `input` step and
+   continue each instance's own session; they do not declare their own lineup.
+   Lineage is **`(sourceStepId, instanceId)`**, not instance id alone **[R3]**.
+3. **Default model configurable per provider** (catalog `defaultModel`): `claude →
+   claude-fable-5`, `gemini → gemini-3.1-pro-preview`, `codex → gpt-5.6-sol`, `opencode →
+   moonshotai/kimi-k3`.
+4. **Instance identity is tuple-derived and label-independent** **[R4]**.
+   `id = ${agent}:${model ?? 'auto'}:${effort ?? 'auto'}` (resolved catalog ids). `label`
+   is **display-only** and never part of the key. **Exact-tuple duplicates are rejected**
+   (no label escape hatch); an occurrence discriminator is added only when Best-of-N
+   (issue #45) intentionally lands.
+5. **Two-pass resolution avoids the transport circularity** **[R1]**:
+   normalize intent → choose transport → resolve open instances. Explicit `latest`/pinned
+   model/pinned effort count as **pinned intent** *before* transport selection; a bare
+   open provider is **not** pinned intent.
+6. **`latest`/`default` resolves at launch** to the provider default; the resolved
+   concrete model is recorded on the run/artifact.
+7. **Open resolution is transport-aware.** After transport is chosen: Netlify API → the
+   provider `defaultModel`; GitHub Action → Auto/omit (it can't carry a model).
+8. **Execution bounds simultaneous *non-terminal* runners, not submissions** **[R2]**.
+   Backend caps ~5 concurrent runs and it is not user-tunable. A wave scheduler holds a
+   slot until its run reaches a **terminal** state, hardcoded cap `5`.
+9. **Partial failure has explicit step states** **[R5]** — success-with-failures vs
+   all-failed vs final-step partial (+ exit code), plus resume/retry and a
+   `completed_with_failures` status. Isolate & continue is the default.
+10. **Fan-out cost guard = soft cap + confirm** above 6 instances/step. Preview always
+    lists every instance.
+11. **Synthesis relies on the SDK's prompt blob-offload**; no new truncation.
+12. **GitHub transport: full support deferred, not dropped.** Netlify API gets everything
+    now; GitHub keeps provider-only councils; pins/multi on GitHub fail closed with a
+    "supported once the Action is updated" message. Updating the Action is a separate,
+    later effort.
+13. **This is a behavioral migration, not a purely additive minor** **[R6]**. Bare
+    providers on Netlify API change from Auto → pinned default (Claude → Fable 5), and
+    artifact paths gain instance scoping. Existing flows stay *syntactically* valid but
+    behavior and consumer-visible paths change — documented, with compatibility measures
+    (provider-path aliases for single-instance steps).
+14. **Best-of-N (identical-instance sampling) is a non-goal now** (issue #45).
+
+**Open for ratification** (see §21): whether bare providers should keep Auto and reserve
+pinning for `latest` (review's alternative to decision #7), and whether Arena is truly
+2.2 vs bundled into 2.1.
 
 ---
 
 ## 1. Outcome
 
-Today a workflow step runs **at most one agent per provider** — NAX keys run
-identity, status, artifacts, and follow-up continuation by the provider string
-(`claude`). This program makes the unit of execution an **agent instance**
-(`{provider, model, effort}` with a stable id), so a step can run **any number of
-instances, including several of the same provider**, and all four of these — and
-every combination — become the same feature:
+Make the unit of execution an **agent instance** (`{provider, model, effort}` with a
+stable id) so a step runs **any number of instances, including several of the same
+provider**. All four use cases — and every combination — become one feature:
 
-1. **Model bake-off** — several models of one provider (Opus 5 vs Opus 4.8 vs Opus 4.7).
-2. **Effort sweep** — one model at several efforts (Opus 5 at Low/Medium/High).
+1. **Model bake-off** — several models of one provider.
+2. **Effort sweep** — one model at several efforts.
 3. **Flagship-of-each** — one default per provider (today's council).
-4. **Any combination** — e.g. two Claudes + a Gemini + Codex at two efforts, in one step.
+4. **Any combination.**
+
+**2.1 delivers** independent runs, per-instance results, and **distinct per-instance
+artifacts** for every instance, comparable by opening those artifacts. **2.2 adds** the
+Arena side-by-side comparison UI (§10.4). 2.1 does not depend on Arena.
 
 ```text
-workflow file / CLI / dashboard  ─┐
-                                   ├─►  lineup: string-or-object entries + fan-out
-per-provider defaults + `latest` ─┤
-interactive choice (open)        ─┘
-                                          │  resolve each entry (transport-aware)
-                                          ▼
-             [ {agent, model?, effort?, id, label?}, ... ]   (unique per step)
-                                          │  soft cap 6 → confirm
-                                          ▼
-      wave scheduler (≤5 concurrent) → one AgentRun + one SDK handle per instance
-                                          │
-     follow-up steps continue each input-step instance by id (isolate failures)
-                                          │
-                                          ▼
-   state / artifacts / events / dashboard (+ arena compare) keyed by instance id
+lineup (string-or-object + fan-out)
+        │  ① normalize intent (pins/latest = pinned)         [two-pass — R1]
+        ▼
+  intent lineup ──► ② choose transport (pinned/multi → netlify-api)
+        │                                    │
+        │  ③ resolve open per transport      │
+        ▼                                    ▼
+   [ {agent, model?, effort?, id, label?}, … ]   unique by tuple (reject dup)  [R4]
+        │  soft cap 6 → confirm
+        ▼
+  wave scheduler: ≤5 non-terminal runners at once  [R2]  → 1 AgentRun + 1 handle each
+        │
+  follow-up continues each (sourceStepId, instanceId) session; failures isolate  [R3,R5]
+        ▼
+  state / artifacts / events / dashboard keyed by instance id   (Arena view = 2.2)
 ```
 
 ---
@@ -68,49 +101,36 @@ interactive choice (open)        ─┘
 
 | Term | Meaning |
 |---|---|
-| **Provider / agent** | `claude`, `gemini`, `codex`, `opencode` — the `agent` wire field. |
-| **Model** | Provider model id (`claude-opus-5`) or an alias (`latest`/`default`). |
-| **Effort** | `low`/`medium`/`high`/`max` (`max` → wire `xhigh` for the two models that require it). |
-| **Agent instance** | A resolved `{provider, model, effort}` that maps to exactly one run — the new unit of execution. |
-| **Instance id** | Stable key `provider:model:effort` (resolved catalog ids; `auto` when omitted), or a `label`. |
+| **Provider / agent** | `claude`/`gemini`/`codex`/`opencode` — the `agent` wire field. |
+| **Model / Effort** | Model id or `latest` alias; `low`..`max` (`max`→wire `xhigh` where required). |
+| **Agent instance** | Resolved `{provider, model, effort}` → exactly one run. |
+| **Instance id** | `provider:model:effort` (resolved ids; `auto` when omitted). Tuple-derived, label-independent. |
+| **Lineage** | `(sourceStepId, instanceId)` — how a follow-up maps to a prior session. |
 | **Lineup** | The ordered set of instances a step runs. |
-| **Fan-out entry** | A shorthand (`models: […]` / `efforts: […]`) expanding to the cartesian set of instances. |
-| **Open instance** | An instance with no pinned model — resolves to the provider default (or interactive choice). |
-| **Alias** | `latest`/`default` — resolves to the provider's configured default model at launch. |
-| **Arena** | The side-by-side comparison of a step's instance outputs (from PR #25842). |
-
-"Instance" replaces "provider" wherever run identity/status/selection is keyed;
-`agent` remains the provider field on the wire and in `agent_config`.
+| **Fan-out entry** | `models: […]` / `efforts: […]` shorthand → cartesian instances. |
+| **Open instance** | No pinned model — resolves to provider default (Netlify) or Auto (GitHub). |
+| **Alias** | `latest`/`default` → provider `defaultModel` at launch. |
+| **Arena** | Side-by-side comparison of a step's instance outputs (2.2, PR #25842). |
 
 ---
 
 ## 3. Motivating use cases
-
-Each must be expressible in workflow file, CLI, and dashboard, and produce
-independent runs, artifacts, and results, comparable in the arena view.
 
 ### 3.1 Model bake-off
 ```yaml
 agents:
   - { agent: claude, models: [claude-opus-5, claude-opus-4-8, claude-opus-4-7] }
 ```
-→ `claude:claude-opus-5:auto`, `claude:claude-opus-4-8:auto`, `claude:claude-opus-4-7:auto`.
-
 ### 3.2 Effort sweep
 ```yaml
 agents:
   - { agent: claude, model: claude-opus-5, efforts: [low, medium, high] }
 ```
-→ `claude:claude-opus-5:low`, `:medium`, `:high`. **This is why effort is in the instance id.**
-
+(Effort is in the instance id, so these are three distinct instances.)
 ### 3.3 Flagship of each provider (today's council)
 ```yaml
-agents: [claude, gemini, codex]          # bare strings = open → per-provider default
+agents: [claude, gemini, codex]     # open → per-provider default (Netlify) / Auto (GitHub)
 ```
-On Netlify API this now resolves to the configured defaults (Claude → **Fable 5**,
-Gemini → 3.1 Pro, Codex → GPT 5.6 Sol). On GitHub it stays Auto/omit (§13).
-Rot-proof explicit form: `- { agent: claude, model: latest }`.
-
 ### 3.4 Any combination
 ```yaml
 agents:
@@ -118,30 +138,32 @@ agents:
   - { agent: gemini, model: latest }
   - { agent: codex,  model: gpt-5.6-sol, efforts: [medium, high] }
 ```
-Six instances, three providers, one step.
 
 ---
 
-## 4. Current architecture and the constraint being lifted
+## 4. Current architecture and the constraints being lifted
 
 Verified in the tree:
 
-- **Run identity is provider-keyed** (`agentStatuses`, `selectedAgents`/`stepAgents`,
-  per-run lookups) — locked decision #5 of the model/effort program, now reopened.
+- **Run identity is provider-keyed** (status maps, selection). Locked decision #5 of the
+  model/effort program — reopened here.
 - **Follow-up matches by provider** — `src/workflows/followups/plan.js:97`
   (`agent === targetAgent`). Ambiguous with two Claudes.
-- **Schema is provider-keyed** — `agents: [providers]`, `models: {provider: model}`,
-  `efforts: {provider: effort}` can't hold two `claude` entries.
-- **Executor fires all runs at once** — `src/workflows/engine/local-executor.js:806`
-  `Promise.allSettled(runs.map(...))`, no concurrency limit (fine for ≤4, exceeds
-  the ~5 backend cap for big fan-outs).
-- **Catalog + resolver exist** — `src/core/agents/configuration.js`
-  (`resolveAgentRunConfig`, `getBestModelForProvider`, `getHighestEffortForModel`).
-- **SDK is per-run** — `start`/`followUp` take one `{agent, model, effort}` and
-  return one handle; no provider-uniqueness assumption. N instances = N calls.
-
-The change is a NAX **re-keying** (provider → instance id) + a schema that
-expresses multiples + follow-up inheritance + a wave scheduler + the arena view.
+- **Multi-input source collection preserves the source step** —
+  `sourceRunsForStep` in `src/workflows/engine/execution-context.js` iterates `step.input`.
+  Any inheritance keyed by instance id alone would discard that source **[R3]**.
+- **Schema is provider-keyed** — `agents/models/efforts` maps can't hold two `claude`.
+- **The executor fan-outs *submissions*, not bounded runs** —
+  `src/workflows/engine/local-executor.js:806` `Promise.allSettled(runs.map(submit))`;
+  terminal results are awaited later in `completeLocalStep` (~`:889`). Bounding submission
+  promises would not bound active remote runners **[R2]**.
+- **Step status is binary** — `localStepStatus` (`local-executor.js:276`) returns
+  `completed` only if every run is completed/dry-run, else `failed` **[R5]**.
+- **Transport is chosen from already-materialized config** —
+  `src/cli/main.js` computes `materializedAgentConfigurations` *before* `let transport`,
+  so transport-aware open resolution is circular unless split into two passes **[R1]**.
+- **Catalog + resolver exist** — `src/core/agents/configuration.js`.
+- **SDK is per-run** — N instances = N independent `start`/`followUp` calls.
 
 ---
 
@@ -150,66 +172,88 @@ expresses multiples + follow-up inheritance + a wave scheduler + the arena view.
 ### 5.1 Instance descriptor
 ```ts
 type AgentInstance = {
-  agent: AgentProvider           // 'claude' | 'gemini' | 'codex' | 'opencode'
-  model?: string                 // resolved concrete id, or undefined = Auto/omit
-  effort?: string                // resolved catalog id ('low'..'max'), or undefined = Auto/omit
-  id: string                     // label ?? `${agent}:${model ?? 'auto'}:${effort ?? 'auto'}`
-  label?: string                 // display + duplicate disambiguator
+  agent: AgentProvider
+  model?: string        // resolved concrete id, or undefined = Auto/omit
+  effort?: string       // resolved catalog id ('low'..'max'), or undefined = Auto/omit
+  id: string            // `${agent}:${model ?? 'auto'}:${effort ?? 'auto'}`  — tuple only [R4]
+  label?: string        // display-only; NEVER part of id or persistence key [R4]
 }
 ```
 
-### 5.2 Instance id
-- Resolved catalog ids; `max` (not wire `xhigh`); `auto` for omitted dimensions —
-  so an old provider-only run maps to `claude:auto:auto`.
-- **Unique within a step.** Fan-out dupes are deduped; an author-written exact
-  duplicate is an error naming the collision and suggesting a `label`.
+### 5.2 Instance identity and duplicates **[R4]**
+- **Identity is generated from the resolved tuple**, independent of `label`. `label` is a
+  presentation string only; changing it must never change the key or artifact path.
+- Uses resolved catalog ids; `max` (not wire `xhigh`); `auto` for omitted dimensions — so
+  an old provider-only run maps to `claude:auto:auto`.
+- **Exact-tuple duplicates within a step are rejected** (error names the collision). There
+  is no label-based escape hatch — running the identical instance twice is Best-of-N
+  (issue #45), which will add an explicit occurrence discriminator to the identity when it
+  lands. This keeps the identical-sampling non-goal actually closed.
 
-### 5.3 Model resolution ladder (per instance, at launch)
-1. **Pinned concrete id** → verbatim; unknown ids pass through with a warning.
-2. **Alias** (`latest`/`default`) → the provider's configured `defaultModel`.
-3. **Open** (no model) → **transport-aware** (§13): Netlify API → `defaultModel`;
-   GitHub → Auto/omit. Interactive launch prompts (default = `defaultModel`).
-4. **Explicit `auto`** → omit model; effort must be Auto too.
+### 5.3 Artifact slug
+Instance artifact paths use a **collision-resistant slug**: a readable prefix plus a short
+hash of the full instance id, e.g. `claude__fable-5__high__<8hex>`. This survives model
+ids that are not filesystem-safe (`z-ai/glm-5.2`, `~deepseek/…`) and guarantees no two
+instances collide. See §11 for the single-instance provider-path alias.
 
-Effort resolves against the chosen model with the existing rules (`auto` → omit;
-unsupported-for-model → error; `max` → `xhigh` at send only). Resolution happens
-**once** at materialize; retry/resume never re-resolve an alias.
-
-### 5.4 Per-provider defaults (catalog)
+### 5.4 Per-provider defaults
 Add `defaultModel` per provider so "flagship" is configurable, not positional:
-```
-claude   → claude-fable-5
-gemini   → gemini-3.1-pro-preview
-codex    → gpt-5.6-sol
-opencode → moonshotai/kimi-k3
-```
-`getBestModelForProvider` returns `defaultModel` (falling back to `models[0]`).
+`claude → claude-fable-5`, `gemini → gemini-3.1-pro-preview`, `codex → gpt-5.6-sol`,
+`opencode → moonshotai/kimi-k3`. `getBestModelForProvider` returns `defaultModel`
+(fallback `models[0]`). `latest`/`default` and open instances resolve through it.
 
 ---
 
-## 6. Workflow file schema
+## 6. Resolution pipeline (two-pass) **[R1]**
 
-### 6.1 Lineup entries (string-or-object + fan-out)
+A single pass is impossible because open resolution depends on transport, and transport
+depends on whether anything is pinned. Split it:
+
+**Pass 1 — normalize intent (transport-independent).**
+Expand fan-out; classify each entry's model as one of `pinned-concrete`, `pinned-latest`,
+or `open`; classify effort as `pinned` or `open`. `latest`/`default` and any explicit
+model/effort are **pinned intent**. A bare provider is **open, not pinned**.
+
+**Pass 2 — choose transport.**
+`transport:auto` → Netlify API if the lineup has **any pinned intent** or **>1 instance
+per provider**; otherwise it may use GitHub. Explicit `transport:github` with pinned intent
+or multi-instance **fails closed** (§13).
+
+**Pass 3 — resolve open instances against the chosen transport.**
+Netlify API → open model = provider `defaultModel` (pinned on the wire); GitHub → open
+model = Auto/omit. Then resolve effort, validate against the catalog, compute the tuple
+id, dedupe fan-out, reject exact duplicates, and freeze the resolved instances on the run.
+Aliases resolve **once** here; retry/resume never re-resolve.
+
+The CLI currently materializes config before choosing transport
+(`src/cli/main.js`); Phase 1 restructures this into the three passes so both the CLI and
+dashboard share one ordering.
+
+---
+
+## 7. Workflow file schema
+
+### 7.1 Lineup entries (string-or-object + fan-out)
 ```yaml
 agents:
-  - claude                                                # open (provider default / Auto on GitHub)
-  - { agent: claude, model: latest }                      # alias
+  - claude                                                # open
+  - { agent: claude, model: latest }                      # pinned intent (alias)
   - { agent: claude, model: claude-opus-5, effort: high } # pinned
   - { agent: codex,  model: gpt-5.6-sol, efforts: [medium, high] }        # fan-out ×2
   - { agent: gemini, models: [gemini-3.1-pro-preview, gemini-3.6-flash] } # fan-out ×2
 ```
-- String = open instance. Object may set `model`/`models` and `effort`/`efforts`;
-  list forms fan out (`models × efforts` cartesian). Multiple same-provider entries
-  allowed. Optional `label`.
+String = open; object may set `model`/`models` + `effort`/`efforts` (cartesian fan-out);
+multiple same-provider entries allowed; optional display `label`.
 
-### 6.2 Back-compatibility
-- `agents: [claude, gemini, codex]` unchanged structurally; resolves per §5.3.
-- Legacy `models`/`efforts` maps still apply to the **single bare-string instance**
-  of a provider; if a provider appears more than once, the maps are ambiguous → error
-  pointing to the object form.
-- Supported in YAML/JSON/JS/TS/TOML via `src/workflows/catalog/flows.js`.
+### 7.2 Back-compatibility (a documented migration) **[R6]**
+- `agents: [claude, gemini, codex]` stays valid; behavior changes on Netlify API (now
+  resolves to defaults) — see §13 and the §21 ratification question.
+- Legacy `models`/`efforts` maps still apply to the **single bare-string instance** of a
+  provider; if a provider appears more than once, the maps are ambiguous → error → object
+  form.
+- All formats (YAML/JSON/JS/TS/TOML) via `src/workflows/catalog/flows.js`.
 
-### 6.3 Follow-up steps inherit (no lineup)
+### 7.3 Follow-up steps inherit (single continuation source) **[R3]**
 ```yaml
 - id: review
   submit: new-run
@@ -218,166 +262,135 @@ agents:
     - { agent: gemini, model: latest }
 - id: cross-review
   submit: follow-up
-  input: [{ step: review, results: all }]        # inherits review's instances + sessions
+  input: [{ step: review, results: all }]     # continues review's instances by (review, id)
 ```
-- A `follow-up` step **must not** declare `agents`; its lineup is the union
-  (deduped by id) of the resolved instances of its `input` step(s), continuing each
-  session. A declared lineup on a follow-up step → deprecation notice, ignored.
-- The bundled `review` and `ideas` flows are migrated to drop `agents` from their
-  follow-up steps (`cross-review`, `cross-score`, `react`). `new-run` steps (e.g.
-  Review's single-Codex `synthesize`) keep declaring their lineup.
+- A `follow-up` step continues the instances of **exactly one designated input step** (its
+  *continuation source*). For 2.1, if `input` lists multiple steps, the first is the
+  continuation source and the others provide **read-only context only** — they do not
+  create continuations. A cross-source instance-id collision is therefore impossible
+  because lineage is `(sourceStepId, instanceId)`.
+- A follow-up step must not declare `agents` (deprecation notice, ignored).
+- Migrate bundled `review`/`ideas` follow-up steps (`cross-review`, `cross-score`,
+  `react`) to inherit; `new-run` steps (Review's single-Codex `synthesize`) keep their
+  declared lineup.
 
-### 6.4 Aliases
-- `latest`/`default` → provider `defaultModel`. Distinct from OpenCode backend
-  `~…latest` ids (concrete wire ids, pass-through). Family aliases (`claude:opus:latest`)
-  are a non-goal.
-
----
-
-## 7. Resolution, precedence, validation
-
-Precedence per instance (highest wins): step CLI override → global CLI override →
-object inline (or fan-out member) → legacy `models`/`efforts` map (single-per-provider) →
-alias/default/interactive/Auto.
-
-Then: resolve alias/open → concrete (transport-aware); validate against the catalog
-(reuse the model/effort program's known-rules); `max`→`xhigh` at send; compute id;
-dedupe fan-out; reject unlabeled duplicates; store the resolved instance on the run.
-
-Fail before any remote mutation when: model belongs to another provider; effort pinned
-while model Auto; known model + unsupported effort; a `follow-up` `input` references a
-step with no continuable instances; duplicate ids without labels; pinned/multi-instance
-on the GitHub transport.
+### 7.4 Aliases
+`latest`/`default` → provider `defaultModel`. Distinct from OpenCode backend `~…latest`
+concrete ids (pass-through). Family aliases are a non-goal.
 
 ---
 
-## 8. Execution: wave scheduler, follow-up, retry
+## 8. Execution
 
-### 8.1 Wave scheduler (new)
-The backend caps parallel runs at ~5 and it is not user-tunable. Replace the
-fire-all `Promise.allSettled` at `local-executor.js:806` with a **bounded scheduler**:
+### 8.1 Wave scheduler — bound non-terminal runners **[R2]**
+The constraint is on **simultaneously active (non-terminal) remote runners**, not
+in-flight submission calls. Replace the unbounded submission fan-out
+(`local-executor.js:806`) with a scheduler that:
 
-- concurrency = hardcoded constant `MAX_PARALLEL_RUNS = 5` (documented as the
-  observed backend default; **not** auto-detected — the API may not report it
-  reliably and could fail under a burst);
-- run instances in waves of ≤5, preserving lineup order for start ordering;
-- integrate with existing capacity-retry as a backstop (if the backend still
-  rejects, the SDK retry handles it).
+- holds a concurrency slot from **submission through terminal state** (completed / failed /
+  cancelled), not just until the submit promise resolves;
+- keeps at most `MAX_PARALLEL_RUNS = 5` non-terminal runners at once (hardcoded — the API
+  may not report the cap reliably and could fail under a burst; **not** user-tunable);
+- submits a wave, waits for those runs to terminate (reusing the existing poll/wait in
+  `completeLocalStep`, ~`:889`), then submits the next wave, preserving lineup order;
+- keeps SDK capacity-retry as a backstop.
 
-Applies within a step (all a step's instances target one site → cap is per-step).
+**Test the maximum simultaneous non-terminal runners**, not merely concurrent submission
+calls.
 
 ### 8.2 Materialize instances
-`local-executor.js` creates one `AgentRun` per resolved instance:
-```js
-{ agent, model, effort, instanceId, instanceLabel, /* existing fields */ }
-```
-Resolve once; retry/resume replay the stored resolved instance.
+`local-executor.js` creates one `AgentRun` per resolved instance
+(`{agent, model, effort, instanceId, instanceLabel}`), resolved once (§6).
 
 ### 8.3 Re-key by instance
 `agentStatuses` and all provider-keyed maps become instance-id-keyed.
-`src/integrations/netlify/local-runner.js` and `agent-runner-sdk.js` call
-`sdk.start`/`sdk.followUp` per instance and carry `{agent, model, effort}` through
-create, follow-up, capacity retry, prompt-shrink retry, manual retry, resume, and
+`local-runner.js` / `agent-runner-sdk.js` call `sdk.start`/`sdk.followUp` per instance and
+carry config through create, follow-up, capacity/prompt-shrink/manual retry, resume, and
 handle reconstruction.
 
-### 8.4 Follow-up inheritance mechanics
-Rewrite `src/workflows/followups/plan.js` so a follow-up step gathers its `input`
-steps' resolved instances (deduped by id) and, for each, finds the prior run/session
-for **that instance id** and continues it — replacing the `agent === targetAgent`
-match at line 97. `followups/runner.js` and `persistence.js` follow.
+### 8.4 Follow-up inheritance mechanics **[R3]**
+Rewrite `followups/plan.js` so a follow-up gathers its **continuation source** step's
+resolved instances and, for each, finds the prior run/session for that `(sourceStepId,
+instanceId)` and continues it — replacing the `agent === targetAgent` match at `:97`.
+Extra `input` steps are read context only. `followups/runner.js`/`persistence.js` follow.
 
-### 8.5 Partial failure (isolate & continue)
-A failed instance does not fail the step. Successful instances produce results; the
-follow-up inherits only continuable instances; failed/uncontinuable instances are
-reported and skipped (never silently re-forked as fresh).
+### 8.5 Partial failure — step state machine **[R5]**
+Replace the binary `localStepStatus` with:
+
+| Situation | Step status | Notes |
+|---|---|---|
+| all instances completed | `completed` | as today |
+| ≥1 completed, ≥1 failed | `completed_with_failures` | new; step proceeds |
+| all instances failed | `failed` | step fails |
+| final step, partial | `completed_with_failures` | **process exit code non-zero** so CI still signals failure |
+
+- Follow-ups inherit **only continuable** instances; failed/uncontinuable ones are reported
+  and skipped (never silently re-forked fresh).
+- Resume/manual retry operate per instance: a partial step can be retried for only its
+  failed instances; the succeeded instances are not re-run.
+- Dashboard/events surface `completed_with_failures` distinctly (badge + per-instance
+  status), so a green step with a dead instance is never silently hidden.
 
 ---
 
-## 9. CLI design
+## 9. CLI
 
 Instance syntax `provider[:model[:effort]]` (model may be `latest`), comma-lists,
-repeatable:
-```bash
-nax run review --agents "claude:claude-opus-5:high,claude:claude-opus-4-8,codex:latest"
-nax run review --step-agents "audit=claude:latest,codex:gpt-5.6-sol"
-```
-- Effort sweep = list each. Bare `claude` = open.
-- `--models`/`--efforts` remain for single-per-provider back-compat; a provider used
-  multiple times cannot also be addressed by them (error → instance syntax).
-- Single-agent `nax run` prompt (provider → model → effort, best/highest defaults) is
-  the one-instance case, unchanged.
-- Interactive workflow launch: after providers, offer **Add instance** and per-instance
-  model/effort prompts (open defaults to the provider default).
-- Dry-run/preview lists every instance deduped with resolved config; the soft cap (>6)
-  requires confirmation.
+repeatable; `--step-agents "step=…"`. `--models`/`--efforts` remain for single-per-provider
+back-compat (multi-use → error → instance syntax). Single-agent `nax run` (provider → model
+→ effort, defaults) is the one-instance case. Interactive launch offers **Add instance**;
+dry-run/preview lists every resolved instance and confirms above the soft cap (6).
 
 ---
 
 ## 10. Dashboard
 
-### 10.1 Per-instance chips
-One chip per instance (not per provider); two Claude chips with different subtitles are
-normal. The shipped chip UI (icon + name + model + effort, caret popover, equal-height
-centered content) becomes per-instance; the caret edits that instance. An explicit
-remove affordance per chip.
+### 10.1–10.3 Config (2.1)
+- **Per-instance chips** (not per-provider); the shipped chip UI + caret popover becomes
+  per-instance; explicit per-chip remove.
+- **Add-instance** picker: provider → multi-select models (default = provider default) →
+  multi-select efforts (default = highest) → appends the cartesian instance chips.
+  Presets: *flagship of every provider*, *this model × all efforts*, *all models of this
+  provider*. Soft cap 6 → confirm.
+- **Follow-up steps** show inherited instances read-only, "inherited from &lt;step&gt;".
+- Contracts/serializers/projections re-key provider → instance
+  (`contracts/workflow.ts`, `contracts/dashboard.ts`, `dashboard/api/serializers.js`,
+  `services/mutations.js`, `transports/*`, `api/run-state-projection.js`, web
+  `run-projection.ts`, `App.tsx`, `WorkflowNode.tsx`, `WorkflowCanvas.tsx`,
+  `ModelEffortFields.tsx`, `agent-catalog-context.tsx`). Expose per-provider defaults in
+  the capabilities response. Surface `completed_with_failures`.
 
-### 10.2 Add-instance flow (serves all use cases)
-An **Add agent** control: pick provider → multi-select **models** (default = provider
-default) → multi-select **efforts** (default = highest) → appends the cartesian set of
-instance chips. Quick presets: *Flagship of every provider* (use case 3), *This model ×
-all efforts* (use case 2), *All models of this provider* (use case 1). Soft cap 6 →
-confirm.
-
-### 10.3 Follow-up display
-A follow-up step shows its inherited instances read-only, labeled "inherited from
-&lt;step&gt;".
-
-### 10.4 Arena comparison (port of PR #25842) — documented, built later
-netlify-react-ui PR #25842 ("feat(agent-runners): add arena mode") already designed
-this:
-- **Multi-select agents** + an *arena mode* toggle on the new-task control.
-- A **ComparisonPage** (`pages/AgentRunners/ComparisonPage.tsx`, ~555 LOC) rendering
-  **one column per runner** via `CompareRunnerColumn.tsx` under a `CompareHero.tsx`
-  summary, reachable from the runs list.
-- Helpers in `helpers/agentRunners.ts` for arena state + navigation paths.
-
-Plan: adapt this into the nax dashboard (Mantine/xyflow) as the step-level compare view
-— side-by-side columns of each instance's result, plus the existing distinct per-instance
-artifacts. **This is a later phase; this program does not build it, only specs the target.**
-
-### 10.5 Contracts/plumbing
-`selectedAgents`/`stepAgents` (provider lists) → instance descriptors;
-`models`/`stepModels`/`efforts`/`stepEfforts` fold into instance objects. Update together:
-`src/contracts/workflow.ts`, `contracts/dashboard.ts`, `dashboard/api/serializers.js`,
-`services/mutations.js`, `transports/*`, `api/run-state-projection.js`, web
-`run-projection.ts`, `App.tsx`, `WorkflowNode.tsx`, `WorkflowCanvas.tsx`,
-`ModelEffortFields.tsx`, `agent-catalog-context.tsx`. Expose per-provider defaults in the
-capabilities response so client and server agree.
+### 10.4 Arena comparison — **NAX 2.2**, port of PR #25842
+PR #25842 ("feat(agent-runners): add arena mode", **closed/unmerged**, source commit
+`0e33fcd18b204e5587e7c1c30d5940bfd0b9fba2`) designed this: multi-select agents + arena
+toggle; a `ComparisonPage` (~555 LOC) rendering **one column per runner**
+(`CompareRunnerColumn.tsx`) under a `CompareHero.tsx`, reachable from the runs list;
+helpers in `helpers/agentRunners.ts`. Plan: adapt into the nax dashboard (Mantine/xyflow)
+as the step-level side-by-side compare, on top of the distinct per-instance artifacts.
+**Shipped in 2.2, after the 2.1 execution/config core.** Pin the source commit so the port
+has a stable reference even though the PR is closed.
 
 ---
 
 ## 11. Persistence, artifacts, events
 
-- Persist resolved instance (`agent`, `model`, `effort`, `instanceId`, `label`) on run
+- Persist resolved instance (`agent`, `model`, `effort`, `instanceId`, `label`) on
   checkpoints and resume snapshots.
-- **Instance-scoped artifact paths** — provider-keyed session files (`<runner>/claude.md`)
-  collide for two Claudes; key by instance slug (`<runner>/claude__opus-5__high.md`),
-  filesystem-safe.
+- **Artifact paths** use the §5.3 collision-resistant instance slug. **Compatibility
+  [R6]:** when a step has exactly **one instance of a provider**, retain the legacy
+  provider-named path (`<runner>/claude.md`) as the canonical/alias path so existing
+  artifact consumers keep working; use instance slugs only to disambiguate when a provider
+  has **>1 instance** in the step. Document the change either way.
 - Session JSON nests `agent_config` (`{agent, model, effort}`) + instance id/label; keep
-  intent-vs-observed handling and the `configurationMismatch` diagnostic (incl. the
-  `nax-i28x` follow-up-effort backend gap).
-- Markdown summaries, event payloads, dashboard projections, round-results group by
-  instance. Old artifacts (`agent` only) load as `agent:auto:auto`. Additive; no schema
-  bump.
+  intent-vs-observed handling + `configurationMismatch` (incl. `nax-i28x`).
+- Markdown/events/projections/round-results group by instance. Old artifacts (`agent`
+  only) load as `agent:auto:auto`.
 
 ---
 
 ## 12. Synthesis / large inputs
-
-A synthesis/judge step may receive many instance outputs. Feed them all and rely on the
-SDK's existing **prompt blob-offload** for oversized prompts (the E2BIG/argv work); no new
-truncation or pre-summarization. (Keeps synthesis faithful; offload is already the tested
-path for large prompts.)
+Feed all instance outputs to a synthesis/judge step and rely on the SDK's existing prompt
+blob-offload for oversized prompts (the E2BIG/argv work). No new truncation.
 
 ---
 
@@ -385,93 +398,78 @@ path for large prompts.)
 
 | Case | Netlify API | GitHub Action |
 |---|---|---|
-| Bare provider (open) | resolve to provider default (pinned) | Auto/omit (as today) |
-| Pinned model/effort | supported | **fail closed** — "supported once the Action is updated" |
-| >1 instance per provider | supported | **fail closed** (Action is provider-keyed) |
+| Bare provider (open) | provider default (pinned) | Auto/omit (as today) |
+| Pinned model/effort or `latest` | supported | **fail closed** — "supported once the Action is updated" |
+| >1 instance per provider | supported | **fail closed** |
 
-GitHub is **not deprecated** — it keeps running provider-only councils exactly as today.
-Full model/effort/multi-instance on GitHub requires updating the external Action's inputs
-and dispatch, then a pinned-SHA bump in NAX — a **separate later effort, out of scope
-here**. Never encode instance config in the prompt.
+Transport is chosen in Pass 2 (§6) from **intent**, before open resolution. GitHub is not
+deprecated; full support requires a separate later update to the external Action + a pinned
+SHA bump. Never encode instance config in the prompt.
 
 ---
 
 ## 14. SDK impact
-
-Expected **none** — the SDK already runs N independent `{agent, model, effort}` calls.
-Phase 0 proves two same-provider starts run independently. If any SDK path keys by
-provider (it should not), that becomes a scoped SDK task; otherwise no SDK release.
+Expected none. Phase 0 proves two same-provider starts run independently; if any SDK path
+keys by provider, that becomes a scoped SDK task, else no SDK release.
 
 ---
 
 ## 15. Documentation
-
-Update under `site/content`: `reference/workflow-files.mdx` (string-or-object, fan-out,
-aliases, inheritance), `reference/commands.mdx` (instance syntax),
-`guides/run-workflows.mdx` + `guides/use-the-dashboard.mdx` (the four use cases + arena),
-`concepts/glossary.mdx` (instance, id, lineup, alias, arena), `concepts/artifacts.mdx`
-(instance-scoped paths), `for-agents.mdx`, root `README.md`, and
-`src/templates/skills/nax-workflows/SKILL.md`.
+`site/content`: `reference/workflow-files.mdx`, `reference/commands.mdx`,
+`guides/run-workflows.mdx`, `guides/use-the-dashboard.mdx`, `concepts/glossary.mdx`,
+`concepts/artifacts.mdx`, `for-agents.mdx`, root `README.md`, and
+`src/templates/skills/nax-workflows/SKILL.md`. Document the behavioral migration (§13, §11)
+prominently.
 
 ---
 
 ## 16. Implementation phases
 
-### Phase 0 — Contracts, fixtures, SDK confirmation
-Prove two same-provider SDK runs are independent; fixtures for all four use cases;
-inventory + guard-tests for every provider-keyed map/status/selection site.
-
-### Phase 1 — Data model and resolver
-`AgentInstance`, instance id, dedupe, labels; per-provider `defaultModel`;
-`latest`/`default` alias; transport-aware open resolution; ladder + fan-out + validation.
-
-### Phase 2 — Schema, normalization, back-compat
-String-or-object + fan-out normalization across all formats; legacy-map bridge + ambiguity
-errors; migrate bundled `review`/`ideas` follow-up steps to inherit.
-
-### Phase 3 — Execution
-Wave scheduler (cap 5); one run per instance; re-key status/selection by instance id;
-follow-up inheritance + instance-id continuation; partial-failure isolation;
-instance-scoped artifacts; resolved config in state/events; retry/resume replay.
-
-### Phase 4 — CLI
-Instance syntax for `--agents`/`--step-agents`; back-compat supersession + ambiguity
-errors; interactive Add-instance; dry-run/preview per-instance labels + soft-cap confirm.
-
-### Phase 5 — Dashboard (config)
-Per-instance chips + edit/remove; Add-instance picker (multi-select models/efforts +
-presets + soft cap); read-only inherited follow-up display; contracts/serializers/projections
-re-keyed; catalog defaults exposed; `dashboard:build` + typecheck + Playwright.
-
-### Phase 6 — Arena comparison (port PR #25842)
-Adapt the arena comparison (columns per instance + hero) into the nax dashboard. Separate,
-later phase; can ship after the core.
-
-### Phase 7 — Docs, canary, release
-MDX/skill/examples/help; full verification matrix; bounded live canary of each use case;
-human gate for NAX 2.1 publication.
+- **Phase 0 — Contracts/fixtures/SDK confirmation.** Two same-provider SDK runs independent;
+  fixtures for the four use cases; inventory + guard-tests for every provider-keyed
+  map/status/selection/transport site.
+- **Phase 1 — Data model + resolution pipeline.** `AgentInstance`, tuple id, dedupe,
+  display labels; per-provider `defaultModel`; `latest`; the **two-pass intent → transport
+  → resolve** pipeline (§6) shared by CLI + dashboard; fan-out; validation.
+- **Phase 2 — Schema/normalization/back-compat.** String-or-object + fan-out across
+  formats; legacy-map bridge + ambiguity errors; migrate bundled follow-up steps to inherit.
+- **Phase 3 — Execution.** Wave scheduler bounding **non-terminal** runners (cap 5); one
+  run per instance; instance-id status keying; follow-up `(sourceStepId, instanceId)`
+  continuation; partial-failure state machine + exit codes; instance-slug artifacts +
+  single-instance provider-path alias; retry/resume replay.
+- **Phase 4 — CLI.** Instance syntax; back-compat supersession; interactive Add-instance;
+  preview + soft-cap confirm.
+- **Phase 5 — Dashboard config (2.1).** Per-instance chips + edit/remove; Add-instance
+  picker + presets + soft cap; inherited follow-up display; re-keyed contracts;
+  `completed_with_failures`; build + typecheck + Playwright.
+- **Phase 6 — Docs, canary, 2.1 release.** MDX/skill/examples/help; full verification;
+  bounded live canary of each use case (incl. a partial-failure run); human gate for 2.1.
+- **Phase 7 — Arena comparison (NAX 2.2).** Port PR #25842 into the nax dashboard; its own
+  version + release gate.
 
 ---
 
 ## 17. Test matrix
 
-- **Resolver:** each use case; fan-out expand + dedupe; alias → configured default;
-  open → default (Netlify) vs Auto (GitHub); duplicate id w/o label → error; unsupported
-  effort → error; wrong-provider model → error; `max`→`xhigh` at send only.
-- **Schema:** string-or-object + fan-out in YAML/JSON/JS/TS/TOML; legacy-map bridge;
-  ambiguity error; follow-up-with-declared-agents deprecation.
-- **Scheduler:** 9 instances run in waves of ≤5; ordering; capacity-retry backstop.
-- **Execution/state:** two same-provider instances → two runs/artifacts/results; instance-id
-  status keying; resume preserves exact instances; retry replays resolved (not re-aliased).
-- **Follow-up:** cross-review continues each review instance's own session by id; failed
-  instance reported/skipped; step succeeds with the rest.
-- **CLI:** instance syntax; effort sweep; back-compat; non-TTY; dry-run labels + soft-cap
-  confirm; GitHub pin/multi fail-fast.
-- **Dashboard:** add 3 models (bake-off); 1 model × 3 efforts (sweep); flagship preset;
-  inherited follow-up display; per-instance edit/remove; contract rejects provider-only arrays.
-- **Artifacts:** instance-scoped paths never collide for same-provider instances.
-- **Arena (Phase 6):** comparison page renders one column per instance from a completed
-  multi-instance step.
+- **Resolver/pipeline:** two-pass ordering (transport:auto + bare provider is deterministic);
+  `latest` = pinned intent forces netlify-api; open → default (Netlify) vs Auto (GitHub);
+  fan-out expand + dedupe; **exact-tuple duplicate → error** (no label bypass); wrong-provider
+  model / unsupported effort → error; `max`→`xhigh` at send only.
+- **Schema:** string-or-object + fan-out in all formats; legacy-map bridge + ambiguity;
+  follow-up-with-declared-agents deprecation.
+- **Scheduler:** 9 instances never exceed 5 **non-terminal** runners (assert active count,
+  not submission count); wave ordering; capacity-retry backstop.
+- **Follow-up:** cross-review continues each review instance by `(review, id)`;
+  multi-input follow-up continues only the source step; failed instance skipped;
+  same tuple in two input steps does not collide.
+- **Partial failure:** one-success + failures → `completed_with_failures`; all-failed →
+  `failed`; final-step partial → non-zero exit; retry re-runs only failed instances; resume
+  preserves succeeded instances.
+- **Identity/artifacts:** id is label-independent (relabeling doesn't move the key);
+  instance slugs never collide for same-provider instances; single-instance step keeps the
+  provider-named path.
+- **CLI/dashboard:** instance syntax; effort sweep; presets (bake-off / sweep / flagship);
+  soft-cap confirm; GitHub pin/multi fail-fast; contract rejects provider-only arrays.
 
 ---
 
@@ -479,45 +477,47 @@ human gate for NAX 2.1 publication.
 
 | Risk | Mitigation |
 |---|---|
-| Provider→instance re-key touches many sites | Phase 0 inventory + guard tests; land core (1–3) before UI |
-| Backend falls over on bursts | Hardcoded wave cap 5, waves, capacity-retry backstop |
-| `latest` shifts a run mid-flight | Resolve once at materialize; persist concrete; never re-alias on retry |
-| Same-provider artifact collisions | Instance-slug paths; explicit test |
-| Open-default behavior change surprises GitHub users | Transport-aware: GitHub stays Auto; only Netlify pins the default |
-| Fan-out cost blowups | Soft cap 6 + confirm; dry-run lists every instance + cost |
-| Follow-up can't map an input instance | Continue by instance id; report/skip, never silent fresh fork |
-| Schema churn breaks existing flows | Bare-string + legacy maps stay valid; multiples require object form |
-| Large synthesis prompts | Rely on tested SDK prompt blob-offload |
+| Transport/open circular resolution | Two-pass pipeline (§6); tests assert deterministic order [R1] |
+| Capping submissions ≠ capping active runs | Slot held to terminal; test non-terminal count [R2] |
+| Multi-input follow-up lineage ambiguity | Lineage `(sourceStepId, instanceId)`; single continuation source [R3] |
+| Mutable label as key / accidental sampling | Tuple-only id; reject exact dups; label display-only [R4] |
+| Partial failure undefined | Explicit step state machine + exit codes + retry semantics [R5] |
+| "Additive" overstated / consumer path breaks | Document migration; provider-path alias for single-instance [R6] |
+| Arena scope creep into 2.1 | Arena is 2.2; 2.1 DoD needs distinct artifacts only [R7] |
+| Backend falls over on bursts | Hardcoded wave cap 5; capacity-retry backstop |
+| `latest` shifts mid-run | Resolve once; persist concrete; never re-alias |
+| Fan-out cost | Soft cap 6 + confirm; preview lists all |
 
 ---
 
 ## 19. Non-goals
+Best-of-N sampling (issue #45); family aliases; updating the GitHub Action;
+dynamic catalog discovery; backend changes (incl. `nax-i28x`); Arena UI in 2.1;
+user-tunable parallel cap.
 
-- **Best-of-N sampling** of identical instances — deferred (issue **#45**).
-- Family-scoped aliases (`claude:opus:latest`).
-- Updating the GitHub Action for model/effort/multi-instance (separate later effort).
-- Dynamic catalog discovery; changing backend behavior (incl. `nax-i28x`).
-- Building the arena comparison UI in the core phases (Phase 6 / later).
-- User-tunable parallel-run cap.
-
----
-
-## 20. Definition of done
-
-- A step runs any number of instances, incl. several of one provider; all four use cases
-  work in workflow files, CLI, and dashboard.
-- Instances keyed by `provider:model:effort` (or `label`); duplicates handled.
-- Per-provider `defaultModel` (Claude → Fable 5) drives open/`latest`; resolution is
-  transport-aware and recorded concrete; retry/resume never re-alias.
-- Follow-up steps inherit and continue each input instance's own session by id; partial
-  failures isolate.
-- Execution respects the wave cap (5); fan-outs preview and soft-cap-confirm at 6.
-- Existing provider-only flows and the shipped model/effort maps keep working.
-- GitHub transport keeps provider-only councils; pins/multi fail closed with a clear
-  "later" message.
+## 20. Definition of done (2.1)
+- A step runs any number of instances incl. several of one provider; all four use cases
+  work in workflow files, CLI, and dashboard, producing distinct per-instance artifacts.
+- Identity is tuple-derived and label-independent; exact-tuple duplicates rejected.
+- Two-pass resolution is deterministic for `transport:auto`; open resolves per transport;
+  `latest`/defaults recorded concrete; retry/resume never re-alias.
+- Follow-ups continue by `(sourceStepId, instanceId)` from a single source; partial
+  failures yield `completed_with_failures` with correct exit codes and per-instance retry.
+- The scheduler never exceeds 5 non-terminal runners (verified by active-count test).
+- Existing provider-only flows and shipped model/effort maps still load; the behavioral
+  migration is documented; single-instance steps keep provider-named artifact paths.
+- GitHub keeps provider-only councils; pins/multi fail closed with a clear "later" message.
 - No SDK release required (or a scoped one if Phase 0 finds a provider assumption).
-- Docs, dashboard build, Playwright, and a live canary of each use case pass; NAX 2.1 is
-  handed to the user for publication.
-- Arena comparison (PR #25842 port) is specced for a follow-on phase.
-```
+- Docs, dashboard build, Playwright, and a live canary of each use case (+ a partial
+  failure) pass; NAX 2.1 handed to the user for publication.
+- **Arena (2.2)** is specced against pinned commit `0e33fcd…` for a follow-on release.
 
+## 21. Open questions (ratify before build)
+1. **Bare-provider default vs Auto [R6].** Keep decision #7 (bare → provider default on
+   Netlify), or adopt the review's alternative (bare stays Auto; only `latest`/explicit
+   pins), which keeps councils behavior-identical and avoids forcing netlify-api? *Leaning:
+   keep default but document the migration; confirm.*
+2. **Arena in 2.1 or 2.2 [R7].** Spec says 2.2. Confirm, or pull Arena into 2.1.
+3. Multi-input follow-up: read-only extra inputs (this spec) vs allowing multiple
+   continuation sources with explicit lineage.
+4. Artifact slug format (readability vs hash length).

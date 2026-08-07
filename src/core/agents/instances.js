@@ -15,16 +15,8 @@ const EFFORT_RANK = { low: 1, medium: 2, high: 3, max: 4 }
 
 /**
  * @typedef {'claude'|'gemini'|'codex'|'opencode'} AgentProvider
- * @typedef {'latest'|'default'|'open'|'pinned'} InstanceProvenance
- * @typedef {{
- *   agent: AgentProvider,
- *   model?: string,
- *   effort?: string,
- *   id: string,
- *   label?: string,
- *   resolvedFrom: InstanceProvenance,
- *   wireEffort?: string,
- * }} AgentInstance
+ * @typedef {import('../../types').InstanceProvenance} InstanceProvenance
+ * @typedef {import('../../types').AgentInstance} AgentInstance
  * @typedef {{ code: string, message: string }} ResolveWarning
  * @typedef {{
  *   instances: AgentInstance[],

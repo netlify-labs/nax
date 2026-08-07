@@ -87,6 +87,7 @@
  *   submit?: string,
  *   waitFor?: string,
  *   agents?: string[],
+ *   lineup?: Array<string | Record<string, unknown>>,
  *   models?: Record<string, string>,
  *   efforts?: Record<string, string>,
  *   input?: StepInput[],
@@ -114,6 +115,7 @@
  *     transport?: string,
  *     notify?: boolean,
  *     agents?: string[],
+ *     lineup?: Array<string | Record<string, unknown>>,
  *     models?: Record<string, string>,
  *     efforts?: Record<string, string>,
  *   },
@@ -154,12 +156,33 @@
  */
 
 /**
+ * How an instance's model was resolved: from a `latest`/`default` alias, an open (Auto) provider,
+ * or an explicitly pinned model.
+ * @typedef {'latest' | 'default' | 'open' | 'pinned'} InstanceProvenance
+ *
+ * A resolved agent instance — the unit of execution ({provider, model, effort} with a stable,
+ * tuple-derived, label-independent id).
+ * @typedef {{
+ *   agent: string,
+ *   model?: string,
+ *   effort?: string,
+ *   id: string,
+ *   label?: string,
+ *   resolvedFrom: InstanceProvenance,
+ *   wireEffort?: string,
+ * }} AgentInstance
+ */
+
+/**
  * Runtime status for a submitted model invocation, local runner submission, or GitHub-backed agent issue.
  * @typedef {{
  *   transport?: string,
  *   agent?: string,
  *   model?: string,
  *   effort?: string,
+ *   instanceId?: string,
+ *   instanceLabel?: string,
+ *   resolvedFrom?: InstanceProvenance,
  *   agent_config?: { agent?: string, model?: string, effort?: string },
  *   configurationMismatch?: {
  *     requested: { agent?: string, model?: string, effort?: string },

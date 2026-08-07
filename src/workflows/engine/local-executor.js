@@ -749,7 +749,7 @@ async function executeLocalFlow({ flow, steps, options, runState, projectRoot, c
     const inheritedRuns = step.submit === 'follow-up'
       ? continuationSourceRuns(step, completedStepStates).filter((sourceRun) => sourceRun.runnerId)
       : []
-    /** @type {Array<import('../../core/agents/instances').AgentInstance>} */
+    /** @type {import('../../types').AgentInstance[]} */
     let instances
     /** @type {string[]} */
     let lineupWarnings

@@ -11,6 +11,9 @@ const { resolveLineup } = require('../../src/core/agents/instances')
 
 const FIXTURE_DIR = path.join(__dirname, '..', 'fixtures', 'multi-instance')
 
+/** Launder a raw (yaml-shaped) flow object to the normalizeFlow input type for typecheck. */
+const asFlow = (/** @type {unknown} */ raw) => /** @type {import('../../src/types').WorkflowFlow} */ (raw)
+
 test('normalizeLineup preserves string and object entries', () => {
   const lineup = normalizeLineup([
     'claude',
@@ -19,7 +22,7 @@ test('normalizeLineup preserves string and object entries', () => {
   ])
   assert.equal(lineup[0], 'claude')
   assert.deepEqual(lineup[1], { agent: 'claude', models: ['claude-opus-5', 'claude-opus-4-8'] })
-  assert.equal(lineup[2].label, 'primary')
+  assert.equal(typeof lineup[2] === 'object' ? lineup[2].label : undefined, 'primary')
 })
 
 test('normalizeLineup splits a CSV string into providers', () => {
@@ -41,18 +44,18 @@ test('providersFromLineup derives a deduped, ordered provider list', () => {
 })
 
 test('bare-string flows are unchanged: agents == lineup', () => {
-  const flow = normalizeFlow({
+  const flow = normalizeFlow(asFlow({
     id: 'bare',
     title: 'Bare',
     defaults: { agents: ['claude', 'gemini', 'codex'] },
     steps: [{ id: 's', title: 'S', prompt: 'prompts/task.md', agents: ['claude', 'gemini', 'codex'] }],
-  }, { file: 'bare.yml', dir: FIXTURE_DIR, source: { type: 'test' } })
+  }), { id: 'bare', file: 'bare.yml', dir: FIXTURE_DIR, source: { type: 'test' } })
   assert.deepEqual(flow.steps[0].agents, ['claude', 'gemini', 'codex'])
   assert.deepEqual(flow.steps[0].lineup, ['claude', 'gemini', 'codex'])
 })
 
 test('object lineup: agents derived, full lineup preserved, and resolvable end-to-end', () => {
-  const flow = normalizeFlow({
+  const flow = normalizeFlow(asFlow({
     id: 'obj',
     title: 'Obj',
     defaults: { agents: [{ agent: 'claude', models: ['claude-opus-5', 'claude-opus-4-8'] }] },
@@ -63,7 +66,7 @@ test('object lineup: agents derived, full lineup preserved, and resolvable end-t
         { agent: 'codex', model: 'gpt-5.6-sol', efforts: ['medium', 'high'] },
       ],
     }],
-  }, { file: 'obj.yml', dir: FIXTURE_DIR, source: { type: 'test' } })
+  }), { id: 'obj', file: 'obj.yml', dir: FIXTURE_DIR, source: { type: 'test' } })
   // back-compat provider list
   assert.deepEqual(flow.steps[0].agents, ['claude', 'codex'])
   // full lineup preserved for the resolver

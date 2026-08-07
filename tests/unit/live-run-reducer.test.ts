@@ -12,7 +12,7 @@ test('live run reducer maps ordered workflow, step, agent, and output events', (
 
   assert.equal(state.run?.runId, 'run-1')
   assert.equal(state.stepStatuses.review, 'running')
-  assert.equal(state.agentStatuses.review.codex, 'running')
+  assert.equal(state.agentStatuses.review['codex:auto:auto'], 'running')
   assert.equal(state.output, 'hello\n')
 })
 
@@ -21,7 +21,7 @@ test('live run reducer dedupes replayed structured events by eventId', () => {
   const event = { type: 'agent_status', eventId: 'run-1:3', seq: 3, runId: 'run-1', stepId: 'review', agent: 'codex', status: 'completed' }
   state = liveRunReducer(state, { type: 'event', event })
   state = liveRunReducer(state, { type: 'event', event: { ...event, status: 'failed' } })
-  assert.equal(state.agentStatuses.review.codex, 'completed')
+  assert.equal(state.agentStatuses.review['codex:auto:auto'], 'completed')
 })
 
 test('live run reducer bounds retained output', () => {
@@ -41,7 +41,7 @@ test('live run reducer ignores older durable replay statuses after newer live st
   state = liveRunReducer(state, { type: 'event', event: { type: 'agent_status', eventId: 'run-1:5', seq: 5, runId: 'run-1', stepId: 'review', agent: 'claude', status: 'submitted' } })
 
   assert.equal(state.stepStatuses.review, 'completed')
-  assert.equal(state.agentStatuses.review.claude, 'completed')
+  assert.equal(state.agentStatuses.review['claude:auto:auto'], 'completed')
 })
 
 test('live run reducer bootstraps a temporary run from workflow_started on reconnect', () => {
@@ -90,7 +90,7 @@ test('live run reducer surfaces failed agent_status message in errors', () => {
   let state = initialLiveRunState({ id: 'dashboard-run', flowId: 'review', status: 'running' })
   state = liveRunReducer(state, { type: 'event', event: { type: 'agent_status', eventId: 'run-1:21', seq: 21, runId: 'run-1', stepId: 'review', agent: 'codex', status: 'failed', message: 'netlify agents:create failed: Not Found' } })
 
-  assert.equal(state.agentStatuses.review.codex, 'failed')
+  assert.equal(state.agentStatuses.review['codex:auto:auto'], 'failed')
   assert.deepEqual(state.errors, ['review/codex: netlify agents:create failed: Not Found'])
 })
 
@@ -109,6 +109,23 @@ test('live run reducer ignores terminal and failed-agent events without a messag
   state = liveRunReducer(state, { type: 'event', event: { type: 'workflow_failed', eventId: 'run-1:25', seq: 25, runId: 'run-1', status: 'failed', exitCode: 1 } })
 
   assert.equal(state.run?.status, 'failed')
-  assert.equal(state.agentStatuses.review.codex, 'failed')
+  assert.equal(state.agentStatuses.review['codex:auto:auto'], 'failed')
   assert.deepEqual(state.errors, [])
+})
+
+test('live run reducer tracks repeated providers by instance id', () => {
+  let state = initialLiveRunState()
+  state = liveRunReducer(state, { type: 'event', event: {
+    type: 'agent_status', eventId: 'run-1:26', seq: 26, runId: 'run-1', stepId: 'review',
+    agent: 'codex', instanceId: 'codex:gpt-5.6-sol:high', status: 'completed',
+  } })
+  state = liveRunReducer(state, { type: 'event', event: {
+    type: 'agent_status', eventId: 'run-1:27', seq: 27, runId: 'run-1', stepId: 'review',
+    agent: 'codex', instanceId: 'codex:gpt-5.6-sol:medium', status: 'failed',
+  } })
+
+  assert.deepEqual(state.agentStatuses.review, {
+    'codex:gpt-5.6-sol:high': 'completed',
+    'codex:gpt-5.6-sol:medium': 'failed',
+  })
 })

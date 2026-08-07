@@ -70,6 +70,15 @@ export function appendBoundedOutput(current: string, text: string, maxChars = MA
   return next.length > maxChars ? next.slice(-maxChars) : next
 }
 
+function eventInstanceId(event: RunnerEvent): string {
+  if (typeof event.instanceId === 'string' && event.instanceId) return event.instanceId
+  const agent = typeof event.agent === 'string' ? event.agent : ''
+  if (!agent) return ''
+  const model = typeof event.model === 'string' && event.model ? event.model : 'auto'
+  const effort = typeof event.effort === 'string' && event.effort ? event.effort : 'auto'
+  return `${agent}:${model}:${effort}`
+}
+
 function appendError(errors: string[], message: unknown): string[] {
   return typeof message === 'string' && message && !errors.includes(message) ? [...errors, message] : errors
 }
@@ -124,8 +133,9 @@ function applyEvent(state: LiveRunState, event: RunnerEvent): LiveRunState {
   }
 
   if (event.type === 'agent_status' && event.stepId && event.agent && event.status) {
+    const instanceId = eventInstanceId(event)
     const seq = eventSeq(event)
-    const previousSeq = withRawEvents.agentSeqs[event.stepId]?.[event.agent] || 0
+    const previousSeq = withRawEvents.agentSeqs[event.stepId]?.[instanceId] || 0
     if (seq < previousSeq) return withRawEvents
     const status = visualStatus(event.status)
     return {
@@ -137,14 +147,14 @@ function applyEvent(state: LiveRunState, event: RunnerEvent): LiveRunState {
         ...withRawEvents.agentStatuses,
         [event.stepId]: {
           ...(withRawEvents.agentStatuses[event.stepId] || {}),
-          [event.agent]: status,
+          [instanceId]: status,
         },
       },
       agentSeqs: {
         ...withRawEvents.agentSeqs,
         [event.stepId]: {
           ...(withRawEvents.agentSeqs[event.stepId] || {}),
-          [event.agent]: seq,
+          [instanceId]: seq,
         },
       },
     }

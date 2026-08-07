@@ -1,4 +1,5 @@
 const { isHumanReviewStep, loadStepPrompt } = require('../../workflows/catalog/flows')
+const { publicInstances, publicRunInstance } = require('../api/instances')
 
 const WORKFLOW_NODE_LAYOUT = {
   width: 300,
@@ -28,6 +29,34 @@ function filteredAgents(agents = [], selectedAgents = null) {
   return normalized.filter((agent) => selectedAgents.has(agent))
 }
 
+/** @param {Array<Record<string, unknown>>} instances @param {Set<string>|null} selectedAgents */
+function filteredInstances(instances = [], selectedAgents = null) {
+  if (!selectedAgents) return instances
+  return instances.filter((instance) => selectedAgents.has(String(instance.agent || '')))
+}
+
+/** @param {Array<Record<string, unknown>>} instances */
+function providersForInstances(instances = []) {
+  return [...new Set(instances.map((instance) => String(instance.agent || '')).filter(Boolean))]
+}
+
+/** @param {unknown} value @returns {Record<string, string>} */
+function stringMap(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return {}
+  return Object.fromEntries(Object.entries(value).map(([key, entry]) => [key, String(entry)]))
+}
+
+/** @param {Record<string, unknown>} flow @param {Record<string, unknown>} step */
+function instancesForDefinitionStep(flow, step) {
+  const defaults = flow.defaults && typeof flow.defaults === 'object' && !Array.isArray(flow.defaults)
+    ? /** @type {Record<string, unknown>} */ (flow.defaults)
+    : {}
+  return publicInstances(step.lineup || step.agents, {
+    models: { ...stringMap(defaults.models), ...stringMap(step.models) },
+    efforts: { ...stringMap(defaults.efforts), ...stringMap(step.efforts) },
+  })
+}
+
 function stepStatus(step = {}, runState = null) {
   const savedSteps = Array.isArray(runState?.steps) ? runState.steps : []
   const saved = savedSteps.find((candidate) => candidate.id === step.id)
@@ -40,29 +69,32 @@ function stepRuns(step = {}, runState = null) {
   return Array.isArray(saved?.runs) ? saved.runs : []
 }
 
-function uniqueRunAgents(runs = []) {
+function uniqueRunInstances(runs = []) {
   const seen = new Set()
-  const agents = []
+  const instances = []
   for (const run of Array.isArray(runs) ? runs : []) {
-    const agent = String(run?.agent || '').trim()
-    if (!agent || seen.has(agent)) continue
-    seen.add(agent)
-    agents.push(agent)
+    const instance = publicRunInstance(run)
+    if (!instance || seen.has(instance.id)) continue
+    seen.add(instance.id)
+    instances.push({ ...instance, status: String(run?.status || '') })
   }
-  return agents
+  return instances
 }
 
-function stepSelectedAgents(step = {}, runState = null) {
-  if (!runState) return null
+function stepSelectedInstances(flow = {}, step = {}, runState = null) {
+  if (!runState) return instancesForDefinitionStep(flow, step)
   const savedSteps = Array.isArray(runState?.steps) ? runState.steps : []
   const saved = savedSteps.find((candidate) => candidate.id === step.id)
   if (!saved) return null
 
-  const selected = uniqueRunAgents(saved.runs)
+  const selected = uniqueRunInstances(saved.runs)
   if (selected.length > 0) return selected
 
-  const savedAgents = filteredAgents(saved.agents)
-  return savedAgents.length > 0 ? savedAgents : null
+  const savedInstances = publicInstances(saved.lineup || saved.agents, {
+    models: saved.models,
+    efforts: saved.efforts,
+  })
+  return savedInstances.length > 0 ? savedInstances : null
 }
 
 function stepPrompt(step = {}, flow = {}) {
@@ -143,7 +175,7 @@ function flowAgents(steps = []) {
 function agentsForSavedStep(step = {}) {
   const declared = filteredAgents(step.agents)
   if (declared.length > 0) return declared
-  return uniqueRunAgents(step.runs)
+  return providersForInstances(uniqueRunInstances(step.runs))
 }
 
 function hasPath(edges, source, target, ignoredEdgeId, visited = new Set()) {
@@ -266,6 +298,7 @@ function flowToGraph(options = {}) {
           submit: step.submit || '',
           waitFor: step.waitFor || '',
           agents: agentsForSavedStep(step),
+          lineup: uniqueRunInstances(step.runs),
           input: Array.isArray(step.input) ? step.input.map((input) => ({ ...input })) : [],
           source: step.source || null,
           savedOnly: true,
@@ -277,13 +310,14 @@ function flowToGraph(options = {}) {
     .map((step, index) => ({
       step,
       index,
-      agents: filteredAgents(step.agents, selected),
+      instances: filteredInstances(instancesForDefinitionStep(flow, step), selected),
     }))
-    .filter((item) => isHumanReviewStep(item.step) || item.agents.length > 0)
+    .map((item) => ({ ...item, agents: providersForInstances(item.instances) }))
+    .filter((item) => isHumanReviewStep(item.step) || item.instances.length > 0)
   const runnableIds = new Set(runnableSteps.map((item) => item.step.id))
 
   let nextNodeY = 0
-  const nodes = runnableSteps.map(({ step, index, agents }, graphIndex) => {
+  const nodes = runnableSteps.map(({ step, index, agents, instances }, graphIndex) => {
     const prompt = stepPrompt(step, flow)
     const y = nextNodeY
     nextNodeY += estimatedWorkflowNodeHeight(step, agents) + WORKFLOW_NODE_LAYOUT.verticalGap
@@ -308,11 +342,13 @@ function flowToGraph(options = {}) {
         submitLabel: edgeLabel(step),
         waitFor: step.waitFor || '',
         agents,
+        instances,
         input: Array.isArray(step.input) ? step.input.map((input) => ({ ...input })) : [],
         status: stepStatus(step, runState),
         runs: stepRuns(step, runState).map((run) => ({ ...run })),
         sourceLabel: flow.sourceLabel || flow.source || '',
-        selectedAgents: stepSelectedAgents(step, runState) || undefined,
+        selectedAgents: stepSelectedInstances(flow, step, runState) || undefined,
+        inheritedFromStepId: step.submit === 'follow-up' ? explicitInputSteps(step)[0] || '' : '',
         ...prompt,
       },
     }
@@ -355,7 +391,9 @@ function flowToGraph(options = {}) {
       stepCount: steps.length,
       renderedStepCount: nodes.length,
       agents: flowAgents(runnableSteps.map((item) => ({ ...item.step, agents: item.agents }))),
-      selectedAgents: selected ? [...selected] : [],
+      selectedAgents: selected
+        ? runnableSteps.flatMap((item) => item.instances)
+        : [],
       hasRunState: Boolean(runState),
     },
   }

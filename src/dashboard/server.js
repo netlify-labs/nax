@@ -8,13 +8,10 @@ const { artifactMeta } = require('../core/artifact-metadata')
 const { listFlows, loadFlow } = require('../workflows/catalog/flows')
 const { listRunStates, listWorkflowStatePage, saveRunState } = require('../storage/local/run-state')
 const { flowToGraph } = require('./shared/graph')
-const { applyAgentSelection, normalizeAgentList, normalizeStepAgents, selectionValidationErrors } = require('../core/agents/selection')
+const { normalizeAgentList, selectionValidationErrors } = require('../core/agents/selection')
 const {
   normalizeProviderEffortMap,
   normalizeProviderModelMap,
-  normalizeStepProviderEffortMap,
-  normalizeStepProviderModelMap,
-  resolveAgentRunConfig,
 } = require('../core/agents/configuration')
 const { buildRunDetails } = require('./shared/run-details')
 const { appendEventLog, eventLogPathForRunState, readEventLog } = require('../workflows/events/runner-event-log')
@@ -24,6 +21,13 @@ const { archiveAgentRun, stopAgentRun } = require('../integrations/netlify/local
 const { readLinkedSiteId } = require('../integrations/netlify/init')
 const { isTerminalRunStatus } = require('../core/status')
 const { errorPayload, requestError } = require('./api/errors')
+const {
+  dashboardInstancesToCli,
+  dashboardStepInstancesToCli,
+  normalizeDashboardInstances,
+  normalizeDashboardStepInstances,
+  publicOptionInstances,
+} = require('./api/instances')
 const { readJsonBody } = require('./api/request')
 const { securityHeaders } = require('./api/security')
 const { isActiveProjectedStatus, projectRunSnapshot, publicFlow, publicRunOptions, publicRunState } = require('./api/serializers')
@@ -577,20 +581,26 @@ function dashboardInitialPath(input) {
   return pathname.replace(/\/{2,}/g, '/')
 }
 
-function normalizeDryRunOptions(raw = {}, flow = {}) {
+/**
+ * @param {Record<string, unknown>} raw
+ * @param {import('../types').WorkflowFlow} flow
+ * @param {Record<string, unknown>} defaults
+ */
+function normalizeDryRunOptions(raw = {}, flow = {}, defaults = {}) {
   const allowedTransports = new Set(['auto', 'github', 'github-actions', 'netlify-api', 'local', 'local-machine'])
   const out = {}
-  const transport = String(raw.transport || 'auto').trim()
+  const merged = { ...defaults, ...raw }
+  const transport = String(merged.transport || 'auto').trim()
   if (!allowedTransports.has(transport)) {
     throw requestError(400, 'invalid_transport', `Invalid transport "${transport}".`)
   }
   out.transport = transport
 
   for (const key of ['branch', 'context', 'step', 'fromStep', 'filter']) {
-    if (raw[key] === undefined || raw[key] === null) continue
-    out[key] = String(raw[key])
+    if (merged[key] === undefined || merged[key] === null) continue
+    out[key] = String(merged[key])
   }
-  const siteId = raw.siteId || raw.netlifySiteId
+  const siteId = merged.siteId || merged.netlifySiteId
   if (siteId !== undefined && siteId !== null && String(siteId).trim()) {
     out.siteId = String(siteId).trim()
     out.netlifySiteId = String(siteId).trim()
@@ -604,44 +614,27 @@ function normalizeDryRunOptions(raw = {}, flow = {}) {
     throw requestError(400, 'invalid_from_step', `Unknown fromStep "${out.fromStep}" in flow "${flow.id}".`)
   }
 
-  const agents = normalizeAgentList(raw.agents)
-  out.agents = agents
-  out.stepAgents = normalizeStepAgents(raw.stepAgents)
-  const errors = selectionValidationErrors(flow, out)
-  if (errors.length > 0) {
-    throw requestError(400, errors[0].code, errors[0].message)
-  }
   try {
-    out.models = normalizeProviderModelMap(raw.models)
-    out.efforts = normalizeProviderEffortMap(raw.efforts)
-    out.stepModels = normalizeStepProviderModelMap(raw.stepModels)
-    out.stepEfforts = normalizeStepProviderEffortMap(raw.stepEfforts)
-    const configuredFlow = applyAgentSelection(flow, out)
-    const stepIds = new Set((configuredFlow.steps || []).map((step) => step.id))
-    for (const stepId of new Set([...Object.keys(out.stepModels), ...Object.keys(out.stepEfforts)])) {
-      if (!stepIds.has(stepId)) throw new Error(`Unknown step "${stepId}" in model/effort configuration.`)
-    }
-    for (const step of configuredFlow.steps || []) {
-      for (const agent of step.agents || []) {
-        resolveAgentRunConfig(agent, {
-          defaults: {
-            models: configuredFlow.defaults?.models,
-            efforts: configuredFlow.defaults?.efforts,
-          },
-          step: {
-            models: step.models,
-            efforts: step.efforts,
-          },
-          globalCli: {
-            models: out.models,
-            efforts: out.efforts,
-          },
-          stepCli: {
-            models: out.stepModels[step.id],
-            efforts: out.stepEfforts[step.id],
-          },
-        })
+    for (const key of ['models', 'efforts', 'stepModels', 'stepEfforts']) {
+      if (Object.prototype.hasOwnProperty.call(raw, key)) {
+        throw Object.assign(
+          new Error(`Dashboard workflow requests no longer accept "${key}". Put model and effort on each agent instance object.`),
+          { code: 'invalid_instance_contract' },
+        )
       }
+    }
+    const fallback = publicOptionInstances(defaults)
+    const instances = raw.agents === undefined
+      ? fallback.agents
+      : normalizeDashboardInstances(raw.agents, { requestedTransport: transport })
+    const stepInstances = raw.stepAgents === undefined
+      ? fallback.stepAgents
+      : normalizeDashboardStepInstances(raw.stepAgents, { requestedTransport: transport })
+    out.agents = dashboardInstancesToCli(instances)
+    out.stepAgents = dashboardStepInstancesToCli(stepInstances)
+    const errors = selectionValidationErrors(flow, out)
+    if (errors.length > 0) {
+      throw Object.assign(new Error(errors[0].message), { code: errors[0].code })
     }
   } catch (error) {
     const code = error && typeof error === 'object' && 'code' in error ? String(error.code) : 'invalid_agent_configuration'
@@ -1042,7 +1035,7 @@ function createRequestHandler(options = {}) {
       dryRunWorkflow: async (id, body) => {
         const flowId = safeDecode(id)
         const flow = await loadFlow(flowId, flowOptions)
-        const options = normalizeDryRunOptions({ ...defaultRunOptions, ...body }, flow)
+        const options = normalizeDryRunOptions(body, flow, defaultRunOptions)
         const result = await dryRunWorkflow({ flowId, projectRoot, options, tailOutput })
         return {
           statusCode: result.exitCode === 0 ? 200 : 500,
@@ -1055,7 +1048,7 @@ function createRequestHandler(options = {}) {
       startWorkflow: async (id, body) => {
         const flowId = safeDecode(id)
         const flow = await loadFlow(flowId, flowOptions)
-        const runOptions = normalizeDryRunOptions({ ...defaultRunOptions, ...body }, flow)
+        const runOptions = normalizeDryRunOptions(body, flow, defaultRunOptions)
         const run = startRun({ flowId, runOptions })
         await run.startedPromise
         return {
@@ -1987,7 +1980,7 @@ function createRequestHandler(options = {}) {
           const id = safeDecode(dryRunMatch[1])
           const flow = await loadFlow(id, flowOptions)
           const body = await readJsonBody(req)
-          const options = normalizeDryRunOptions({ ...defaultRunOptions, ...body }, flow)
+          const options = normalizeDryRunOptions(body, flow, defaultRunOptions)
           const result = await dryRunWorkflow({ flowId: id, projectRoot, options, tailOutput })
           jsonResponse(res, result.exitCode === 0 ? 200 : 500, {
             workflow: publicFlow(flow),
@@ -2006,7 +1999,7 @@ function createRequestHandler(options = {}) {
           const id = safeDecode(startRunMatch[1])
           const flow = await loadFlow(id, flowOptions)
           const body = await readJsonBody(req)
-          const runOptions = normalizeDryRunOptions({ ...defaultRunOptions, ...body }, flow)
+          const runOptions = normalizeDryRunOptions(body, flow, defaultRunOptions)
           const run = startRun({ flowId: id, runOptions })
           jsonResponse(res, 202, {
             workflow: publicFlow(flow),

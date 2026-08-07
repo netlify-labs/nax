@@ -17,7 +17,7 @@ const STATUS_ALIASES = {
 }
 
 const ACTIVE_STATUSES = new Set(['booting', 'running'])
-const COMPLETED_STATUSES = new Set(['completed', 'dry-run'])
+const COMPLETED_STATUSES = new Set(['completed', 'completed_with_failures', 'dry-run'])
 const CANCELLED_STATUSES = new Set(['abandoned', 'cancelled', 'dismissed'])
 const TERMINAL_STATUSES = new Set([...COMPLETED_STATUSES, ...CANCELLED_STATUSES, 'failed', 'skipped'])
 const REVIEW_STATUSES = new Set(['awaiting_review', 'interrupted'])
@@ -88,10 +88,14 @@ function runList(step) {
 function statusFromRuns(runs) {
   const statuses = runs.map((run) => statusKey(run.status)).filter(Boolean)
   if (statuses.length === 0) return ''
-  if (statuses.some((status) => isFailedRunStatus(status) || status === 'failed')) return 'failed'
-  if (statuses.some((status) => isCancelledRunStatus(status) || CANCELLED_STATUSES.has(status))) return 'cancelled'
   if (statuses.some(isReviewProjectedStatus)) return 'awaiting_review'
   if (statuses.some(isActiveProjectedStatus)) return 'running'
+  const failed = statuses.filter((status) => isFailedRunStatus(status) || status === 'failed').length
+  const completed = statuses.filter((status) => COMPLETED_STATUSES.has(status) || status === 'skipped').length
+  if (failed === statuses.length) return 'failed'
+  if (failed > 0 && completed > 0 && failed + completed === statuses.length) return 'completed_with_failures'
+  if (failed > 0) return 'failed'
+  if (statuses.some((status) => isCancelledRunStatus(status) || CANCELLED_STATUSES.has(status))) return 'cancelled'
   if (statuses.every((status) => COMPLETED_STATUSES.has(status) || status === 'skipped')) return 'completed'
   return statuses[statuses.length - 1] || ''
 }
@@ -134,6 +138,7 @@ function statusFromSteps(steps) {
   if (statuses.some((status) => status === 'cancelled' || isCancelledRunStatus(status) || CANCELLED_STATUSES.has(status))) return 'cancelled'
   if (statuses.some(isReviewProjectedStatus)) return 'awaiting_review'
   if (statuses.some(isActiveProjectedStatus)) return 'running'
+  if (statuses.some((status) => status === 'completed_with_failures')) return 'completed_with_failures'
   if (statuses.length === steps.length && statuses.every((status) => COMPLETED_STATUSES.has(status) || status === 'skipped')) return 'completed'
   return statuses[statuses.length - 1] || ''
 }
@@ -178,7 +183,12 @@ function projectRunSnapshot(runState = {}, options = {}) {
 
   if (storedStatus === 'dismissed') {
     status = storedStatus
-  } else if (!storedStatus || !isTerminalProjectedStatus(storedStatus) || (stepStatus && isActiveProjectedStatus(stepStatus))) {
+  } else if (
+    stepStatus === 'completed_with_failures' ||
+    !storedStatus ||
+    !isTerminalProjectedStatus(storedStatus) ||
+    (stepStatus && isActiveProjectedStatus(stepStatus))
+  ) {
     status = stepStatus || storedStatus || 'unknown'
   }
 

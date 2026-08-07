@@ -526,19 +526,38 @@ test('dashboard dry-run requires token and validates options', async () => {
     assert.equal(invalidStep.statusCode, 400)
     assert.equal(invalidStep.payload.error.code, 'invalid_step')
 
-    const invalidAgent = await postJson(`${base}/api/workflows/review/dry-run`, server.token, {
+    const legacyProviderArray = await postJson(`${base}/api/workflows/review/dry-run`, server.token, {
       agents: ['watson'],
     })
+    assert.equal(legacyProviderArray.statusCode, 400)
+    assert.equal(legacyProviderArray.payload.error.code, 'invalid_instance_contract')
+
+    const invalidAgent = await postJson(`${base}/api/workflows/review/dry-run`, server.token, {
+      agents: [{ agent: 'watson' }],
+    })
     assert.equal(invalidAgent.statusCode, 400)
-    assert.equal(invalidAgent.payload.error.code, 'invalid_agent')
+    assert.equal(invalidAgent.payload.error.code, 'unsupported_agent')
 
     const invalidStepAgent = await postJson(`${base}/api/workflows/review/dry-run`, server.token, {
       stepAgents: {
-        synthesize: ['claude'],
+        synthesize: [{ agent: 'claude' }],
       },
     })
     assert.equal(invalidStepAgent.statusCode, 400)
     assert.equal(invalidStepAgent.payload.error.code, 'invalid_step_agent')
+
+    const githubPinned = await postJson(`${base}/api/workflows/review/dry-run`, server.token, {
+      transport: 'github',
+      agents: [{ agent: 'codex', model: 'gpt-5.6-sol', effort: 'high' }],
+    })
+    assert.equal(githubPinned.statusCode, 400)
+    assert.equal(githubPinned.payload.error.code, 'github_transport_unsupported')
+
+    const legacyModelMap = await postJson(`${base}/api/workflows/review/dry-run`, server.token, {
+      models: { codex: 'gpt-5.6-sol' },
+    })
+    assert.equal(legacyModelMap.statusCode, 400)
+    assert.equal(legacyModelMap.payload.error.code, 'invalid_instance_contract')
   } finally {
     await server.close()
   }
@@ -552,9 +571,9 @@ test('dashboard dry-run returns preview output without writing artifacts', async
       transport: 'netlify-api',
       branch: 'master',
       stepAgents: {
-        review: ['claude', 'codex'],
-        'cross-review': ['gemini'],
-        synthesize: ['codex'],
+        review: [{ agent: 'claude' }, { agent: 'codex' }],
+        'cross-review': [{ agent: 'gemini' }],
+        synthesize: [{ agent: 'codex' }],
       },
     })
     assert.equal(response.statusCode, 200, response.payload?.dryRun?.stderr || response.payload?.error?.message)
@@ -669,7 +688,7 @@ test('dashboard real-run endpoint starts a tracked process and replays events', 
     const started = await postJson(`${base}/api/workflows/review/runs`, server.token, {
       transport: 'auto',
       branch: 'master',
-      agents: ['codex'],
+      agents: [{ agent: 'codex' }],
     })
     assert.equal(started.statusCode, 202)
     assert.equal(started.payload.workflow.id, 'review')
@@ -751,7 +770,7 @@ test('dashboard real-run endpoint does not expose pending run ids while waiting 
     const pendingStart = postJson(`${base}/api/workflows/review/runs`, server.token, {
       transport: 'auto',
       branch: 'master',
-      agents: ['codex'],
+      agents: [{ agent: 'codex' }],
     })
     await childStarted
     const runs = await requestJson(`${base}/api/runs?limit=50`, { token: server.token })
@@ -1036,12 +1055,19 @@ test('dashboard runs API reads durable workflow state from .nax', async () => {
     const graph = await requestJson(`${base}/api/runs/${runId}/graph`, { token: server.token })
     assert.equal(graph.statusCode, 200)
     assert.equal(graph.payload.run.runId, runId)
-    assert.deepEqual(graph.payload.run.options.stepAgents, { review: ['codex'] })
+    assert.deepEqual(graph.payload.run.options.stepAgents, {
+      review: [{ agent: 'codex', id: 'codex:auto:auto', resolvedFrom: 'open' }],
+    })
     assert.equal(graph.payload.run.options.target.branch, 'main')
     assert.equal(graph.payload.workflow.id, 'review')
     assert.equal(graph.payload.graph.metadata.hasRunState, true)
     assert.deepEqual(graph.payload.graph.nodes[0].data.agents, ['claude', 'gemini', 'codex'])
-    assert.deepEqual(graph.payload.graph.nodes[0].data.selectedAgents, ['codex'])
+    assert.deepEqual(graph.payload.graph.nodes[0].data.selectedAgents, [{
+      agent: 'codex',
+      id: 'codex:auto:auto',
+      resolvedFrom: 'open',
+      status: 'completed',
+    }])
   } finally {
     await server.close()
   }
@@ -1133,8 +1159,13 @@ test('dashboard standalone agent endpoint submits and persists exact model and e
     const runId = started.payload.run.runId
     const graph = await requestJson(`${base}/api/runs/${runId}/graph`, { token: server.token })
     assert.equal(graph.statusCode, 200)
-    assert.deepEqual(graph.payload.run.options.models, { opencode: 'z-ai/glm-5.2' })
-    assert.deepEqual(graph.payload.run.options.efforts, { opencode: 'xhigh' })
+    assert.deepEqual(graph.payload.run.options.agents, [{
+      agent: 'opencode',
+      model: 'z-ai/glm-5.2',
+      effort: 'xhigh',
+      id: 'opencode:z-ai/glm-5.2:xhigh',
+      resolvedFrom: 'pinned',
+    }])
     assert.equal(graph.payload.graph.nodes[0].data.runs[0].model, 'z-ai/glm-5.2')
     assert.equal(graph.payload.graph.nodes[0].data.runs[0].effort, 'xhigh')
   } finally {

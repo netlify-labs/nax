@@ -1,12 +1,6 @@
 const path = require('path')
 
-const { normalizeAgentList, normalizeStepAgents } = require('../../core/agents/selection')
-const {
-  normalizeProviderEffortMap,
-  normalizeProviderModelMap,
-  normalizeStepProviderEffortMap,
-  normalizeStepProviderModelMap,
-} = require('../../core/agents/configuration')
+const { publicInstances, publicOptionInstances, publicRunInstance } = require('./instances')
 const { isActiveProjectedStatus, projectRunSnapshot } = require('./run-state-projection')
 
 /** @typedef {import('../../contracts').DashboardRun} DashboardRun */
@@ -17,6 +11,8 @@ function contractTypecheckProbe() {
 }
 
 function publicFlow(flow = {}) {
+  const defaultModels = flow.defaults?.models || {}
+  const defaultEfforts = flow.defaults?.efforts || {}
   return {
     id: flow.id || '',
     title: flow.title || '',
@@ -39,8 +35,10 @@ function publicFlow(flow = {}) {
         action: step.action || '',
         submit: step.submit || '',
         agents: Array.isArray(step.agents) ? step.agents : [],
-        models: step.models || {},
-        efforts: step.efforts || {},
+        instances: publicInstances(step.lineup || step.agents, {
+          models: { ...defaultModels, ...(step.models || {}) },
+          efforts: { ...defaultEfforts, ...(step.efforts || {}) },
+        }),
         input: Array.isArray(step.input) ? step.input : [],
         waitFor: step.waitFor || '',
         review: step.review || null,
@@ -80,16 +78,27 @@ function publicRunState(runState = {}) {
 
 function publicRunOptions(runState = {}) {
   const options = runState.options || {}
+  const instances = publicOptionInstances(options)
+  const runInstances = []
+  const seenRunInstances = new Set()
+  for (const step of Array.isArray(runState.steps) ? runState.steps : []) {
+    for (const run of Array.isArray(step.runs) ? step.runs : []) {
+      const instance = publicRunInstance(run)
+      if (!instance || seenRunInstances.has(instance.id)) continue
+      seenRunInstances.add(instance.id)
+      runInstances.push(instance)
+    }
+  }
   return {
     branch: options.branch || runState.branch || '',
     target: runState.target || options.target || null,
     transport: options.transport || runState.transport || '',
-    agents: normalizeAgentList(options.agents),
-    stepAgents: normalizeStepAgents(options.stepAgents),
-    models: normalizeProviderModelMap(options.models),
-    efforts: normalizeProviderEffortMap(options.efforts),
-    stepModels: normalizeStepProviderModelMap(options.stepModels),
-    stepEfforts: normalizeStepProviderEffortMap(options.stepEfforts),
+    agents: instances.agents.length > 0
+      ? instances.agents
+      : runState.flowId === 'agent-run'
+        ? runInstances
+        : [],
+    stepAgents: instances.stepAgents,
     context: options.context || '',
     step: options.step || '',
     fromStep: options.fromStep || '',

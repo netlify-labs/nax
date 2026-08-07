@@ -1222,6 +1222,11 @@ body {
   box-shadow: 0 0 0 2px color-mix(in srgb, var(--mantine-color-yellow-4), transparent 72%), 0 16px 34px rgba(0, 0, 0, 0.3);
 }
 
+.workflow-node.status-completed_with_failures {
+  border-color: var(--mantine-color-orange-5);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--mantine-color-orange-5), transparent 72%), 0 16px 34px rgba(0, 0, 0, 0.3);
+}
+
 .workflow-node.status-completed,
 .workflow-node.status-dry-run {
   border-color: color-mix(in srgb, var(--mantine-color-green-4), transparent 20%);
@@ -1315,6 +1320,22 @@ body {
   font-weight: 700;
 }
 
+.node-state-badge {
+  border: 1px solid var(--mantine-color-default-border);
+  border-radius: 999px;
+  padding: 1px 6px;
+  color: var(--mantine-color-dimmed);
+  font-size: 10px;
+  font-weight: 800;
+  line-height: 1.4;
+  text-transform: uppercase;
+}
+
+.node-state-badge.status-completed_with_failures {
+  border-color: var(--mantine-color-orange-5);
+  color: light-dark(var(--mantine-color-orange-9), var(--mantine-color-orange-2));
+}
+
 .node-status-line.follow-up {
   color: var(--mantine-color-text);
 }
@@ -1400,6 +1421,15 @@ body {
   background: color-mix(in srgb, var(--mantine-color-red-5), transparent 88%);
   color: light-dark(var(--mantine-color-red-9), var(--mantine-color-red-1));
   box-shadow: 0 0 0 1px color-mix(in srgb, var(--mantine-color-red-5), transparent 74%), 0 0 18px color-mix(in srgb, var(--mantine-color-red-5), transparent 86%);
+}
+
+.agent-chip-status {
+  color: currentColor;
+  font-size: 9px;
+  font-weight: 800;
+  line-height: 1.1;
+  opacity: 0.82;
+  text-transform: uppercase;
 }
 
 .agent-chip:hover {
@@ -1557,6 +1587,40 @@ body {
 .agent-chip-caret:focus-visible {
   outline: 2px solid var(--mantine-primary-color-5);
   outline-offset: 2px;
+}
+
+.agent-chip-wrap:has(.agent-chip-remove) .agent-chip-caret {
+  border-radius: 0;
+}
+
+.agent-chip-remove {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid color-mix(in srgb, var(--mantine-color-red-5), transparent 42%);
+  border-left: 0;
+  border-radius: 0 8px 8px 0;
+  padding: 0 5px;
+  background: color-mix(in srgb, var(--mantine-color-red-5), transparent 90%);
+  color: var(--mantine-color-red-6);
+  cursor: pointer;
+}
+
+.agent-chip-remove:hover {
+  background: color-mix(in srgb, var(--mantine-color-red-5), transparent 78%);
+}
+
+.agent-chip-remove:focus-visible {
+  outline: 2px solid var(--mantine-color-red-5);
+  outline-offset: 2px;
+}
+
+.inherited-lineup-note {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  margin: -4px 12px 12px;
 }
 
 .agent-icon {

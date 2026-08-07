@@ -11,6 +11,7 @@ const {
 } = require('../../src/dashboard/api/auth')
 const { readJsonBody } = require('../../src/dashboard/api/request')
 const { securityHeaders } = require('../../src/dashboard/api/security')
+const { normalizeDashboardInstances } = require('../../src/dashboard/api/instances')
 const { inferRunStateStatus, projectRunSnapshot, publicFlow, publicRunOptions, publicRunState } = require('../../src/dashboard/api/serializers')
 
 function requestWithBody(body) {
@@ -97,8 +98,7 @@ test('dashboard API serializers keep public workflow and run shapes', () => {
     action: '',
     submit: '',
     agents: ['codex'],
-    models: {},
-    efforts: {},
+    instances: [{ agent: 'codex', id: 'codex:auto:auto', resolvedFrom: 'open' }],
     input: ['previous'],
     waitFor: '',
     review: { type: 'human' },
@@ -126,16 +126,26 @@ test('dashboard API serializers keep public workflow and run shapes', () => {
     branch: 'main',
     target: null,
     transport: 'netlify-api',
-    agents: ['codex'],
-    models: { codex: 'gpt-5.6-sol' },
-    efforts: { codex: 'high' },
-    stepModels: {},
-    stepEfforts: {},
-    stepAgents: { one: ['codex'] },
+    agents: [{ agent: 'codex', model: 'gpt-5.6-sol', effort: 'high', id: 'codex:gpt-5.6-sol:high', resolvedFrom: 'pinned' }],
+    stepAgents: { one: [{ agent: 'codex', model: 'gpt-5.6-sol', effort: 'high', id: 'codex:gpt-5.6-sol:high', resolvedFrom: 'pinned' }] },
     context: '',
     step: '',
     fromStep: '',
   })
+})
+
+test('dashboard agent-instance mutations reject provider arrays and resolve object descriptors', () => {
+  assert.throws(
+    () => normalizeDashboardInstances(['codex']),
+    (error) => Boolean(error && typeof error === 'object' && 'code' in error && error.code === 'invalid_instance_contract'),
+  )
+  assert.deepEqual(normalizeDashboardInstances([
+    { agent: 'codex', model: 'gpt-5.6-sol', effort: 'high' },
+    { agent: 'codex', model: 'gpt-5.6-sol', effort: 'medium' },
+  ]), [
+    { agent: 'codex', model: 'gpt-5.6-sol', effort: 'high', id: 'codex:gpt-5.6-sol:high', resolvedFrom: 'pinned' },
+    { agent: 'codex', model: 'gpt-5.6-sol', effort: 'medium', id: 'codex:gpt-5.6-sol:medium', resolvedFrom: 'pinned' },
+  ])
 })
 
 test('dashboard run projection upgrades stale non-terminal workflow status from steps', () => {
@@ -175,6 +185,25 @@ test('dashboard run projection treats active remote agent runs as conflicting au
     'step_status_conflict',
     'workflow_status_conflict',
   ])
+})
+
+test('dashboard run projection preserves mixed terminal instance outcomes', () => {
+  const snapshot = projectRunSnapshot({
+    runId: 'run-1',
+    flowId: 'review',
+    status: 'completed',
+    steps: [{
+      id: 'review',
+      status: 'completed',
+      runs: [
+        { agent: 'claude', instanceId: 'claude:auto:auto', status: 'failed' },
+        { agent: 'codex', instanceId: 'codex:auto:auto', status: 'completed' },
+      ],
+    }],
+  })
+
+  assert.equal(snapshot.steps[0].status, 'completed_with_failures')
+  assert.equal(snapshot.status, 'completed_with_failures')
 })
 
 test('dashboard run projection preserves dismissed workflows with stale active child state', () => {

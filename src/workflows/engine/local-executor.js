@@ -474,6 +474,8 @@ function emitRunArtifact(runtimeEvents, runState, stepState, run, artifactResult
       stepId: stepState.id,
       stepTitle: stepState.title || stepState.id,
       agent: run.agent || '',
+      instanceId: run.instanceId || '',
+      instanceLabel: run.instanceLabel || '',
       runnerId: run.runnerId || '',
       sessionId: run.sessionId || '',
       relativePath: path.relative(runState.dir, filePath),

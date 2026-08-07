@@ -1,3 +1,13 @@
+export type AgentInstanceDescriptor = {
+  id: string
+  agent: string
+  model?: string
+  effort?: string
+  label?: string
+  resolvedFrom?: 'latest' | 'default' | 'open' | 'pinned'
+  status?: string
+}
+
 export type WorkflowStep = {
   id: string
   title: string
@@ -7,8 +17,7 @@ export type WorkflowStep = {
   action: string
   submit: string
   agents: string[]
-  models: Record<string, string>
-  efforts: Record<string, string>
+  instances: AgentInstanceDescriptor[]
   input: Array<Record<string, unknown>>
   waitFor: string
   review?: Record<string, unknown> | null
@@ -45,6 +54,7 @@ export type WorkflowGraphNodeData = {
   submitLabel: string
   waitFor: string
   agents: string[]
+  instances: AgentInstanceDescriptor[]
   input: Array<Record<string, unknown>>
   status: string
   runs: Array<Record<string, unknown>>
@@ -52,14 +62,15 @@ export type WorkflowGraphNodeData = {
   promptMarkdown: string
   promptPath: string
   promptTitle: string
-  selectedAgents?: string[]
+  selectedAgents?: AgentInstanceDescriptor[]
   agentStatuses?: Record<string, string>
   agentInteraction?: 'toggle' | 'view-result'
-  models?: Record<string, string>
-  efforts?: Record<string, string>
+  inheritedFromStepId?: string
   onToggleAgent?: (stepId: string, agent: string, allAgents: string[], declaredAgents?: string[]) => void
-  onConfigureAgent?: (stepId: string, agent: string, config: { model: string; effort: string }) => void
-  onViewAgentResult?: (node: WorkflowGraphNodeData, agent: string) => void
+  onConfigureAgent?: (stepId: string, instanceId: string, config: { model: string; effort: string }) => void
+  onRemoveAgent?: (stepId: string, instanceId: string) => void
+  onAddInstances?: (stepId: string, instances: AgentInstanceDescriptor[]) => void
+  onViewAgentResult?: (node: WorkflowGraphNodeData, instanceId: string) => void
 }
 
 export type WorkflowGraph = {
@@ -87,7 +98,7 @@ export type WorkflowGraph = {
     stepCount: number
     renderedStepCount: number
     agents: string[]
-    selectedAgents: string[]
+    selectedAgents: AgentInstanceDescriptor[]
     hasRunState: boolean
   }
 }

@@ -1655,6 +1655,7 @@ function printFlowPlan({ flow, steps, transport, branch, context, runState = nul
     `Orchestrated via: ${isNetlifyApiTransport(transport) ? 'Netlify API' : 'GitHub Actions'}`,
     `Branch: ${branch}`,
     ...(hasContext ? ['Additional context: yes'] : []),
+    ...((flow.warnings || []).map((warning) => `Warning: ${warning.stepId ? `${warning.stepId}: ` : ''}${warning.message || warning.code || 'workflow warning'}`)),
   ]
   const headings = steps.map((step, i) => `${i + 1}. ${step.title}`)
   const actionLabels = steps.map((step) => {

@@ -88,6 +88,7 @@
  *   waitFor?: string,
  *   agents?: string[],
  *   lineup?: Array<string | Record<string, unknown>>,
+ *   lineupDeclared?: boolean,
  *   models?: Record<string, string>,
  *   efforts?: Record<string, string>,
  *   input?: StepInput[],
@@ -111,6 +112,7 @@
  *   sourceDir?: string,
  *   sourceLabel?: string,
  *   sourcePriority?: number,
+ *   warnings?: Array<{ stepId?: string, code?: string, message?: string, hint?: string }>,
  *   defaults?: {
  *     transport?: string,
  *     notify?: boolean,

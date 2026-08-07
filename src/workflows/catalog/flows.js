@@ -397,6 +397,14 @@ function validateFlowStructure(flow, { existsSync = fs.existsSync } = {}) {
     const step = steps[index]
     const stepId = String(step.id || `step-${index + 1}`)
     const humanReview = isHumanReviewStep(step)
+    if (step.submit === 'follow-up' && step.lineupDeclared === true) {
+      warnings.push(flowDiagnostic({
+        stepId,
+        code: 'deprecated_followup_lineup',
+        message: `Step "${stepId}" declares agents even though follow-up steps inherit their lineup from the first input step. The declaration is ignored.`,
+        hint: 'Remove agents from this follow-up step.',
+      }))
+    }
     if (Object.prototype.hasOwnProperty.call(step, 'agentConfig')) {
       errors.push(flowDiagnostic({
         stepId,
@@ -638,6 +646,7 @@ function normalizeFlow(raw, { id, dir, file, source = {} }) {
         submit: step.submit || (humanReview ? HUMAN_REVIEW_SUBMIT : 'new-run'),
         agents: providersFromLineup(stepLineup),
         lineup: stepLineup,
+        lineupDeclared: ownLineup.length > 0,
         models: normalizeAgentConfigurationMap(step.models, 'models', `steps[${index}].models`),
         efforts: normalizeAgentConfigurationMap(step.efforts, 'efforts', `steps[${index}].efforts`),
         input: step.input === undefined ? [] : step.input,
@@ -648,7 +657,8 @@ function normalizeFlow(raw, { id, dir, file, source = {} }) {
       }
     }),
   }
-  assertValidFlowStructure(flow)
+  const validation = assertValidFlowStructure(flow)
+  if (validation.warnings.length > 0) flow.warnings = validation.warnings
   return flow
 }
 

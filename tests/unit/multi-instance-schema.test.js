@@ -91,3 +91,44 @@ test('fixture flow.yml files parse to lineups the resolver accepts', () => {
     assert.ok(resolved.instances.length >= 1, `${file} resolved`)
   }
 })
+
+test('declared follow-up agents produce a structured deprecation notice and are ignored by inheritance', () => {
+  const flow = normalizeFlow(asFlow({
+    id: 'deprecated-followup-lineup',
+    defaults: { agents: ['codex'] },
+    steps: [
+      { id: 'first', prompt: 'prompts/task.md', agents: ['claude'] },
+      {
+        id: 'continue',
+        prompt: 'prompts/task.md',
+        submit: 'follow-up',
+        agents: ['gemini'],
+        input: [{ step: 'first', results: 'all' }],
+      },
+    ],
+  }), {
+    id: 'deprecated-followup-lineup',
+    file: 'deprecated-followup-lineup.yml',
+    dir: FIXTURE_DIR,
+    source: { type: 'test' },
+  })
+
+  assert.equal(flow.steps[1].lineupDeclared, true)
+  assert.deepEqual(flow.warnings, [{
+    stepId: 'continue',
+    code: 'deprecated_followup_lineup',
+    message: 'Step "continue" declares agents even though follow-up steps inherit their lineup from the first input step. The declaration is ignored.',
+    hint: 'Remove agents from this follow-up step.',
+  }])
+})
+
+test('bundled follow-up steps omit their own lineup declarations', async () => {
+  const { loadFlow } = require('../../src/workflows/catalog/flows')
+  const review = await loadFlow('review')
+  const ideas = await loadFlow('ideas')
+  assert.equal(review.steps.find((step) => step.id === 'cross-review').lineupDeclared, false)
+  assert.equal(ideas.steps.find((step) => step.id === 'cross-score').lineupDeclared, false)
+  assert.equal(ideas.steps.find((step) => step.id === 'react').lineupDeclared, false)
+  assert.equal(review.warnings, undefined)
+  assert.equal(ideas.warnings, undefined)
+})

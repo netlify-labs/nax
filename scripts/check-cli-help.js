@@ -21,7 +21,11 @@ const targets = [
   },
   {
     args: ['run', '--help'],
-    mustContain: ['Usage: nax run [workflow]'],
+    mustContain: [
+      'Usage: nax run [workflow]',
+      '--agents <provider[:model[:effort]]>',
+      'Agent instance for workflow steps',
+    ],
   },
   {
     args: ['run', 'agent', '--help'],

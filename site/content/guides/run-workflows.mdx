@@ -71,10 +71,21 @@ nax run review --transport netlify-api
 
 Use `github-actions` for provider-only hosted workflow-dispatch runs and team-visible logs. Use `netlify-api` for model/effort configuration, local orchestration, resume support, and dashboard event streaming. With pinned model or effort settings, `auto` selects `netlify-api`; forcing GitHub fails before creating remote work.
 
-## Choose agents, models, and effort
+## Build an instance lineup
 
 ```sh
 nax run review --agents claude,codex
+nax run review \
+  --agents claude:claude-opus-5:auto \
+  --agents claude:claude-opus-4-8:auto
+nax run review \
+  --agents claude:claude-fable-5:low \
+  --agents claude:claude-fable-5:medium \
+  --agents claude:claude-fable-5:high
+nax run review \
+  --agents claude:latest:high \
+  --agents gemini:latest:high \
+  --agents codex:latest:high
 nax run review \
   --agents claude,codex \
   --models claude=claude-opus-4-8 \
@@ -87,9 +98,16 @@ nax run review \
   --step-efforts review:gemini=medium
 ```
 
-Agents are providers: Claude, Codex, Gemini, and OpenCode. Models are real
-provider-specific model IDs. Efforts are reasoning levels. Mapping flags can
-be repeated. OpenCode is opt-in and is not added to existing council defaults.
+The execution unit is an agent instance: one provider, optional model, and
+optional effort. The stable id is `provider:model:effort`, with `auto` for an
+omitted dimension. Repeating a provider is supported, so the same mechanism
+handles model bake-offs, effort sweeps, flagship councils, and mixed lineups.
+Exact duplicate tuples are rejected.
+
+Bare providers remain Auto and omit model and effort. `latest` and `default`
+resolve to the catalog default model at launch and are stored as concrete
+values for retry and resume. OpenCode is opt-in and is not added to bundled
+council defaults.
 
 Configuration precedence is step CLI, global CLI, step workflow map, defaults
 workflow map, then Auto. When a higher scope changes a model without setting
@@ -99,6 +117,16 @@ Auto is never sent to the SDK.
 Known incompatible combinations fail before a run starts. Unknown future IDs
 are forwarded with a warning. For OpenCode GLM 5.2 and DeepSeek V4 Pro, the
 displayed Max effort is sent as `xhigh`.
+
+Pinned or repeated-provider lineups require the Netlify API transport. Local
+execution admits at most five non-terminal runners at a time; larger lineups
+start in waves as slots become terminal. The CLI asks for confirmation above
+six instances in one step unless `--force` is set.
+
+Follow-up steps inherit the surviving lineup from their first input step. Each
+instance continues its own runner session. A mixed result becomes
+`completed_with_failures` and survivors proceed; an all-failed step halts the
+workflow.
 
 ## Add context
 
@@ -114,6 +142,8 @@ Extra context is appended to each step prompt after the workflow prompt and befo
 ```sh
 nax run --retry <run-id>
 nax run review --retry <run-id> --step cross-review
+nax run review --retry <run-id> --step cross-review \
+  --instance claude:claude-opus-5:high
 ```
 
 Interrupted `netlify-api` runs write state under `.nax/workflows/<run-id>/workflow.json`. Starting `nax run` again offers to resume unfinished work.

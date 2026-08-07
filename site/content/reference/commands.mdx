@@ -35,7 +35,7 @@ nax run agent <claude|codex|gemini|opencode> [prompt...] [OPTIONS]
 | `--branch <branch-or-pr>` | Branch or PR selector such as `fix/auth` or `#123`. |
 | `--context <text>` | Additional context appended to each prompt. |
 | `--context-file <path>` | Additional context read from disk. |
-| `--agents <list>` | Select comma-separated agent providers for workflow steps. |
+| `--agents <instances>` | Select comma-separated or repeated `provider[:model[:effort]]` instances. |
 | `--models <agent=model>` | Assign a real model ID to a provider. Repeat for more providers. |
 | `--efforts <agent=effort>` | Assign reasoning effort to a provider. Repeat for more providers. |
 | `--step <id>` | Run only one step. |
@@ -50,10 +50,28 @@ Advanced workflow overrides use `--step-agents <step=agents>`,
 `--step-efforts <step:agent=effort>`. Direct single-agent runs use
 `--model <id>` and `--effort <level>`.
 
+Use `--agents` for repeated providers, bake-offs, and effort sweeps:
+
+```sh
+nax run review \
+  --agents claude:claude-opus-5:low \
+  --agents claude:claude-opus-5:high \
+  --agents gemini:latest:high
+```
+
+Bare values such as `--agents claude,codex` remain Auto on the wire. The
+`latest` and `default` aliases pin the catalog default at launch. Legacy
+`--models` and `--efforts` mappings remain available only when each provider is
+unambiguous; use exact instance specs for repeated providers.
+
 `auto` for a model or effort means omission on the wire. Pinned model or
 effort settings make `--transport auto` select `netlify-api`. Explicit
 `--transport github` rejects pinned settings because the GitHub Action only
 supports provider selection.
+
+Retry accepts `--instance <agent:model:effort>` to select one failed tuple.
+The older `--agent <provider>` selector remains valid only when that provider
+has one failed instance in the step.
 
 ## `nax handoff`
 

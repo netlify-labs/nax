@@ -47,11 +47,11 @@ nax dashboard --no-open --tail
 | Surface | What it does |
 | --- | --- |
 | Workflow list | Reads the same workflows as `nax list`. |
-| Graph canvas | Shows steps, agents, inputs, submit mode, and run status. |
+| Graph canvas | Shows one chip per instance, inputs, submit mode, and step/instance status. |
 | Dry Run | Runs `nax run <flow> --dry --force` through the local API. |
 | Run | Starts the workflow after browser confirmation. |
 | Run agent | Starts a standalone provider run with its own model and effort settings. |
-| Agent configuration | Configures provider-specific model and effort from the server-owned catalog. |
+| Instance configuration | Adds, edits, or removes exact provider/model/effort tuples on each runnable step. |
 | Recent runs | Reads `.nax/workflows` and highlights resumable or completed runs. |
 | Run details | Shows results, prompt source, artifacts, copy/open actions, and follow-up controls. |
 
@@ -82,15 +82,26 @@ http://127.0.0.1:5173/?token=<token>&workflow=do-next
 
 In Run details, choose **Send to next agent**. The composer requires fresh instructions, defaults to the last meaningful artifact, and lets you choose which workflow, step, runner, session, or result artifacts to include.
 
-## Configure models and effort
+## Configure instance lineups
 
-Before a workflow run or dry run, choose **Configure agents**. Each selected
-provider has an Auto-first model picker and a model-sensitive effort picker.
-Auto omits model and effort. Models without an effort dial explain that the
-setting is unavailable; unknown values saved by a newer backend remain visible
-instead of being reset.
+Each runnable step card shows one chip per instance. Existing bare-provider
+flow entries load as **Auto** chips and stay Auto unless you edit them. Open a
+chip's caret to pin its exact model and effort, or remove that tuple without
+affecting another instance of the same provider.
 
-The follow-up composer opens the same configuration drawer and initializes the
+Choose **Add agent** on a step to build a cartesian lineup from one provider,
+multiple models, and multiple efforts. The picker preselects that provider's
+flagship model and highest effort. Quick presets cover one flagship from every
+provider, one model at every effort, or every model from one provider. Adding
+more than six instances to a step requires confirmation.
+
+Follow-up step chips are read-only. They inherit the surviving instances from
+the first input step and continue each instance's own runner session. During a
+run, chips are keyed by exact instance id, so two Claude models can show
+different statuses. A mixed result is visibly marked **Completed with
+failures** rather than being shown as an all-green step.
+
+The follow-up composer opens its configuration drawer and initializes the
 matching provider from the selected source run or session. Changing it is an
 intentional override for the new submission. Run history and details keep the
 requested model/effort separate from the backend-observed `agent_config`.

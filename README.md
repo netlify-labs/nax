@@ -40,19 +40,20 @@ You want the best possible coding outcome from the world's leading agentic codin
 
 ### The Solution
 
-`nax` makes the orchestration the artifact. A workflow is a static YAML, JSON, or TOML `flow.*` config file plus Markdown prompts. You run `nax run`, pick a flow, pick where to run it, and the steps execute in order — fanning out to multiple agents per step, blocking until every agent finishes, and feeding prior-round output into the next step.
+`nax` makes the orchestration the artifact. A workflow is a static YAML, JSON, or TOML `flow.*` config file plus Markdown prompts. You run `nax run`, pick a flow, pick where to run it, and the steps execute in order — fanning out to agent instances, waiting for terminal results, and feeding surviving prior-round output into the next step.
 
 ### Why Use `nax`?
 
 | Feature | What it gets you |
 |---|---|
 | **Workflow-first** | Steps and prompts live in config files + Markdown — diffable, reviewable, repeatable. |
-| **Multi-agent fan-out per step** | Claude, Codex, Gemini, and opt-in OpenCode run the same prompt in parallel. |
-| **Step gating** | Round N+1 only starts when every agent in round N has finished. |
+| **Multi-instance fan-out per step** | Run any provider/model/effort lineup, including several models or effort levels from one provider. |
+| **Step gating** | Round N+1 starts after every instance is terminal; mixed-success rounds continue with survivors. |
 | **Follow-up sessions** | A step can reuse a runner from a prior step so its agent sees its own context. |
 | **Two transports, one CLI** | Run on GitHub Actions or directly via the Netlify Agent Runner API. |
 | **Single-agent runs** | Start Claude, Codex, Gemini, or OpenCode directly without creating a full workflow. |
 | **Model and effort controls** | Pin real provider-specific model IDs and reasoning effort, or leave both on Auto. |
+| **Failure isolation** | Survivors continue after a partial failure; an all-failed step halts the workflow. |
 | **Project-aware Netlify selection** | Multi-project repos prompt for the Netlify project/config to run against. |
 | **Durable artifacts** | Every workflow, runner, and session lands under `.nax/` with `latest` symlinks. |
 | **Resume** | A killed Netlify API run picks up at the first not-yet-completed step. |
@@ -167,7 +168,7 @@ This is handy for passing remote Netlify agent runner results into local Claude 
 ## Design Philosophy
 
 - **The flow file is the program.** Flows are not a DSL bolted onto code — they *are* the unit of execution. Anyone can read a workflow's `flow.yml` (or `flow.json`, `flow.js`, `flow.ts`, `flow.toml`) and tell you exactly what `nax run review` will do.
-- **Steps gate on results, not time.** A step's `waitFor: agent-results` makes the next step wait for every agent in the fan-out, not a wall-clock timeout. Long thinkers don't poison fast ones.
+- **Steps gate on results, not time.** A step's `waitFor: agent-results` makes the next step wait for every instance in the fan-out to become terminal, not a wall-clock timeout. Long thinkers don't poison fast ones.
 - **Same flow, two transports.** A flow runs identically on `github-actions` (workflow_dispatch into `netlify-labs/agent-runner-action`) and `netlify-api` (this machine orchestrates the runner directly). You don't rewrite the flow to move it.
 - **Artifacts are first-class.** Every run, runner, and agent session writes a summary into `.nax/` with `latest` symlinks, so the next prompt or the next operator can pick up the trail.
 - **Resume over re-run.** If your laptop sleeps mid-`netlify-api` run, `nax` finds the unfinished workflow on next launch and continues from the first incomplete step.
@@ -179,7 +180,7 @@ This is handy for passing remote Netlify agent runner results into local Claude 
 | | `nax` | Manual issue/comment loops | One-shot agent CLI | Custom orchestrator scripts |
 |---|---|---|---|---|
 | Multi-agent fan-out per step | ✅ | ⚠️ (manual N times) | ❌ | ⚠️ (you build it) |
-| Waits for every agent before next step | ✅ | ⚠️ (you watch) | ❌ | ⚠️ |
+| Waits for every instance before next step | ✅ | ⚠️ (you watch) | ❌ | ⚠️ |
 | Follow-up sessions reuse runner context | ✅ | ❌ | ❌ | ⚠️ |
 | GitHub Actions + Netlify API from one CLI | ✅ | ❌ | ❌ | ❌ |
 | Durable per-step artifacts | ✅ | ❌ | ❌ | ⚠️ |
@@ -340,7 +341,7 @@ The workbench includes:
 | Surface | Behavior |
 |---|---|
 | Workflow list | Reads the same project and bundled flow definitions as `nax list`. |
-| Graph canvas | Renders workflow steps as React Flow nodes with agents, inputs, submit mode, and run status. |
+| Graph canvas | Renders workflow steps as React Flow nodes with per-instance configuration/status, inputs, and submit mode. |
 | Dry Run | Calls the local API to run `nax run <flow> --dry --force`; it previews the command and output without writing `.nax` artifacts. |
 | Run | Requires a browser confirmation, then starts the workflow through the local `nax` command and streams stdout/stderr plus structured run events into the UI. |
 | Recent runs | Reads durable `.nax/workflows` state, highlights resumable runs, and overlays run status on the graph. |
@@ -352,10 +353,12 @@ Run details resolve the original step prompt from the workflow definition when p
 
 From a completed run details modal, **Send to next agent** opens a follow-up composer. The composer requires fresh user instructions, defaults to the last meaningful result artifact, and lets you choose which workflow, step, runner, session, or result artifacts to include. In **Follow up prompt on previous Agent Run** mode, the selected agent continues its matching prior Netlify Agent Runner when one exists; extra selected agents start fresh runner threads seeded with the selected artifacts. **Start fresh agent runner** always starts new runner threads.
 
-Workflow and follow-up launchers share a server-owned Agent configuration
-drawer. It offers Auto-first model choices, model-sensitive effort choices,
-and preserves unknown existing IDs. Requested values remain distinct from the
-backend-observed `session.agent_config` shown in run history.
+Workflow step cards show one chip per agent instance. Existing bare-provider
+chips load as Auto. Each chip can be edited or removed independently, and
+**Add agent** creates model bake-offs, effort sweeps, or a flagship council
+from the server-owned catalog. Follow-up step lineups are inherited and
+read-only. Requested values remain distinct from the backend-observed
+`session.agent_config` shown in run history.
 
 Dashboard follow-up submission returns after Netlify accepts the runner/session, not after the remote agent finishes. The notification includes remote links and any local artifact path the server could persist. Fresh runner submissions are saved as one-step pseudo-workflow runs so they can be opened from Recent runs. If Netlify accepts work but local artifact persistence fails, the API still returns success with `warnings[]` so the remote link is not lost.
 
@@ -440,6 +443,40 @@ nax run agent claude --model claude-opus-4-8 --effort high --transport netlify-a
 
 If you omit `--prompt` in a TTY, `nax` opens a multiline prompt. Single-agent runs still use the same transport detection, Netlify project picker, artifacts, and handoff support as workflows.
 
+### Multi-instance lineups
+
+The unit of execution is an instance tuple: provider, optional model, and
+optional effort. Its stable id is `provider:model:effort`, with `auto` for an
+omitted field. Repeating a provider is supported:
+
+```bash
+# Model bake-off
+nax run review \
+  --agents claude:claude-opus-5:auto \
+  --agents claude:claude-opus-4-8:auto
+
+# Effort sweep
+nax run review \
+  --agents claude:claude-fable-5:low \
+  --agents claude:claude-fable-5:medium \
+  --agents claude:claude-fable-5:high
+
+# Flagship of each provider
+nax run review \
+  --agents claude:latest:high \
+  --agents gemini:latest:high \
+  --agents codex:latest:high
+```
+
+Bare providers such as `--agents claude,gemini,codex` remain Auto and omit
+model and effort on the wire. `latest` and `default` resolve at launch to the
+catalog default and are recorded concretely for retry and resume. Exact
+duplicate tuples are rejected.
+
+Pinned or repeated-provider lineups select `netlify-api` under transport Auto.
+Local runs start in waves with at most five non-terminal runners. A step above
+six instances requires confirmation unless `--force` is set.
+
 ### `nax admin sync`
 
 ```bash
@@ -471,7 +508,7 @@ nax admin clean blobs --ttl-hours 1 --force
 | `--force` | Skip confirmation prompts. |
 | `--branch <name>` | Branch to review. Accepts a PR selector like `#123`. |
 | `--transport <kind>` | `auto` (default), `netlify-api`, or GitHub Actions aliases (`github`, `github-actions`). |
-| `--agents <list>` | Select provider fan-out, e.g. `--agents claude,codex`. |
+| `--agents <instances>` | Select comma-separated or repeated `provider[:model[:effort]]` tuples. |
 | `--models <agent=model>` | Assign a real model ID; repeat for more providers. |
 | `--efforts <agent=effort>` | Assign reasoning effort; repeat for more providers. |
 | `--step-agents <step=agents>` | Select providers for one step, e.g. `--step-agents review=claude,codex`. Repeat as needed. |
@@ -523,7 +560,8 @@ nax admin skills update                        # reinstall latest
 | Provider-specific model/effort | Not supported | Supported |
 
 `--transport auto` keeps the usual transport preference while every model and
-effort is Auto. Pinning either setting makes Auto select `netlify-api`.
+effort is Auto. Pinning either setting or repeating a provider makes Auto
+select `netlify-api`.
 Explicit GitHub transport rejects pinned settings before dispatch because the
 GitHub Action supports provider selection only.
 
@@ -597,7 +635,7 @@ flowchart LR
   r2 --> syn[Step 3: synthesize<br/>Codex posts consensus]
 ```
 
-Each step waits for every agent before the next step starts. Round 2 reuses each runner via follow-up sessions so the cross-review sees its own prior context. Round 3 reads both rounds and posts one consensus issue.
+Each step waits for every instance to become terminal before the next step starts. Round 2 reuses each surviving runner via follow-up sessions so the cross-review sees its own prior context. Round 3 reads both rounds and posts one consensus issue.
 
 ### Repo layout
 
@@ -675,7 +713,10 @@ steps:
     prompt: prompts/1_review.md
     action: issue         # `issue` opens a new issue, `comment` replies on an existing one
     submit: new-run       # `new-run` spawns a fresh runner, `follow-up` reuses the runner from `input`
-    agents: [claude, gemini, codex]
+    agents:
+      - { agent: claude, models: [claude-opus-5, claude-opus-4-8] }
+      - gemini
+      - codex
     waitFor: agent-results
 
   - id: cross-review
@@ -683,7 +724,6 @@ steps:
     prompt: prompts/2_cross-review.md
     action: comment
     submit: follow-up
-    agents: [claude, gemini, codex]
     input:
       - step: review
         results: all
@@ -711,11 +751,17 @@ Prompt files are plain Markdown. The runner appends auto-injected review context
 |---|---|---|
 | `action` | `issue`, `comment` | Open a new issue per agent, or comment on the source issue. |
 | `submit` | `new-run`, `follow-up` | Spawn a fresh runner, or reuse the runner from a prior step. |
-| `agents` | list of `claude`, `gemini`, `codex` | Fan-out targets for this step. |
+| `agents` | bare providers or instance objects | Ordered lineup; plural `models`/`efforts` expand to a cartesian fan-out. |
 | `input` | `[{ step, results }]` | Prior step(s) whose results are passed into this prompt. |
 | `waitFor` | `agent-results` | Block on every agent completing before the next step. |
 | `isArchivable` | `true`, `false` | Opt a step in or out of `--archive` cleanup. Defaults to `true`; final-step runs are still kept unless `autoArchive: true` is set explicitly. |
 | `autoArchive` | `true`, `false` | Explicit per-step override. Use sparingly; `--archive` is the normal cleanup switch. |
+
+Follow-up steps inherit surviving instances from the first `input` step and do
+not declare `agents`. Each tuple continues its own runner session by
+`(sourceStepId, instanceId)`. Legacy provider-keyed `models` and `efforts` maps
+remain valid only when that provider occurs once; instance objects are the
+unambiguous form for repeated providers.
 
 ---
 
@@ -726,6 +772,7 @@ Every completed workflow writes durable artifacts under `.nax/`:
 ```text
 .nax/workflows/<workflow-run-id>/workflow.json
 .nax/workflows/<workflow-run-id>/artifacts/summary.md
+.nax/workflows/<workflow-run-id>/artifacts/steps/01-review/agent-runners/claude__claude-opus-5__high.md
 .nax/workflows/<workflow-run-id>/blobs/<blob-key>.md
 .nax/agent-runners/<runner-id>/summary.md
 .nax/agent-sessions/<session-id>/summary.md
@@ -735,6 +782,11 @@ Every completed workflow writes durable artifacts under `.nax/`:
 - `.nax/workflows/<id>/blobs/` — local debug mirrors of prompt blob payloads.
 - `.nax/agent-runners/` — one Netlify Agent Runner thread/conversation rollup.
 - `.nax/agent-sessions/` — one concrete agent result with output, usage, links, metadata.
+
+When a step has multiple instances of one provider, its step artifacts use an
+instance-scoped basename such as `claude__claude-opus-5__high.md`. A provider
+with only one instance keeps the legacy `claude.md` basename. Read `step.json`
+or artifact `instanceId` fields instead of constructing provider-only paths.
 
 Each directory has a `latest` symlink (when the filesystem supports symlinks). The most common handoff file is:
 
@@ -804,7 +856,7 @@ nax run review --step <step-id>      # re-run one step from scratch
 - **Local site slugs are best-effort.** `nax` can read exact site IDs from `.netlify/state.json`; if a multi-project repo is only linked at the root, per-project options show directories/configs instead of guessed site names.
 - **Sync starts with known local runners.** `nax admin sync last` refreshes the latest local runner. It does not yet discover every remote Agent Runner for a site.
 - **Four supported providers.** Claude, Gemini, Codex, and opt-in OpenCode are supported. Bundled council workflows keep their existing three-provider defaults unless you select OpenCode.
-- **No partial-failure auto-rollback.** If one agent fails mid-step, the workflow surfaces the failure; you decide whether to `nax run --retry` or `--from-step`.
+- **No automatic rollback.** Partial failures are retained as evidence while surviving instances continue; NAX does not revert work produced by a failed or mixed workflow.
 
 ---
 
@@ -826,7 +878,7 @@ A: Set the step's `agents:` list to one entry (e.g. `agents: [codex]`). The `syn
 A: Yes. In `nax dashboard`, open Run details and switch from **Results** to **Prompt**. Copy and open-file actions follow the active view, so copying from the Prompt tab copies prompt markdown instead of result markdown.
 
 **Q: What happens if one agent fails mid-step?**
-A: The step still completes when the other agents finish or time out. The failed agent's result is recorded as a failure; downstream steps that depend on it can still run with the surviving results. Use `nax run --retry <run-id>` to redo just the failed one.
+A: After retry is exhausted, a step with at least one survivor becomes `completed_with_failures`; downstream follow-ups inherit only surviving instances. If every instance fails, the step fails and the workflow halts. Use `nax run --retry <run-id> --instance <provider:model:effort>` to target one failed tuple.
 
 **Q: Do flows have to be YAML?**
 A: No. YAML is the default in the bundled examples because it is diffable, reviewable, and trivially generatable, but custom flows can be JSON, JavaScript, TypeScript, or TOML too. Use whichever format your team will actually read.

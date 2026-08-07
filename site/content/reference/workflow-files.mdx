@@ -50,9 +50,9 @@ functions are rejected.
 | --- | --- | --- |
 | `action` | `issue`, `comment`, `human-review` | Submission or gate behavior. |
 | `submit` | `new-run`, `follow-up` | Start fresh or reuse prior context. |
-| `agents` | `claude`, `codex`, `gemini`, `opencode` | Provider fan-out targets. OpenCode is supported but is not in bundled council defaults. |
-| `models` | provider-keyed string map | Real model IDs, such as `{ claude: "claude-opus-4-8" }`. |
-| `efforts` | provider-keyed string map | Reasoning settings, such as `{ claude: "high" }`. Requires a pinned model. |
+| `agents` | strings or instance objects | Ordered lineup. Strings are bare Auto providers; objects can pin or fan out `model`/`models` and `effort`/`efforts`. |
+| `models` | provider-keyed string map | Legacy bridge for pinning one unambiguous provider instance. Prefer instance objects. |
+| `efforts` | provider-keyed string map | Legacy bridge for one unambiguous pinned model. Prefer instance objects. |
 | `input` | `[{ step, results }]` | Earlier results to include. |
 | `waitFor` | `agent-results` | Wait until every configured agent has a result. |
 
@@ -66,12 +66,6 @@ description: Review, cross-review, and synthesize findings.
 defaults:
   transport: auto
   agents: [claude, gemini, codex]
-  models:
-    claude: claude-opus-4-8
-    codex: gpt-5.6-sol
-  efforts:
-    claude: high
-    codex: high
 
 steps:
   - id: review
@@ -79,11 +73,10 @@ steps:
     prompt: prompts/1_review.md
     action: issue
     submit: new-run
-    agents: [claude, gemini, codex]
-    models:
-      claude: claude-sonnet-5
-    efforts:
-      claude: medium
+    agents:
+      - { agent: claude, models: [claude-opus-5, claude-opus-4-8] }
+      - { agent: gemini, model: latest, effort: high }
+      - codex
     waitFor: agent-results
 
   - id: cross-review
@@ -91,7 +84,6 @@ steps:
     prompt: prompts/2_cross-review.md
     action: comment
     submit: follow-up
-    agents: [claude, gemini, codex]
     input:
       - step: review
         results: all
@@ -111,16 +103,52 @@ steps:
     waitFor: agent-results
 ```
 
-Model and effort configuration resolves separately for each selected agent.
-Precedence is step CLI, global CLI, step map, defaults map, then Auto. A
-higher-precedence model change clears an inherited effort unless the same
-scope also supplies an effort. The literal `auto` clears an inherited value
-and is omitted from the Agent Runner request.
+Each normalized lineup entry becomes one agent instance. An instance has a
+tuple-derived id: `agent:model:effort`, using `auto` for omitted fields. A bare
+provider such as `claude` therefore becomes `claude:auto:auto` and sends no
+model or effort. It does not silently resolve to the catalog flagship.
+
+Instance objects accept `model` or `models`, plus `effort` or `efforts`.
+Plural fields expand to their cartesian product:
+
+```yaml
+agents:
+  # Model bake-off: two Claude instances.
+  - { agent: claude, models: [claude-opus-5, claude-opus-4-8] }
+  # Effort sweep: three more Claude instances.
+  - { agent: claude, model: claude-fable-5, efforts: [low, medium, high] }
+  # Alias resolved and recorded as a concrete model at launch.
+  - { agent: gemini, model: latest, effort: high, label: Gemini flagship }
+  # Bare provider: Auto on the wire.
+  - codex
+```
+
+`latest` and `default` resolve to the provider's `defaultModel` at launch. A
+retry or resume reuses the recorded concrete model; a fresh workflow run
+resolves the alias again. Labels are display-only and cannot make duplicate
+tuples distinct. Exact duplicates fail before remote work is created.
+
+Legacy `models` and `efforts` maps remain valid when a provider occurs exactly
+once as a bare string. They are rejected as ambiguous when the same provider
+has multiple instances. The literal `auto` clears a legacy pin and is omitted
+from the Agent Runner request.
 
 Known provider/model or model/effort mismatches fail before submission.
 Unknown future model and effort strings pass through with a warning so a
 slightly stale NAX catalog does not block new backend capabilities. Do not use
-an `agentConfig` wrapper; `models` and `efforts` are first-class maps.
+an `agentConfig` wrapper.
+
+## Follow-up inheritance
+
+A `follow-up` step does not declare an `agents` lineup. It inherits surviving
+instances from the first step in `input` and continues each instance's own
+runner session by `(sourceStepId, instanceId)`. Additional inputs supply
+read-only context. Declaring `agents` on a follow-up is deprecated and ignored.
+
+If some instances exhaust their retries, survivors continue and the step is
+stored as `completed_with_failures`. If every instance fails, the workflow
+halts before later steps. Local Netlify API execution keeps at most five
+non-terminal runners active at once.
 
 ## Current model and effort catalog
 
@@ -144,6 +172,14 @@ ID. The dashboard displays Max even where Agent Runner expects `xhigh`.
 NAX 2.0 does not accept the old provider-list meaning of `models`. Replace a
 request such as `--models claude,codex` with `--agents claude,codex`, then add
 real model assignments separately if needed. There is no compatibility alias.
+
+## NAX 2.1 artifact migration
+
+Run state, status, retry selection, and artifacts are keyed by instance id
+rather than provider. A step with one instance of a provider keeps the familiar
+provider artifact basename. Multiple instances of the same provider use an
+instance-scoped basename such as `claude__claude-opus-5__high.md`. Consumers
+must not assume there is only one result per provider.
 
 <Callout type="warning">
   Project-local flows with the same id as bundled flows shadow the bundled version. This is useful when intentional and confusing when accidental.

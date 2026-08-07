@@ -12,14 +12,16 @@ Every `nax` run writes a durable local record under `.nax/`. The artifact tree i
 For multi-agent workflows, artifacts are the evidence trail. They let you inspect the workflow config, prompts, per-agent responses, cross-review notes, consensus summaries, generated patches, and token or cost metadata when available.
 
 Resolved request intent is stored on each agent run as `agent`, optional
-`model`, and optional `effort`. The backend-observed session configuration is
-stored separately:
+`model`, optional `effort`, `instanceId`, and resolution provenance. The
+backend-observed session configuration is stored separately:
 
 ```json
 {
   "agent": "opencode",
+  "instanceId": "opencode:z-ai/glm-5.2:max",
   "model": "z-ai/glm-5.2",
-  "effort": "xhigh",
+  "effort": "max",
+  "resolvedFrom": "pinned",
   "agent_config": {
     "agent": "opencode",
     "model": "z-ai/glm-5.2",
@@ -31,8 +33,9 @@ stored separately:
 If requested and observed values differ, session JSON includes
 `configurationMismatch` diagnostics instead of overwriting the request.
 Historical artifacts without model or effort mean that backend defaults were
-used. Friendly Markdown renders `xhigh` as Max while JSON retains the wire
-value.
+used. Friendly Markdown renders the catalog effort label. Request intent keeps
+the catalog id (`max`), while backend-observed `agent_config` retains its wire
+value (`xhigh`).
 
 <Callout type="warning">
 Known backend limitation: on a **completed follow-up session**, the Agent
@@ -57,6 +60,16 @@ three fields correctly.
         <FileTree.File name="events.jsonl" />
         <FileTree.Folder name="artifacts">
           <FileTree.File name="summary.md" active />
+          <FileTree.Folder name="steps">
+            <FileTree.Folder name="01-review">
+              <FileTree.File name="step.json" />
+              <FileTree.File name="summary.md" />
+              <FileTree.Folder name="agent-runners">
+                <FileTree.File name="claude__claude-opus-5__high.json" />
+                <FileTree.File name="claude__claude-opus-5__high.md" />
+              </FileTree.Folder>
+            </FileTree.Folder>
+          </FileTree.Folder>
         </FileTree.Folder>
         <FileTree.Folder name="blobs">
           <FileTree.File name="<blob-key>.md" />
@@ -79,6 +92,22 @@ three fields correctly.
 ```text
 .nax/workflows/latest/artifacts/summary.md
 ```
+
+## Per-instance result paths
+
+NAX 2.1 keys saved runs and results by instance id. When a step has multiple
+instances from one provider, each result gets a distinct sanitized basename:
+
+```text
+artifacts/steps/01-review/agent-runners/claude__claude-opus-5__low.md
+artifacts/steps/01-review/agent-runners/claude__claude-opus-5__high.md
+```
+
+For backward compatibility, a step with only one instance of a provider keeps
+the provider basename, such as `agent-runners/claude.md`. New consumers should
+read `step.json` or the instance fields in each JSON artifact instead of
+constructing a provider-only path. Historical artifacts without `instanceId`
+are interpreted as `provider:auto:auto`.
 
 ## Local state and git ignore
 

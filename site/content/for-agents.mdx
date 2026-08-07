@@ -201,22 +201,48 @@ Run the workflow:
 nax run review --transport netlify-api --force
 ```
 
-Override the agent providers, then optionally configure their real models:
+Override the instance lineup. Repeat `--agents` when one provider should run
+more than once:
 
 ```sh
 nax run review \
-  --agents codex,claude \
-  --models codex=gpt-5.6-sol \
-  --efforts codex=high \
+  --agents claude:claude-opus-5:low \
+  --agents claude:claude-opus-5:high \
+  --agents codex:latest:high \
   --transport netlify-api \
   --force
 ```
 
-Provider lists belong only in `--agents` and `--step-agents`. Model and effort
-flags require explicit provider mappings and can be repeated. `auto` clears a
-pin and becomes omission on the wire. Unknown future IDs pass through with a
-warning; known incompatible pairs fail before mutation. Pinned configuration
-requires the Netlify API transport.
+Each `provider:model:effort` tuple is one independent instance. Bare providers
+such as `--agents codex,claude` remain Auto on the wire. `latest` and `default`
+resolve to the catalog default at launch; retry and resume reuse the recorded
+concrete model. Exact duplicate tuples fail before mutation.
+
+The legacy `--models` and `--efforts` mappings remain available for one
+unambiguous instance per provider. Use exact `--agents` specs for model
+bake-offs, effort sweeps, and mixed repeated-provider lineups. Pinned or
+repeated-provider lineups require the Netlify API transport.
+
+Common lineup shapes:
+
+```sh
+# Three models from one provider.
+nax run review --agents \
+  claude:claude-opus-5:auto,claude:claude-opus-4-8:auto,claude:claude-fable-5:auto \
+  --transport netlify-api --force
+
+# One model at three efforts.
+nax run review --agents \
+  claude:claude-opus-5:low,claude:claude-opus-5:medium,claude:claude-opus-5:high \
+  --transport netlify-api --force
+
+# Bare council; model and effort stay omitted.
+nax run review --agents claude,gemini,codex --force
+```
+
+Local execution starts large lineups in waves with at most five non-terminal
+runners. Above six instances in a step, use `--force` only when the user has
+already approved the cost fan-out.
 
 Run part of a workflow:
 
@@ -250,6 +276,8 @@ For local Netlify API orchestration, resume or retry interrupted work:
 
 ```sh
 nax run --retry <workflow-run-id>
+nax run --retry <workflow-run-id> --step <step-id> \
+  --instance claude:claude-opus-5:high
 nax admin sync last
 ```
 
@@ -260,6 +288,8 @@ nax admin sync last
 - Prefer `--transport github-actions` when the user wants hosted GitHub logs and team-visible automation.
 - Include `--branch` when the user named a branch or PR.
 - Include `--context` or `--context-file` when the user supplied extra constraints.
+- Treat `completed_with_failures` as a mixed outcome: inspect failed instance artifacts even though survivors continue.
+- Expect follow-up steps to inherit surviving instances from their first input; do not add an `agents` block to a follow-up step.
 - Do not assume a final agent recommendation is correct; inspect artifacts and ask for human approval before merging code.
 
 ## See also

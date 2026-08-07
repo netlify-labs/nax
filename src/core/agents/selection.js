@@ -1,4 +1,4 @@
-const { DEFAULT_AGENT_PROVIDERS } = require('../constants')
+const { SUPPORTED_AGENT_PROVIDERS } = require('./configuration')
 
 /**
  * Parsed agent-provider override for one workflow step.
@@ -143,7 +143,7 @@ function flowAgentSet(flow = {}) {
  * @param {AgentSelectionValidationOptions} [options]
  * @returns {AgentSelectionValidationError[]}
  */
-function flowDeclaredAgentValidationErrors(flow = {}, { knownAgents = DEFAULT_AGENT_PROVIDERS } = {}) {
+function flowDeclaredAgentValidationErrors(flow = {}, { knownAgents = SUPPORTED_AGENT_PROVIDERS } = {}) {
   const errors = []
   const known = new Set(normalizeAgentList(knownAgents))
   const knownLabel = [...known].join(', ') || 'none'

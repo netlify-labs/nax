@@ -42,7 +42,8 @@ const {
   prepareLocalPromptDelivery,
 } = require('./prompt-delivery')
 const { utf8ByteLength } = require('../../core/prompts/budget')
-const { formatAgentConfigLabel, resolveAgentRunConfig } = require('../../core/agents/configuration')
+const { formatAgentConfigLabel } = require('../../core/agents/configuration')
+const { resolveLineup } = require('../../core/agents/instances')
 const {
   completedStepMapFromRunState,
   contextForRunState,
@@ -709,27 +710,33 @@ async function executeLocalFlow({ flow, steps, options, runState, projectRoot, c
       hasPriorResults: sourceRuns.length > 0,
       hasFutureSteps: stepIndex < steps.length - 1,
     })
-    const runs = step.agents.map((agent) => {
-      const resolvedConfig = resolveAgentRunConfig(agent, {
-        defaults: {
-          models: flow.defaults?.models,
-          efforts: flow.defaults?.efforts,
-        },
-        step: {
-          models: step.models,
-          efforts: step.efforts,
-        },
-        globalCli: {
-          models: options.models,
-          efforts: options.efforts,
-        },
-        stepCli: {
-          models: options.stepModels?.[step.id],
-          efforts: options.stepEfforts?.[step.id],
-        },
-      })
+    // Resolve the step's lineup into agent instances (one AgentRun per instance). The lineup
+    // preserves fan-out/object entries; provider-keyed models/efforts maps bridge to bare
+    // instances. Precedence: defaults < step < globalCli < stepCli.
+    const stepLineup = Array.isArray(step.lineup) && step.lineup.length > 0 ? step.lineup : step.agents
+    const mergedModels = {
+      ...(flow.defaults?.models || {}),
+      ...(step.models || {}),
+      ...(options.models || {}),
+      ...(options.stepModels?.[step.id] || {}),
+    }
+    const mergedEfforts = {
+      ...(flow.defaults?.efforts || {}),
+      ...(step.efforts || {}),
+      ...(options.efforts || {}),
+      ...(options.stepEfforts?.[step.id] || {}),
+    }
+    const resolvedLineup = resolveLineup(stepLineup, {
+      requestedTransport: NETLIFY_API_TRANSPORT,
+      models: mergedModels,
+      efforts: mergedEfforts,
+    })
+    const lineupWarnings = resolvedLineup.warnings.map((warning) => warning.message)
+    const runs = resolvedLineup.instances.map((instance) => {
+      const agent = instance.agent
       const followUpRun = step.submit === 'follow-up'
-        ? sourceRuns.find((sourceRun) => sourceRun.agent === agent && sourceRun.runnerId)
+        ? sourceRuns.find((sourceRun) => sourceRun.runnerId
+          && (sourceRun.instanceId ? sourceRun.instanceId === instance.id : sourceRun.agent === agent))
         : null
       const delivery = prepareLocalPromptDelivery({
         agent,
@@ -744,8 +751,11 @@ async function executeLocalFlow({ flow, steps, options, runState, projectRoot, c
       return {
         transport: NETLIFY_API_TRANSPORT,
         agent,
-        ...(resolvedConfig.model ? { model: resolvedConfig.model } : {}),
-        ...(resolvedConfig.effort ? { effort: resolvedConfig.effort } : {}),
+        instanceId: instance.id,
+        ...(instance.model ? { model: instance.model } : {}),
+        ...(instance.effort ? { effort: instance.effort } : {}),
+        ...(instance.resolvedFrom ? { resolvedFrom: instance.resolvedFrom } : {}),
+        ...(instance.label ? { instanceLabel: instance.label } : {}),
         status: options.dryRun ? 'dry-run' : 'pending',
         promptText: delivery.promptText,
         compactPromptText: delivery.compactPromptText && utf8ByteLength(delivery.compactPromptText) < utf8ByteLength(delivery.promptText) ? delivery.compactPromptText : '',
@@ -764,7 +774,7 @@ async function executeLocalFlow({ flow, steps, options, runState, projectRoot, c
           workflowRunId: runState.runId,
           stepId: step.id,
           promptName: prompt.name,
-          ...(resolvedConfig.warnings.length > 0 ? { configurationWarnings: resolvedConfig.warnings } : {}),
+          ...(lineupWarnings.length > 0 ? { configurationWarnings: lineupWarnings } : {}),
         },
       }
     })

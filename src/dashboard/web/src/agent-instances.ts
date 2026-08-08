@@ -1,4 +1,4 @@
-import type { AgentInstanceDescriptor } from './types'
+import type { AgentInstanceConfiguration, AgentInstanceDescriptor } from './types'
 
 // Keep aligned with src/core/constants.js; the server enforces the same hard limit.
 export const MAX_STEP_AGENT_INSTANCES = 4
@@ -9,15 +9,16 @@ export function agentInstanceId(agent: string, model?: string, effort?: string):
 
 export function configuredAgentInstance(
   instance: AgentInstanceDescriptor,
-  model: string,
-  effort: string,
+  config: AgentInstanceConfiguration,
 ): AgentInstanceDescriptor {
-  const configuredModel = model && model !== 'auto' ? model : undefined
-  const configuredEffort = configuredModel && effort && effort !== 'auto' ? effort : undefined
-  const { model: _model, effort: _effort, ...base } = instance
+  const configuredAgent = config.agent || instance.agent
+  const configuredModel = config.model && config.model !== 'auto' ? config.model : undefined
+  const configuredEffort = configuredModel && config.effort && config.effort !== 'auto' ? config.effort : undefined
+  const { agent: _agent, model: _model, effort: _effort, ...base } = instance
   return {
     ...base,
-    id: agentInstanceId(instance.agent, configuredModel, configuredEffort),
+    agent: configuredAgent,
+    id: agentInstanceId(configuredAgent, configuredModel, configuredEffort),
     ...(configuredModel ? { model: configuredModel } : {}),
     ...(configuredEffort ? { effort: configuredEffort } : {}),
     resolvedFrom: configuredModel ? 'pinned' : 'open',

@@ -382,6 +382,13 @@ test('dashboard renders Review graph on desktop', async ({ page }, testInfo) => 
     return (actionBox?.y || 0) < (headingBox?.y || 0)
   }).toBe(true)
   const review = page.locator('.workflow-node').filter({ hasText: 'Review' }).first()
+  await expect(review.locator('.agent-row > .add-agent-slot')).toHaveCount(0)
+  await expect(review.locator('.node-footer > .add-agent-slot').getByRole('button', { name: 'Add agent' })).toBeVisible()
+  const summarize = page.locator('.workflow-node').filter({
+    has: page.getByRole('heading', { name: 'Summarize Consensus', exact: true }),
+  })
+  await expect(summarize.locator('.agent-row > .add-agent-slot').getByRole('button', { name: 'Add agent' })).toBeVisible()
+  await expect(summarize.locator('.node-footer > .add-agent-slot')).toHaveCount(0)
   await review.locator('.node-header').click()
   await expect(review).toHaveClass(/selected/)
 
@@ -505,7 +512,7 @@ test('dashboard submits a configured workflow instance', async ({ page }) => {
   }
 })
 
-test('dashboard adds an opencode instance and pins another per-step instance from the canvas', async ({ page }) => {
+test('dashboard adds an opencode instance and changes another instance provider from the canvas', async ({ page }) => {
   const projectRoot = tmpRoot()
   const runId = writeCompletedRunFixture(projectRoot)
   const server = await startDashboardServer({
@@ -535,10 +542,15 @@ test('dashboard adds an opencode instance and pins another per-step instance fro
     await page.getByRole('option', { name: 'OpenCode' }).click()
     await page.getByRole('button', { name: 'Add', exact: true }).click()
 
-    // Pin Claude's model and effort for this step via the chip caret popover.
+    // Change Claude to a single explicitly configured Gemini instance via the chip caret popover.
     await proposeNode.getByRole('button', { name: /Configure Claude Auto/ }).click()
+    const editProvider = page.getByRole('combobox', { name: 'Provider', exact: true })
+    await expect(editProvider.locator('xpath=..').locator('.agent-provider-select-logo .agent-icon')).toBeVisible()
+    await editProvider.click()
+    await page.getByRole('option', { name: 'Gemini' }).click()
+    await expect(page.getByText('Quick presets')).toHaveCount(0)
     await page.getByRole('combobox', { name: 'Model', exact: true }).click()
-    await page.getByRole('option', { name: 'Opus 4.8' }).click()
+    await page.getByRole('option', { name: 'Gemini 3.6 Flash' }).click()
     await page.getByRole('combobox', { name: 'Reasoning effort', exact: true }).click()
     await page.getByRole('option', { name: 'High' }).click()
     await page.getByRole('button', { name: 'Save', exact: true }).click()
@@ -557,14 +569,111 @@ test('dashboard adds an opencode instance and pins another per-step instance fro
         id: 'opencode:moonshotai/kimi-k3:max',
       }),
       expect.objectContaining({
-        agent: 'claude',
-        model: 'claude-opus-4-8',
+        agent: 'gemini',
+        model: 'gemini-3.6-flash',
         effort: 'high',
-        id: 'claude:claude-opus-4-8:high',
+        id: 'gemini:gemini-3.6-flash:high',
       }),
     ]))
   } finally {
     await server.close()
+  }
+})
+
+test('dashboard marks exact existing model and effort configurations while adding agents', async ({ page }) => {
+  await openReview(page, { width: 1360, height: 860 })
+
+  const summarizeNode = page.locator('.workflow-node').filter({
+    has: page.getByRole('heading', { name: 'Summarize Consensus', exact: true }),
+  })
+  await summarizeNode.getByRole('button', { name: /Configure Codex Auto/ }).click()
+  await page.getByRole('combobox', { name: 'Provider', exact: true }).click()
+  await page.getByRole('option', { name: 'Gemini', exact: true }).click()
+  await page.getByRole('button', { name: 'Save', exact: true }).click()
+  await expect(summarizeNode.locator('.agent-chip-config')).toHaveText(['Gemini 3.1 Pro'])
+  await expect(summarizeNode.locator('.agent-chip-effort')).toHaveText(['High'])
+
+  await summarizeNode.getByRole('button', { name: 'Add agent' }).click()
+  await page.getByRole('combobox', { name: 'Provider', exact: true }).click()
+  await page.getByRole('option', { name: 'Gemini', exact: true }).click()
+
+  await expect(page.getByRole('radio', { name: 'Single agent' })).toBeChecked()
+  await page.getByRole('combobox', { name: 'Model', exact: true }).click()
+  const existingModelOption = page.getByRole('option', { name: /Gemini 3\.1 Pro.*High already selected/ })
+  await expect(existingModelOption).toBeVisible()
+  await expect(existingModelOption).toBeEnabled()
+  await existingModelOption.click()
+
+  const effortInput = page.getByRole('combobox', { name: 'Reasoning effort', exact: true })
+  await expect(effortInput).toHaveValue('Medium')
+  await effortInput.click()
+  const existingEffortOption = page.getByRole('option', { name: /High.*Already selected/ })
+  await expect(existingEffortOption).toHaveAttribute('data-combobox-disabled', 'true')
+  await page.getByRole('option', { name: 'Low', exact: true }).click()
+  await expect(effortInput).toHaveValue('Low')
+  await page.getByRole('button', { name: 'Add', exact: true }).click()
+
+  await expect(summarizeNode.locator('.agent-chip-config')).toHaveText(['Gemini 3.1 Pro', 'Gemini 3.1 Pro'])
+  await expect(summarizeNode.locator('.agent-chip-effort')).toHaveText(['High', 'Low'])
+})
+
+test('dashboard only exposes model fan-out in explicit multiple-agent mode', async ({ page }) => {
+  await openReview(page, { width: 1360, height: 860 })
+
+  const summarizeNode = page.locator('.workflow-node').filter({
+    has: page.getByRole('heading', { name: 'Summarize Consensus', exact: true }),
+  })
+  await summarizeNode.getByRole('button', { name: 'Add agent' }).click()
+  await expect(page.getByRole('heading', { name: 'Add new agent(s)', exact: true })).toBeVisible()
+  await expect(page.getByRole('radio', { name: 'Single agent' })).toBeChecked()
+  await expect(page.getByRole('combobox', { name: 'Model', exact: true })).toBeVisible()
+  await expect(page.getByRole('combobox', { name: 'Models', exact: true })).toHaveCount(0)
+
+  await page.getByText('Multiple agents', { exact: true }).click()
+  await expect(page.getByRole('combobox', { name: 'Models', exact: true })).toBeVisible()
+  await expect(page.getByRole('combobox', { name: 'Reasoning efforts', exact: true })).toBeVisible()
+
+  await page.getByText('Single agent', { exact: true }).click()
+  await expect(page.getByRole('combobox', { name: 'Model', exact: true })).toBeVisible()
+  await expect(page.getByRole('combobox', { name: 'Models', exact: true })).toHaveCount(0)
+
+  await page.getByRole('button', { name: 'All Claude models' }).click()
+  await expect(page.getByRole('radio', { name: 'Multiple agents' })).toBeChecked()
+  await expect(page.getByRole('combobox', { name: 'Models', exact: true })).toBeVisible()
+})
+
+test('dashboard preserves one reasoning effort across multiple manually selected models', async ({ page }) => {
+  await openReview(page, { width: 1360, height: 860 })
+
+  const summarizeNode = page.locator('.workflow-node').filter({
+    has: page.getByRole('heading', { name: 'Summarize Consensus', exact: true }),
+  })
+  await summarizeNode.getByRole('button', { name: 'Add agent' }).click()
+  await expect(page.getByRole('radio', { name: 'Single agent' })).toBeChecked()
+  await page.getByText('Multiple agents', { exact: true }).click()
+
+  const modelsInput = page.getByRole('combobox', { name: 'Models', exact: true })
+  await modelsInput.click()
+  await page.getByRole('option', { name: 'Fable 5', exact: true }).click()
+  await page.getByRole('option', { name: 'Opus 5', exact: true }).click()
+  await page.getByRole('option', { name: 'Opus 4.8', exact: true }).click()
+  await modelsInput.press('Tab')
+
+  const effortsInput = page.getByRole('combobox', { name: 'Reasoning efforts', exact: true })
+  await page.getByText('Reasoning efforts', { exact: true }).click()
+  await page.getByRole('option', { name: 'Low', exact: true }).click()
+  await page.keyboard.press('Escape')
+  await expect(page.getByText('Adds 2 instances.')).toBeVisible()
+  await page.getByRole('button', { name: 'Add', exact: true }).click()
+
+  await expect(summarizeNode.locator('.agent-chip-config')).toHaveText(['Auto', 'Opus 5', 'Opus 4.8'])
+  await expect(summarizeNode.locator('.agent-chip-effort')).toHaveText(['Low', 'Low'])
+
+  for (const model of ['claude-opus-5', 'claude-opus-4-8']) {
+    const configureButton = summarizeNode.getByRole('button', { name: new RegExp(`Configure Claude ${model}`) })
+    await configureButton.click()
+    await expect(page.getByRole('combobox', { name: 'Reasoning effort', exact: true })).toHaveValue('Low')
+    await configureButton.click()
   }
 })
 
@@ -609,9 +718,11 @@ test('dashboard builds bake-off and effort-sweep lineups with arena presets', as
       await expect(providerOptions.getByRole('option', { name: provider }).locator('.agent-icon')).toBeVisible()
     }
     await providerOptions.getByRole('option', { name: 'Claude' }).click()
-    await expect(page.locator('.mantine-Pill-label').filter({ hasText: 'Fable 5' })).toBeVisible()
-    await expect(page.locator('.mantine-Pill-label').filter({ hasText: 'High' })).toBeVisible()
+    await expect(page.getByRole('radio', { name: 'Single agent' })).toBeChecked()
+    await expect(page.getByRole('combobox', { name: 'Model', exact: true })).toHaveValue('Fable 5')
+    await expect(page.getByRole('combobox', { name: 'Reasoning effort', exact: true })).toHaveValue('High')
     await page.getByRole('button', { name: 'All Claude models' }).click()
+    await expect(page.getByRole('radio', { name: 'Multiple agents' })).toBeChecked()
     await expect(page.getByText('Adds 4 instances.')).toBeVisible()
     await page.getByRole('button', { name: 'Add', exact: true }).click()
     await expect(proposeNode.locator('.agent-chip-config')).toHaveText([
@@ -624,7 +735,7 @@ test('dashboard builds bake-off and effort-sweep lineups with arena presets', as
     const disabledAddAgent = proposeNode.getByRole('button', { name: 'Add agent' })
     await expect(disabledAddAgent).toBeDisabled()
     await expect(disabledAddAgent).toHaveAttribute('title', 'This step already has the maximum of 4 agent instances.')
-    await expect(disabledAddAgent).toHaveCSS('align-self', 'center')
+    await expect(proposeNode.locator('.add-agent-slot')).toHaveCSS('align-self', 'center')
     await expect(proposeNode.getByRole('button', { name: /Configure Claude claude-opus-5/ })).toBeVisible()
     await expect(proposeNode.getByRole('button', { name: /Configure Claude claude-opus-4-8/ })).toBeVisible()
     await expect(proposeNode.getByRole('button', { name: /Configure Claude claude-fable-5/ })).toBeVisible()
@@ -653,7 +764,7 @@ test('dashboard builds bake-off and effort-sweep lineups with arena presets', as
     await proposeNode.getByRole('button', { name: 'Add agent' }).click()
     await page.getByRole('button', { name: 'All Codex models' }).click()
     await expect(page.getByText('Adds 1 instance.')).toBeVisible()
-    await page.getByRole('button', { name: 'Flagship of every provider' }).click()
+    await page.getByRole('button', { name: 'Add flagship of every provider' }).click()
     await expect(proposeNode.locator('.agent-chip')).toHaveCount(4)
 
     await page.getByRole('button', { name: 'Run', exact: true }).click()

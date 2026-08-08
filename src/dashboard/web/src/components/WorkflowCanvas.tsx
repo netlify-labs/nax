@@ -14,7 +14,7 @@ import {
 } from '@xyflow/react'
 import '@xyflow/react/dist/style.css'
 import { activeOrCompletedStatuses, completedStatuses } from '../run-projection'
-import type { AgentInstanceDescriptor, WorkflowGraph, WorkflowGraphNodeData } from '../types'
+import type { AgentInstanceConfiguration, AgentInstanceDescriptor, WorkflowGraph, WorkflowGraphNodeData } from '../types'
 import { AgentCatalogProvider } from '../agent-catalog-context'
 import { WorkflowNode } from './WorkflowNode'
 import type { AgentCatalog } from './ModelEffortFields'
@@ -32,7 +32,7 @@ type Props = {
   selectedNode: WorkflowGraphNodeData | null
   catalog: AgentCatalog
   transport: string
-  onConfigureStepAgent: (stepId: string, instanceId: string, config: { model: string; effort: string }) => void
+  onConfigureStepAgent: (stepId: string, instanceId: string, config: AgentInstanceConfiguration) => void
   onRemoveStepAgent: (stepId: string, instanceId: string) => void
   onAddStepAgents: (stepId: string, instances: AgentInstanceDescriptor[]) => void
   onSelectNode: (node: WorkflowGraphNodeData | null) => void

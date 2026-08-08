@@ -11,6 +11,16 @@ export function providerFor(catalog: AgentCatalog, agent: string) {
   return catalog.providers.find((provider) => provider.id === agent)
 }
 
+export function defaultAgentConfig(catalog: AgentCatalog, agent: string): { model: string; effort: string } {
+  const provider = providerFor(catalog, agent)
+  const model = provider?.defaultModel || provider?.models[0]?.id || 'auto'
+  const definition = provider?.models.find((candidate) => candidate.id === model)
+  return {
+    model,
+    effort: definition?.efforts.at(-1)?.id || 'auto',
+  }
+}
+
 /** Resolve a stored effort (id or wire value) back to the catalog effort id, defaulting to 'auto'. */
 export function displayEffort(model: string, effort: string, catalog: AgentCatalog): string {
   const definition = catalog.providers

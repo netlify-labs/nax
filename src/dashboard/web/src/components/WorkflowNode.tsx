@@ -1,16 +1,17 @@
 import { memo, useEffect, useState } from 'react'
 import { Handle, Position, type NodeProps } from '@xyflow/react'
-import { Button, Group, Popover, Text } from '@mantine/core'
+import { Button, Group, Popover, Stack, Text } from '@mantine/core'
 import { Check, ChevronDown, CircleAlert, LoaderCircle, LockKeyhole, RotateCcw, Trash2, UserCheck, X } from 'lucide-react'
 
 import { MAX_STEP_AGENT_INSTANCES, instanceDisplayName } from '../agent-instances'
 import { agentLabel, statusLabel } from '../run-format'
 import { isActiveStatus, isCancelledStatus, isCompletedStatus, isFailedStatus, statusKey } from '../status-model'
-import type { AgentInstanceDescriptor, WorkflowGraphNodeData } from '../types'
+import type { AgentInstanceConfiguration, AgentInstanceDescriptor, WorkflowGraphNodeData } from '../types'
 import { useAgentCatalog } from '../agent-catalog-context'
 import { AddAgentInstances } from './AddAgentInstances'
 import { AgentIcon } from './AgentIcon'
-import { ModelEffortFields, describeAgentConfig } from './ModelEffortFields'
+import { AgentProviderSelect } from './AgentProviderSelect'
+import { ModelEffortFields, defaultAgentConfig, describeAgentConfig } from './ModelEffortFields'
 
 function hasCompletedRun(node: WorkflowGraphNodeData, instance: AgentInstanceDescriptor): boolean {
   return node.runs.some((run) => {
@@ -67,7 +68,7 @@ export const WorkflowNode = memo(function WorkflowNode({ data, selected }: NodeP
   const node = data as WorkflowGraphNodeData
   const catalogContext = useAgentCatalog()
   const [configInstanceId, setConfigInstanceId] = useState<string | null>(null)
-  const [draftConfig, setDraftConfig] = useState({ model: 'auto', effort: 'auto' })
+  const [draftConfig, setDraftConfig] = useState<AgentInstanceConfiguration>({ agent: '', model: 'auto', effort: 'auto' })
   const [actingInstanceId, setActingInstanceId] = useState<string | null>(null)
 
   useEffect(() => {
@@ -91,6 +92,17 @@ export const WorkflowNode = memo(function WorkflowNode({ data, selected }: NodeP
   const canAddAgents = configurable && isDefinition
   const githubTransport = catalogContext?.transport === 'github' || catalogContext?.transport === 'github-actions'
   const canConfigure = configurable && Boolean(catalogContext) && Boolean(node.onConfigureAgent)
+  const addAgentInFooter = selectedInstances.length >= MAX_STEP_AGENT_INSTANCES
+  const addAgentControl = canAddAgents && catalogContext ? (
+    <AddAgentInstances
+      catalog={catalogContext.catalog}
+      disabled={addAgentInFooter}
+      existingInstances={selectedInstances}
+      maxInstances={Math.max(0, MAX_STEP_AGENT_INSTANCES - selectedInstances.length)}
+      onAdd={(instances) => node.onAddInstances?.(node.stepId, instances)}
+    />
+  ) : null
+  const addAgentSlot = addAgentControl ? <div className="add-agent-slot">{addAgentControl}</div> : null
 
   return (
     <div className={`workflow-node${statusClass}${selected ? ' selected' : ''}`}>
@@ -161,7 +173,7 @@ export const WorkflowNode = memo(function WorkflowNode({ data, selected }: NodeP
                   opened={configInstanceId === instance.id}
                   onChange={(opened) => setConfigInstanceId(opened ? instance.id : null)}
                   position="bottom-end"
-                  width={260}
+                  width={320}
                   withArrow
                   shadow="md"
                   trapFocus
@@ -175,7 +187,7 @@ export const WorkflowNode = memo(function WorkflowNode({ data, selected }: NodeP
                       aria-label={`Configure ${agentLabel(instance.agent)} ${instanceDisplayName(instance)} for ${node.title}`}
                       onClick={(event) => {
                         event.stopPropagation()
-                        setDraftConfig({ model, effort })
+                        setDraftConfig({ agent: instance.agent, model, effort })
                         setConfigInstanceId((current) => current === instance.id ? null : instance.id)
                       }}
                     >
@@ -197,33 +209,46 @@ export const WorkflowNode = memo(function WorkflowNode({ data, selected }: NodeP
                     >
                       Remove agent
                     </Button>
-                    {githubTransport ? (
-                      <Text size="xs" c="dimmed" mb="xs">
-                        Model and effort require the Netlify API transport.
-                      </Text>
-                    ) : null}
-                    <ModelEffortFields
-                      catalog={catalogContext!.catalog}
-                      agent={instance.agent}
-                      model={configInstanceId === instance.id ? draftConfig.model : model}
-                      effort={configInstanceId === instance.id ? draftConfig.effort : effort}
-                      disabled={githubTransport}
-                      withinPortal={false}
-                      onChange={setDraftConfig}
-                    />
-                    <Group justify="flex-end" gap="xs" mt="sm">
-                      <Button size="xs" variant="subtle" color="gray" onClick={() => setConfigInstanceId(null)}>Cancel</Button>
-                      <Button
-                        size="xs"
-                        disabled={githubTransport}
-                        onClick={() => {
-                          node.onConfigureAgent?.(node.stepId, instance.id, draftConfig)
-                          setConfigInstanceId(null)
+                    <Stack gap="sm">
+                      <AgentProviderSelect
+                        catalog={catalogContext!.catalog}
+                        agent={draftConfig.agent || instance.agent}
+                        withinPortal={false}
+                        onChange={(agent) => {
+                          const defaults = githubTransport
+                            ? { model: 'auto', effort: 'auto' }
+                            : defaultAgentConfig(catalogContext!.catalog, agent)
+                          setDraftConfig({ agent, ...defaults })
                         }}
-                      >
-                        Save
-                      </Button>
-                    </Group>
+                      />
+                      {githubTransport ? (
+                        <Text size="xs" c="dimmed">
+                          Model and effort require the Netlify API transport.
+                        </Text>
+                      ) : null}
+                      <ModelEffortFields
+                        catalog={catalogContext!.catalog}
+                        agent={draftConfig.agent || instance.agent}
+                        model={configInstanceId === instance.id ? draftConfig.model : model}
+                        effort={configInstanceId === instance.id ? draftConfig.effort : effort}
+                        disabled={githubTransport}
+                        withinPortal={false}
+                        onChange={(next) => setDraftConfig((current) => ({ ...current, ...next }))}
+                      />
+                      <Group justify="flex-end" gap="xs">
+                        <Button size="xs" variant="subtle" color="gray" onClick={() => setConfigInstanceId(null)}>Cancel</Button>
+                        <Button
+                          size="xs"
+                          disabled={githubTransport && draftConfig.agent === instance.agent}
+                          onClick={() => {
+                            node.onConfigureAgent?.(node.stepId, instance.id, draftConfig)
+                            setConfigInstanceId(null)
+                          }}
+                        >
+                          Save
+                        </Button>
+                      </Group>
+                    </Stack>
                   </Popover.Dropdown>
                 </Popover>
               ) : active && node.onCancelAgentRun ? (
@@ -286,17 +311,11 @@ export const WorkflowNode = memo(function WorkflowNode({ data, selected }: NodeP
             </div>
           )
         })}
+        {!humanReview && !addAgentInFooter ? addAgentSlot : null}
       </div>
       {!humanReview ? (
         <div className="node-footer">
-          {canAddAgents && catalogContext ? (
-            <AddAgentInstances
-              catalog={catalogContext.catalog}
-              disabled={selectedInstances.length >= MAX_STEP_AGENT_INSTANCES}
-              maxInstances={MAX_STEP_AGENT_INSTANCES - selectedInstances.length}
-              onAdd={(instances) => node.onAddInstances?.(node.stepId, instances)}
-            />
-          ) : null}
+          {addAgentInFooter ? addAgentSlot : null}
           {isDefinition && inherited && node.agentInteraction !== 'view-result' ? (
             <Text className="inherited-lineup-note" size="xs" c="dimmed">
               <LockKeyhole size={12} /> Inherits surviving instances from {node.inheritedFromStepId}

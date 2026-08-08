@@ -8,13 +8,25 @@ test('dashboard instance helpers derive stable tuple identities', () => {
   assert.equal(agentInstanceId('codex', 'gpt-5.6-sol', 'high'), 'codex:gpt-5.6-sol:high')
   assert.deepEqual(configuredAgentInstance(
     { agent: 'codex', id: 'codex:auto:auto', resolvedFrom: 'open' },
-    'gpt-5.6-sol',
-    'high',
+    { agent: 'codex', model: 'gpt-5.6-sol', effort: 'high' },
   ), {
     agent: 'codex',
     model: 'gpt-5.6-sol',
     effort: 'high',
     id: 'codex:gpt-5.6-sol:high',
+    resolvedFrom: 'pinned',
+  })
+})
+
+test('dashboard instance helpers re-key an instance when its provider changes', () => {
+  assert.deepEqual(configuredAgentInstance(
+    { agent: 'claude', id: 'claude:auto:auto', resolvedFrom: 'open' },
+    { agent: 'gemini', model: 'gemini-3.6-flash', effort: 'high' },
+  ), {
+    agent: 'gemini',
+    model: 'gemini-3.6-flash',
+    effort: 'high',
+    id: 'gemini:gemini-3.6-flash:high',
     resolvedFrom: 'pinned',
   })
 })

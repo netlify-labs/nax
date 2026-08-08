@@ -58,7 +58,7 @@ import { projectWorkflowGraph, workflowGraphNodeByStepId } from './run-projectio
 import { agentLabel, recordValue } from './run-format'
 import type { RunDetailsSelector } from './run-details-selection'
 import { isActiveStatus, isTerminalStatus, statusKey } from './status-model'
-import type { AgentInstanceDescriptor, AgentRunRequest, DashboardRun, DryRunOptions, DryRunResult, RunAgentTarget, RunFollowupResponse, RunnerEvent, Workflow, WorkflowGraph, WorkflowGraphNodeData } from './types'
+import type { AgentInstanceConfiguration, AgentInstanceDescriptor, AgentRunRequest, DashboardRun, DryRunOptions, DryRunResult, RunAgentTarget, RunFollowupResponse, RunnerEvent, Workflow, WorkflowGraph, WorkflowGraphNodeData } from './types'
 
 type ContextModalAction = '' | 'dry-run' | 'run'
 type DetailsModalContext = {
@@ -622,14 +622,14 @@ export default function App() {
     return node?.selectedAgents || node?.instances || []
   }, [graph])
 
-  const configureStepAgent = useCallback((stepId: string, instanceId: string, config: { model: string; effort: string }) => {
+  const configureStepAgent = useCallback((stepId: string, instanceId: string, config: AgentInstanceConfiguration) => {
     setDryRunOptions((options) => {
       const current = selectedInstancesForStep(options, stepId)
       const next = current.map((instance) => instance.id === instanceId
-        ? configuredAgentInstance(instance, config.model, config.effort)
+        ? configuredAgentInstance(instance, config)
         : instance)
       if (new Set(next.map((instance) => instance.id)).size !== next.length) {
-        setError('That model and effort combination already exists in this step.')
+        setError('That provider, model, and effort combination already exists in this step.')
         return options
       }
       return {

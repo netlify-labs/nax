@@ -40,6 +40,12 @@ export type Workflow = {
   steps: WorkflowStep[]
 }
 
+export type AgentInstanceConfiguration = {
+  agent: string
+  model: string
+  effort: string
+}
+
 export type WorkflowGraphNodeData = {
   kind: 'workflow-step'
   flowId: string
@@ -67,7 +73,7 @@ export type WorkflowGraphNodeData = {
   agentInteraction?: 'toggle' | 'view-result'
   inheritedFromStepId?: string
   onToggleAgent?: (stepId: string, agent: string, allAgents: string[], declaredAgents?: string[]) => void
-  onConfigureAgent?: (stepId: string, instanceId: string, config: { model: string; effort: string }) => void
+  onConfigureAgent?: (stepId: string, instanceId: string, config: AgentInstanceConfiguration) => void
   onRemoveAgent?: (stepId: string, instanceId: string) => void
   onAddInstances?: (stepId: string, instances: AgentInstanceDescriptor[]) => void
   onViewAgentResult?: (node: WorkflowGraphNodeData, instanceId: string) => void

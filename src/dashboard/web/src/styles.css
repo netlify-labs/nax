@@ -1387,6 +1387,13 @@ body {
   padding: 12px;
 }
 
+.add-agent-slot {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  align-self: center;
+}
+
 .agent-chip {
   border: 1px solid color-mix(in srgb, var(--mantine-primary-color-4), transparent 16%);
   padding: 4px 10px;
@@ -1527,6 +1534,108 @@ body {
   border-color: light-dark(var(--mantine-color-gray-3), var(--mantine-color-dark-3));
 }
 
+.agent-add-popover.agent-add-popover {
+  max-width: calc(100vw - 24px);
+}
+
+.agent-add-layout {
+  display: grid;
+  grid-template-columns: 292px minmax(0, 1fr);
+  gap: var(--mantine-spacing-lg);
+  align-items: start;
+}
+
+.agent-add-fields {
+  min-width: 0;
+}
+
+.agent-add-presets {
+  min-width: 0;
+  padding-left: var(--mantine-spacing-md);
+  border-left: 1px solid light-dark(var(--mantine-color-gray-3), var(--mantine-color-dark-3));
+}
+
+.agent-add-presets-heading {
+  display: grid;
+  gap: 2px;
+  margin-bottom: 2px;
+}
+
+.agent-preset-card {
+  appearance: none;
+  width: 100%;
+  min-width: 0;
+  display: grid;
+  grid-template-columns: 32px minmax(0, 1fr);
+  gap: 10px;
+  align-items: center;
+  padding: 9px 11px;
+  border: 1px solid light-dark(var(--mantine-color-gray-3), var(--mantine-color-dark-3));
+  border-radius: var(--mantine-radius-md);
+  background: light-dark(
+    color-mix(in srgb, var(--mantine-color-white), var(--mantine-primary-color-0) 18%),
+    color-mix(in srgb, var(--mantine-color-dark-6), var(--mantine-primary-color-9) 10%)
+  );
+  color: var(--mantine-color-text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: border-color 120ms ease, background-color 120ms ease, box-shadow 120ms ease, transform 120ms ease;
+}
+
+.agent-preset-card:hover:not(:disabled) {
+  border-color: color-mix(in srgb, var(--mantine-primary-color-5), transparent 30%);
+  background: light-dark(
+    color-mix(in srgb, var(--mantine-color-white), var(--mantine-primary-color-0) 42%),
+    color-mix(in srgb, var(--mantine-color-dark-5), var(--mantine-primary-color-8) 16%)
+  );
+  box-shadow: 0 6px 18px color-mix(in srgb, var(--mantine-primary-color-9), transparent 88%);
+  transform: translateY(-1px);
+}
+
+.agent-preset-card:focus-visible {
+  outline: 2px solid var(--mantine-primary-color-5);
+  outline-offset: 2px;
+}
+
+.agent-preset-card:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.agent-preset-icon {
+  width: 32px;
+  height: 32px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--mantine-radius-md);
+  background: color-mix(in srgb, var(--mantine-primary-color-5), transparent 86%);
+  color: light-dark(var(--mantine-primary-color-7), var(--mantine-primary-color-3));
+}
+
+.agent-preset-copy {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+
+.agent-preset-title {
+  overflow: hidden;
+  color: var(--mantine-color-text);
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1.2;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.agent-preset-description {
+  color: var(--mantine-color-dimmed);
+  font-size: 10.5px;
+  line-height: 1.25;
+}
+
 .agent-config-remove.agent-config-remove {
   position: absolute;
   z-index: 1;
@@ -1582,6 +1691,23 @@ body {
   width: 20px;
   height: 20px;
   color: var(--mantine-primary-color-3);
+}
+
+.agent-selection-option {
+  width: 100%;
+  min-width: 0;
+}
+
+.agent-selection-option-label {
+  min-width: 0;
+  flex: 1;
+}
+
+.agent-selection-option-note {
+  flex: 0 0 auto;
+  color: var(--mantine-color-dimmed);
+  font-weight: 600;
+  white-space: nowrap;
 }
 
 /* Lift the chip and its caret together on hover so they never detach. */
@@ -1752,10 +1878,6 @@ body {
   align-items: center;
   justify-content: center;
   margin: -4px 12px 12px;
-}
-
-.node-footer > .add-agent-button {
-  align-self: center;
 }
 
 .inherited-lineup-note {
@@ -1950,6 +2072,18 @@ body {
 }
 
 @media (max-width: 720px) {
+  .agent-add-layout {
+    grid-template-columns: minmax(0, 1fr);
+    gap: var(--mantine-spacing-md);
+  }
+
+  .agent-add-presets {
+    padding-top: var(--mantine-spacing-md);
+    padding-left: 0;
+    border-top: 1px solid light-dark(var(--mantine-color-gray-3), var(--mantine-color-dark-3));
+    border-left: 0;
+  }
+
   .run-controls {
     grid-template-columns: minmax(0, 1fr);
   }

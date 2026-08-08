@@ -87,11 +87,37 @@ body {
   background: light-dark(var(--mantine-color-gray-0), var(--mantine-color-dark-8));
 }
 
+.workflow-sidebar {
+  display: flex;
+  flex-direction: column;
+}
+
+.sidebar-agent-action {
+  flex: 0 0 auto;
+  padding: var(--mantine-spacing-sm);
+  border-bottom: 1px solid var(--mantine-color-default-border);
+}
+
+.sidebar-agent-run {
+  width: 100%;
+  border: 1px solid color-mix(in srgb, var(--mantine-color-violet-5), transparent 68%);
+  border-radius: var(--mantine-radius-sm);
+}
+
+.workflow-sidebar > .panel-header {
+  flex: 0 0 auto;
+}
+
 .workflow-list-scroll,
 .inspector-scroll,
 .run-list-scroll {
   height: calc(100% - 46px);
   min-height: 0;
+}
+
+.workflow-list-scroll {
+  flex: 1 1 auto;
+  height: auto;
 }
 
 .workflow-item {
@@ -107,7 +133,7 @@ body {
 }
 
 .header-branch {
-  width: 150px;
+  width: 190px;
 }
 
 .header-title-group {
@@ -1222,6 +1248,11 @@ body {
   box-shadow: 0 0 0 2px color-mix(in srgb, var(--mantine-color-yellow-4), transparent 72%), 0 16px 34px rgba(0, 0, 0, 0.3);
 }
 
+.workflow-node.status-completed_with_failures {
+  border-color: var(--mantine-color-orange-5);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--mantine-color-orange-5), transparent 72%), 0 16px 34px rgba(0, 0, 0, 0.3);
+}
+
 .workflow-node.status-completed,
 .workflow-node.status-dry-run {
   border-color: color-mix(in srgb, var(--mantine-color-green-4), transparent 20%);
@@ -1315,6 +1346,22 @@ body {
   font-weight: 700;
 }
 
+.node-state-badge {
+  border: 1px solid var(--mantine-color-default-border);
+  border-radius: 999px;
+  padding: 1px 6px;
+  color: var(--mantine-color-dimmed);
+  font-size: 10px;
+  font-weight: 800;
+  line-height: 1.4;
+  text-transform: uppercase;
+}
+
+.node-state-badge.status-completed_with_failures {
+  border-color: var(--mantine-color-orange-5);
+  color: light-dark(var(--mantine-color-orange-9), var(--mantine-color-orange-2));
+}
+
 .node-status-line.follow-up {
   color: var(--mantine-color-text);
 }
@@ -1338,6 +1385,10 @@ body {
   align-items: stretch;
   gap: 8px;
   padding: 12px;
+}
+
+.agent-row > .add-agent-button {
+  align-self: center;
 }
 
 .agent-chip {
@@ -1400,6 +1451,15 @@ body {
   background: color-mix(in srgb, var(--mantine-color-red-5), transparent 88%);
   color: light-dark(var(--mantine-color-red-9), var(--mantine-color-red-1));
   box-shadow: 0 0 0 1px color-mix(in srgb, var(--mantine-color-red-5), transparent 74%), 0 0 18px color-mix(in srgb, var(--mantine-color-red-5), transparent 86%);
+}
+
+.agent-chip-status {
+  color: currentColor;
+  font-size: 9px;
+  font-weight: 800;
+  line-height: 1.1;
+  opacity: 0.82;
+  text-transform: uppercase;
 }
 
 .agent-chip:hover {
@@ -1480,6 +1540,63 @@ body {
   border-color: light-dark(var(--mantine-color-gray-3), var(--mantine-color-dark-3));
 }
 
+.agent-config-remove.agent-config-remove {
+  position: absolute;
+  z-index: 1;
+  top: 10px;
+  right: 10px;
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.agent-provider-select-logo,
+.agent-provider-option-logo,
+.agent-provider-option-check {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+}
+
+.agent-provider-select-logo {
+  width: 20px;
+  height: 20px;
+  color: light-dark(var(--mantine-color-dark-8), var(--mantine-color-gray-1));
+}
+
+.agent-provider-select-logo .agent-icon,
+.agent-provider-option-logo .agent-icon {
+  width: 17px;
+  height: 17px;
+}
+
+.agent-provider-option-content {
+  width: 100%;
+  min-width: 0;
+}
+
+.agent-provider-option-logo {
+  width: 24px;
+  height: 24px;
+  color: light-dark(var(--mantine-color-dark-6), var(--mantine-color-gray-2));
+}
+
+.agent-provider-option-content[data-checked='true'] .agent-provider-option-logo,
+.agent-provider-option-content[data-checked='true'] .agent-provider-option-check {
+  color: var(--mantine-primary-color-3);
+}
+
+.agent-provider-option-label {
+  min-width: 0;
+  flex: 1;
+}
+
+.agent-provider-option-check {
+  width: 20px;
+  height: 20px;
+  color: var(--mantine-primary-color-3);
+}
+
 /* Lift the chip and its caret together on hover so they never detach. */
 .agent-chip-wrap:hover {
   transform: translateY(-1px);
@@ -1557,6 +1674,14 @@ body {
 .agent-chip-caret:focus-visible {
   outline: 2px solid var(--mantine-primary-color-5);
   outline-offset: 2px;
+}
+
+.inherited-lineup-note {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  margin: -4px 12px 12px;
 }
 
 .agent-icon {
@@ -1763,21 +1888,6 @@ body {
   }
 
   .header-netlify-target .mantine-Button-section {
-    margin-inline: 0;
-  }
-
-  .header-agent-run {
-    width: 32px;
-    min-width: 32px;
-    max-width: 32px;
-    padding-inline: 0;
-  }
-
-  .header-agent-run .mantine-Button-label {
-    display: none;
-  }
-
-  .header-agent-run .mantine-Button-section {
     margin-inline: 0;
   }
 

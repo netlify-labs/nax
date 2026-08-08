@@ -12,6 +12,38 @@ This glossary defines `nax` terms as they are used in the CLI, workflow files, d
 The execution provider selected by `agent` or `agents`: `claude`, `codex`,
 `gemini`, or `opencode`.
 
+## Agent instance
+
+One execution tuple: provider, optional model, and optional effort. Every
+instance creates one Agent Runner run. A step may contain several instances of
+the same provider.
+
+## Instance id
+
+The stable tuple key `provider:model:effort`, with `auto` for omitted fields,
+for example `claude:claude-opus-5:high` or `codex:auto:auto`. Display labels are
+not part of identity.
+
+## Lineup
+
+The ordered set of instances assigned to a step. Plural `models` and `efforts`
+fan out into a cartesian lineup.
+
+## Fan-out
+
+Expansion of one lineup declaration into independent instances. Model
+bake-offs and effort sweeps are both fan-out shapes.
+
+## Lineage
+
+The `(sourceStepId, instanceId)` link used to continue the correct runner
+session in a follow-up step.
+
+## Model alias
+
+`latest` or `default`, resolved to a provider's configured default model when a
+fresh run launches. Retry and resume reuse the recorded concrete model.
+
 ## Model
 
 A real provider-specific model ID, such as `claude-opus-4-8`,
@@ -61,6 +93,12 @@ One concrete agent result within a runner.
 ## Step
 
 One ordered unit inside a flow. A step can submit issues, comments, follow-ups, or a human review gate.
+
+## Completed with failures
+
+A terminal step state where at least one instance succeeded and at least one
+exhausted its retry budget. Surviving instances may continue downstream. If all
+instances fail, the step fails and the workflow halts.
 
 ## Transport
 

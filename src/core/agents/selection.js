@@ -1,4 +1,5 @@
-const { DEFAULT_AGENT_PROVIDERS } = require('../constants')
+const { SUPPORTED_AGENT_PROVIDERS } = require('./configuration')
+const { formatAgentInstanceSpec, parseAgentInstanceList } = require('./instances')
 
 /**
  * Parsed agent-provider override for one workflow step.
@@ -125,7 +126,7 @@ function parseStepAgentsEntries(entries) {
 /** @param {unknown} stepAgents @returns {string[]} */
 function stepAgentsToEntries(stepAgents) {
   return Object.entries(normalizeStepAgents(stepAgents))
-    .map(([stepId, agents]) => `${stepId}=${agents.join(',')}`)
+    .map(([stepId, agents]) => `${stepId}=${parseAgentInstanceList(agents).map(formatAgentInstanceSpec).join(',')}`)
 }
 
 /** @param {import('../../types').WorkflowFlow} [flow] @returns {Set<string>} */
@@ -143,7 +144,7 @@ function flowAgentSet(flow = {}) {
  * @param {AgentSelectionValidationOptions} [options]
  * @returns {AgentSelectionValidationError[]}
  */
-function flowDeclaredAgentValidationErrors(flow = {}, { knownAgents = DEFAULT_AGENT_PROVIDERS } = {}) {
+function flowDeclaredAgentValidationErrors(flow = {}, { knownAgents = SUPPORTED_AGENT_PROVIDERS } = {}) {
   const errors = []
   const known = new Set(normalizeAgentList(knownAgents))
   const knownLabel = [...known].join(', ') || 'none'
@@ -177,7 +178,19 @@ function flowDeclaredAgentValidationErrors(flow = {}, { knownAgents = DEFAULT_AG
 function selectionValidationErrors(flow = {}, selection = {}, options = {}) {
   const errors = flowDeclaredAgentValidationErrors(flow, options)
   const flowAgents = flowAgentSet(flow)
-  for (const agent of normalizeAgentList(selection.agents)) {
+  let selectedInstances = []
+  try {
+    selectedInstances = parseAgentInstanceList(selection.agents)
+  } catch (error) {
+    if (error && typeof error === 'object' && error.code === 'unsupported_agent') {
+      const match = String(error.message || '').match(/"([^"]+)"/)
+      errors.push({ code: 'invalid_agent', message: `Unknown agent "${match?.[1] || 'unknown'}" for flow "${flow.id}".` })
+      selectedInstances = []
+    } else {
+      throw error
+    }
+  }
+  for (const { agent } of selectedInstances) {
     if (!flowAgents.has(agent)) {
       errors.push({ code: 'invalid_agent', message: `Unknown agent "${agent}" for flow "${flow.id}".` })
     }
@@ -191,7 +204,21 @@ function selectionValidationErrors(flow = {}, selection = {}, options = {}) {
       continue
     }
     const stepAgents = new Set(normalizeAgentList(step.agents))
-    for (const agent of agents) {
+    let selectedStepInstances = []
+    try {
+      selectedStepInstances = parseAgentInstanceList(agents)
+    } catch (error) {
+      if (error && typeof error === 'object' && error.code === 'unsupported_agent') {
+        const match = String(error.message || '').match(/"([^"]+)"/)
+        errors.push({
+          code: 'invalid_step_agent',
+          message: `Agent "${match?.[1] || 'unknown'}" is not configured for step "${stepId}" in flow "${flow.id}".`,
+        })
+        continue
+      }
+      throw error
+    }
+    for (const { agent } of selectedStepInstances) {
       if (!stepAgents.has(agent)) {
         errors.push({
           code: 'invalid_step_agent',
@@ -225,31 +252,39 @@ function assertValidAgentSelection(flow, selection = {}, options = {}) {
  * @returns {import('../../types').WorkflowFlow}
  */
 function applyAgentSelection(flow = {}, selection = {}) {
-  const globalAgents = normalizeAgentList(selection.agents)
-  const globalSelected = globalAgents.length > 0 ? new Set(globalAgents) : null
+  const globalLineup = parseAgentInstanceList(selection.agents)
+  const globalSelected = globalLineup.length > 0 ? new Set(globalLineup.map((entry) => entry.agent)) : null
   const stepAgents = normalizeStepAgents(selection.stepAgents)
   const hasStepOverride = (stepId) => Object.prototype.hasOwnProperty.call(stepAgents, stepId)
 
   if (!globalSelected && Object.keys(stepAgents).length === 0) return flow
 
+  const originalDefaultAgents = normalizeAgentList(flow.defaults?.agents)
+  const defaultLineup = globalSelected
+    ? globalLineup.filter((entry) => originalDefaultAgents.includes(entry.agent))
+    : (Array.isArray(flow.defaults?.lineup) ? flow.defaults.lineup : originalDefaultAgents)
+  const defaultAgents = [...new Set(defaultLineup.map((entry) => typeof entry === 'string' ? entry : String(entry.agent || '')).filter(Boolean))]
+
   return {
     ...flow,
     defaults: {
       ...flow.defaults,
-      agents: globalSelected
-        ? normalizeAgentList(flow.defaults?.agents).filter((agent) => globalSelected.has(agent))
-        : normalizeAgentList(flow.defaults?.agents),
+      agents: defaultAgents,
+      lineup: defaultLineup,
     },
     steps: (flow.steps || []).map((step) => {
       const originalAgents = normalizeAgentList(step.agents)
-      const agents = hasStepOverride(step.id)
-        ? stepAgents[step.id].filter((agent) => originalAgents.includes(agent))
+      const selectedLineup = hasStepOverride(step.id)
+        ? parseAgentInstanceList(stepAgents[step.id]).filter((entry) => originalAgents.includes(entry.agent))
         : globalSelected
-          ? originalAgents.filter((agent) => globalSelected.has(agent))
-          : originalAgents
+          ? globalLineup.filter((entry) => originalAgents.includes(entry.agent))
+          : null
+      const lineup = selectedLineup || (Array.isArray(step.lineup) ? step.lineup : originalAgents)
+      const agents = [...new Set(lineup.map((entry) => typeof entry === 'string' ? entry : String(entry.agent || '')).filter(Boolean))]
       return {
         ...step,
         agents,
+        lineup,
       }
     }),
   }

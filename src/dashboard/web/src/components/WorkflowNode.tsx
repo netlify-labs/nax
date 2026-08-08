@@ -1,25 +1,35 @@
-// Workflow step card: renders provider chips, ghost chips for undeclared providers, and per-step model/effort config.
-// Each active chip exposes a caret popover to pin a model and reasoning effort for that step.
 import { memo, useEffect, useState } from 'react'
 import { Handle, Position, type NodeProps } from '@xyflow/react'
-import { Popover, Text } from '@mantine/core'
-import { ChevronDown, UserCheck } from 'lucide-react'
+import { Button, Group, Popover, Text } from '@mantine/core'
+import { ChevronDown, LockKeyhole, Trash2, UserCheck } from 'lucide-react'
+
+import { MAX_STEP_AGENT_INSTANCES, instanceDisplayName } from '../agent-instances'
 import { agentLabel, statusLabel } from '../run-format'
 import { isActiveStatus, isCompletedStatus } from '../status-model'
-import type { WorkflowGraphNodeData } from '../types'
+import type { AgentInstanceDescriptor, WorkflowGraphNodeData } from '../types'
 import { useAgentCatalog } from '../agent-catalog-context'
+import { AddAgentInstances } from './AddAgentInstances'
 import { AgentIcon } from './AgentIcon'
 import { ModelEffortFields, describeAgentConfig } from './ModelEffortFields'
 
-function hasCompletedRun(node: WorkflowGraphNodeData, agent: string): boolean {
-  return node.runs.some((run) => (
-    String(run.agent || '') === agent && isCompletedStatus(String(run.status || ''))
-  ))
+function hasCompletedRun(node: WorkflowGraphNodeData, instance: AgentInstanceDescriptor): boolean {
+  return node.runs.some((run) => {
+    const runInstanceId = String(run.instanceId || '')
+    const matches = runInstanceId
+      ? runInstanceId === instance.id
+      : String(run.agent || '') === instance.agent && !instance.model && !instance.effort
+    return matches && isCompletedStatus(String(run.status || ''))
+  })
 }
 
-function agentStatusTitle(node: WorkflowGraphNodeData, agent: string, active: boolean, status: string, hasResult: boolean): string {
-  const label = agentLabel(agent)
-  if (node.agentInteraction !== 'view-result') return `${active ? 'Disable' : 'Enable'} ${label} for ${node.title}`
+function instanceStatusTitle(
+  node: WorkflowGraphNodeData,
+  instance: AgentInstanceDescriptor,
+  status: string,
+  hasResult: boolean,
+): string {
+  const label = `${agentLabel(instance.agent)} ${instanceDisplayName(instance)}`
+  if (node.agentInteraction !== 'view-result') return `Configure ${label} for ${node.title}`
   if (hasResult) return `View ${label} result for ${node.title}`
   if (isActiveStatus(status)) return `${label} is in progress; view available run details`
   if (status === 'abandoned') return `${label} was abandoned after cancellation; view available run details`
@@ -27,8 +37,8 @@ function agentStatusTitle(node: WorkflowGraphNodeData, agent: string, active: bo
   return `View ${label} details for ${node.title}`
 }
 
-function agentIsDone(node: WorkflowGraphNodeData, agent: string): boolean {
-  return isCompletedStatus(node.agentStatuses?.[agent] || '') || hasCompletedRun(node, agent)
+function instanceIsDone(node: WorkflowGraphNodeData, instance: AgentInstanceDescriptor): boolean {
+  return isCompletedStatus(node.agentStatuses?.[instance.id] || '') || hasCompletedRun(node, instance)
 }
 
 function countStateLabel(count: number, state: string, total?: number): string {
@@ -36,50 +46,44 @@ function countStateLabel(count: number, state: string, total?: number): string {
   return `${count} ${state}`
 }
 
-function nodeProgressLabel(node: WorkflowGraphNodeData, selectedAgents: Set<string>): string {
+function nodeProgressLabel(node: WorkflowGraphNodeData, instances: AgentInstanceDescriptor[]): string {
   if (node.status === 'booting') return 'Booting up'
-  const activeAgents = node.agents.filter((agent) => selectedAgents.has(agent))
-  if (activeAgents.length === 0) return ''
-  const completedCount = activeAgents.filter((agent) => agentIsDone(node, agent)).length
+  if (instances.length === 0) return ''
+  const completedCount = instances.filter((instance) => instanceIsDone(node, instance)).length
   if (isActiveStatus(node.status || '')) {
-    const runningCount = activeAgents.length - completedCount
+    const runningCount = instances.length - completedCount
     return [
-      completedCount > 0 ? countStateLabel(completedCount, 'completed', activeAgents.length) : '',
+      completedCount > 0 ? countStateLabel(completedCount, 'completed', instances.length) : '',
       runningCount > 0 ? countStateLabel(runningCount, 'running') : '',
     ].filter(Boolean).join(', ')
   }
-  if (isCompletedStatus(node.status || '')) return countStateLabel(completedCount, 'completed', activeAgents.length)
+  if (isCompletedStatus(node.status || '')) return countStateLabel(completedCount, 'completed', instances.length)
   return ''
 }
 
 export const WorkflowNode = memo(function WorkflowNode({ data, selected }: NodeProps) {
   const node = data as WorkflowGraphNodeData
   const catalogContext = useAgentCatalog()
-  const [configAgent, setConfigAgent] = useState<string | null>(null)
+  const [configInstanceId, setConfigInstanceId] = useState<string | null>(null)
+  const [draftConfig, setDraftConfig] = useState({ model: 'auto', effort: 'auto' })
 
-  // React Flow stops propagation on pane pointer events, which defeats Mantine's outside-click
-  // close. A capture-phase listener fires first, so clicking anywhere but the popover closes it.
   useEffect(() => {
-    if (!configAgent) return undefined
+    if (!configInstanceId) return undefined
     const closeOnOutsidePointer = (event: PointerEvent) => {
       const target = event.target as Element | null
       if (target?.closest('.agent-config-popover') || target?.closest('.agent-chip-caret')) return
-      setConfigAgent(null)
+      setConfigInstanceId(null)
     }
     document.addEventListener('pointerdown', closeOnOutsidePointer, true)
     return () => document.removeEventListener('pointerdown', closeOnOutsidePointer, true)
-  }, [configAgent])
-  const selectedAgents = new Set(node.selectedAgents || node.agents)
+  }, [configInstanceId])
+
+  const selectedInstances = node.selectedAgents || node.instances
   const statusClass = node.status ? ` status-${node.status}` : ''
   const humanReview = node.action === 'human-review' || node.submit === 'human-review'
-  const progressLabel = humanReview ? '' : nodeProgressLabel(node, selectedAgents)
-
-  const configurable = node.agentInteraction !== 'view-result'
-  const declaredAgents = node.agents
-  const extraProviders = configurable
-    ? (catalogContext?.supportedProviders || []).filter((provider) => !declaredAgents.includes(provider))
-    : []
-  const renderOrder = [...declaredAgents, ...extraProviders]
+  const inherited = Boolean(node.inheritedFromStepId)
+  const progressLabel = humanReview ? '' : nodeProgressLabel(node, selectedInstances)
+  const configurable = node.agentInteraction !== 'view-result' && !inherited
   const githubTransport = catalogContext?.transport === 'github' || catalogContext?.transport === 'github-actions'
   const canConfigure = configurable && Boolean(catalogContext) && Boolean(node.onConfigureAgent)
 
@@ -91,6 +95,9 @@ export const WorkflowNode = memo(function WorkflowNode({ data, selected }: NodeP
           <div className="node-kicker-row">
             <span className="node-kicker">Step {node.number}</span>
             {progressLabel ? <span className="node-progress-label">- {progressLabel}</span> : null}
+            {node.status && node.status !== 'pending' ? (
+              <span className={`node-state-badge status-${node.status}`}>{statusLabel(node.status)}</span>
+            ) : null}
           </div>
           <span className={`node-status-line ${humanReview ? 'human-review' : node.submit === 'follow-up' ? 'follow-up' : 'new-run'}`}>
             <span className="action-badge">{node.submitLabel || node.submit || node.action}</span>
@@ -105,47 +112,37 @@ export const WorkflowNode = memo(function WorkflowNode({ data, selected }: NodeP
             <UserCheck size={14} />
             <span>{node.status === 'awaiting_review' ? 'Awaiting review' : 'Human review'}</span>
           </span>
-        ) : renderOrder.map((agent) => {
-          const active = selectedAgents.has(agent)
-          const isExtra = !declaredAgents.includes(agent)
-          const isGhost = isExtra && !active
-          const agentStatus = active ? node.agentStatuses?.[agent] || '' : ''
-          const hasResult = hasCompletedRun(node, agent)
-          const model = node.models?.[agent] || 'auto'
-          const effort = node.efforts?.[agent] || 'auto'
-          const config = catalogContext ? describeAgentConfig(catalogContext.catalog, agent, model, effort) : { modelLabel: '', effortLabel: '' }
-          const showCaret = canConfigure && active
+        ) : selectedInstances.map((instance) => {
+          const agentStatus = node.agentStatuses?.[instance.id] || instance.status || ''
+          const hasResult = hasCompletedRun(node, instance)
+          const model = instance.model || 'auto'
+          const effort = instance.effort || 'auto'
+          const config = catalogContext
+            ? describeAgentConfig(catalogContext.catalog, instance.agent, model, effort)
+            : { modelLabel: instanceDisplayName(instance), effortLabel: instance.effort || '' }
           return (
-            <div className="agent-chip-wrap" key={agent}>
+            <div className="agent-chip-wrap" key={instance.id}>
               <button
-                className={`agent-chip ${agent}${active ? '' : ' inactive'}${isGhost ? ' ghost' : ''}${agentStatus ? ` agent-${agentStatus}` : ''}`}
+                className={`agent-chip ${instance.agent}${agentStatus ? ` agent-${agentStatus}` : ''}`}
                 type="button"
-                aria-pressed={active}
-                title={isGhost ? `Add ${agentLabel(agent)} to ${node.title}` : agentStatusTitle(node, agent, active, agentStatus, hasResult)}
+                title={instanceStatusTitle(node, instance, agentStatus, hasResult)}
                 onClick={(event) => {
                   event.stopPropagation()
-                  if (node.agentInteraction === 'view-result' && node.onViewAgentResult) {
-                    node.onViewAgentResult?.(node, agent)
-                    return
-                  }
-                  node.onToggleAgent?.(node.stepId, agent, renderOrder, declaredAgents)
+                  if (node.agentInteraction === 'view-result') node.onViewAgentResult?.(node, instance.id)
                 }}
               >
-                <AgentIcon agent={agent} />
+                <AgentIcon agent={instance.agent} />
                 <span className="agent-chip-label">
-                  <span className="agent-chip-name">{agentLabel(agent)}</span>
-                  {config.modelLabel ? (
-                    <span className="agent-chip-config">{config.modelLabel}</span>
-                  ) : null}
-                  {config.effortLabel ? (
-                    <span className="agent-chip-effort">{config.effortLabel}</span>
-                  ) : null}
+                  <span className="agent-chip-name">{agentLabel(instance.agent)}</span>
+                  <span className="agent-chip-config">{config.modelLabel || 'Auto'}</span>
+                  {config.effortLabel ? <span className="agent-chip-effort">{config.effortLabel}</span> : null}
+                  {agentStatus ? <span className="agent-chip-status">{statusLabel(agentStatus)}</span> : null}
                 </span>
               </button>
-              {showCaret ? (
+              {canConfigure ? (
                 <Popover
-                  opened={configAgent === agent}
-                  onChange={(opened) => setConfigAgent(opened ? agent : null)}
+                  opened={configInstanceId === instance.id}
+                  onChange={(opened) => setConfigInstanceId(opened ? instance.id : null)}
                   position="bottom-end"
                   width={260}
                   withArrow
@@ -157,41 +154,79 @@ export const WorkflowNode = memo(function WorkflowNode({ data, selected }: NodeP
                   <Popover.Target>
                     <button
                       type="button"
-                      className="agent-chip-caret"
-                      aria-label={`Configure ${agentLabel(agent)} for ${node.title}`}
-                      title={`Configure ${agentLabel(agent)} model and effort`}
+                      className="agent-chip-caret nodrag nopan"
+                      aria-label={`Configure ${agentLabel(instance.agent)} ${instanceDisplayName(instance)} for ${node.title}`}
                       onClick={(event) => {
                         event.stopPropagation()
-                        setConfigAgent((current) => (current === agent ? null : agent))
+                        setDraftConfig({ model, effort })
+                        setConfigInstanceId((current) => current === instance.id ? null : instance.id)
                       }}
                     >
                       <ChevronDown size={13} />
                     </button>
                   </Popover.Target>
                   <Popover.Dropdown className="agent-config-popover" onClick={(event) => event.stopPropagation()}>
+                    <Button
+                      className="agent-config-remove"
+                      size="compact-xs"
+                      variant="subtle"
+                      color="red"
+                      leftSection={<Trash2 size={12} />}
+                      aria-label={`Remove ${agentLabel(instance.agent)} ${instanceDisplayName(instance)} from ${node.title}`}
+                      onClick={() => {
+                        node.onRemoveAgent?.(node.stepId, instance.id)
+                        setConfigInstanceId(null)
+                      }}
+                    >
+                      Remove agent
+                    </Button>
                     {githubTransport ? (
-                      <Text size="xs" c="dimmed">
-                        Model and effort require the Netlify API transport. GitHub Actions supports provider selection only.
+                      <Text size="xs" c="dimmed" mb="xs">
+                        Model and effort require the Netlify API transport.
                       </Text>
                     ) : null}
                     <ModelEffortFields
                       catalog={catalogContext!.catalog}
-                      agent={agent}
-                      model={model}
-                      effort={effort}
+                      agent={instance.agent}
+                      model={configInstanceId === instance.id ? draftConfig.model : model}
+                      effort={configInstanceId === instance.id ? draftConfig.effort : effort}
                       disabled={githubTransport}
                       withinPortal={false}
-                      onChange={({ model: nextModel, effort: nextEffort }) => {
-                        node.onConfigureAgent?.(node.stepId, agent, { model: nextModel, effort: nextEffort })
-                      }}
+                      onChange={setDraftConfig}
                     />
+                    <Group justify="flex-end" gap="xs" mt="sm">
+                      <Button size="xs" variant="subtle" color="gray" onClick={() => setConfigInstanceId(null)}>Cancel</Button>
+                      <Button
+                        size="xs"
+                        disabled={githubTransport}
+                        onClick={() => {
+                          node.onConfigureAgent?.(node.stepId, instance.id, draftConfig)
+                          setConfigInstanceId(null)
+                        }}
+                      >
+                        Save
+                      </Button>
+                    </Group>
                   </Popover.Dropdown>
                 </Popover>
               ) : null}
             </div>
           )
         })}
+        {!humanReview && configurable && catalogContext ? (
+          <AddAgentInstances
+            catalog={catalogContext.catalog}
+            disabled={selectedInstances.length >= MAX_STEP_AGENT_INSTANCES}
+            maxInstances={MAX_STEP_AGENT_INSTANCES - selectedInstances.length}
+            onAdd={(instances) => node.onAddInstances?.(node.stepId, instances)}
+          />
+        ) : null}
       </div>
+      {inherited && node.agentInteraction !== 'view-result' ? (
+        <Text className="inherited-lineup-note" size="xs" c="dimmed">
+          <LockKeyhole size={12} /> Inherits surviving instances from {node.inheritedFromStepId}
+        </Text>
+      ) : null}
       <Handle className="hidden-handle workflow-source-handle" type="source" position={Position.Bottom} />
     </div>
   )

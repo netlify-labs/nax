@@ -1,0 +1,12 @@
+id: mi-bakeoff
+title: Bake-off
+defaults: { transport: auto, notify: false }
+steps:
+  - id: task
+    title: Task
+    prompt: prompts/task.md
+    action: issue
+    submit: new-run
+    agents:
+      - { agent: claude, models: [claude-opus-5, claude-opus-4-8, claude-fable-5] }
+    waitFor: agent-results

@@ -4,6 +4,8 @@ const fs = require('fs')
 const os = require('os')
 const path = require('path')
 const { spawnSync } = require('child_process')
+const { listFlows } = require('../../src/workflows/catalog/flows')
+const { resolveLineup } = require('../../src/core/agents/instances')
 
 const NAX_BIN = path.join(__dirname, '..', '..', 'src', 'cli', 'nax.js')
 
@@ -93,6 +95,63 @@ function flowSource(format, id, title) {
   throw new Error(`Unsupported test format: ${format}`)
 }
 
+function arenaFlowObject(id, title) {
+  return {
+    id,
+    title,
+    steps: [{
+      id: 'one',
+      title: 'One',
+      prompt: 'prompts/one.md',
+      agents: [
+        { agent: 'claude', models: ['claude-opus-5', 'claude-opus-4-8'] },
+        { agent: 'codex', model: 'gpt-5.6-sol', efforts: ['medium', 'high'] },
+      ],
+    }],
+  }
+}
+
+function arenaFlowSource(format, id, title) {
+  const flow = arenaFlowObject(id, title)
+  if (format === 'yml') {
+    return [
+      `id: ${id}`,
+      `title: ${title}`,
+      'steps:',
+      '  - id: one',
+      '    title: One',
+      '    prompt: prompts/one.md',
+      '    agents:',
+      '      - agent: claude',
+      '        models: [claude-opus-5, claude-opus-4-8]',
+      '      - agent: codex',
+      '        model: gpt-5.6-sol',
+      '        efforts: [medium, high]',
+      '',
+    ].join('\n')
+  }
+  if (format === 'json') return `${JSON.stringify(flow, null, 2)}\n`
+  if (format === 'toml') {
+    return [
+      `id = "${id}"`,
+      `title = "${title}"`,
+      '',
+      '[[steps]]',
+      'id = "one"',
+      'title = "One"',
+      'prompt = "prompts/one.md"',
+      'agents = [',
+      '  { agent = "claude", models = ["claude-opus-5", "claude-opus-4-8"] },',
+      '  { agent = "codex", model = "gpt-5.6-sol", efforts = ["medium", "high"] }',
+      ']',
+      '',
+    ].join('\n')
+  }
+  if (format === 'js') return `module.exports = ${JSON.stringify(flow, null, 2)}\n`
+  if (format === 'ts') return `export default ${JSON.stringify(flow, null, 2)}\n`
+  throw new Error(`Unsupported test format: ${format}`)
+}
+
 function configSource(format, flowsDir) {
   const config = { flowsDirs: [flowsDir] }
   if (format === 'yml') {
@@ -151,6 +210,27 @@ const SYNTAX_CASES = [
   { label: 'JavaScript', extension: 'js' },
   { label: 'TypeScript', extension: 'ts' },
 ]
+
+test('multi-instance lineups normalize identically across supported syntaxes', async (t) => {
+  const expectedIds = [
+    'claude:claude-opus-5:auto',
+    'claude:claude-opus-4-8:auto',
+    'codex:gpt-5.6-sol:medium',
+    'codex:gpt-5.6-sol:high',
+  ]
+  for (const { label, extension } of SYNTAX_CASES) {
+    await t.test(label, async () => {
+      const root = tmpRoot()
+      const flowId = `arena-${extension}`
+      writeFlow(root, 'flows', flowId, `flow.${extension}`, arenaFlowSource(extension, flowId, `${label} Arena`))
+      const flow = (await listFlows({ flowsDir: path.join(root, 'flows') })).find((candidate) => candidate.id === flowId)
+      assert.ok(flow, `${label} flow loaded`)
+      assert.deepEqual(flow.steps[0].agents, ['claude', 'codex'])
+      const resolved = resolveLineup(flow.steps[0].lineup, { requestedTransport: 'auto' })
+      assert.deepEqual(resolved.instances.map((instance) => instance.id), expectedIds)
+    })
+  }
+})
 
 test('CLI dry run loads project flow files across supported syntaxes', async (t) => {
   for (const { label, extension } of SYNTAX_CASES) {

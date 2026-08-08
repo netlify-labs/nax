@@ -42,6 +42,7 @@
     "dashboard:preview": "vite preview --config src/dashboard/web/vite.config.mjs",
     "dashboard:smoke": "playwright test tests/e2e/dashboard.spec.js",
     "probe:model-effort": "node scripts/probe-agent-runner-model-effort.mjs",
+    "canary:multi-instance": "node scripts/run-multi-instance-canary.mjs",
     "prepare": "npm run sdk:build && npm run dashboard:build",
     "prepack": "npm run dashboard:build",
     "test": "node --import tsx --test tests/unit/*.test.js tests/unit/*.test.ts tests/integration/*.test.js",

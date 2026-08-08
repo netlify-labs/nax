@@ -1,7 +1,12 @@
 const assert = require('node:assert/strict')
 const { test } = require('node:test')
 
-const { chooseSingleAgentConfigInteractively, configureAgentsInteractively } = require('../../src/cli/main')
+const {
+  addAgentInstancesInteractively,
+  chooseSingleAgentConfigInteractively,
+  configureAgentsInteractively,
+  prepareInteractiveFlowRun,
+} = require('../../src/cli/main')
 const { resolveAgentRunConfig } = require('../../src/core/agents/configuration')
 
 /**
@@ -47,6 +52,48 @@ const EMPTY_FLOW = {
     agents: ['claude', 'opencode'],
   }],
 }
+
+test('interactive Add-instance repeats a provider with flagship model and highest-effort defaults', async () => {
+  const harness = promptHarness([
+    true,
+    'claude',
+    'claude-fable-5',
+    'high',
+    false,
+  ])
+  const result = await addAgentInstancesInteractively({
+    clack: harness.clack,
+    agents: ['claude', 'codex'],
+  })
+
+  assert.deepEqual(result, [{ agent: 'claude', model: 'claude-fable-5', effort: 'high' }])
+  const providerPrompt = harness.calls.find((call) => call.input.message === 'Choose provider for the additional instance')
+  assert.equal(providerPrompt.input.initialValue, 'claude')
+  const modelPrompt = harness.calls.find((call) => call.input.message === 'Claude model')
+  assert.equal(modelPrompt.input.initialValue, 'claude-fable-5')
+  const effortPrompt = harness.calls.find((call) => call.input.message === 'Claude reasoning effort')
+  assert.equal(effortPrompt.input.initialValue, 'high')
+})
+
+test('the four-instance step limit cannot be bypassed with --force', async () => {
+  const flow = {
+    id: 'large-lineup',
+    title: 'Large lineup',
+    defaults: { agents: ['claude'], transport: 'netlify-api' },
+    steps: [{ id: 'review', title: 'Review', agents: ['claude'] }],
+  }
+  const agents = Array.from({ length: 5 }, (_, index) => `claude:future-model-${index + 1}`)
+
+  await assert.rejects(
+    prepareInteractiveFlowRun({
+      flow,
+      options: { agents, yes: true, force: true },
+      transport: 'netlify-api',
+      projectRoot: '/tmp/large-lineup',
+    }),
+    /at most 4 agent instances/,
+  )
+})
 
 test('interactive configuration keeps Auto as the one-step default', async () => {
   const harness = promptHarness([false])
@@ -186,16 +233,16 @@ test('interactive configuration preserves unknown inherited IDs and exposes canc
 })
 
 test('single-agent config defaults to the best model and its highest effort', async () => {
-  const harness = promptHarness(['claude-opus-5', 'high'])
+  const harness = promptHarness(['claude-fable-5', 'high'])
   const result = await chooseSingleAgentConfigInteractively({ clack: harness.clack, agent: 'claude' })
 
   assert.deepEqual(result, {
-    models: { claude: 'claude-opus-5' },
+    models: { claude: 'claude-fable-5' },
     efforts: { claude: 'high' },
   })
   assert.deepEqual(harness.calls.map((call) => call.kind), ['select', 'select'])
   const modelPrompt = harness.calls.find((call) => call.input.message === 'Claude model')
-  assert.equal(modelPrompt.input.initialValue, 'claude-opus-5')
+  assert.equal(modelPrompt.input.initialValue, 'claude-fable-5')
   const effortPrompt = harness.calls.find((call) => call.input.message === 'Claude reasoning effort')
   assert.equal(effortPrompt.input.initialValue, 'high')
 })

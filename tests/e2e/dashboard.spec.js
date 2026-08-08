@@ -131,7 +131,7 @@ async function computedTextColor(locator) {
 
 /**
  * @param {string} projectRoot
- * @param {{ staleRunStatus?: string, staleWorkflowStatus?: string }} [options]
+ * @param {{ staleRunStatus?: string, staleWorkflowStatus?: string, partialFailure?: boolean }} [options]
  * @returns {string}
  */
 function writeCompletedRunFixture(projectRoot, options = {}) {
@@ -143,6 +143,29 @@ function writeCompletedRunFixture(projectRoot, options = {}) {
   const runnerDir = path.join(stepDir, 'agent-runners')
   fs.mkdirSync(path.join(flowDir, 'prompts'), { recursive: true })
   fs.mkdirSync(runnerDir, { recursive: true })
+  const runs = options.partialFailure
+    ? [
+        {
+          agent: 'codex',
+          instanceId: 'codex:gpt-5.6-sol:high',
+          model: 'gpt-5.6-sol',
+          effort: 'high',
+          status: 'completed',
+          runnerId: 'runner-1',
+          sessionId: 'session-1',
+          usage: { totalCreditsCost: 7.5, totalTokens: 2150 },
+        },
+        {
+          agent: 'claude',
+          instanceId: 'claude:claude-opus-5:high',
+          model: 'claude-opus-5',
+          effort: 'high',
+          status: 'failed',
+          runnerId: 'runner-failed',
+          sessionId: 'session-failed',
+        },
+      ]
+    : [{ agent: 'codex', status: options.staleRunStatus || 'completed', runnerId: 'runner-1', sessionId: 'session-1', usage: { totalCreditsCost: 7.5, totalTokens: 2150 } }]
 
   fs.writeFileSync(path.join(flowDir, 'flow.yml'), [
     'id: review',
@@ -197,7 +220,7 @@ function writeCompletedRunFixture(projectRoot, options = {}) {
       title: 'Review',
       status: 'completed',
       agents: ['codex'],
-      runs: [{ agent: 'codex', status: options.staleRunStatus || 'completed', runnerId: 'runner-1', sessionId: 'session-1', usage: { totalCreditsCost: 7.5, totalTokens: 2150 } }],
+      runs,
     }],
   }, null, 2))
 
@@ -331,6 +354,49 @@ function writeRecentRunPageFixtures(projectRoot, count) {
 
 test('dashboard renders Review graph on desktop', async ({ page }, testInfo) => {
   await openReview(page, { width: 1360, height: 860 })
+  const sidebar = page.locator('.workflow-sidebar')
+  const runIndividualAgent = sidebar.getByRole('button', { name: 'Run an individual agent' })
+  const workflowsHeading = sidebar.getByRole('heading', { name: 'Workflows' })
+  await expect(runIndividualAgent).toBeVisible()
+  await expect(page.locator('.header-actions').getByRole('button', { name: 'Run an individual agent' })).toHaveCount(0)
+  await expect.poll(async () => {
+    const actionBox = await runIndividualAgent.boundingBox()
+    const headingBox = await workflowsHeading.boundingBox()
+    return (actionBox?.y || 0) < (headingBox?.y || 0)
+  }).toBe(true)
+  const review = page.locator('.workflow-node').filter({ hasText: 'Review' }).first()
+  await review.locator('.node-header').click()
+  await expect(review).toHaveClass(/selected/)
+
+  const viewport = page.locator('.react-flow__viewport')
+  const initialTransform = await viewport.getAttribute('style')
+  const configureClaude = review.getByRole('button', { name: 'Configure Claude Auto for Review' })
+  await configureClaude.click()
+  await expect(page.getByRole('dialog')).toBeVisible()
+  const removeClaude = page.getByRole('button', { name: 'Remove Claude Auto from Review' })
+  await expect(removeClaude).toHaveCSS('position', 'absolute')
+  await expect(removeClaude).toHaveCSS('font-size', '11px')
+  await expect.poll(() => viewport.getAttribute('style')).toBe(initialTransform)
+
+  await page.keyboard.press('Escape')
+  await configureClaude.dblclick()
+  await expect.poll(() => viewport.getAttribute('style')).toBe(initialTransform)
+  await page.keyboard.press('Escape')
+
+  for (const provider of ['Claude', 'Gemini', 'Codex', 'OpenCode']) {
+    await review.getByRole('button', { name: `Configure ${provider} Auto for Review` }).click()
+    await page.getByRole('button', { name: `Remove ${provider} Auto from Review` }).click()
+  }
+  await review.getByRole('button', { name: 'Add agent' }).click()
+  await page.getByRole('button', { name: 'All Claude models' }).click()
+  await page.getByRole('button', { name: 'Add', exact: true }).click()
+
+  const crossReview = page.locator('.workflow-node').filter({ hasText: 'Cross Review' })
+  const inheritedModels = ['Fable 5', 'Opus 5', 'Opus 4.8', 'Sonnet 5']
+  await expect(review.locator('.agent-chip-config')).toHaveText(inheritedModels)
+  await expect(crossReview.locator('.agent-chip-config')).toHaveText(inheritedModels)
+  await expect(crossReview.getByText('Inherits surviving instances from review')).toBeVisible()
+  await expect(crossReview.getByRole('button', { name: 'Add agent' })).toHaveCount(0)
   await testInfo.attach('desktop', {
     body: await page.screenshot({ fullPage: true }),
     contentType: 'image/png',
@@ -339,8 +405,14 @@ test('dashboard renders Review graph on desktop', async ({ page }, testInfo) => 
 
 test('dashboard identifies the Agent Runner target and lists every local site link', async ({ page }) => {
   await openReview(page, { width: 1360, height: 860 })
-  const targetButton = page.getByRole('button', { name: 'Agent Runner site: revenue-engine-dev' })
+  const targetButton = page.getByRole('button', { name: 'Netlify project: revenue-engine-dev' })
   await expect(targetButton).toBeVisible()
+  await expect(targetButton).toHaveText('Netlify project · revenue-engine-dev')
+  await expect(targetButton).toHaveAttribute('data-variant', 'subtle')
+  await expect(page.locator('.header-repo .lucide-folder')).toBeVisible()
+  await expect(page.locator('.header-repo .lucide-folder-git-2')).toHaveCount(0)
+  const branchSelector = page.getByRole('combobox', { name: 'Branch' })
+  await expect(branchSelector).toHaveAttribute('aria-haspopup', 'listbox')
   await targetButton.click()
   await expect(page.getByText('Locally linked sites (2)')).toBeVisible()
   await expect(page.getByText('re-notify-demo')).toBeVisible()
@@ -356,7 +428,7 @@ test('dashboard renders Review graph on narrow viewport', async ({ page }, testI
   })
 })
 
-test('dashboard submits configured workflow model and effort', async ({ page }) => {
+test('dashboard submits a configured workflow instance', async ({ page }) => {
   const projectRoot = tmpRoot()
   const runId = writeCompletedRunFixture(projectRoot)
   const server = await startDashboardServer({
@@ -385,35 +457,37 @@ test('dashboard submits configured workflow model and effort', async ({ page }) 
   try {
     await page.setViewportSize({ width: 1360, height: 860 })
     await page.goto(server.url, { waitUntil: 'networkidle' })
+    await page.getByRole('combobox', { name: 'Branch' }).fill('remote-only/review-candidate')
+    const reviewNode = page.locator('.workflow-node').first()
+    await reviewNode.getByRole('button', { name: /Configure Codex Auto/ }).click()
+    await page.getByRole('combobox', { name: 'Model' }).click()
+    await page.getByRole('option', { name: 'GPT 5.6 Sol' }).click()
+    await page.getByRole('combobox', { name: 'Reasoning effort' }).click()
+    await page.getByRole('option', { name: 'High' }).click()
+    await page.getByRole('button', { name: 'Save', exact: true }).click()
+
     await page.getByRole('button', { name: 'Run', exact: true }).click()
     const runDialog = page.getByRole('dialog', { name: 'Run Review' })
     await expect(runDialog).toBeVisible()
-    await runDialog.getByRole('button', { name: 'Configure agents' }).click()
-
-    const configDrawer = page.getByRole('dialog', { name: 'Agent configuration' })
-    await expect(configDrawer).toBeVisible()
-    await configDrawer.getByRole('tab', { name: 'Codex' }).click()
-    await configDrawer.getByRole('combobox', { name: 'Model' }).click()
-    await page.getByRole('option', { name: 'GPT 5.6 Sol' }).click()
-    await configDrawer.getByRole('combobox', { name: 'Reasoning effort' }).click()
-    await page.getByRole('option', { name: 'High' }).click()
-    await configDrawer.getByRole('button', { name: 'Save' }).click()
-    await expect(configDrawer).toBeHidden()
-
     await runDialog.getByRole('textbox', { name: 'Optional context' }).fill('Focus on authentication boundaries.')
     await runDialog.getByRole('button', { name: 'Run', exact: true }).click()
     await expect.poll(() => requests.length).toBe(1)
-    expect(requests[0]).toMatchObject({
-      context: 'Focus on authentication boundaries.',
-      models: { codex: 'gpt-5.6-sol' },
-      efforts: { codex: 'high' },
-    })
+    expect(requests[0].branch).toBe('remote-only/review-candidate')
+    expect(requests[0].context).toBe('Focus on authentication boundaries.')
+    expect(requests[0].stepAgents.review).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        agent: 'codex',
+        model: 'gpt-5.6-sol',
+        effort: 'high',
+        id: 'codex:gpt-5.6-sol:high',
+      }),
+    ]))
   } finally {
     await server.close()
   }
 })
 
-test('dashboard adds an opencode ghost chip and pins per-step model and effort from the canvas', async ({ page }) => {
+test('dashboard adds an opencode instance and pins another per-step instance from the canvas', async ({ page }) => {
   const projectRoot = tmpRoot()
   const runId = writeCompletedRunFixture(projectRoot)
   const server = await startDashboardServer({
@@ -438,18 +512,18 @@ test('dashboard adds an opencode ghost chip and pins per-step model and effort f
     await page.goto(server.url, { waitUntil: 'networkidle' })
 
     const proposeNode = page.locator('.workflow-node').filter({ hasText: 'Propose Next Task' })
-    // do-next does not declare opencode, so it is offered as a ghost chip.
-    const opencodeGhost = proposeNode.locator('.agent-chip.ghost', { hasText: 'OpenCode' })
-    await expect(opencodeGhost).toBeVisible()
-    await opencodeGhost.click()
+    await proposeNode.getByRole('button', { name: 'Add agent' }).click()
+    await page.getByRole('combobox', { name: 'Provider' }).click()
+    await page.getByRole('option', { name: 'OpenCode' }).click()
+    await page.getByRole('button', { name: 'Add', exact: true }).click()
 
     // Pin Claude's model and effort for this step via the chip caret popover.
-    await proposeNode.getByRole('button', { name: 'Configure Claude for Propose Next Task' }).click()
-    await page.getByRole('combobox', { name: 'Model' }).click()
+    await proposeNode.getByRole('button', { name: /Configure Claude Auto/ }).click()
+    await page.getByRole('combobox', { name: 'Model', exact: true }).click()
     await page.getByRole('option', { name: 'Opus 4.8' }).click()
-    await page.getByRole('combobox', { name: 'Reasoning effort' }).click()
+    await page.getByRole('combobox', { name: 'Reasoning effort', exact: true }).click()
     await page.getByRole('option', { name: 'High' }).click()
-    await page.keyboard.press('Escape')
+    await page.getByRole('button', { name: 'Save', exact: true }).click()
 
     await page.getByRole('button', { name: 'Run', exact: true }).click()
     const runDialog = page.getByRole('dialog', { name: 'Run Do Next' })
@@ -457,11 +531,146 @@ test('dashboard adds an opencode ghost chip and pins per-step model and effort f
     await runDialog.getByRole('button', { name: 'Run', exact: true }).click()
 
     await expect.poll(() => requests.length).toBe(1)
-    expect(requests[0]).toMatchObject({
-      stepAgents: { propose: ['claude', 'gemini', 'codex', 'opencode'] },
-      stepModels: { propose: { claude: 'claude-opus-4-8' } },
-      stepEfforts: { propose: { claude: 'high' } },
+    expect(requests[0].stepAgents.propose).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        agent: 'opencode',
+        model: 'moonshotai/kimi-k3',
+        effort: 'max',
+        id: 'opencode:moonshotai/kimi-k3:max',
+      }),
+      expect.objectContaining({
+        agent: 'claude',
+        model: 'claude-opus-4-8',
+        effort: 'high',
+        id: 'claude:claude-opus-4-8:high',
+      }),
+    ]))
+  } finally {
+    await server.close()
+  }
+})
+
+test('dashboard builds bake-off and effort-sweep lineups with arena presets', async ({ page }) => {
+  const projectRoot = tmpRoot()
+  const runId = writeCompletedRunFixture(projectRoot)
+  const server = await startDashboardServer({ projectRoot, initialWorkflow: 'do-next' })
+  const requests = []
+  await page.route('**/api/workflows/do-next/runs', async (route) => {
+    requests.push(route.request().postDataJSON())
+    await route.fulfill({
+      status: 202,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        workflow: { id: 'do-next', title: 'Do Next', description: '', steps: [] },
+        run: { id: runId, runId, flowId: 'do-next', flowTitle: 'Do Next', status: 'completed' },
+      }),
     })
+  })
+  try {
+    await page.setViewportSize({ width: 1360, height: 860 })
+    await page.goto(server.url, { waitUntil: 'networkidle' })
+    const proposeNode = page.locator('.workflow-node').filter({ hasText: 'Propose Next Task' })
+    await expect(proposeNode.locator('.agent-chip-config')).toHaveText(['Auto', 'Auto', 'Auto'])
+
+    // Explicitly removing every default leaves the step empty until Add agent is used.
+    for (const provider of ['Claude', 'Gemini', 'Codex']) {
+      await proposeNode.getByRole('button', { name: `Configure ${provider} Auto for Propose Next Task` }).click()
+      await page.getByRole('button', { name: `Remove ${provider} Auto from Propose Next Task` }).click()
+      await expect(proposeNode.getByRole('button', { name: `Configure ${provider} Auto for Propose Next Task` })).toHaveCount(0)
+    }
+    await expect(proposeNode.locator('.agent-chip')).toHaveCount(0)
+    await expect(proposeNode.getByRole('button', { name: 'Add agent' })).toBeVisible()
+
+    // The all-model preset takes the four strongest Claude models and drops Haiku.
+    await proposeNode.getByRole('button', { name: 'Add agent' }).click()
+    const providerInput = page.getByRole('combobox', { name: 'Provider', exact: true })
+    await expect(providerInput.locator('xpath=..').locator('.agent-provider-select-logo .agent-icon')).toBeVisible()
+    await providerInput.click()
+    const providerOptions = page.getByRole('listbox')
+    for (const provider of ['Claude', 'Gemini', 'Codex', 'OpenCode']) {
+      await expect(providerOptions.getByRole('option', { name: provider }).locator('.agent-icon')).toBeVisible()
+    }
+    await providerOptions.getByRole('option', { name: 'Claude' }).click()
+    await expect(page.locator('.mantine-Pill-label').filter({ hasText: 'Fable 5' })).toBeVisible()
+    await expect(page.locator('.mantine-Pill-label').filter({ hasText: 'High' })).toBeVisible()
+    await page.getByRole('button', { name: 'All Claude models' }).click()
+    await expect(page.getByText('Adds 4 instances.')).toBeVisible()
+    await page.getByRole('button', { name: 'Add', exact: true }).click()
+    await expect(proposeNode.locator('.agent-chip-config')).toHaveText([
+      'Fable 5',
+      'Opus 5',
+      'Opus 4.8',
+      'Sonnet 5',
+    ])
+    await expect(proposeNode.getByRole('button', { name: /Configure Claude claude-haiku-4-5/ })).toHaveCount(0)
+    const disabledAddAgent = proposeNode.getByRole('button', { name: 'Add agent' })
+    await expect(disabledAddAgent).toBeDisabled()
+    await expect(disabledAddAgent).toHaveAttribute('title', 'This step already has the maximum of 4 agent instances.')
+    await expect(disabledAddAgent).toHaveCSS('align-self', 'center')
+    await expect(proposeNode.getByRole('button', { name: /Configure Claude claude-opus-5/ })).toBeVisible()
+    await expect(proposeNode.getByRole('button', { name: /Configure Claude claude-opus-4-8/ })).toBeVisible()
+    await expect(proposeNode.getByRole('button', { name: /Configure Claude claude-fable-5/ })).toBeVisible()
+
+    // Per-instance removal only removes the selected tuple.
+    await proposeNode.getByRole('button', { name: /Configure Claude claude-opus-4-8/ }).click()
+    await page.getByRole('button', { name: /Remove Claude claude-opus-4-8/ }).click()
+    await expect(proposeNode.getByRole('button', { name: /Configure Claude claude-opus-4-8/ })).toHaveCount(0)
+
+    // Clear the remaining bake-off before building an independent effort sweep.
+    for (const model of ['claude-fable-5', 'claude-opus-5', 'claude-sonnet-5']) {
+      await proposeNode.getByRole('button', { name: new RegExp(`Configure Claude ${model}`) }).click()
+      await page.getByRole('button', { name: new RegExp(`Remove Claude ${model}`) }).click()
+    }
+    await expect(proposeNode.locator('.agent-chip')).toHaveCount(0)
+
+    // One model expanded across all efforts produces a three-instance sweep.
+    await proposeNode.getByRole('button', { name: 'Add agent' }).click()
+    await page.getByRole('combobox', { name: 'Provider', exact: true }).click()
+    await page.getByRole('option', { name: 'Codex', exact: true }).click()
+    await page.getByRole('button', { name: 'This model × all efforts' }).click()
+    await expect(page.getByText('Adds 3 instances.')).toBeVisible()
+    await page.getByRole('button', { name: 'Add', exact: true }).click()
+
+    // With one slot left, bulk presets are capped to one additional instance.
+    await proposeNode.getByRole('button', { name: 'Add agent' }).click()
+    await page.getByRole('button', { name: 'All Codex models' }).click()
+    await expect(page.getByText('Adds 1 instance.')).toBeVisible()
+    await page.getByRole('button', { name: 'Flagship of every provider' }).click()
+    await expect(proposeNode.locator('.agent-chip')).toHaveCount(4)
+
+    await page.getByRole('button', { name: 'Run', exact: true }).click()
+    const runDialog = page.getByRole('dialog', { name: 'Run Do Next' })
+    await runDialog.getByRole('button', { name: 'Run', exact: true }).click()
+    await expect.poll(() => requests.length).toBe(1)
+    const instances = requests[0].stepAgents.propose
+    const ids = instances.map((instance) => instance.id)
+    expect(new Set(ids).size).toBe(ids.length)
+    expect(ids).toEqual(expect.arrayContaining([
+      'claude:claude-fable-5:high',
+      'codex:gpt-5.6-sol:low',
+      'codex:gpt-5.6-sol:medium',
+      'codex:gpt-5.6-sol:high',
+    ]))
+    expect(ids).toHaveLength(4)
+  } finally {
+    await server.close()
+  }
+})
+
+test('dashboard visibly preserves partial failures per instance', async ({ page }) => {
+  const projectRoot = tmpRoot()
+  const runId = writeCompletedRunFixture(projectRoot, { partialFailure: true })
+  const server = await startDashboardServer({ projectRoot, initialWorkflow: 'review' })
+
+  try {
+    await page.setViewportSize({ width: 1360, height: 860 })
+    await page.goto(server.url, { waitUntil: 'networkidle' })
+    await page.locator('.run-item').filter({ hasText: runId }).click()
+    const reviewNode = page.locator('.workflow-node').filter({ hasText: 'Review' })
+    await expect(reviewNode.locator('.node-state-badge')).toHaveText('Completed with failures')
+    await expect(reviewNode.locator('.agent-chip.codex .agent-chip-status')).toHaveText('Completed')
+    await expect(reviewNode.locator('.agent-chip.claude .agent-chip-status')).toHaveText('Failed')
+    await expect(reviewNode).toHaveClass(/status-completed_with_failures/)
   } finally {
     await server.close()
   }
@@ -489,7 +698,8 @@ test('dashboard runs one configured agent on a narrow dark layout', async ({ pag
     await page.setViewportSize({ width: 430, height: 900 })
     await page.goto(server.url, { waitUntil: 'networkidle' })
     await expect(page.locator('html')).toHaveAttribute('data-mantine-color-scheme', 'dark')
-    await page.getByRole('button', { name: 'Run agent' }).click()
+    await page.getByRole('button', { name: 'Toggle workflow navigation' }).click()
+    await page.getByRole('button', { name: 'Run an individual agent' }).click()
 
     const runDialog = page.getByRole('dialog', { name: 'Run one agent' })
     await expect(runDialog).toBeVisible()
@@ -610,11 +820,11 @@ test('run details timeline shows all configured agents for running steps', async
     const timeline = page.locator('.run-details-timeline')
     await expect(timeline.locator('.run-details-timeline-card').filter({ hasText: 'Audit Security' })).toContainText('In progress')
     await expect(timeline.locator('.run-details-timeline-child-button')).toHaveCount(4)
-    await expect(timeline.locator('.run-details-timeline-child-button').filter({ hasText: 'Claude - In progress' })).toBeVisible()
-    await expect(timeline.locator('.run-details-timeline-child-button').filter({ hasText: 'Gemini - In progress' })).toBeVisible()
-    await expect(timeline.locator('.run-details-timeline-child-button').filter({ hasText: 'Codex - In progress' })).toBeVisible()
+    await expect(timeline.locator('.run-details-timeline-child-button').filter({ hasText: 'Claude Auto - In progress' })).toBeVisible()
+    await expect(timeline.locator('.run-details-timeline-child-button').filter({ hasText: 'Gemini Auto - In progress' })).toBeVisible()
+    await expect(timeline.locator('.run-details-timeline-child-button').filter({ hasText: 'Codex Auto - In progress' })).toBeVisible()
     await expect(timeline.locator('.run-details-timeline-card').filter({ hasText: 'Synthesize Security Findings' })).toContainText('Queued')
-    await expect(timeline.locator('.run-details-timeline-child-button').filter({ hasText: 'Codex - Queued' })).toBeVisible()
+    await expect(timeline.locator('.run-details-timeline-child-button').filter({ hasText: 'Codex Auto - Queued' })).toBeVisible()
     await expect(timeline.locator('.run-details-timeline-card').filter({ hasText: '"Security Audit" Workflow Queued' })).toContainText('Queued')
     await expect(timeline.locator('.run-details-timeline-card').filter({ hasText: '"Security Audit" Workflow Queued' })).not.toContainText('click to view results')
   } finally {
@@ -696,14 +906,14 @@ test('dashboard opens shared run details modal from runs and graph agent results
 
     await expect(page.getByRole('dialog', { name: /Workflow results for "Review"/ })).toBeVisible()
     await expect(page.getByRole('heading', { name: 'Codex result' })).toBeVisible()
-    await expect(page).toHaveURL(new RegExp(`/runs/${runId}/steps/review/agents/codex$`))
+    await expect(page).toHaveURL(new RegExp(`/runs/${runId}/steps/review/agents/codex%3Aauto%3Aauto$`))
     await expect(page.getByText('Final result text.')).toBeVisible()
-    const codexTimelineButton = page.locator('.run-details-timeline-child-button').filter({ hasText: 'Codex - completed' })
+    const codexTimelineButton = page.locator('.run-details-timeline-child-button').filter({ hasText: 'Codex Auto - completed' })
     await expect(codexTimelineButton).toBeVisible()
     await page.locator('.run-details-timeline-button').filter({ hasText: '"Review" Workflow Completed' }).click()
     await expect(page).toHaveURL(new RegExp(`/runs/${runId}/details$`))
     await codexTimelineButton.click()
-    await expect(page).toHaveURL(new RegExp(`/runs/${runId}/steps/review/agents/codex$`))
+    await expect(page).toHaveURL(new RegExp(`/runs/${runId}/steps/review/agents/codex%3Aauto%3Aauto$`))
     const activeResultsButton = page.locator('.run-details-content-switch-button[data-active="true"]').filter({ hasText: 'Results' })
     await expect(activeResultsButton).toBeVisible()
     expectVisibleTeal(await computedTextColor(activeResultsButton))

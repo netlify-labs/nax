@@ -223,6 +223,28 @@ test('sourceRunsForStep dedupes within a single input step', () => {
   ])
 })
 
+test('sourceRunsForStep routes only peer results to each inherited instance', () => {
+  const fable = 'claude:claude-fable-5:auto'
+  const opus = 'claude:claude-opus-5:auto'
+  const completed = new Map([
+    ['review', { runs: [
+      { agent: 'claude', model: 'claude-fable-5', instanceId: fable, runnerId: 'runner-fable', resultText: 'fable review' },
+      { agent: 'claude', model: 'claude-opus-5', instanceId: opus, runnerId: 'runner-opus', resultText: 'opus review' },
+      { agent: 'claude', model: 'claude-haiku-4-5', instanceId: 'claude:claude-haiku-4-5:auto', runnerId: 'runner-haiku', status: 'failed', resultText: 'failed' },
+    ] }],
+  ])
+  const step = { input: [{ step: 'review', results: 'peers' }] }
+
+  assert.deepEqual(
+    sourceRunsForStep(step, completed, { instanceId: fable }).map((run) => run.instanceId),
+    [opus],
+  )
+  assert.deepEqual(
+    sourceRunsForStep(step, completed, { instanceId: opus }).map((run) => run.instanceId),
+    [fable],
+  )
+})
+
 test('prepareLocalPromptDelivery leaves unsafe fan-in delivery to the SDK', () => {
   const projectRoot = tmpRoot()
   const sourceRuns = [
@@ -1972,6 +1994,23 @@ test('localRetryCandidates finds failed local runs by step and agent', () => {
   assert.equal(candidates[0].runIndex, 0)
 })
 
+test('localRetryCandidates scopes retries to one same-provider instance', () => {
+  const runState = {
+    steps: [{
+      id: 'review',
+      runs: [
+        { agent: 'claude', instanceId: 'claude:opus:high', runnerId: 'runner-opus', status: 'failed' },
+        { agent: 'claude', instanceId: 'claude:sonnet:high', runnerId: 'runner-sonnet', status: 'failed' },
+        { agent: 'claude', instanceId: 'claude:haiku:low', runnerId: 'runner-haiku', status: 'completed' },
+      ],
+    }],
+  }
+
+  const candidates = localRetryCandidates(runState, { instanceId: 'claude:sonnet:high' })
+  assert.equal(candidates.length, 1)
+  assert.equal(candidates[0].run.runnerId, 'runner-sonnet')
+})
+
 test('completeLocalStep saves workflow state as each local agent finishes', async () => {
   const projectRoot = tmpRoot()
   const runState = {
@@ -2748,12 +2787,13 @@ test('waitForGithubStep surfaces failed GitHub Actions runs before status commen
   assert.equal(run.promptEnvBytes, 134639)
 })
 
-test('withSelectedAgents filters each workflow step and runnableSteps drops empty steps', () => {
+test('withSelectedAgents filters each workflow step, retaining inheritance-only follow-ups', () => {
   const flow = {
     defaults: { agents: ['claude', 'gemini', 'codex'] },
     steps: [
       { id: 'review', agents: ['claude', 'gemini', 'codex'] },
       { id: 'synthesize', agents: ['codex'] },
+      { id: 'cross-review', agents: [], submit: 'follow-up', input: [{ step: 'review', results: 'all' }] },
     ],
   }
 
@@ -2762,7 +2802,7 @@ test('withSelectedAgents filters each workflow step and runnableSteps drops empt
   const filtered = withSelectedAgents(flow, ['claude', 'gemini'])
   assert.deepEqual(filtered.steps[0].agents, ['claude', 'gemini'])
   assert.deepEqual(filtered.steps[1].agents, [])
-  assert.deepEqual(runnableSteps(filtered, {}).map((step) => step.id), ['review'])
+  assert.deepEqual(runnableSteps(filtered, {}).map((step) => step.id), ['review', 'cross-review'])
 })
 
 test('withSelectedStepAgents applies step-specific agent overrides', () => {

@@ -1,24 +1,24 @@
 ---
 title: Cross Review
-description: Cross-check the first-round Claude/Gemini/Codex review findings against each other.
-instruction: please cross-reference the first-round review outputs and evaluate the other models' findings carefully
+description: Cross-grade the other model instances' first-round findings.
+instruction: please cross-reference the peer review outputs and evaluate the other models' findings carefully
 ---
 
 # Cross Reference Review
 
 You are in round 2 of a multi-model review process.
 
-The **Additional Context** section contains:
+Your own first-round position remains in this runner's session history. The **Additional Context** section contains:
 
-- the first-round review outputs from Claude, Gemini, and Codex
+- the first-round review outputs from the other surviving model instances
 - a pinned commit SHA and repository snapshot
 - a merge-state ledger for open PRs at prompt generation time
 
 Your job is to:
 
-1. Identify which first-round report came from **your own model family**.
-2. Treat that report as your prior position.
-3. Critically evaluate the **other two** reports.
+1. Treat your earlier session response as your prior position.
+2. Critically evaluate every peer report in Additional Context.
+3. Compare the peers' evidence and conclusions against your own prior position.
 4. Say where they are right, where they are overstating things, where they missed important context, and where an item is already fixed or partly fixed.
 5. Update your own position based on the strongest evidence.
 
@@ -101,8 +101,8 @@ Write a structured report with these sections:
 ## 3. My Original Position
 - Brief summary of your first-round report
 
-## 4. Evaluation Of The Other Two Reports
-For each other model:
+## 4. Evaluation Of The Peer Reports
+For each other model instance:
 - **Strong agreements**
 - **Disagreements**
 - **Claims that need more evidence**

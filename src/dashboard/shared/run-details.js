@@ -2,6 +2,7 @@ const fs = require('fs')
 const path = require('path')
 
 const { loadStepPrompt } = require('../../workflows/catalog/flows')
+const { publicInstances } = require('../api/instances')
 
 /**
  * File-name predicate used while scanning artifact directories.
@@ -24,6 +25,9 @@ const { loadStepPrompt } = require('../../workflows/catalog/flows')
  *   agent?: string,
  *   model?: string,
  *   effort?: string,
+ *   instanceId?: string,
+ *   instanceLabel?: string,
+ *   resolvedFrom?: string,
  *   stepId?: string,
  *   status?: string,
  *   runnerId?: string,
@@ -68,6 +72,9 @@ const { loadStepPrompt } = require('../../workflows/catalog/flows')
  *   agent: string,
  *   model?: string,
  *   effort?: string,
+ *   instanceId?: string,
+ *   instanceLabel?: string,
+ *   resolvedFrom?: string,
  *   stepId: string,
  *   stepNumber: number,
  *   stepTitle: string,
@@ -126,6 +133,11 @@ const { loadStepPrompt } = require('../../workflows/catalog/flows')
  *   stepId: string,
  *   stepTitle: string,
  *   agent: string,
+ *   model?: string,
+ *   effort?: string,
+ *   instanceId?: string,
+ *   instanceLabel?: string,
+ *   resolvedFrom?: string,
  *   status: string,
  *   runnerId: string,
  *   sessionId: string,
@@ -441,12 +453,17 @@ function workflowStepsForDetails(flow) {
     const source = step?.source && typeof step.source === 'object' && !Array.isArray(step.source)
       ? step.source
       : {}
+    const instances = publicInstances(step?.lineup || step?.agents, {
+      models: { ...(flow.defaults?.models || {}), ...(step?.models || {}) },
+      efforts: { ...(flow.defaults?.efforts || {}), ...(step?.efforts || {}) },
+    })
     return {
       id: String(step?.id || `step-${index + 1}`),
       title: String(step?.title || step?.id || `Step ${index + 1}`),
       status: String(step?.status || 'pending'),
       sourceType: String(source.type || ''),
       agents: Array.isArray(step?.agents) ? step.agents.map(String).filter(Boolean) : [],
+      instances,
       promptMarkdown: promptDetails?.promptMarkdown || '',
       promptPath: promptDetails?.promptPath || '',
       promptTitle: promptDetails?.promptTitle || String(step?.title || step?.id || `Step ${index + 1}`),
@@ -637,6 +654,9 @@ function buildRunDetails(runState = {}, options = {}) {
         stepId: metadata.stepId || stepMeta.id || '',
         stepTitle,
         agent,
+        instanceId: metadata.instanceId || '',
+        instanceLabel: metadata.instanceLabel || '',
+        resolvedFrom: metadata.resolvedFrom || '',
         ...(metadata.model ? { model: metadata.model } : {}),
         ...(metadata.effort ? { effort: metadata.effort } : {}),
         status: metadata.status || '',

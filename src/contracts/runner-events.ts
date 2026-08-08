@@ -16,6 +16,11 @@ export type RunnerEvent = {
   stepId?: string
   stepTitle?: string
   agent?: string
+  model?: string
+  effort?: string
+  instanceId?: string
+  instanceLabel?: string
+  resolvedFrom?: 'latest' | 'default' | 'open' | 'pinned' | ''
   runnerId?: string
   sessionId?: string
   issueNumber?: number | null

@@ -198,6 +198,16 @@ function runsFromStep(stepState) {
 }
 
 /**
+ * Stable identity for peer-result routing, including durable runs created before instance ids.
+ * @param {import('../../types').AgentRun} run
+ * @returns {string}
+ */
+function sourceRunInstanceId(run) {
+  if (run.instanceId) return run.instanceId
+  return `${run.agent}:${run.model || 'auto'}:${run.effort || 'auto'}`
+}
+
+/**
  * Deduplicates finite numbers while preserving order.
  * @param {number[]} numbers
  * @returns {number[]}
@@ -225,14 +235,20 @@ function sourceIssueNumbersForStep(step, completedStepStates) {
  * Resolves source local runs requested by a workflow step.
  * @param {import('../../types').WorkflowStep} step
  * @param {Map<string, ExecutionStepState>} completedStepStates
+ * @param {{ instanceId?: string }} [options]
  * @returns {import('../../types').AgentRun[]}
  */
-function sourceRunsForStep(step, completedStepStates) {
+function sourceRunsForStep(step, completedStepStates, { instanceId = '' } = {}) {
   if (!Array.isArray(step.input)) return []
   const runs = []
   for (const input of step.input) {
     const seen = new Set()
     for (const run of runsFromStep(completedStepStates.get(input.step))) {
+      if (input.results === 'peers') {
+        const status = String(run.status || '')
+        if (status && status !== 'complete' && status !== 'completed') continue
+        if (instanceId && sourceRunInstanceId(run) === instanceId) continue
+      }
       const runWithStepId = /** @type {import('../../types').AgentRun & { stepId?: string }} */ (run)
       const key = run.runnerId || `${run.agent}:${runWithStepId.stepId || input.step}:${runs.length}`
       if (seen.has(key)) continue
@@ -257,6 +273,7 @@ module.exports = {
   parsePositiveInteger,
   runsFromStep,
   shouldApplyOutputBudget,
+  sourceRunInstanceId,
   sourceIssueNumbersForStep,
   sourceRunsForStep,
   uniqueNumbers,

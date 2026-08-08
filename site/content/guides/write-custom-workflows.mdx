@@ -91,6 +91,7 @@ nax run conversion-audit --dry --force
 - Run independent first-pass steps with `submit: new-run` before cross-review steps read prior outputs.
 - Use `waitFor: agent-results` when later steps depend on all prior outputs.
 - Use `submit: follow-up` when the same agent should continue an earlier runner context.
+- Use `results: peers` on that first input when every inherited instance should cross-grade the other instances without repeating its own result in Additional Context.
 - Use `submit: new-run` when a step should start with a clean context plus selected inputs.
 - Use a single synthesis step when you want a concise artifact for human review.
 

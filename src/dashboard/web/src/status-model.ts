@@ -15,7 +15,7 @@ const STATUS_ALIASES: Record<string, string> = {
   error: 'failed',
 }
 
-const COMPLETED_STATUSES = new Set(['completed', 'dry-run'])
+const COMPLETED_STATUSES = new Set(['completed', 'completed_with_failures', 'dry-run'])
 const ACTIVE_STATUSES = new Set(['running', 'booting'])
 const FAILED_STATUSES = new Set(['failed'])
 const CANCELLED_STATUSES = new Set(['cancelled', 'abandoned', 'dismissed'])
@@ -64,6 +64,7 @@ export function statusLabel(status: string): string {
 
 export function statusTone(status: string): StatusTone | undefined {
   const key = statusKey(status)
+  if (key === 'completed_with_failures') return 'yellow'
   if (COMPLETED_STATUSES.has(key)) return 'green'
   if (ACTIVE_STATUSES.has(key) || WARNING_STATUSES.has(key)) return 'yellow'
   if (FAILED_STATUSES.has(key) || CANCELLED_STATUSES.has(key)) return 'red'

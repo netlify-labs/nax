@@ -23,6 +23,43 @@ test('parseStepAgentsEntries parses repeatable step=agent overrides', () => {
   })
 })
 
+test('instance syntax preserves repeated providers and per-instance configuration', () => {
+  const flow = {
+    defaults: { agents: ['claude', 'codex'], lineup: ['claude', 'codex'] },
+    steps: [{ id: 'review', agents: ['claude', 'codex'], lineup: ['claude', 'codex'] }],
+  }
+  const selected = applyAgentSelection(flow, {
+    agents: ['claude:claude-opus-5:high,claude:claude-opus-4-8:low', 'codex:latest'],
+  })
+
+  assert.deepEqual(selected.steps[0].agents, ['claude', 'codex'])
+  assert.deepEqual(selected.steps[0].lineup, [
+    { agent: 'claude', model: 'claude-opus-5', effort: 'high' },
+    { agent: 'claude', model: 'claude-opus-4-8', effort: 'low' },
+    { agent: 'codex', model: 'latest' },
+  ])
+})
+
+test('step instance syntax overrides the global lineup for that step', () => {
+  const flow = {
+    defaults: { agents: ['claude', 'gemini'] },
+    steps: [
+      { id: 'review', agents: ['claude', 'gemini'] },
+      { id: 'summarize', agents: ['claude'] },
+    ],
+  }
+  const selected = applyAgentSelection(flow, {
+    agents: ['claude'],
+    stepAgents: { review: ['gemini:gemini-3.6-flash:medium', 'gemini:gemini-3.6-flash:high'] },
+  })
+
+  assert.deepEqual(selected.steps[0].lineup, [
+    { agent: 'gemini', model: 'gemini-3.6-flash', effort: 'medium' },
+    { agent: 'gemini', model: 'gemini-3.6-flash', effort: 'high' },
+  ])
+  assert.deepEqual(selected.steps[1].lineup, [{ agent: 'claude' }])
+})
+
 test('applyAgentSelection lets per-step agents override global agents', () => {
   const flow = {
     defaults: { agents: ['claude', 'gemini', 'codex'] },

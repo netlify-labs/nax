@@ -293,7 +293,7 @@ test('catalog helpers preserve unknown values and display Max', () => {
 })
 
 test('getBestModelForProvider returns the flagship model per provider', () => {
-  assert.equal(getBestModelForProvider('claude'), 'claude-opus-5')
+  assert.equal(getBestModelForProvider('claude'), 'claude-fable-5')
   assert.equal(getBestModelForProvider('gemini'), 'gemini-3.1-pro-preview')
   assert.equal(getBestModelForProvider('codex'), 'gpt-5.6-sol')
   assert.equal(getBestModelForProvider('opencode'), 'moonshotai/kimi-k3')
@@ -306,4 +306,20 @@ test('getHighestEffortForModel returns the top catalog effort or auto', () => {
   assert.equal(getHighestEffortForModel('opencode', 'moonshotai/kimi-k3'), 'max')
   assert.equal(getHighestEffortForModel('opencode', 'moonshotai/kimi-k2.7-code'), 'auto')
   assert.equal(getHighestEffortForModel('claude', 'auto'), 'auto')
+})
+
+test('catalog exposes a configurable defaultModel per provider (Claude = Fable 5)', () => {
+  const byId = Object.fromEntries(
+    AGENT_CONFIGURATION_CATALOG.providers.map((p) => [p.id, p.defaultModel]),
+  )
+  assert.deepEqual(byId, {
+    claude: 'claude-fable-5',
+    gemini: 'gemini-3.1-pro-preview',
+    codex: 'gpt-5.6-sol',
+    opencode: 'moonshotai/kimi-k3',
+  })
+  // every defaultModel is a real model of its provider
+  for (const p of AGENT_CONFIGURATION_CATALOG.providers) {
+    assert.ok(p.models.some((m) => m.id === p.defaultModel), `${p.id} default missing`)
+  }
 })

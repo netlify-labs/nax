@@ -170,7 +170,7 @@ test('nax run agent routes positional and flagged prompts', async () => {
   }, { agent: 'opencode', model: 'z-ai/glm-5.2', effort: 'max' })
 })
 
-test('workflow configuration flags preserve provider-keyed mappings', async () => {
+test('workflow configuration flags preserve repeatable instances and provider-keyed mappings', async () => {
   const { calls, program } = makeProgram()
 
   await parse(program, [
@@ -178,6 +178,8 @@ test('workflow configuration flags preserve provider-keyed mappings', async () =
     'review',
     '--agents',
     'claude,codex',
+    '--agents',
+    'claude:claude-opus-5:high',
     '--models',
     'claude=claude-opus-4-8',
     '--models',
@@ -193,7 +195,7 @@ test('workflow configuration flags preserve provider-keyed mappings', async () =
   ])
 
   const options = /** @type {Record<string, unknown>} */ (calls[0].args[1])
-  assert.equal(options.agents, 'claude,codex')
+  assert.deepEqual(options.agents, ['claude,codex', 'claude:claude-opus-5:high'])
   assert.deepEqual(options.models, [
     'claude=claude-opus-4-8',
     'codex=gpt-5.6-sol',

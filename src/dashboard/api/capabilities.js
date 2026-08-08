@@ -1,6 +1,16 @@
 /** @typedef {import('../../contracts').DashboardCapabilities} DashboardCapabilities */
 const { AGENT_CONFIGURATION_CATALOG } = require('../../core/agents/configuration')
 
+function dashboardAgentCatalog() {
+  return {
+    ...AGENT_CONFIGURATION_CATALOG,
+    providers: AGENT_CONFIGURATION_CATALOG.providers.map((provider) => ({
+      ...provider,
+      defaultModel: provider.defaultModel || '',
+    })),
+  }
+}
+
 /**
  * @param {Partial<DashboardCapabilities>} [overrides]
  * @returns {DashboardCapabilities}
@@ -22,7 +32,7 @@ function localDashboardCapabilities(overrides = {}) {
     canServeStaticAssets: true,
     requiresAuth: true,
     agentConfiguration: {
-      catalog: AGENT_CONFIGURATION_CATALOG,
+      catalog: dashboardAgentCatalog(),
       transports: {
         auto: { models: true, efforts: true },
         'netlify-api': { models: true, efforts: true },
@@ -54,7 +64,7 @@ function hostedPlaceholderCapabilities(overrides = {}) {
     canServeStaticAssets: false,
     requiresAuth: true,
     agentConfiguration: {
-      catalog: AGENT_CONFIGURATION_CATALOG,
+      catalog: dashboardAgentCatalog(),
       transports: {
         auto: { models: true, efforts: true },
         'netlify-api': { models: true, efforts: true },

@@ -181,7 +181,7 @@ function addPublicRunOptions(command, collectOption) {
     .option('--branch <branch-or-pr>', 'Git branch or PR number to run in Netlify agent runners')
     .option('--context <text>', 'Additional context appended to each prompt')
     .option('--context-file <path>', 'Read additional context from a file')
-    .option('--agents <list>', 'Comma-separated agent providers for workflow steps')
+    .option('--agents <provider[:model[:effort]]>', 'Agent instance for workflow steps; comma-separated or repeatable', collectOption, [])
     .option('--models <agent=model>', 'Assign a model to an agent provider; repeatable', collectOption, [])
     .option('--efforts <agent=effort>', 'Assign reasoning effort to an agent provider; repeatable', collectOption, [])
     .option('--step <id>', 'Run only one flow step')
@@ -219,7 +219,7 @@ function addAdvancedRunOptions(command, collectOption, defaultOutputBudgetBytes)
     .addOption(hiddenOption('--notify-events <list>', 'Comma-separated notification events to send'))
     .addOption(hiddenOption('--no-auto-context', 'Do not inject the automatic review contract, pinned SHA snapshot, or PR ledger'))
     .addOption(hiddenOption('--no-fetch-results', 'Do not fetch round results from prior steps'))
-    .addOption(hiddenOption('--step-agents <step=agents>', 'Agent providers for one workflow step; repeatable').argParser(collectOption).default([]))
+    .addOption(hiddenOption('--step-agents <step=instances>', 'Agent instances for one workflow step; repeatable').argParser(collectOption).default([]))
     .addOption(hiddenOption('--step-models <step:agent=model>', 'Model assignment for one workflow step; repeatable').argParser(collectOption).default([]))
     .addOption(hiddenOption('--step-efforts <step:agent=effort>', 'Effort assignment for one workflow step; repeatable').argParser(collectOption).default([])), collectOption), defaultOutputBudgetBytes)
 }
@@ -233,6 +233,7 @@ function addRetryOptions(command) {
   return command
     .option('--retry [run-id]', 'Retry one failed Netlify API agent run and continue the workflow')
     .addOption(hiddenOption('--agent <name>', 'Failed agent to retry, e.g. claude'))
+    .addOption(hiddenOption('--instance <id>', 'Exact failed instance to retry, e.g. claude:claude-opus-5:high'))
 }
 
 /**

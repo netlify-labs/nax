@@ -1,0 +1,12 @@
+id: mi-sweep
+title: Effort sweep
+defaults: { transport: auto, notify: false }
+steps:
+  - id: task
+    title: Task
+    prompt: prompts/task.md
+    action: issue
+    submit: new-run
+    agents:
+      - { agent: claude, model: claude-opus-5, efforts: [low, medium, high] }
+    waitFor: agent-results

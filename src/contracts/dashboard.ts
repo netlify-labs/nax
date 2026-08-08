@@ -1,4 +1,4 @@
-import type { Workflow, WorkflowGraph } from './workflow'
+import type { AgentInstanceDescriptor, Workflow, WorkflowGraph } from './workflow'
 
 export type DashboardDeploymentMode = 'local' | 'desktop' | 'web'
 
@@ -23,6 +23,7 @@ export type DashboardCapabilities = {
       providers: Array<{
         id: string
         label: string
+        defaultModel: string
         models: Array<{
           id: string
           label: string
@@ -74,6 +75,8 @@ export type HealthResponse = {
   capabilities?: DashboardCapabilities
   netlifyAccess?: NetlifyAccessVerdict
   netlifyContext?: DashboardNetlifyContext
+  branches?: string[]
+  currentBranch?: string
 }
 
 export type Target = {
@@ -88,12 +91,8 @@ export type Target = {
 export type DryRunOptions = {
   branch: string
   transport: string
-  agents: string[]
-  stepAgents: Record<string, string[]>
-  models: Record<string, string>
-  efforts: Record<string, string>
-  stepModels: Record<string, Record<string, string>>
-  stepEfforts: Record<string, Record<string, string>>
+  agents: AgentInstanceDescriptor[]
+  stepAgents: Record<string, AgentInstanceDescriptor[]>
   context: string
   step: string
   fromStep: string
@@ -220,6 +219,9 @@ export type RunDetailsSection = {
   stepId: string
   stepTitle: string
   agent: string
+  instanceId?: string
+  instanceLabel?: string
+  resolvedFrom?: string
   model?: string
   effort?: string
   status: string
@@ -300,6 +302,7 @@ export type RunDetailsWorkflowStep = {
   status: string
   sourceType: string
   agents: string[]
+  instances: AgentInstanceDescriptor[]
   promptMarkdown: string
   promptPath: string
   promptTitle: string

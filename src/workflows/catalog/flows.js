@@ -9,6 +9,7 @@ const {
   normalizeProviderModelMap,
   resolveAgentRunConfig,
 } = require('../../core/agents/configuration')
+const { resolveLineup } = require('../../core/agents/instances')
 
 const FLOWS_DIR = path.join(__dirname, '..', '..', '..', 'workflows')
 const DEFAULT_PROJECT_FLOWS_DIRS = ['.github/nax-flows']
@@ -19,6 +20,7 @@ const FLOW_FILE_NAMES = FLOW_FILE_EXTENSIONS.map((extension) => `flow.${extensio
 const WAIT_FOR_AGENT_RESULTS = 'agent-results'
 const ALLOWED_STEP_ACTIONS = ['issue', 'comment', HUMAN_REVIEW_ACTION]
 const ALLOWED_STEP_SUBMITS = ['new-run', 'follow-up', HUMAN_REVIEW_SUBMIT]
+const ALLOWED_INPUT_RESULTS = ['all', 'selected', 'peers']
 /**
  * @typedef {{ stepId: string, code: string, message: string, hint: string }} FlowDiagnostic
  * @typedef {{ errors: FlowDiagnostic[], warnings: FlowDiagnostic[] }} FlowValidation
@@ -152,6 +154,61 @@ function normalizeList(value) {
     return value.split(',').map((item) => item.trim()).filter(Boolean)
   }
   return []
+}
+
+/** @param {string} message @returns {Error & { code: string }} */
+function lineupError(message) {
+  return Object.assign(new Error(message), { code: 'invalid_lineup_entry' })
+}
+
+/**
+ * Normalize a workflow lineup (string-or-object entries). String entries are providers;
+ * object entries carry { agent, model?|models?, effort?|efforts?, label? } and are preserved
+ * for the instance resolver. A CSV string is split into provider entries.
+ * @param {unknown} value
+ * @returns {Array<string | Record<string, unknown>>}
+ */
+function normalizeLineup(value) {
+  if (typeof value === 'string' && value.trim()) {
+    return value.split(',').map((item) => item.trim()).filter(Boolean)
+  }
+  if (!Array.isArray(value)) return []
+  /** @type {Array<string | Record<string, unknown>>} */
+  const out = []
+  for (const entry of value) {
+    if (typeof entry === 'string') {
+      const trimmed = entry.trim()
+      if (trimmed) out.push(trimmed)
+    } else if (entry && typeof entry === 'object' && !Array.isArray(entry)) {
+      const obj = /** @type {Record<string, unknown>} */ (entry)
+      if (!String(obj.agent || '').trim()) {
+        throw lineupError(`Lineup entry object must have an "agent"; got ${JSON.stringify(entry)}.`)
+      }
+      out.push(obj)
+    } else {
+      throw lineupError(`Lineup entry must be a provider string or object; got ${JSON.stringify(entry)}.`)
+    }
+  }
+  return out
+}
+
+/**
+ * Provider ids in lineup order (deduped) — the back-compat `agents` list derived from a lineup.
+ * @param {Array<string | Record<string, unknown>>} lineup
+ * @returns {string[]}
+ */
+function providersFromLineup(lineup) {
+  const seen = new Set()
+  /** @type {string[]} */
+  const out = []
+  for (const entry of lineup) {
+    const agent = typeof entry === 'string' ? entry : String(entry.agent || '')
+    if (agent && !seen.has(agent)) {
+      seen.add(agent)
+      out.push(agent)
+    }
+  }
+  return out
 }
 
 /**
@@ -342,6 +399,14 @@ function validateFlowStructure(flow, { existsSync = fs.existsSync } = {}) {
     const step = steps[index]
     const stepId = String(step.id || `step-${index + 1}`)
     const humanReview = isHumanReviewStep(step)
+    if (step.submit === 'follow-up' && step.lineupDeclared === true) {
+      warnings.push(flowDiagnostic({
+        stepId,
+        code: 'deprecated_followup_lineup',
+        message: `Step "${stepId}" declares agents even though follow-up steps inherit their lineup from the first input step. The declaration is ignored.`,
+        hint: 'Remove agents from this follow-up step.',
+      }))
+    }
     if (Object.prototype.hasOwnProperty.call(step, 'agentConfig')) {
       errors.push(flowDiagnostic({
         stepId,
@@ -443,6 +508,15 @@ function validateFlowStructure(flow, { existsSync = fs.existsSync } = {}) {
           hint: 'Inputs can only reference earlier steps.',
         }))
       }
+      const results = String(input?.results || 'all')
+      if (!ALLOWED_INPUT_RESULTS.includes(results)) {
+        errors.push(flowDiagnostic({
+          stepId,
+          code: 'invalid_input_results',
+          message: `Step "${stepId}" input from "${sourceStepId || 'unknown'}" has unsupported results mode "${results}".`,
+          hint: `Allowed results modes: ${formatAllowed(ALLOWED_INPUT_RESULTS)}.`,
+        }))
+      }
     }
 
     const configuredAgents = new Set([
@@ -471,6 +545,25 @@ function validateFlowStructure(flow, { existsSync = fs.existsSync } = {}) {
           message: `steps[${index}] configuration for "${agent}" is invalid: ${message}`,
           hint: 'Use a model owned by the provider and an effort supported by that model, or set both to auto.',
         }))
+      }
+    }
+    if (!humanReview) {
+      try {
+        resolveLineup(Array.isArray(step.lineup) ? step.lineup : step.agents || [], {
+          requestedTransport: 'auto',
+          models: { ...(defaults.models || {}), ...(step.models || {}) },
+          efforts: { ...(defaults.efforts || {}), ...(step.efforts || {}) },
+        })
+      } catch (error) {
+        const typed = /** @type {{ code?: string, message?: string }} */ (error)
+        if (typed.code === 'step_instance_limit') {
+          errors.push(flowDiagnostic({
+            stepId,
+            code: typed.code,
+            message: typed.message || `Step "${stepId}" exceeds the agent instance limit.`,
+            hint: 'Reduce the models/efforts fan-out or split the work into another step.',
+          }))
+        }
       }
     }
   }
@@ -536,6 +629,7 @@ function normalizeFlow(raw, { id, dir, file, source = {} }) {
   }
   const defaultModels = normalizeAgentConfigurationMap(defaults.models, 'models', 'defaults.models')
   const defaultEfforts = normalizeAgentConfigurationMap(defaults.efforts, 'efforts', 'defaults.efforts')
+  const defaultLineup = normalizeLineup(defaults.agents)
   if (steps.length === 0) {
     throw new Error(`Flow "${flowId}" has no steps in ${file}`)
   }
@@ -553,7 +647,8 @@ function normalizeFlow(raw, { id, dir, file, source = {} }) {
     defaults: {
       transport: defaults.transport || 'auto',
       notify: defaults.notify === true,
-      agents: normalizeList(defaults.agents),
+      agents: providersFromLineup(defaultLineup),
+      lineup: defaultLineup,
       models: defaultModels,
       efforts: defaultEfforts,
     },
@@ -569,6 +664,8 @@ function normalizeFlow(raw, { id, dir, file, source = {} }) {
       const action = String(step.action || step.type || 'issue')
       const humanReview = action === HUMAN_REVIEW_ACTION
       const waitFor = String(step.waitFor || (humanReview ? HUMAN_REVIEW_WAIT_FOR : WAIT_FOR_AGENT_RESULTS))
+      const ownLineup = normalizeLineup(step.agents)
+      const stepLineup = humanReview ? [] : (ownLineup.length > 0 ? ownLineup : defaultLineup)
       return {
         id: stepId,
         title: step.title || stepId,
@@ -577,7 +674,9 @@ function normalizeFlow(raw, { id, dir, file, source = {} }) {
         type: step.type || (humanReview ? HUMAN_REVIEW_ACTION : ''),
         action,
         submit: step.submit || (humanReview ? HUMAN_REVIEW_SUBMIT : 'new-run'),
-        agents: humanReview ? [] : normalizeList(step.agents).length > 0 ? normalizeList(step.agents) : normalizeList(defaults.agents),
+        agents: providersFromLineup(stepLineup),
+        lineup: stepLineup,
+        lineupDeclared: ownLineup.length > 0,
         models: normalizeAgentConfigurationMap(step.models, 'models', `steps[${index}].models`),
         efforts: normalizeAgentConfigurationMap(step.efforts, 'efforts', `steps[${index}].efforts`),
         input: step.input === undefined ? [] : step.input,
@@ -588,7 +687,8 @@ function normalizeFlow(raw, { id, dir, file, source = {} }) {
       }
     }),
   }
-  assertValidFlowStructure(flow)
+  const validation = assertValidFlowStructure(flow)
+  if (validation.warnings.length > 0) flow.warnings = validation.warnings
   return flow
 }
 
@@ -646,6 +746,7 @@ function loadStepPrompt(flow, step) {
 }
 
 module.exports = {
+  ALLOWED_INPUT_RESULTS,
   ALLOWED_STEP_ACTIONS,
   ALLOWED_STEP_SUBMITS,
   DEFAULT_PROJECT_FLOWS_DIRS,
@@ -665,6 +766,8 @@ module.exports = {
   loadFlow,
   loadStepPrompt,
   normalizeFlow,
+  normalizeLineup,
+  providersFromLineup,
   parseStaticModuleConfig,
   projectFlowDirs,
   validateFlowStructure,

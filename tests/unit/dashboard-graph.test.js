@@ -20,6 +20,32 @@ test('flowToGraph renders review as three nodes and two input edges', async () =
   assert.equal(graph.edges[0].animated, true)
   assert.equal(graph.nodes[2].data.agents.length, 1)
   assert.deepEqual(graph.nodes[2].data.agents, ['codex'])
+  assert.equal(graph.nodes[1].data.inheritedFromStepId, 'review')
+})
+
+test('flowToGraph preserves repeated providers as distinct instance descriptors', () => {
+  const flow = {
+    id: 'bakeoff',
+    title: 'Bakeoff',
+    steps: [{
+      id: 'compare',
+      title: 'Compare',
+      agents: ['codex'],
+      lineup: [
+        { agent: 'codex', model: 'gpt-5.6-sol', effort: 'medium' },
+        { agent: 'codex', model: 'gpt-5.6-sol', effort: 'high' },
+      ],
+      submit: 'new-run',
+    }],
+  }
+
+  const graph = flowToGraph({ flow })
+  assert.deepEqual(graph.nodes[0].data.agents, ['codex'])
+  assert.deepEqual(graph.nodes[0].data.instances.map((instance) => instance.id), [
+    'codex:gpt-5.6-sol:medium',
+    'codex:gpt-5.6-sol:high',
+  ])
+  assert.deepEqual(graph.nodes[0].data.selectedAgents, graph.nodes[0].data.instances)
 })
 
 test('flowToGraph adds sequential fallback edges for steps without explicit input', () => {
@@ -113,7 +139,12 @@ test('flowToGraph overlays run state status and runs', () => {
   assert.equal(graph.metadata.hasRunState, true)
   assert.equal(graph.nodes[0].data.status, 'completed')
   assert.deepEqual(graph.nodes[0].data.runs, [{ agent: 'codex', status: 'completed', runnerId: 'runner-1' }])
-  assert.deepEqual(graph.nodes[0].data.selectedAgents, ['codex'])
+  assert.deepEqual(graph.nodes[0].data.selectedAgents, [{
+    agent: 'codex',
+    id: 'codex:auto:auto',
+    resolvedFrom: 'open',
+    status: 'completed',
+  }])
 })
 
 test('flowToGraph keeps available agents visible when overlaying filtered run state', () => {
@@ -136,7 +167,12 @@ test('flowToGraph keeps available agents visible when overlaying filtered run st
   const graph = flowToGraph({ flow, runState })
 
   assert.deepEqual(graph.nodes[0].data.agents, ['claude', 'gemini', 'codex'])
-  assert.deepEqual(graph.nodes[0].data.selectedAgents, ['claude'])
+  assert.deepEqual(graph.nodes[0].data.selectedAgents, [{
+    agent: 'claude',
+    id: 'claude:auto:auto',
+    resolvedFrom: 'open',
+    status: 'completed',
+  }])
 })
 
 test('flowToGraph renders saved dashboard follow-up steps not present in the flow definition', () => {

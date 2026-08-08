@@ -42,6 +42,7 @@ function graphWithRunnerStatus(status: string): WorkflowGraph {
         submitLabel: 'new agent run',
         waitFor: 'all',
         agents: ['codex'],
+        instances: [{ agent: 'codex', id: 'codex:auto:auto', resolvedFrom: 'open' }],
         input: [],
         status,
         runs: [{ agent: 'codex', status, runnerId: 'runner-1' }],
@@ -61,7 +62,7 @@ function graphWithRunnerStatus(status: string): WorkflowGraph {
       stepCount: 1,
       renderedStepCount: 1,
       agents: ['codex'],
-      selectedAgents: ['codex'],
+      selectedAgents: [{ agent: 'codex', id: 'codex:auto:auto', resolvedFrom: 'open' }],
       hasRunState: true,
     },
   }

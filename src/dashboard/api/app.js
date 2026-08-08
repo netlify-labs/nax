@@ -14,6 +14,8 @@ const { localDashboardCapabilities } = require('./capabilities')
  *   healthCapabilities?: Partial<import('../../contracts').DashboardCapabilities>,
  *   netlifyAccess?: Record<string, unknown>,
  *   netlifyContext?: Record<string, unknown>,
+ *   branches?: string[],
+ *   currentBranch?: string,
  * }} DashboardApiRuntime
  *
  * @typedef {{
@@ -301,6 +303,8 @@ function createDashboardApi({
       if (runtime.projectRoot) health.projectRoot = runtime.projectRoot
       if (runtime.netlifyAccess) health.netlifyAccess = runtime.netlifyAccess
       if (runtime.netlifyContext) health.netlifyContext = runtime.netlifyContext
+      if (Array.isArray(runtime.branches)) health.branches = runtime.branches
+      if (runtime.currentBranch) health.currentBranch = runtime.currentBranch
     }
     return json(c, health, 200, headers)
   })

@@ -5,6 +5,7 @@ import {
   ActionIcon,
   Alert,
   AppShell,
+  Autocomplete,
   Badge,
   Box,
   Burger,
@@ -23,11 +24,10 @@ import {
   useMantineColorScheme,
 } from '@mantine/core'
 import { useDisclosure, type UseSplitterReturnValue } from '@mantine/hooks'
-import { BookOpen, Bot, Check, Copy, FolderGit2, GitBranch, Moon, RefreshCw, Settings2, Sun } from 'lucide-react'
+import { BookOpen, Check, ChevronDown, Copy, Folder, GitBranch, Moon, RefreshCw, Sun } from 'lucide-react'
 import { ReactFlowProvider } from '@xyflow/react'
 import { runEventsStream, type RunEventStream } from './api'
 import { WorkflowOutputTabs } from './components/DryRunPanel'
-import { AgentConfigDrawer } from './components/AgentConfigDrawer'
 import { AgentRunModal } from './components/AgentRunModal'
 import { Inspector } from './components/Inspector'
 import { NetlifyTargetMenu } from './components/NetlifyTargetMenu'
@@ -47,6 +47,7 @@ import {
   routeWorkflowStepId,
 } from './dashboard-routes'
 import { appendBoundedOutput, initialLiveRunState, liveRunReducer, visualStatus } from './liveRunReducer'
+import { MAX_STEP_AGENT_INSTANCES, configuredAgentInstance, instanceFromRun } from './agent-instances'
 import { dashboardQueryKeys } from './query-keys'
 import { invalidateDashboardLists, invalidateRunViews, sameRun, upsertRunInDashboardCache } from './queries/dashboard-cache'
 import { useCancelWorkflowRunMutation, useDryRunWorkflowMutation, useStartAgentRunMutation, useStartWorkflowRunMutation } from './queries/dashboard-mutations'
@@ -57,12 +58,12 @@ import { projectWorkflowGraph, workflowGraphNodeByStepId } from './run-projectio
 import { recordValue } from './run-format'
 import type { RunDetailsSelector } from './run-details-selection'
 import { isActiveStatus, isTerminalStatus, statusKey } from './status-model'
-import type { AgentRunRequest, DryRunOptions, DryRunResult, RunFollowupResponse, RunnerEvent, DashboardRun, Workflow, WorkflowGraph, WorkflowGraphNodeData } from './types'
+import type { AgentInstanceDescriptor, AgentRunRequest, DryRunOptions, DryRunResult, RunFollowupResponse, RunnerEvent, DashboardRun, Workflow, WorkflowGraph, WorkflowGraphNodeData } from './types'
 
 type ContextModalAction = '' | 'dry-run' | 'run'
 type DetailsModalContext = {
   node: WorkflowGraphNodeData
-  agent?: string
+  instanceId?: string
   runId: string
   selector: RunDetailsSelector
 }
@@ -75,12 +76,15 @@ function parseRunEvent(event: Event): RunnerEvent {
   }
 }
 
-function stepAgentsFromRunGraph(graph: WorkflowGraph): Record<string, string[]> {
-  const out: Record<string, string[]> = {}
+function stepAgentsFromRunGraph(graph: WorkflowGraph): Record<string, AgentInstanceDescriptor[]> {
+  const out: Record<string, AgentInstanceDescriptor[]> = {}
   for (const node of graph.nodes) {
-    const agents = node.data.agents || []
+    const instances = node.data.instances || []
     const selectedAgents = node.data.selectedAgents || []
-    if (selectedAgents.length === 0 || selectedAgents.length >= agents.length) continue
+    if (selectedAgents.length === 0 || (
+      selectedAgents.length === instances.length &&
+      selectedAgents.every((instance) => instances.some((candidate) => candidate.id === instance.id))
+    )) continue
     out[node.data.stepId] = selectedAgents
   }
   return out
@@ -99,10 +103,11 @@ function runValue(run: Record<string, unknown> | undefined, key: string): string
   return recordValue(run, key)
 }
 
-function runForAgent(node: WorkflowGraphNodeData, agent: string): Record<string, unknown> | undefined {
+function runForAgent(node: WorkflowGraphNodeData, instanceId: string): Record<string, unknown> | undefined {
   for (let index = node.runs.length - 1; index >= 0; index -= 1) {
     const run = node.runs[index]
-    if (runValue(run, 'agent') === agent) return run
+    const instance = instanceFromRun(run)
+    if (instance?.id === instanceId || (!runValue(run, 'instanceId') && runValue(run, 'agent') === instanceId)) return run
   }
   return undefined
 }
@@ -121,22 +126,25 @@ function liveStatusMapsFromRun(run: DashboardRun): {
     const runs = Array.isArray(step.runs) ? step.runs : []
     for (const runRecord of runs) {
       if (!runRecord || typeof runRecord !== 'object' || Array.isArray(runRecord)) continue
-      const agent = recordValue(runRecord as Record<string, unknown>, 'agent')
+      const instance = instanceFromRun(runRecord as Record<string, unknown>)
       const status = recordValue(runRecord as Record<string, unknown>, 'status')
-      if (!agent || !status) continue
+      if (!instance || !status) continue
       agentStatuses[stepId] = {
         ...(agentStatuses[stepId] || {}),
-        [agent]: statusKey(status),
+        [instance.id]: statusKey(status),
       }
     }
   }
   return { stepStatuses, agentStatuses }
 }
 
-function latestAgentEvent(events: RunnerEvent[], node: WorkflowGraphNodeData, agent: string): RunnerEvent | null {
+function latestAgentEvent(events: RunnerEvent[], node: WorkflowGraphNodeData, instanceId: string): RunnerEvent | null {
   for (let index = events.length - 1; index >= 0; index -= 1) {
     const event = events[index]
-    if (event.type === 'agent_status' && event.stepId === node.stepId && event.agent === agent) return event
+    const eventInstanceId = typeof event.instanceId === 'string' && event.instanceId
+      ? event.instanceId
+      : instanceFromRun(event)?.id || ''
+    if (event.type === 'agent_status' && event.stepId === node.stepId && eventInstanceId === instanceId) return event
   }
   return null
 }
@@ -164,6 +172,7 @@ function eventRevisionPart(event: RunnerEvent): string {
     event.seq ?? event.id ?? '',
     event.stepId || '',
     event.agent || '',
+    event.instanceId || '',
     event.status || '',
     event.runnerId || '',
     event.sessionId || '',
@@ -218,9 +227,8 @@ export default function App() {
   const routedWorkflowId = routeWorkflowId(routeState)
   const selectedRunId = routeRunId(routeState)
   const legacyWorkflowId = useMemo(() => legacyWorkflowFromUrl(), [])
-  const [navbarOpened, { toggle: toggleNavbar }] = useDisclosure(false)
+  const [navbarOpened, { toggle: toggleNavbar, close: closeNavbar }] = useDisclosure(false)
   const [eventDiagnosticsOpened, { open: openEventDiagnostics, close: closeEventDiagnostics }] = useDisclosure(false)
-  const [agentConfigOpened, { open: openAgentConfig, close: closeAgentConfig }] = useDisclosure(false)
   const [agentRunOpened, { open: openAgentRun, close: closeAgentRun }] = useDisclosure(false)
   const { colorScheme, toggleColorScheme } = useMantineColorScheme()
   const [dryRunOptions, setDryRunOptions] = useState<DryRunOptions>({
@@ -228,10 +236,6 @@ export default function App() {
     transport: 'netlify-api',
     agents: [],
     stepAgents: {},
-    models: {},
-    efforts: {},
-    stepModels: {},
-    stepEfforts: {},
     context: '',
     step: '',
     fromStep: '',
@@ -386,7 +390,8 @@ export default function App() {
       data: {
         stepId: step.id,
         agents: step.agents,
-        selectedAgents: step.agents,
+        instances: step.instances,
+        selectedAgents: step.instances,
         graphIndex: index,
       },
     }))
@@ -406,21 +411,20 @@ export default function App() {
     const nextStepDelayMs = 700
 
     selectedNodes.forEach((node) => {
-      const selectedAgents = Object.prototype.hasOwnProperty.call(options.stepAgents, node.data.stepId)
+      const selectedInstances = Object.prototype.hasOwnProperty.call(options.stepAgents, node.data.stepId)
         ? options.stepAgents[node.data.stepId]
-        : node.data.selectedAgents || node.data.agents
+        : node.data.selectedAgents || node.data.instances
       const completionOrder = ['claude', 'codex', 'gemini']
-      const activeAgents = node.data.agents
-        .filter((agent) => selectedAgents.includes(agent))
+      const activeInstances = [...selectedInstances]
         .sort((left, right) => {
-          const leftIndex = completionOrder.indexOf(left)
-          const rightIndex = completionOrder.indexOf(right)
-          if (leftIndex === -1 && rightIndex === -1) return node.data.agents.indexOf(left) - node.data.agents.indexOf(right)
+          const leftIndex = completionOrder.indexOf(left.agent)
+          const rightIndex = completionOrder.indexOf(right.agent)
+          if (leftIndex === -1 && rightIndex === -1) return selectedInstances.indexOf(left) - selectedInstances.indexOf(right)
           if (leftIndex === -1) return 1
           if (rightIndex === -1) return -1
           return leftIndex - rightIndex
         })
-      if (activeAgents.length === 0) return
+      if (activeInstances.length === 0) return
 
       const stepId = node.data.stepId
       const stepStartMs = elapsedMs
@@ -431,13 +435,13 @@ export default function App() {
         }))
         setLiveAgentStatuses((value) => ({
           ...value,
-          [stepId]: Object.fromEntries(activeAgents.map((agent) => [agent, 'running'])),
+          [stepId]: Object.fromEntries(activeInstances.map((instance) => [instance.id, 'running'])),
         }))
       }, stepStartMs)
       dryRunSimulationTimers.current.push(startTimer)
 
       let stepDurationMs = firstAgentDelayMs
-      activeAgents.forEach((agent, agentIndex) => {
+      activeInstances.forEach((instance, agentIndex) => {
         if (agentIndex > 0) {
           stepDurationMs += nextAgentDelayPatternMs[(agentIndex - 1) % nextAgentDelayPatternMs.length]
         }
@@ -446,7 +450,7 @@ export default function App() {
             ...value,
             [stepId]: {
               ...(value[stepId] || {}),
-              [agent]: 'completed',
+              [instance.id]: 'completed',
             },
           }))
         }, stepStartMs + stepDurationMs)
@@ -512,10 +516,6 @@ export default function App() {
       context: '',
       agents: [],
       stepAgents: {},
-      models: {},
-      efforts: {},
-      stepModels: {},
-      stepEfforts: {},
       step: '',
       fromStep: '',
     }))
@@ -566,10 +566,6 @@ export default function App() {
       fromStep: typeof runOptions.fromStep === 'string' ? runOptions.fromStep : '',
       agents: [],
       stepAgents: stepAgentsFromRunGraph(response.graph),
-      models: runOptions.models || {},
-      efforts: runOptions.efforts || {},
-      stepModels: runOptions.stepModels || {},
-      stepEfforts: runOptions.stepEfforts || {},
     }))
     setError('')
   }, [closeRunEvents, runGraphQuery.data, selectedRunId, setLiveAgentStatuses, setLiveStepStatuses])
@@ -597,46 +593,60 @@ export default function App() {
     return () => window.clearInterval(interval)
   }, [queryClient, runRunning, visibleRunActive])
 
-  const toggleStepAgent = useCallback((stepId: string, agent: string, allAgents: string[], declaredAgents?: string[]) => {
-    const declared = declaredAgents ?? allAgents
+  const selectedInstancesForStep = useCallback((options: DryRunOptions, stepId: string) => {
+    if (Object.prototype.hasOwnProperty.call(options.stepAgents, stepId)) return options.stepAgents[stepId]
+    const node = graph?.nodes.find((candidate) => candidate.data.stepId === stepId)?.data
+    return node?.selectedAgents || node?.instances || []
+  }, [graph])
+
+  const configureStepAgent = useCallback((stepId: string, instanceId: string, config: { model: string; effort: string }) => {
     setDryRunOptions((options) => {
-      const current = Object.prototype.hasOwnProperty.call(options.stepAgents, stepId)
-        ? options.stepAgents[stepId]
-        : declared
-      const next = current.includes(agent)
-        ? current.filter((candidate) => candidate !== agent)
-        : [...current, agent].filter((candidate, index, list) => list.indexOf(candidate) === index)
-      const ordered = allAgents.filter((candidate) => next.includes(candidate))
-      const nextStepAgents = { ...options.stepAgents }
-      const isDeclaredDefault = ordered.length === declared.length &&
-        declared.every((candidate) => ordered.includes(candidate))
-      if (isDeclaredDefault) delete nextStepAgents[stepId]
-      else nextStepAgents[stepId] = ordered
+      const current = selectedInstancesForStep(options, stepId)
+      const next = current.map((instance) => instance.id === instanceId
+        ? configuredAgentInstance(instance, config.model, config.effort)
+        : instance)
+      if (new Set(next.map((instance) => instance.id)).size !== next.length) {
+        setError('That model and effort combination already exists in this step.')
+        return options
+      }
       return {
         ...options,
         agents: [],
-        stepAgents: nextStepAgents,
+        stepAgents: { ...options.stepAgents, [stepId]: next },
       }
     })
-  }, [])
+  }, [selectedInstancesForStep])
 
-  const configureStepAgent = useCallback((stepId: string, agent: string, config: { model: string; effort: string }) => {
-    setDryRunOptions((options) => {
-      const nextStepModels = { ...options.stepModels }
-      const nextStepEfforts = { ...options.stepEfforts }
-      const models = { ...(nextStepModels[stepId] || {}) }
-      const efforts = { ...(nextStepEfforts[stepId] || {}) }
-      if (!config.model || config.model === 'auto') delete models[agent]
-      else models[agent] = config.model
-      if (!config.effort || config.effort === 'auto') delete efforts[agent]
-      else efforts[agent] = config.effort
-      if (Object.keys(models).length > 0) nextStepModels[stepId] = models
-      else delete nextStepModels[stepId]
-      if (Object.keys(efforts).length > 0) nextStepEfforts[stepId] = efforts
-      else delete nextStepEfforts[stepId]
-      return { ...options, stepModels: nextStepModels, stepEfforts: nextStepEfforts }
-    })
-  }, [])
+  const removeStepAgent = useCallback((stepId: string, instanceId: string) => {
+    setDryRunOptions((options) => ({
+      ...options,
+      agents: [],
+      stepAgents: {
+        ...options.stepAgents,
+        [stepId]: selectedInstancesForStep(options, stepId).filter((instance) => instance.id !== instanceId),
+      },
+    }))
+  }, [selectedInstancesForStep])
+
+  const addStepAgents = useCallback((stepId: string, added: AgentInstanceDescriptor[]) => {
+    const current = selectedInstancesForStep(dryRunOptions, stepId)
+    const existing = new Set(current.map((instance) => instance.id))
+    const next = [...current, ...added.filter((instance) => !existing.has(instance.id))]
+    if (next.length === current.length) {
+      setError('Those agent instances are already in this step.')
+      return
+    }
+    if (next.length > MAX_STEP_AGENT_INSTANCES) {
+      setError(`A step can run at most ${MAX_STEP_AGENT_INSTANCES} agent instances.`)
+      return
+    }
+    setError('')
+    setDryRunOptions((options) => ({
+      ...options,
+      agents: [],
+      stepAgents: { ...options.stepAgents, [stepId]: next },
+    }))
+  }, [dryRunOptions, selectedInstancesForStep])
 
   const openContextModal = (action: Exclude<ContextModalAction, ''>) => {
     setContextDraft('')
@@ -912,6 +922,17 @@ export default function App() {
         : 'No workflow selected'
   const workflowCanvasMode = selectedRunId || activeRun ? 'inspect' : 'configure'
   const repoName = repoNameFromPath(projectRoot)
+  const branchOptions = useMemo(() => [...new Set([
+    dryRunOptions.branch,
+    healthQuery.data?.currentBranch || '',
+    ...(healthQuery.data?.branches || []),
+    ...runs.map((run) => run.branch || ''),
+  ].map((branch) => branch.trim()).filter(Boolean))], [
+    dryRunOptions.branch,
+    healthQuery.data?.branches,
+    healthQuery.data?.currentBranch,
+    runs,
+  ])
   const startupNode = useMemo(() => {
     if (!runRunning || !graph) return null
     if (activeRun && runGraphQuery.data) return null
@@ -936,14 +957,14 @@ export default function App() {
   }, [liveStepStatuses, startupNode])
   const projectedAgentStatuses = useMemo(() => {
     if (!startupNode?.node.stepId) return liveAgentStatuses
-    const selectedAgents = Object.prototype.hasOwnProperty.call(dryRunOptions.stepAgents, startupNode.node.stepId)
+    const selectedInstances = Object.prototype.hasOwnProperty.call(dryRunOptions.stepAgents, startupNode.node.stepId)
       ? dryRunOptions.stepAgents[startupNode.node.stepId]
-      : startupNode.node.selectedAgents || startupNode.node.agents
+      : startupNode.node.selectedAgents || startupNode.node.instances
     return {
       ...liveAgentStatuses,
       [startupNode.node.stepId]: {
         ...(liveAgentStatuses[startupNode.node.stepId] || {}),
-        ...Object.fromEntries(selectedAgents.map((agent) => [agent, startupNode.status])),
+        ...Object.fromEntries(selectedInstances.map((instance) => [instance.id, startupNode.status])),
       },
     }
   }, [dryRunOptions.stepAgents, liveAgentStatuses, startupNode])
@@ -953,10 +974,6 @@ export default function App() {
     stepStatuses: projectedStepStatuses,
     stepAgentStatuses: projectedAgentStatuses,
   }), [dryRunOptions.stepAgents, graph, projectedAgentStatuses, projectedStepStatuses])
-  const configurableAgents = useMemo(() => {
-    const agents = projectedGraph?.nodes.flatMap((node) => node.data.selectedAgents || node.data.agents) || []
-    return agents.filter((agent, index) => agents.indexOf(agent) === index)
-  }, [projectedGraph])
   const selectedWorkflowStepId = routeWorkflowStepId(routeState)
   const selectedNode = useMemo(
     () => workflowGraphNodeByStepId(projectedGraph, selectedWorkflowStepId),
@@ -969,14 +986,19 @@ export default function App() {
     if (!detailsRunId || !routeDetailsStepId) return null
     const node = workflowGraphNodeByStepId(projectedGraph, routeDetailsStepId)
     if (!node) return null
-    const savedRun = routeDetailsAgent ? runForAgent(node, routeDetailsAgent) : undefined
+    const routeInstance = routeDetailsAgent
+      ? (node.selectedAgents || node.instances).find((instance) => instance.id === routeDetailsAgent) ||
+        (node.selectedAgents || node.instances).find((instance) => instance.agent === routeDetailsAgent)
+      : undefined
+    const instanceId = routeInstance?.id || routeDetailsAgent
+    const savedRun = instanceId ? runForAgent(node, instanceId) : undefined
     return {
       node,
-      agent: routeDetailsAgent || undefined,
+      instanceId: instanceId || undefined,
       runId: detailsRunId,
       selector: {
         stepId: node.stepId,
-        agent: routeDetailsAgent || undefined,
+        agent: routeDetailsAgent ? runValue(savedRun, 'agent') || undefined : undefined,
         runnerId: routeDetailsAgent ? runValue(savedRun, 'runnerId') : undefined,
         sessionId: routeDetailsAgent ? runValue(savedRun, 'sessionId') : undefined,
       },
@@ -1021,21 +1043,27 @@ export default function App() {
     stderr: '',
   } : null
   const detailsModalLiveContext = useMemo<RunDetailsLiveContext | null>(() => {
-    if (!detailsModalContext?.agent) return null
+    if (!detailsModalContext?.instanceId) return null
     const latestNode = workflowGraphNodeByStepId(projectedGraph, detailsModalContext.node.stepId) || detailsModalContext.node
-    const event = latestAgentEvent(liveRunState.rawEvents, latestNode, detailsModalContext.agent)
-    const savedRun = runForAgent(latestNode, detailsModalContext.agent)
+    const event = latestAgentEvent(liveRunState.rawEvents, latestNode, detailsModalContext.instanceId)
+    const savedRun = runForAgent(latestNode, detailsModalContext.instanceId)
     const savedStatus = runValue(savedRun, 'status')
-    const status = latestNode.agentStatuses?.[detailsModalContext.agent] ||
+    const agent = runValue(savedRun, 'agent') ||
+      event?.agent ||
+      latestNode.selectedAgents?.find((instance) => instance.id === detailsModalContext.instanceId)?.agent ||
+      detailsModalContext.selector.agent || ''
+    if (!agent) return null
+    const status = latestNode.agentStatuses?.[detailsModalContext.instanceId] ||
       (event?.status ? statusKey(event.status) : '') ||
       (savedStatus ? statusKey(savedStatus) : '')
     return {
       selector: {
         ...detailsModalContext.selector,
-        agent: detailsModalContext.agent,
+        agent,
         runnerId: detailsModalContext.selector.runnerId || runValue(savedRun, 'runnerId') || event?.runnerId || '',
         sessionId: detailsModalContext.selector.sessionId || runValue(savedRun, 'sessionId') || event?.sessionId || '',
       },
+      instanceId: detailsModalContext.instanceId,
       stepTitle: latestNode.title,
       status,
       runnerId: event?.runnerId || runValue(savedRun, 'runnerId'),
@@ -1095,9 +1123,9 @@ export default function App() {
     if (!runDetailsModalRunId) return
     if (entry.kind === 'session') {
       const stepId = entry.section?.stepId || entry.liveContext?.selector.stepId || ''
-      const agent = entry.section?.agent || entry.liveContext?.selector.agent || ''
-      if (stepId && agent) {
-        navigateRunAgent(runDetailsModalRunId, stepId, agent)
+      const instanceId = entry.instance?.id || entry.section?.instanceId || entry.section?.agent || entry.liveContext?.instanceId || entry.liveContext?.selector.agent || ''
+      if (stepId && instanceId) {
+        navigateRunAgent(runDetailsModalRunId, stepId, instanceId)
         return
       }
       if (stepId) {
@@ -1140,34 +1168,23 @@ export default function App() {
               </Box>
             </Group>
             <Group gap="xs" wrap="nowrap" className="header-actions">
-              <Button
-                aria-label="Run agent"
-                className="header-agent-run"
-                size="xs"
-                variant="light"
-                color="violet"
-                leftSection={<Bot size={15} />}
-                onClick={() => {
-                  setAgentRunError('')
-                  openAgentRun()
-                }}
-                disabled={!capabilities.canStartRuns}
-              >
-                Run agent
-              </Button>
               <Tooltip label={projectRoot || 'Project root'}>
                 <Group gap={6} wrap="nowrap" className="header-repo">
-                  <FolderGit2 size={15} />
+                  <Folder size={15} />
                   <Text size="sm" fw={700} truncate>{repoName}</Text>
                 </Group>
               </Tooltip>
               <NetlifyTargetMenu context={netlifyContext} />
-              <TextInput
+              <Autocomplete
                 aria-label="Branch"
                 className="header-branch"
+                data={branchOptions}
                 leftSection={<GitBranch size={14} />}
+                rightSection={<ChevronDown aria-hidden size={14} />}
+                rightSectionPointerEvents="none"
+                placeholder="Branch"
                 value={dryRunOptions.branch}
-                onChange={(event) => setDryRunOptions((options) => ({ ...options, branch: event.currentTarget.value }))}
+                onChange={(branch) => setDryRunOptions((options) => ({ ...options, branch }))}
                 size="xs"
               />
               <Tooltip label="Open documentation">
@@ -1213,6 +1230,12 @@ export default function App() {
             workflows={workflows}
             selectedWorkflowId={selectedWorkflowId}
             loading={loadingWorkflows}
+            canRunAgent={capabilities.canStartRuns}
+            onRunAgent={() => {
+              setAgentRunError('')
+              openAgentRun()
+              closeNavbar()
+            }}
             onSelect={selectWorkflowDefinition}
           />
         </AppShell.Navbar>
@@ -1261,12 +1284,9 @@ export default function App() {
                         selectedNode={selectedNode}
                         catalog={capabilities.agentConfiguration.catalog}
                         transport={dryRunOptions.transport}
-                        models={dryRunOptions.models}
-                        efforts={dryRunOptions.efforts}
-                        stepModels={dryRunOptions.stepModels}
-                        stepEfforts={dryRunOptions.stepEfforts}
-                        onToggleStepAgent={toggleStepAgent}
                         onConfigureStepAgent={configureStepAgent}
+                        onRemoveStepAgent={removeStepAgent}
+                        onAddStepAgents={addStepAgents}
                         onSelectNode={selectCanvasNode}
                         onViewNodeDetails={openNodeDetails}
                         onViewAgentResult={openAgentResult}
@@ -1344,14 +1364,7 @@ export default function App() {
             </Text>
           ) : null}
           <Group justify="space-between">
-            <Button
-              variant="light"
-              color="gray"
-              leftSection={<Settings2 size={16} />}
-              onClick={openAgentConfig}
-            >
-              Configure agents
-            </Button>
+            <Text size="xs" c="dimmed">Agent instances are configured directly on each workflow step.</Text>
             <Group gap="xs">
               <Button variant="subtle" color="gray" onClick={closeContextModal}>Cancel</Button>
               <Button
@@ -1365,20 +1378,6 @@ export default function App() {
           </Group>
         </Stack>
       </Modal>
-      <AgentConfigDrawer
-        opened={agentConfigOpened}
-        onClose={closeAgentConfig}
-        agents={configurableAgents}
-        catalog={capabilities.agentConfiguration.catalog}
-        models={dryRunOptions.models}
-        efforts={dryRunOptions.efforts}
-        transport={dryRunOptions.transport}
-        onChange={({ models, efforts }) => setDryRunOptions((options) => ({
-          ...options,
-          models,
-          efforts,
-        }))}
-      />
       <AgentRunModal
         opened={agentRunOpened}
         onClose={closeAgentRun}

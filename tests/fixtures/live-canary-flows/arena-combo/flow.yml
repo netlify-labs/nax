@@ -1,0 +1,25 @@
+id: arena-combo-canary
+title: Arena combination and inheritance canary
+defaults:
+  transport: netlify-api
+  notify: false
+steps:
+  - id: compare
+    title: Compare six configurations
+    prompt: prompts/check.md
+    action: issue
+    submit: new-run
+    agents:
+      - { agent: claude, models: [claude-opus-5, claude-opus-4-8, claude-fable-5] }
+      - { agent: codex, model: gpt-5.6-sol, efforts: [low, medium, high] }
+    waitFor: agent-results
+
+  - id: continue
+    title: Continue every configuration
+    prompt: prompts/follow-up.md
+    action: comment
+    submit: follow-up
+    input:
+      - step: compare
+        results: all
+    waitFor: agent-results

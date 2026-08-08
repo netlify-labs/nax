@@ -28,6 +28,7 @@
  * @typedef {{
  *   id: AgentProvider,
  *   label: string,
+ *   defaultModel?: string,
  *   models: AgentModelDefinition[],
  * }} AgentProviderDefinition
  *
@@ -93,6 +94,7 @@ const AGENT_CONFIGURATION_CATALOG = {
     {
       id: 'claude',
       label: 'Claude',
+      defaultModel: 'claude-fable-5',
       models: [
         { id: 'claude-opus-5', label: 'Opus 5', efforts: LOW_MEDIUM_HIGH_EFFORTS },
         { id: 'claude-opus-4-8', label: 'Opus 4.8', efforts: LOW_MEDIUM_HIGH_EFFORTS },
@@ -104,6 +106,7 @@ const AGENT_CONFIGURATION_CATALOG = {
     {
       id: 'gemini',
       label: 'Gemini',
+      defaultModel: 'gemini-3.1-pro-preview',
       models: [
         { id: 'gemini-3.1-pro-preview', label: 'Gemini 3.1 Pro', efforts: LOW_MEDIUM_HIGH_EFFORTS },
         { id: 'gemini-3.6-flash', label: 'Gemini 3.6 Flash', efforts: LOW_MEDIUM_HIGH_EFFORTS },
@@ -113,6 +116,7 @@ const AGENT_CONFIGURATION_CATALOG = {
     {
       id: 'codex',
       label: 'Codex',
+      defaultModel: 'gpt-5.6-sol',
       models: [
         { id: 'gpt-5.6-sol', label: 'GPT 5.6 Sol', efforts: LOW_MEDIUM_HIGH_EFFORTS },
         { id: 'gpt-5.6-terra', label: 'GPT 5.6 Terra', efforts: LOW_MEDIUM_HIGH_EFFORTS },
@@ -123,6 +127,7 @@ const AGENT_CONFIGURATION_CATALOG = {
     {
       id: 'opencode',
       label: 'OpenCode',
+      defaultModel: 'moonshotai/kimi-k3',
       models: [
         {
           id: 'moonshotai/kimi-k3',
@@ -576,7 +581,9 @@ function getEffortAvailabilityNotice(rawAgent, rawModel) {
 function getBestModelForProvider(rawAgent) {
   const agent = normalizeAgentProvider(rawAgent)
   if (!agent) return AUTO_CONFIGURATION_VALUE
-  const [best] = providerDefinition(agent).models
+  const provider = providerDefinition(agent)
+  if (provider.defaultModel) return provider.defaultModel
+  const [best] = provider.models
   return best ? best.id : AUTO_CONFIGURATION_VALUE
 }
 
@@ -629,6 +636,7 @@ module.exports = {
   AGENT_CONFIGURATION_CATALOG,
   AUTO_CONFIGURATION_VALUE,
   SUPPORTED_AGENT_PROVIDERS,
+  catalogModel,
   formatAgentConfigLabel,
   getAgentEffortOptions,
   getAgentModelOptions,

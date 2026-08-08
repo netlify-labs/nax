@@ -34,7 +34,7 @@ Useful flags:
 --transport github-actions      # same GitHub Actions transport, older explicit name
 --transport netlify-api         # orchestrate through Netlify CLI/API from this machine
 --branch <branch-or-pr>     # branch name or PR selector like '#123'
---agents <list>                       # select providers for runnable steps
+--agents <provider[:model[:effort]]>  # select instances; comma-separated or repeatable
 --models <agent=model>                # assign a real model; repeatable
 --efforts <agent=effort>              # assign reasoning effort; repeatable
 --step-agents <step=agents>           # select providers for one step
@@ -60,7 +60,7 @@ Useful flags:
 
 Use for code review. Steps:
 
-1. `review` - Claude, Gemini, and Codex independently review.
+1. `review` - up to four configured agent instances independently review.
 2. `cross-review` - each agent critiques the other agents' findings.
 3. `synthesize` - Codex synthesizes the final consensus.
 
@@ -85,6 +85,9 @@ Use to pick the next best task. Steps:
 - Prefer `--transport netlify-api` when the user wants live local progress, resume state, or direct Netlify API control.
 - Prefer `--transport github` / `--transport github-actions` when the user wants remote reproducibility and GitHub Actions logs.
 - Pinned model or effort settings require `netlify-api`; Auto omits both fields.
+- Bare providers remain Auto on the wire; `latest`/`default` pin the catalog default at launch.
+- Repeated providers are independent instances. Use exact tuples for model bake-offs and effort sweeps.
+- Each step admits at most four agent instances, which may run concurrently.
 - Warn that local uncommitted/unpushed changes are invisible to remote Netlify agent runners.
 - Use `--branch '#123'` for PR-specific runs when the user references a PR number.
 - Use `--step` only for deliberate partial reruns; otherwise resume/retry saved Netlify API state.
@@ -121,13 +124,14 @@ Use `nax dashboard` to inspect saved runs in a browser. Run details can switch b
 For a terminal failed Netlify API run that needs a compact follow-up prompt, use:
 
 ```bash
-nax run --retry <run-id> --step <step-id> --agent <agent>
+nax run --retry <run-id> --step <step-id> --instance <agent:model:effort>
 ```
 
 Example:
 
 ```bash
-nax run --retry 2026-05-15T01-24-10-177Z-ideas --step react --agent claude
+nax run --retry 2026-05-15T01-24-10-177Z-ideas --step react \
+  --instance claude:claude-opus-5:high
 ```
 
 The retry command submits a new follow-up session to the existing runner, waits for that one agent, updates run state, and continues downstream steps if the failed step becomes complete.
@@ -183,13 +187,11 @@ Each step declares:
 - `prompt`
 - `action`: `issue` or `comment`
 - `submit`: `new-run` or `follow-up`
-- `agents`
-- `models` (provider-keyed real model IDs)
-- `efforts` (provider-keyed reasoning settings)
+- `agents`: bare providers or instance objects with `model`/`models` and `effort`/`efforts`
 - optional `input` from earlier steps
 - `waitFor: agent-results`
 
-When adding a flow, keep prompts self-contained and make step outputs easy for later steps to parse. For follow-up steps, be careful with prompt size because prior outputs are embedded.
+When adding a flow, keep prompts self-contained and make step outputs easy for later steps to parse. A `follow-up` step inherits surviving instances from its first input and must not declare `agents`. Use `results: peers` to give each inherited instance only the other instances' outputs. Mixed success becomes `completed_with_failures`; an all-failed step halts the workflow.
 
 ## References
 

@@ -1,6 +1,6 @@
 ---
 title: Review
-description: Explore, review, and improve the current setup with three independent agents.
+description: Explore, review, and improve the current setup with up to four independent agent instances.
 instruction: please review and access current setup and see if you find any improvements plz
 ---
 

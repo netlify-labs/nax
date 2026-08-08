@@ -112,11 +112,17 @@ function durableLineup(value) {
 function publicInstances(lineup, { models, efforts } = {}) {
   const entries = durableLineup(lineup)
   if (entries.length === 0) return []
-  return resolveLineup(entries, {
-    requestedTransport: 'auto',
-    models: normalizeProviderModelMap(models),
-    efforts: normalizeProviderEffortMap(efforts),
-  }).instances
+  // Durable records can predate the current lineup rules (e.g. a repeated provider). On this read
+  // path a rejection must degrade the single row to an empty lineup, not fail the whole collection.
+  try {
+    return resolveLineup(entries, {
+      requestedTransport: 'auto',
+      models: normalizeProviderModelMap(models),
+      efforts: normalizeProviderEffortMap(efforts),
+    }).instances
+  } catch (_error) {
+    return []
+  }
 }
 
 /**

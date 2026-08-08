@@ -60,7 +60,7 @@ Useful flags:
 
 Use for code review. Steps:
 
-1. `review` - Claude, Gemini, and Codex independently review.
+1. `review` - up to four configured agent instances independently review.
 2. `cross-review` - each agent critiques the other agents' findings.
 3. `synthesize` - Codex synthesizes the final consensus.
 
@@ -87,7 +87,7 @@ Use to pick the next best task. Steps:
 - Pinned model or effort settings require `netlify-api`; Auto omits both fields.
 - Bare providers remain Auto on the wire; `latest`/`default` pin the catalog default at launch.
 - Repeated providers are independent instances. Use exact tuples for model bake-offs and effort sweeps.
-- Local runs admit at most five non-terminal instances; ask before forcing a step above six instances.
+- Each step admits at most four agent instances, which may run concurrently.
 - Warn that local uncommitted/unpushed changes are invisible to remote Netlify agent runners.
 - Use `--branch '#123'` for PR-specific runs when the user references a PR number.
 - Use `--step` only for deliberate partial reruns; otherwise resume/retry saved Netlify API state.
@@ -191,7 +191,7 @@ Each step declares:
 - optional `input` from earlier steps
 - `waitFor: agent-results`
 
-When adding a flow, keep prompts self-contained and make step outputs easy for later steps to parse. A `follow-up` step inherits surviving instances from its first input and must not declare `agents`. Mixed success becomes `completed_with_failures`; an all-failed step halts the workflow.
+When adding a flow, keep prompts self-contained and make step outputs easy for later steps to parse. A `follow-up` step inherits surviving instances from its first input and must not declare `agents`. Use `results: peers` to give each inherited instance only the other instances' outputs. Mixed success becomes `completed_with_failures`; an all-failed step halts the workflow.
 
 ## References
 

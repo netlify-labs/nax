@@ -135,6 +135,19 @@ test('bare providers on github stay eligible (no pin)', () => {
   assert.equal(r.transport, 'github')
 })
 
+test('a step cannot resolve more than four agent instances', () => {
+  assert.throws(
+    () => resolveLineup([{ agent: 'claude', models: [
+      'claude-fable-5',
+      'claude-opus-5',
+      'claude-opus-4-8',
+      'claude-sonnet-5',
+      'claude-haiku-4-5',
+    ] }]),
+    { code: 'step_instance_limit' },
+  )
+})
+
 test('effort pinned on a model belonging to another provider errors', () => {
   assert.throws(
     () => resolveLineup([{ agent: 'codex', model: 'claude-opus-5' }]),

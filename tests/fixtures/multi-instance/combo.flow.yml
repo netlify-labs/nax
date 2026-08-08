@@ -10,5 +10,5 @@ steps:
     agents:
       - { agent: claude, models: [claude-opus-5, claude-opus-4-8] }
       - { agent: gemini, model: latest }
-      - { agent: codex, model: gpt-5.6-sol, efforts: [medium, high] }
+      - { agent: codex, model: gpt-5.6-sol, effort: high }
     waitFor: agent-results

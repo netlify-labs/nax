@@ -1,9 +1,9 @@
 import { memo, useEffect, useState } from 'react'
 import { Handle, Position, type NodeProps } from '@xyflow/react'
 import { Button, Group, Popover, Text } from '@mantine/core'
-import { ChevronDown, LockKeyhole, UserCheck, X } from 'lucide-react'
+import { ChevronDown, LockKeyhole, Trash2, UserCheck } from 'lucide-react'
 
-import { instanceDisplayName } from '../agent-instances'
+import { MAX_STEP_AGENT_INSTANCES, instanceDisplayName } from '../agent-instances'
 import { agentLabel, statusLabel } from '../run-format'
 import { isActiveStatus, isCompletedStatus } from '../status-model'
 import type { AgentInstanceDescriptor, WorkflowGraphNodeData } from '../types'
@@ -154,7 +154,7 @@ export const WorkflowNode = memo(function WorkflowNode({ data, selected }: NodeP
                   <Popover.Target>
                     <button
                       type="button"
-                      className="agent-chip-caret"
+                      className="agent-chip-caret nodrag nopan"
                       aria-label={`Configure ${agentLabel(instance.agent)} ${instanceDisplayName(instance)} for ${node.title}`}
                       onClick={(event) => {
                         event.stopPropagation()
@@ -166,6 +166,20 @@ export const WorkflowNode = memo(function WorkflowNode({ data, selected }: NodeP
                     </button>
                   </Popover.Target>
                   <Popover.Dropdown className="agent-config-popover" onClick={(event) => event.stopPropagation()}>
+                    <Button
+                      className="agent-config-remove"
+                      size="compact-xs"
+                      variant="subtle"
+                      color="red"
+                      leftSection={<Trash2 size={12} />}
+                      aria-label={`Remove ${agentLabel(instance.agent)} ${instanceDisplayName(instance)} from ${node.title}`}
+                      onClick={() => {
+                        node.onRemoveAgent?.(node.stepId, instance.id)
+                        setConfigInstanceId(null)
+                      }}
+                    >
+                      Remove agent
+                    </Button>
                     {githubTransport ? (
                       <Text size="xs" c="dimmed" mb="xs">
                         Model and effort require the Netlify API transport.
@@ -180,7 +194,7 @@ export const WorkflowNode = memo(function WorkflowNode({ data, selected }: NodeP
                       withinPortal={false}
                       onChange={setDraftConfig}
                     />
-                    <Group justify="flex-end" mt="sm">
+                    <Group justify="flex-end" gap="xs" mt="sm">
                       <Button size="xs" variant="subtle" color="gray" onClick={() => setConfigInstanceId(null)}>Cancel</Button>
                       <Button
                         size="xs"
@@ -196,25 +210,14 @@ export const WorkflowNode = memo(function WorkflowNode({ data, selected }: NodeP
                   </Popover.Dropdown>
                 </Popover>
               ) : null}
-              {configurable ? (
-                <button
-                  type="button"
-                  className="agent-chip-remove"
-                  aria-label={`Remove ${agentLabel(instance.agent)} ${instanceDisplayName(instance)} from ${node.title}`}
-                  onClick={(event) => {
-                    event.stopPropagation()
-                    node.onRemoveAgent?.(node.stepId, instance.id)
-                  }}
-                >
-                  <X size={12} />
-                </button>
-              ) : null}
             </div>
           )
         })}
         {!humanReview && configurable && catalogContext ? (
           <AddAgentInstances
             catalog={catalogContext.catalog}
+            disabled={selectedInstances.length >= MAX_STEP_AGENT_INSTANCES}
+            maxInstances={MAX_STEP_AGENT_INSTANCES - selectedInstances.length}
             onAdd={(instances) => node.onAddInstances?.(node.stepId, instances)}
           />
         ) : null}

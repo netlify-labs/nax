@@ -263,7 +263,7 @@ function buildCompactLocalPromptForRetry({ flow, step, runState, run }) {
   const options = runState.options || {}
   const prompt = loadStepPrompt(flow, step)
   const completedStepStates = completedStepMapFromRunState(runState)
-  const sourceRuns = sourceRunsForStep(step, completedStepStates)
+  const sourceRuns = sourceRunsForStep(step, completedStepStates, { instanceId: run.instanceId || '' })
   const instructionOnly = buildLocalAgentPrompt({
     model: run.agent,
     prompt,
@@ -852,10 +852,9 @@ async function executeLocalFlow({ flow, steps, options, runState, projectRoot, c
     runState.steps.push(stepState)
     saveRunState(runState)
 
-    const sourceRuns = sourceRunsForStep(step, completedStepStates)
-    const roundResults = formatLocalRunResults(sourceRuns)
+    const allSourceRuns = sourceRunsForStep(step, completedStepStates)
     const stepContext = contextWithOutputBudget(baseContext, options, {
-      hasPriorResults: sourceRuns.length > 0,
+      hasPriorResults: allSourceRuns.length > 0,
       hasFutureSteps: stepIndex < steps.length - 1,
     })
     // Resolve the step's lineup into agent instances (one AgentRun per instance). The lineup
@@ -904,6 +903,8 @@ async function executeLocalFlow({ flow, steps, options, runState, projectRoot, c
     /** @type {import('../../types').AgentRun[]} */
     const runs = instances.map((instance) => {
       const agent = instance.agent
+      const sourceRuns = sourceRunsForStep(step, completedStepStates, { instanceId: instance.id })
+      const roundResults = formatLocalRunResults(sourceRuns)
       const followUpRun = step.submit === 'follow-up'
         ? continuationRunForInstance(inheritedRuns, instance)
         : null

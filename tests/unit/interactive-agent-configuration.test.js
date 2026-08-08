@@ -4,9 +4,7 @@ const { test } = require('node:test')
 const {
   addAgentInstancesInteractively,
   chooseSingleAgentConfigInteractively,
-  confirmLineupSoftCapInteractively,
   configureAgentsInteractively,
-  lineupSoftCapViolations,
   prepareInteractiveFlowRun,
 } = require('../../src/cli/main')
 const { resolveAgentRunConfig } = require('../../src/core/agents/configuration')
@@ -77,62 +75,24 @@ test('interactive Add-instance repeats a provider with flagship model and highes
   assert.equal(effortPrompt.input.initialValue, 'high')
 })
 
-test('instance soft cap counts resolved instances rather than providers', () => {
-  const lineup = Array.from({ length: 7 }, (_, index) => ({
-    agent: 'claude',
-    model: `future-model-${index + 1}`,
-  }))
-  const flow = {
-    id: 'large-lineup',
-    title: 'Large lineup',
-    defaults: { agents: ['claude'] },
-    steps: [{ id: 'review', title: 'Review', agents: ['claude'], lineup }],
-  }
-
-  assert.deepEqual(lineupSoftCapViolations(flow, flow.steps, {}, 'netlify-api'), [{
-    stepId: 'review',
-    title: 'Review',
-    count: 7,
-  }])
-})
-
-test('interactive soft cap requires a separate explicit confirmation above six instances', async () => {
-  const harness = promptHarness([true])
-  await confirmLineupSoftCapInteractively({
-    clack: harness.clack,
-    violations: [{ title: 'Review', count: 7 }],
-  })
-
-  assert.deepEqual(harness.calls.map((call) => call.kind), ['confirm'])
-  assert.match(String(harness.calls[0].input.message), /more than 6 instances: Review \(7\)/)
-  assert.equal(harness.calls[0].input.initialValue, false)
-})
-
-test('non-interactive soft cap rejects execution unless --force approves it', async () => {
+test('the four-instance step limit cannot be bypassed with --force', async () => {
   const flow = {
     id: 'large-lineup',
     title: 'Large lineup',
     defaults: { agents: ['claude'], transport: 'netlify-api' },
     steps: [{ id: 'review', title: 'Review', agents: ['claude'] }],
   }
-  const agents = Array.from({ length: 7 }, (_, index) => `claude:future-model-${index + 1}`)
+  const agents = Array.from({ length: 5 }, (_, index) => `claude:future-model-${index + 1}`)
 
   await assert.rejects(
     prepareInteractiveFlowRun({
       flow,
-      options: { agents, yes: true },
+      options: { agents, yes: true, force: true },
       transport: 'netlify-api',
       projectRoot: '/tmp/large-lineup',
     }),
-    /re-run with --force to approve it in non-interactive mode/,
+    /at most 4 agent instances/,
   )
-  const forced = await prepareInteractiveFlowRun({
-    flow,
-    options: { agents, yes: true, force: true },
-    transport: 'netlify-api',
-    projectRoot: '/tmp/large-lineup',
-  })
-  assert.equal(forced.steps.length, 1)
 })
 
 test('interactive configuration keeps Auto as the one-step default', async () => {

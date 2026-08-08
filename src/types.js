@@ -74,6 +74,7 @@
  *   stepId?: string,
  *   id?: string,
  *   name?: string,
+ *   results?: string,
  * }} StepInput
  *
  * A workflow step definition merged with its durable runtime state.

@@ -112,13 +112,6 @@
           "resolvedFrom": "latest"
         },
         {
-          "id": "codex:gpt-5.6-sol:medium",
-          "agent": "codex",
-          "model": "gpt-5.6-sol",
-          "effort": "medium",
-          "resolvedFrom": "pinned"
-        },
-        {
           "id": "codex:gpt-5.6-sol:high",
           "agent": "codex",
           "model": "gpt-5.6-sol",

@@ -1,5 +1,8 @@
 import type { AgentInstanceDescriptor } from './types'
 
+// Keep aligned with src/core/constants.js; the server enforces the same hard limit.
+export const MAX_STEP_AGENT_INSTANCES = 4
+
 export function agentInstanceId(agent: string, model?: string, effort?: string): string {
   return `${agent}:${model && model !== 'auto' ? model : 'auto'}:${effort && effort !== 'auto' ? effort : 'auto'}`
 }

@@ -240,9 +240,8 @@ nax run review --agents \
 nax run review --agents claude,gemini,codex --force
 ```
 
-Local execution starts large lineups in waves with at most five non-terminal
-runners. Above six instances in a step, use `--force` only when the user has
-already approved the cost fan-out.
+Each step accepts at most four resolved agent instances, and local execution
+can run all four concurrently. `--force` does not bypass this limit.
 
 Run part of a workflow:
 

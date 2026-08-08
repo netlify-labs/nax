@@ -2,8 +2,10 @@
 // The worker owns one slot until the remote run reaches a terminal state. As soon as a worker
 // settles, the next queued item starts; a slow run therefore does not hold up unrelated slots.
 
-/** Hardcoded backend parallel-run cap (observed default; not auto-detected, not user-tunable). */
-const MAX_PARALLEL_RUNS = 5
+const { MAX_STEP_AGENT_INSTANCES } = require('../../core/constants')
+
+/** One lifecycle slot per allowed step instance. */
+const MAX_PARALLEL_RUNS = MAX_STEP_AGENT_INSTANCES
 
 /**
  * @template T, R

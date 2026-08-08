@@ -130,3 +130,51 @@ test('projectWorkflowGraph keeps terminal step status ahead of stale active run 
   assert.equal(node?.status, 'completed')
   assert.deepEqual(node?.agentStatuses, { 'codex:auto:auto': 'completed' })
 })
+
+test('projectWorkflowGraph preserves an explicitly empty step lineup', () => {
+  const projected = projectWorkflowGraph({
+    graph: graphWithStep({}),
+    stepAgents: { review: [] },
+    stepStatuses: {},
+    stepAgentStatuses: {},
+  })
+
+  assert.deepEqual(projected?.nodes[0].data.selectedAgents, [])
+})
+
+test('projectWorkflowGraph mirrors definition overrides into inherited follow-up steps', () => {
+  const graph = graphWithStep({})
+  graph.nodes.push({
+    ...graph.nodes[0],
+    id: 'cross-review',
+    data: {
+      ...graph.nodes[0].data,
+      stepId: 'cross-review',
+      number: 2,
+      title: 'Cross Review',
+      submit: 'follow-up',
+      inheritedFromStepId: 'review',
+    },
+  })
+  const claudeModels = [
+    'claude-fable-5',
+    'claude-opus-5',
+    'claude-opus-4-8',
+    'claude-sonnet-5',
+  ].map((model) => ({
+    agent: 'claude',
+    model,
+    id: `claude:${model}:auto`,
+    resolvedFrom: 'pinned' as const,
+  }))
+
+  const projected = projectWorkflowGraph({
+    graph,
+    stepAgents: { review: claudeModels },
+    stepStatuses: {},
+    stepAgentStatuses: {},
+  })
+
+  assert.deepEqual(projected?.nodes[0].data.selectedAgents, claudeModels)
+  assert.deepEqual(projected?.nodes[1].data.selectedAgents, claudeModels)
+})

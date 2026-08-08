@@ -50,14 +50,15 @@ nax dashboard --no-open --tail
 | Graph canvas | Shows one chip per instance, inputs, submit mode, and step/instance status. |
 | Dry Run | Runs `nax run <flow> --dry --force` through the local API. |
 | Run | Starts the workflow after browser confirmation. |
-| Run agent | Starts a standalone provider run with its own model and effort settings. |
+| Run an individual agent | Opens the standalone provider runner from the top of the workflow sidebar. |
+| Branch | Suggests the current, local, and locally known remote branches while still accepting a branch name that has not been fetched. |
 | Instance configuration | Adds, edits, or removes exact provider/model/effort tuples on each runnable step. |
 | Recent runs | Reads `.nax/workflows` and highlights resumable or completed runs. |
 | Run details | Shows results, prompt source, artifacts, copy/open actions, and follow-up controls. |
 
 ## Verify the Agent Runner site
 
-When the dashboard starts, the terminal lists every `.netlify/state.json` link found in the repository and marks the site selected for Agent Runner execution. The dashboard header repeats that target in the **Agent runs** menu, where you can inspect every local link and open the corresponding Netlify Agent Runs page.
+When the dashboard starts, the terminal lists every `.netlify/state.json` link found in the repository and marks the site selected for Agent Runner execution. The dashboard header exposes that target through the quiet **Netlify project · site-slug** menu, where you can inspect every local link and open the corresponding Netlify Agent Runs page.
 
 In a monorepo, the repository-root link is not automatically the run target. If exactly one discovered `netlify.toml` contains a package-manager `--filter`, `nax` selects that app and its adjacent `.netlify/state.json`. The startup output and dashboard menu include this selection reason, and the run confirmation names the exact Netlify site before remote work begins.
 
@@ -92,11 +93,14 @@ affecting another instance of the same provider.
 Choose **Add agent** on a step to build a cartesian lineup from one provider,
 multiple models, and multiple efforts. The picker preselects that provider's
 flagship model and highest effort. Quick presets cover one flagship from every
-provider, one model at every effort, or every model from one provider. Adding
-more than six instances to a step requires confirmation.
+provider, one model at every effort, or the four strongest models from one
+provider. Each step is limited to four agent instances.
 
 Follow-up step chips are read-only. They inherit the surviving instances from
-the first input step and continue each instance's own runner session. During a
+the first input step and continue each instance's own runner session. In the
+definition view, inherited chips mirror changes made to that source step. An
+input configured with `results: peers` gives each continued instance the other
+instances' outputs for cross-grading. During a
 run, chips are keyed by exact instance id, so two Claude models can show
 different statuses. A mixed result is visibly marked **Completed with
 failures** rather than being shown as an all-green step.

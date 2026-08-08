@@ -309,7 +309,6 @@ const DEFAULT_LOCAL_SAFE_PROMPT_BYTES = 16384
 const AD_HOC_RUN_TARGET = '__ad_hoc_agent_run__'
 const STEP_MAX_WIDTH = 200
 const OUTER_TERMINAL_RATIO = 0.8
-const INSTANCE_SOFT_CAP = 6
 
 let clackModulePromise
 
@@ -1675,47 +1674,6 @@ function runnableSteps(flow, options) {
 }
 
 /**
- * @param {import('../types').WorkflowFlow} flow
- * @param {import('../types').WorkflowStep[]} steps
- * @param {import('../types').JsonMap} options
- * @param {string} transport
- * @returns {Array<{ stepId: string, title: string, count: number }>}
- */
-function lineupSoftCapViolations(flow, steps, options, transport) {
-  return steps.flatMap((step) => {
-    if (isHumanReviewStep(step)) return []
-    const count = resolvedLineupForStep(flow, step, options, transport).instances.length
-    return count > INSTANCE_SOFT_CAP ? [{ stepId: step.id, title: step.title, count }] : []
-  })
-}
-
-/** @param {Array<{ title: string, count: number }>} violations @returns {string} */
-function formatLineupSoftCap(violations) {
-  return violations.map((entry) => `${entry.title} (${entry.count})`).join(', ')
-}
-
-/**
- * @param {{
- *   clack: { confirm: (input: Record<string, unknown>) => Promise<unknown>, isCancel: (value: unknown) => boolean },
- *   violations: Array<{ title: string, count: number }>,
- *   force?: boolean,
- *   exit?: (code?: number) => never,
- * }} input
- */
-async function confirmLineupSoftCapInteractively({ clack, violations, force = false, exit = process.exit }) {
-  if (force || violations.length === 0) return
-  const confirmed = await clack.confirm({
-    message: `Run steps with more than ${INSTANCE_SOFT_CAP} instances: ${formatLineupSoftCap(violations)}?`,
-    initialValue: false,
-  })
-  if (clack.isCancel(confirmed)) exit(0)
-  if (!confirmed) {
-    console.log('Cancelled')
-    exit(0)
-  }
-}
-
-/**
  * @param {{
  *   flow: import('../types').WorkflowFlow,
  *   steps: import('../types').WorkflowStep[],
@@ -1919,13 +1877,6 @@ async function prepareInteractiveFlowRun({ flow, options, transport, projectRoot
     if (steps.length === 0) {
       throw new Error('No workflow steps have selected agents.')
     }
-    const violations = lineupSoftCapViolations(configuredFlow, steps, configuredOptions, transport)
-    if (!configuredOptions.dryRun && configuredOptions.force !== true && violations.length > 0) {
-      throw new Error(
-        `More than ${INSTANCE_SOFT_CAP} agent instances are configured for ${formatLineupSoftCap(violations)}. ` +
-        'Review the lineup and re-run with --force to approve it in non-interactive mode.',
-      )
-    }
     return {
       flow: configuredFlow,
       options: configuredOptions,
@@ -2044,13 +1995,6 @@ async function prepareInteractiveFlowRun({ flow, options, transport, projectRoot
       previewPrinted: true,
     }
   }
-
-  const violations = lineupSoftCapViolations(configuredFlow, steps, configuredOptions, transport)
-  await confirmLineupSoftCapInteractively({
-    clack,
-    violations,
-    force: configuredOptions.force === true,
-  })
 
   const confirmed = await clack.confirm({
     message: `Start the "${configuredFlow.title}" agent workflow?`,
@@ -3107,7 +3051,6 @@ module.exports = {
   cancelLocalWorkflowRunnersForInterrupt,
   chooseSingleAgentConfigInteractively,
   configureAgentsInteractively,
-  confirmLineupSoftCapInteractively,
   createIssue,
   createPullRequestComment,
   extractLinkedPullRequest,
@@ -3129,7 +3072,6 @@ module.exports = {
   printFlowPlan,
   printSuccessBox,
   runnableSteps,
-  lineupSoftCapViolations,
   withSelectedAgents,
   withSelectedStepAgents,
   parseGitHubPullRequestUrl,

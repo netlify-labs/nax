@@ -92,6 +92,31 @@ test('fixture flow.yml files parse to lineups the resolver accepts', () => {
   }
 })
 
+test('flow validation rejects unsupported result routing and lineups above four instances', () => {
+  assert.throws(() => normalizeFlow(asFlow({
+    id: 'bad-result-routing',
+    steps: [
+      { id: 'first', prompt: 'prompts/task.md', agents: ['claude'] },
+      { id: 'second', prompt: 'prompts/task.md', agents: ['claude'], input: [{ step: 'first', results: 'rivals' }] },
+    ],
+  }), { id: 'bad-result-routing', file: 'bad.yml', dir: FIXTURE_DIR, source: { type: 'test' } }), /unsupported results mode "rivals"/)
+
+  assert.throws(() => normalizeFlow(asFlow({
+    id: 'too-many-instances',
+    steps: [{
+      id: 'review',
+      prompt: 'prompts/task.md',
+      agents: [{ agent: 'claude', models: [
+        'claude-fable-5',
+        'claude-opus-5',
+        'claude-opus-4-8',
+        'claude-sonnet-5',
+        'claude-haiku-4-5',
+      ] }],
+    }],
+  }), { id: 'too-many-instances', file: 'too-many.yml', dir: FIXTURE_DIR, source: { type: 'test' } }), /at most 4 agent instances/)
+})
+
 test('declared follow-up agents produce a structured deprecation notice and are ignored by inheritance', () => {
   const flow = normalizeFlow(asFlow({
     id: 'deprecated-followup-lineup',
@@ -127,6 +152,7 @@ test('bundled follow-up steps omit their own lineup declarations', async () => {
   const review = await loadFlow('review')
   const ideas = await loadFlow('ideas')
   assert.equal(review.steps.find((step) => step.id === 'cross-review').lineupDeclared, false)
+  assert.deepEqual(review.steps.find((step) => step.id === 'cross-review').input, [{ step: 'review', results: 'peers' }])
   assert.equal(ideas.steps.find((step) => step.id === 'cross-score').lineupDeclared, false)
   assert.equal(ideas.steps.find((step) => step.id === 'react').lineupDeclared, false)
   assert.equal(review.warnings, undefined)

@@ -36,14 +36,14 @@ export function NetlifyTargetMenu({ context }: Props) {
     <Menu position="bottom-end" shadow="md" width={430} withinPortal>
       <Menu.Target>
         <Button
-          aria-label={`Agent Runner site: ${label}`}
+          aria-label={`Netlify project: ${label}`}
           className="header-netlify-target"
-          color={target?.accessible ? 'violet' : 'yellow'}
+          color={target?.accessible ? 'gray' : 'yellow'}
           leftSection={<Cloud size={14} />}
           size="xs"
-          variant="light"
+          variant="subtle"
         >
-          Agent runs · {label}
+          Netlify project · {label}
         </Button>
       </Menu.Target>
       <Menu.Dropdown>

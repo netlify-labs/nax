@@ -192,6 +192,7 @@ function FlowBody({ graph, loading, mode, onSelectNode, onViewNodeDetails, fitVi
       nodesDraggable={false}
       nodesConnectable={false}
       elementsSelectable
+      zoomOnDoubleClick={false}
       onNodeClick={handleNodeClick}
       onPaneClick={() => onSelectNode(null)}
       defaultEdgeOptions={{

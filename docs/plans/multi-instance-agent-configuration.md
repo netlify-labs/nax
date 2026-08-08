@@ -42,9 +42,10 @@ Interview (rounds 1–7, 2026-08-07) + adversarial review. Review findings marke
    result is recorded on the run/artifact (with `resolvedFrom` provenance).
 7. **Follow-up steps inherit from a single continuation source** **[R3]** (the first
    `input` step); extra inputs are read-only context. Lineage is `(sourceStepId,
-   instanceId)`. Follow-up steps declare no lineup.
+   instanceId)`. Follow-up steps declare no lineup. `results: peers` excludes each
+   continuing instance's own result while retaining the other instances' outputs.
 8. **Wave scheduler bounds simultaneous *non-terminal* runners** **[R2]**, hardcoded cap
-   `5`, **per workflow run** (concurrent runs on one site rely on SDK capacity-retry as a
+   `4`, **per workflow run** (concurrent runs on one site rely on SDK capacity-retry as a
    backstop). A slot frees at **result-ready** (landing/PR/deploy continues async, outside
    the cap).
 9. **Partial failure** **[R5]**: each instance auto-retries within its budget; then —
@@ -53,8 +54,7 @@ Interview (rounds 1–7, 2026-08-07) + adversarial review. Review findings marke
    final-step partial → non-zero exit code.
 10. **Unsupported effort in a fan-out clamps to the nearest supported effort** (round 5),
     with a logged warning.
-11. **Fan-out cost guard = count-based soft cap + confirm** above 6 instances/step (no
-    credit math).
+11. **A step has a hard maximum of 4 resolved instances.**
 12. **Synthesis relies on SDK prompt blob-offload**; no new truncation.
 13. **GitHub transport: full support deferred, not dropped.** Explicit `transport:github`
     with any pinned/multi instance **fails the whole flow** before dispatch. Netlify API
@@ -71,7 +71,7 @@ Interview (rounds 1–7, 2026-08-07) + adversarial review. Review findings marke
 
 ## 1. Outcome
 
-Make the unit of execution an **agent instance** so a step runs **any number of instances,
+Make the unit of execution an **agent instance** so a step runs **up to four instances,
 including several of the same provider**. All four use cases become one feature:
 
 1. **Model bake-off** — several models of one provider.
@@ -91,9 +91,9 @@ lineup (string-or-object + fan-out)
         │  resolve: open → auto (wire); latest/default → defaultModel; clamp effort
         ▼
    [ {agent, model?, effort?, id, label?}, … ]   unique by tuple (reject dup)  [R4]
-        │  count soft cap 6 → confirm
+        │  hard maximum: 4 instances per step
         ▼
-  wave scheduler: ≤5 non-terminal runners; slot frees at result-ready  [R2]
+  wave scheduler: ≤4 non-terminal runners; slot frees at result-ready  [R2]
         │
   follow-up continues each (sourceStepId, instanceId); auto-retry; survivors proceed;
   all-failed halts the workflow                                          [R3,R5]
@@ -261,11 +261,13 @@ same-provider entries allowed; optional display `label`.
     - { agent: gemini, model: latest }
 - id: cross-review
   submit: follow-up
-  input: [{ step: review, results: all }]   # continues review's instances by (review, id)
+  input: [{ step: review, results: peers }] # continues each instance; supplies other results
 ```
 - A follow-up continues the instances of **exactly one continuation source** — the first
   `input` step. Extra `input` steps are read-only context only. Lineage is `(sourceStepId,
   instanceId)`, so cross-source id collisions can't occur.
+- `results: peers` removes the matching source `instanceId` from each continued instance's
+  Additional Context. Its own first-round work remains in the continued runner session.
 - A follow-up must not declare `agents` (deprecation notice, ignored).
 - Migrate bundled `review`/`ideas` follow-up steps (`cross-review`, `cross-score`, `react`)
   to inherit; `new-run` steps keep their declared lineup.
@@ -283,7 +285,7 @@ Replace the unbounded submission fan-out (`local-executor.js:806`) with a schedu
 
 - holds a slot from submission until the run reaches **result-ready** (its result exists);
   landing (PR merge / deploy) then proceeds **asynchronously, outside the cap** (decision #8);
-- keeps at most `MAX_PARALLEL_RUNS = 5` non-terminal runners at once (hardcoded; not
+- keeps at most `MAX_PARALLEL_RUNS = 4` non-terminal runners at once (hardcoded; not
   auto-detected, not user-tunable), **per workflow run**;
 - submits a wave, waits for those runs to reach result-ready (reusing the poll/wait in
   `completeLocalStep`, ~`:889`), then the next wave, preserving lineup order;
@@ -332,7 +334,7 @@ Instance syntax `provider[:model[:effort]]` (`latest` allowed), comma-lists, rep
 (multi-use → error → instance syntax). Single-agent `nax run` (provider → model → effort,
 flagship pre-selected) is the one-instance case; **non-interactive bare providers stay Auto**
 (no pre-select). Interactive workflow launch offers **Add instance**. Dry-run/preview lists
-every resolved instance and confirms above the soft cap (6, count-based).
+every resolved instance and rejects lineups above the hard maximum of 4.
 
 ---
 
@@ -345,7 +347,7 @@ every resolved instance and confirms above the soft cap (6, count-based).
 - **Add-instance** picker: provider → multi-select models (**flagship pre-selected**) →
   multi-select efforts (highest pre-selected) → appends the cartesian instance chips.
   Presets: *flagship of every provider*, *this model × all efforts*, *all models of this
-  provider*. Count soft cap 6 → confirm.
+  provider* (limited to the four strongest models).
 - **Follow-up steps** show inherited instances read-only, "inherited from &lt;step&gt;".
 - Re-key contracts/serializers/projections provider → instance (`contracts/workflow.ts`,
   `contracts/dashboard.ts`, `dashboard/api/serializers.js`, `services/mutations.js`,
@@ -422,14 +424,14 @@ that bare providers remain Auto (§4).
   validation; restructure `main.js` intent → transport → resolve.
 - **Phase 2 — Complete.** String-or-object + fan-out across formats; legacy-map bridge + ambiguity;
   migrate bundled follow-up steps to inherit.
-- **Phase 3 — Complete.** Wave scheduler (non-terminal cap 5, result-ready slot release); one run per
+- **Phase 3 — Complete.** Wave scheduler (non-terminal cap 4, result-ready slot release); one run per
   instance; instance-id status keying; `(sourceStepId, instanceId)` continuation;
   partial-failure state machine (survivors proceed, all-failed halts, exit codes);
   instance-slug artifacts + single-instance provider alias; retry/resume replay.
-- **Phase 4 — Complete.** CLI instance syntax; back-compat; interactive Add-instance; preview + soft
-  cap.
+- **Phase 4 — Complete.** CLI instance syntax; back-compat; interactive Add-instance; preview + hard
+  four-instance cap.
 - **Phase 5 — Complete.** Dashboard config: per-instance chips (Auto on load) + edit/remove;
-  Add-instance picker (flagship pre-select) + presets + soft cap; inherited follow-up
+  Add-instance picker (flagship pre-select) + presets + hard cap; inherited follow-up
   display; re-keyed contracts; `completed_with_failures`; build + typecheck + Playwright.
 - **Phase 6 — Awaiting human publication.** Docs and live canary are complete, including
   partial-failure and all-failed runs. NAX 2.0 must pass its human publication gate before
@@ -473,10 +475,10 @@ that bare providers remain Auto (§4).
 | Partial failure undefined | State machine + exit codes + all-failed halt [R5] |
 | Consumer artifact-path break | Provider-path alias for single-instance steps [R6] |
 | Arena scope creep | Arena is 2.2; 2.1 needs distinct artifacts only [R7] |
-| Cross-run contention on a site | Per-run cap 5 + SDK capacity-retry backstop |
+| Cross-run contention on a site | Per-run cap 4 + SDK capacity-retry backstop |
 | Silent effort clamp surprises | Clamp is logged; documented mapping |
 | `latest` drift | Resolve once per run; retry replays concrete; `resolvedFrom` recorded |
-| Fan-out cost | Count soft cap 6 + confirm; preview lists all |
+| Fan-out cost | Hard maximum of 4 resolved instances per step |
 
 ---
 
@@ -486,7 +488,7 @@ discovery; backend changes (incl. `nax-i28x`); Arena UI in 2.1; user-tunable par
 credit-cost estimation.
 
 ## 20. Definition of done (2.1)
-- A step runs any number of instances incl. several of one provider; all four use cases work
+- A step runs up to four instances incl. several of one provider; all four use cases work
   in workflow files, CLI, and dashboard, producing distinct per-instance artifacts.
 - Identity is tuple-derived, label-independent; exact-tuple duplicates rejected.
 - Bare providers stay Auto on the wire (no council behavior change); flagship is a UI/CLI

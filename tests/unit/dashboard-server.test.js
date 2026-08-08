@@ -322,6 +322,7 @@ test('dashboard server exposes health, workflow list, and graph routes', async (
     assert.equal(health.statusCode, 200)
     assert.equal(health.payload.ok, true)
     assert.equal(Object.hasOwn(health.payload, 'projectRoot'), false)
+    assert.equal(Object.hasOwn(health.payload, 'branches'), false)
     assert.equal(health.payload.tokenRequiredForSensitiveReads, true)
     assert.deepEqual(health.payload.capabilities, localDashboardCapabilities())
 
@@ -332,6 +333,8 @@ test('dashboard server exposes health, workflow list, and graph routes', async (
     const authenticatedHealth = await requestJson(`${base}/api/health`, { token: server.token })
     assert.equal(authenticatedHealth.statusCode, 200)
     assert.equal(authenticatedHealth.payload.projectRoot, process.cwd())
+    assert.ok(Array.isArray(authenticatedHealth.payload.branches))
+    assert.ok(authenticatedHealth.payload.branches.includes(authenticatedHealth.payload.currentBranch))
     assert.match(String(authenticatedHealth.headers['set-cookie'] || ''), /nax_dashboard_token=/)
 
     const authenticatedWorkflows = await requestJson(`${base}/api/workflows`, { token: server.token })

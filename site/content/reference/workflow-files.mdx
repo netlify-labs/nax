@@ -53,7 +53,7 @@ functions are rejected.
 | `agents` | strings or instance objects | Ordered lineup. Strings are bare Auto providers; objects can pin or fan out `model`/`models` and `effort`/`efforts`. |
 | `models` | provider-keyed string map | Legacy bridge for pinning one unambiguous provider instance. Prefer instance objects. |
 | `efforts` | provider-keyed string map | Legacy bridge for one unambiguous pinned model. Prefer instance objects. |
-| `input` | `[{ step, results }]` | Earlier results to include. |
+| `input` | `[{ step, results }]` | Earlier results to include. Use `all` for every result or `peers` to exclude each continuing instance's own result. |
 | `waitFor` | `agent-results` | Wait until every configured agent has a result. |
 
 ## Example
@@ -86,7 +86,7 @@ steps:
     submit: follow-up
     input:
       - step: review
-        results: all
+        results: peers
     waitFor: agent-results
 
   - id: synthesize
@@ -107,6 +107,11 @@ Each normalized lineup entry becomes one agent instance. An instance has a
 tuple-derived id: `agent:model:effort`, using `auto` for omitted fields. A bare
 provider such as `claude` therefore becomes `claude:auto:auto` and sends no
 model or effort. It does not silently resolve to the catalog flagship.
+
+A step can contain at most four resolved instances. A `follow-up` step inherits
+the surviving instances from its first input step. With `results: peers`, each
+continued instance receives every surviving peer's output while its own prior
+work remains available through the continued runner session.
 
 Instance objects accept `model` or `models`, plus `effort` or `efforts`.
 Plural fields expand to their cartesian product:
@@ -147,7 +152,7 @@ read-only context. Declaring `agents` on a follow-up is deprecated and ignored.
 
 If some instances exhaust their retries, survivors continue and the step is
 stored as `completed_with_failures`. If every instance fails, the workflow
-halts before later steps. Local Netlify API execution keeps at most five
+halts before later steps. Local Netlify API execution keeps at most four
 non-terminal runners active at once.
 
 ## Current model and effort catalog

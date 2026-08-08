@@ -9,6 +9,7 @@ const {
   normalizeAgentProvider,
   validateAgentConfig,
 } = require('./configuration')
+const { MAX_STEP_AGENT_INSTANCES } = require('../constants')
 
 const LATEST_ALIASES = new Set(['latest', 'default'])
 const EFFORT_RANK = { low: 1, medium: 2, high: 3, max: 4 }
@@ -276,6 +277,13 @@ function resolveLineup(lineup, { requestedTransport = 'auto', models = {}, effor
       seen.set(id, instance)
       instances.push(instance)
     }
+  }
+
+  if (instances.length > MAX_STEP_AGENT_INSTANCES) {
+    throw instanceError(
+      'step_instance_limit',
+      `A workflow step can contain at most ${MAX_STEP_AGENT_INSTANCES} agent instances; this lineup resolves to ${instances.length}.`,
+    )
   }
 
   return { instances, transport, forcedNetlifyApi, warnings }

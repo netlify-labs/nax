@@ -223,6 +223,28 @@ test('sourceRunsForStep dedupes within a single input step', () => {
   ])
 })
 
+test('sourceRunsForStep routes only peer results to each inherited instance', () => {
+  const fable = 'claude:claude-fable-5:auto'
+  const opus = 'claude:claude-opus-5:auto'
+  const completed = new Map([
+    ['review', { runs: [
+      { agent: 'claude', model: 'claude-fable-5', instanceId: fable, runnerId: 'runner-fable', resultText: 'fable review' },
+      { agent: 'claude', model: 'claude-opus-5', instanceId: opus, runnerId: 'runner-opus', resultText: 'opus review' },
+      { agent: 'claude', model: 'claude-haiku-4-5', instanceId: 'claude:claude-haiku-4-5:auto', runnerId: 'runner-haiku', status: 'failed', resultText: 'failed' },
+    ] }],
+  ])
+  const step = { input: [{ step: 'review', results: 'peers' }] }
+
+  assert.deepEqual(
+    sourceRunsForStep(step, completed, { instanceId: fable }).map((run) => run.instanceId),
+    [opus],
+  )
+  assert.deepEqual(
+    sourceRunsForStep(step, completed, { instanceId: opus }).map((run) => run.instanceId),
+    [fable],
+  )
+})
+
 test('prepareLocalPromptDelivery leaves unsafe fan-in delivery to the SDK', () => {
   const projectRoot = tmpRoot()
   const sourceRuns = [

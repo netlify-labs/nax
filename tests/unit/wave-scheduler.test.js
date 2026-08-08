@@ -8,14 +8,14 @@ test('never exceeds the concurrency cap (max simultaneous in-flight)', async () 
   let inFlight = 0
   let maxInFlight = 0
   const items = Array.from({ length: 13 }, (_, i) => i)
-  await mapInWaves(items, 5, async (item) => {
+  await mapInWaves(items, MAX_PARALLEL_RUNS, async (item) => {
     inFlight += 1
     maxInFlight = Math.max(maxInFlight, inFlight)
     await new Promise((resolve) => setTimeout(resolve, 3))
     inFlight -= 1
     return item
   })
-  assert.ok(maxInFlight <= 5, `max in-flight was ${maxInFlight}, expected <= 5`)
+  assert.ok(maxInFlight <= MAX_PARALLEL_RUNS, `max in-flight was ${maxInFlight}, expected <= ${MAX_PARALLEL_RUNS}`)
   assert.ok(maxInFlight >= 1)
 })
 
@@ -54,23 +54,23 @@ test('a step within the cap starts every lifecycle worker immediately', async ()
   await scheduled
 })
 
-test('starts the sixth lifecycle as soon as one of the first five becomes terminal', async () => {
+test('starts the fifth lifecycle as soon as one of the first four becomes terminal', async () => {
   /** @type {Array<() => void>} */
   const finish = []
   const started = []
-  const scheduled = mapInWaves(Array.from({ length: 9 }, (_, index) => index), 5, async (item) => {
+  const scheduled = mapInWaves(Array.from({ length: 8 }, (_, index) => index), MAX_PARALLEL_RUNS, async (item) => {
     started.push(item)
     await new Promise((resolve) => { finish[item] = () => resolve() })
     return item
   })
 
   await new Promise((resolve) => setImmediate(resolve))
-  assert.deepEqual(started, [0, 1, 2, 3, 4])
+  assert.deepEqual(started, [0, 1, 2, 3])
   finish[2]()
   await new Promise((resolve) => setImmediate(resolve))
-  assert.deepEqual(started, [0, 1, 2, 3, 4, 5])
+  assert.deepEqual(started, [0, 1, 2, 3, 4])
   for (const item of started) finish[item]()
   await new Promise((resolve) => setImmediate(resolve))
-  for (let item = 6; item < 9; item += 1) finish[item]()
+  for (let item = 5; item < 8; item += 1) finish[item]()
   await scheduled
 })

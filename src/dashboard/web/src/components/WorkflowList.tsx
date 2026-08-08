@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react'
 import { Badge, Box, Group, NavLink, ScrollArea, Stack, Text, TextInput, Title } from '@mantine/core'
-import { Search } from 'lucide-react'
+import { Bot, Search } from 'lucide-react'
 import type { Workflow } from '../types'
 
 function agentSummary(workflow: Workflow): string {
@@ -15,10 +15,12 @@ type Props = {
   workflows: Workflow[]
   selectedWorkflowId: string
   loading: boolean
+  canRunAgent: boolean
+  onRunAgent: () => void
   onSelect: (id: string) => void
 }
 
-export function WorkflowList({ workflows, selectedWorkflowId, loading, onSelect }: Props) {
+export function WorkflowList({ workflows, selectedWorkflowId, loading, canRunAgent, onRunAgent, onSelect }: Props) {
   const [query, setQuery] = useState('')
   const filtered = useMemo(() => {
     const normalized = query.trim().toLowerCase()
@@ -34,6 +36,20 @@ export function WorkflowList({ workflows, selectedWorkflowId, loading, onSelect 
 
   return (
     <Box className="workflow-sidebar" aria-label="Workflows">
+      <Box className="sidebar-agent-action">
+        <NavLink
+          component="button"
+          className="sidebar-agent-run"
+          color="violet"
+          variant="light"
+          leftSection={<Bot size={17} />}
+          label={<Text fw={700} size="sm">Run an individual agent</Text>}
+          aria-label="Run an individual agent"
+          disabled={!canRunAgent}
+          title={!canRunAgent ? 'Agent runs are not available in this dashboard.' : undefined}
+          onClick={onRunAgent}
+        />
+      </Box>
       <Group className="panel-header" justify="space-between" wrap="nowrap">
         <Title order={2} size="sm">Workflows</Title>
         <Badge variant="light" color="gray">{workflows.length}</Badge>

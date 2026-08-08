@@ -9,6 +9,7 @@ const {
   normalizeProviderModelMap,
   resolveAgentRunConfig,
 } = require('../../core/agents/configuration')
+const { resolveLineup } = require('../../core/agents/instances')
 
 const FLOWS_DIR = path.join(__dirname, '..', '..', '..', 'workflows')
 const DEFAULT_PROJECT_FLOWS_DIRS = ['.github/nax-flows']
@@ -19,6 +20,7 @@ const FLOW_FILE_NAMES = FLOW_FILE_EXTENSIONS.map((extension) => `flow.${extensio
 const WAIT_FOR_AGENT_RESULTS = 'agent-results'
 const ALLOWED_STEP_ACTIONS = ['issue', 'comment', HUMAN_REVIEW_ACTION]
 const ALLOWED_STEP_SUBMITS = ['new-run', 'follow-up', HUMAN_REVIEW_SUBMIT]
+const ALLOWED_INPUT_RESULTS = ['all', 'selected', 'peers']
 /**
  * @typedef {{ stepId: string, code: string, message: string, hint: string }} FlowDiagnostic
  * @typedef {{ errors: FlowDiagnostic[], warnings: FlowDiagnostic[] }} FlowValidation
@@ -506,6 +508,15 @@ function validateFlowStructure(flow, { existsSync = fs.existsSync } = {}) {
           hint: 'Inputs can only reference earlier steps.',
         }))
       }
+      const results = String(input?.results || 'all')
+      if (!ALLOWED_INPUT_RESULTS.includes(results)) {
+        errors.push(flowDiagnostic({
+          stepId,
+          code: 'invalid_input_results',
+          message: `Step "${stepId}" input from "${sourceStepId || 'unknown'}" has unsupported results mode "${results}".`,
+          hint: `Allowed results modes: ${formatAllowed(ALLOWED_INPUT_RESULTS)}.`,
+        }))
+      }
     }
 
     const configuredAgents = new Set([
@@ -534,6 +545,25 @@ function validateFlowStructure(flow, { existsSync = fs.existsSync } = {}) {
           message: `steps[${index}] configuration for "${agent}" is invalid: ${message}`,
           hint: 'Use a model owned by the provider and an effort supported by that model, or set both to auto.',
         }))
+      }
+    }
+    if (!humanReview) {
+      try {
+        resolveLineup(Array.isArray(step.lineup) ? step.lineup : step.agents || [], {
+          requestedTransport: 'auto',
+          models: { ...(defaults.models || {}), ...(step.models || {}) },
+          efforts: { ...(defaults.efforts || {}), ...(step.efforts || {}) },
+        })
+      } catch (error) {
+        const typed = /** @type {{ code?: string, message?: string }} */ (error)
+        if (typed.code === 'step_instance_limit') {
+          errors.push(flowDiagnostic({
+            stepId,
+            code: typed.code,
+            message: typed.message || `Step "${stepId}" exceeds the agent instance limit.`,
+            hint: 'Reduce the models/efforts fan-out or split the work into another step.',
+          }))
+        }
       }
     }
   }
@@ -716,6 +746,7 @@ function loadStepPrompt(flow, step) {
 }
 
 module.exports = {
+  ALLOWED_INPUT_RESULTS,
   ALLOWED_STEP_ACTIONS,
   ALLOWED_STEP_SUBMITS,
   DEFAULT_PROJECT_FLOWS_DIRS,

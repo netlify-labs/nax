@@ -57,11 +57,9 @@ export function selectedAgentsForStep(
   step: StepStatusInput,
   selectedOverride?: AgentInstanceDescriptor[],
 ): AgentInstanceDescriptor[] {
-  return selectedOverride && selectedOverride.length > 0
-    ? selectedOverride
-    : step.selectedAgents && step.selectedAgents.length > 0
-      ? step.selectedAgents
-      : step.instances || []
+  if (selectedOverride !== undefined) return selectedOverride
+  if (step.selectedAgents !== undefined) return step.selectedAgents
+  return step.instances || []
 }
 
 export function displayAgentStatuses(
@@ -148,18 +146,28 @@ export function projectWorkflowGraph({
   stepAgentStatuses,
 }: ProjectWorkflowGraphOptions): WorkflowGraph | null {
   if (!graph) return null
+  const selectedByStep = new Map<string, AgentInstanceDescriptor[]>()
   return {
     ...graph,
-    nodes: graph.nodes.map((node) => ({
-      ...node,
-      data: projectWorkflowNodeData(node.data, {
-        selectedAgents: Object.prototype.hasOwnProperty.call(stepAgents, node.data.stepId)
+    nodes: graph.nodes.map((node) => {
+      const inheritedDefinition = node.data.status === 'definition' && node.data.inheritedFromStepId
+        ? selectedByStep.get(node.data.inheritedFromStepId)
+        : undefined
+      const selectedAgents = inheritedDefinition !== undefined
+        ? inheritedDefinition
+        : Object.prototype.hasOwnProperty.call(stepAgents, node.data.stepId)
           ? stepAgents[node.data.stepId]
-          : node.data.selectedAgents || node.data.instances,
-        stepStatus: stepStatuses[node.data.stepId] || node.data.status,
-        liveAgentStatuses: stepAgentStatuses[node.data.stepId] || {},
-      }),
-    })),
+          : node.data.selectedAgents || node.data.instances
+      selectedByStep.set(node.data.stepId, selectedAgents)
+      return {
+        ...node,
+        data: projectWorkflowNodeData(node.data, {
+          selectedAgents,
+          stepStatus: stepStatuses[node.data.stepId] || node.data.status,
+          liveAgentStatuses: stepAgentStatuses[node.data.stepId] || {},
+        }),
+      }
+    }),
   }
 }
 

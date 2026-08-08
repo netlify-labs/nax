@@ -5,7 +5,7 @@ const path = require('node:path')
 const { test } = require('node:test')
 const { executeLocalFlow } = require('../../src/workflows/engine/local-executor')
 
-test('mock multi-instance step holds at most five submit-through-result lifecycle slots', async () => {
+test('mock four-instance step holds at most four submit-through-result lifecycle slots', async () => {
   const projectRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'nax-multi-e2e-'))
   fs.mkdirSync(path.join(projectRoot, '.netlify'), { recursive: true })
   fs.writeFileSync(path.join(projectRoot, '.netlify', 'state.json'), JSON.stringify({ siteId: 'site-mock' }))
@@ -17,8 +17,8 @@ test('mock multi-instance step holds at most five submit-through-result lifecycl
     '',
     'Return a deterministic mock result.',
   ].join('\n'))
-  const lineup = ['claude-opus-5', 'claude-opus-4-8', 'claude-fable-5']
-    .flatMap((model) => ['low', 'medium', 'high'].map((effort) => ({ agent: 'claude', model, effort })))
+  const lineup = ['claude-fable-5', 'claude-opus-5', 'claude-opus-4-8', 'claude-sonnet-5']
+    .map((model) => ({ agent: 'claude', model }))
   const step = {
     id: 'review',
     title: 'Mock review',
@@ -86,10 +86,10 @@ test('mock multi-instance step holds at most five submit-through-result lifecycl
     },
   })
 
-  assert.equal(maxActive, 5)
+  assert.equal(maxActive, 4)
   assert.equal(active, 0)
-  assert.deepEqual(starts, lineup.map(({ agent, model, effort }) => `${agent}:${model}:${effort}`))
+  assert.deepEqual(starts, lineup.map(({ agent, model }) => `${agent}:${model}:auto`))
   assert.equal(runState.steps[0].status, 'completed')
-  assert.equal(runState.steps[0].runs.length, 9)
+  assert.equal(runState.steps[0].runs.length, 4)
   assert.ok(runState.steps[0].runs.every((run) => run.status === 'completed'))
 })

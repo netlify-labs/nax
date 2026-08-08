@@ -87,11 +87,37 @@ body {
   background: light-dark(var(--mantine-color-gray-0), var(--mantine-color-dark-8));
 }
 
+.workflow-sidebar {
+  display: flex;
+  flex-direction: column;
+}
+
+.sidebar-agent-action {
+  flex: 0 0 auto;
+  padding: var(--mantine-spacing-sm);
+  border-bottom: 1px solid var(--mantine-color-default-border);
+}
+
+.sidebar-agent-run {
+  width: 100%;
+  border: 1px solid color-mix(in srgb, var(--mantine-color-violet-5), transparent 68%);
+  border-radius: var(--mantine-radius-sm);
+}
+
+.workflow-sidebar > .panel-header {
+  flex: 0 0 auto;
+}
+
 .workflow-list-scroll,
 .inspector-scroll,
 .run-list-scroll {
   height: calc(100% - 46px);
   min-height: 0;
+}
+
+.workflow-list-scroll {
+  flex: 1 1 auto;
+  height: auto;
 }
 
 .workflow-item {
@@ -107,7 +133,7 @@ body {
 }
 
 .header-branch {
-  width: 150px;
+  width: 190px;
 }
 
 .header-title-group {
@@ -1361,6 +1387,10 @@ body {
   padding: 12px;
 }
 
+.agent-row > .add-agent-button {
+  align-self: center;
+}
+
 .agent-chip {
   border: 1px solid color-mix(in srgb, var(--mantine-primary-color-4), transparent 16%);
   padding: 4px 10px;
@@ -1510,6 +1540,63 @@ body {
   border-color: light-dark(var(--mantine-color-gray-3), var(--mantine-color-dark-3));
 }
 
+.agent-config-remove.agent-config-remove {
+  position: absolute;
+  z-index: 1;
+  top: 10px;
+  right: 10px;
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.agent-provider-select-logo,
+.agent-provider-option-logo,
+.agent-provider-option-check {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+}
+
+.agent-provider-select-logo {
+  width: 20px;
+  height: 20px;
+  color: light-dark(var(--mantine-color-dark-8), var(--mantine-color-gray-1));
+}
+
+.agent-provider-select-logo .agent-icon,
+.agent-provider-option-logo .agent-icon {
+  width: 17px;
+  height: 17px;
+}
+
+.agent-provider-option-content {
+  width: 100%;
+  min-width: 0;
+}
+
+.agent-provider-option-logo {
+  width: 24px;
+  height: 24px;
+  color: light-dark(var(--mantine-color-dark-6), var(--mantine-color-gray-2));
+}
+
+.agent-provider-option-content[data-checked='true'] .agent-provider-option-logo,
+.agent-provider-option-content[data-checked='true'] .agent-provider-option-check {
+  color: var(--mantine-primary-color-3);
+}
+
+.agent-provider-option-label {
+  min-width: 0;
+  flex: 1;
+}
+
+.agent-provider-option-check {
+  width: 20px;
+  height: 20px;
+  color: var(--mantine-primary-color-3);
+}
+
 /* Lift the chip and its caret together on hover so they never detach. */
 .agent-chip-wrap:hover {
   transform: translateY(-1px);
@@ -1586,32 +1673,6 @@ body {
 
 .agent-chip-caret:focus-visible {
   outline: 2px solid var(--mantine-primary-color-5);
-  outline-offset: 2px;
-}
-
-.agent-chip-wrap:has(.agent-chip-remove) .agent-chip-caret {
-  border-radius: 0;
-}
-
-.agent-chip-remove {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  border: 1px solid color-mix(in srgb, var(--mantine-color-red-5), transparent 42%);
-  border-left: 0;
-  border-radius: 0 8px 8px 0;
-  padding: 0 5px;
-  background: color-mix(in srgb, var(--mantine-color-red-5), transparent 90%);
-  color: var(--mantine-color-red-6);
-  cursor: pointer;
-}
-
-.agent-chip-remove:hover {
-  background: color-mix(in srgb, var(--mantine-color-red-5), transparent 78%);
-}
-
-.agent-chip-remove:focus-visible {
-  outline: 2px solid var(--mantine-color-red-5);
   outline-offset: 2px;
 }
 
@@ -1827,21 +1888,6 @@ body {
   }
 
   .header-netlify-target .mantine-Button-section {
-    margin-inline: 0;
-  }
-
-  .header-agent-run {
-    width: 32px;
-    min-width: 32px;
-    max-width: 32px;
-    padding-inline: 0;
-  }
-
-  .header-agent-run .mantine-Button-label {
-    display: none;
-  }
-
-  .header-agent-run .mantine-Button-section {
     margin-inline: 0;
   }
 

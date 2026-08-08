@@ -54,6 +54,7 @@ const {
 const { dryRunWorkflow, resumeWorkflowRun } = require('./transports/local-in-process')
 const { createRunnerEventParser, runWorkflowChild } = require('./transports/local-process')
 const { openLocalFile } = require('./runtime/local-files')
+const { listKnownGitBranches } = require('./runtime/git-branches')
 const {
   MAX_FINISHED_RUNS,
   MAX_LIVE_EVENTS,
@@ -933,6 +934,7 @@ function staticFileForPath(distDir, pathname) {
 
 function createRequestHandler(options = {}) {
   const projectRoot = path.resolve(options.projectRoot || process.cwd())
+  const branchCatalog = listKnownGitBranches(projectRoot)
   const bindHost = options.host || '127.0.0.1'
   const distDir = options.distDir || path.resolve(__dirname, 'web', 'dist')
   const tailOutput = options.tail === true || options.tailOutput === true
@@ -1004,6 +1006,8 @@ function createRequestHandler(options = {}) {
       healthCapabilities,
       netlifyAccess,
       netlifyContext,
+      branches: branchCatalog.branches,
+      currentBranch: branchCatalog.currentBranch,
     },
     token,
     workflowStore,
@@ -1624,7 +1628,7 @@ function createRequestHandler(options = {}) {
             canStreamRunEvents: true,
             requiresAuth: true,
           }
-          /** @type {{ ok: boolean, tokenRequiredForMutations: boolean, tokenRequiredForSensitiveReads: boolean, capabilities: typeof capabilities, projectRoot?: string, netlifyAccess?: Record<string, unknown>, netlifyContext?: Record<string, unknown> }} */
+          /** @type {{ ok: boolean, tokenRequiredForMutations: boolean, tokenRequiredForSensitiveReads: boolean, capabilities: typeof capabilities, projectRoot?: string, netlifyAccess?: Record<string, unknown>, netlifyContext?: Record<string, unknown>, branches?: string[], currentBranch?: string }} */
           const health = {
             ok: true,
             tokenRequiredForMutations: true,
@@ -1635,6 +1639,8 @@ function createRequestHandler(options = {}) {
             health.projectRoot = projectRoot
             if (netlifyAccess) health.netlifyAccess = netlifyAccess
             if (netlifyContext) health.netlifyContext = netlifyContext
+            health.branches = branchCatalog.branches
+            if (branchCatalog.currentBranch) health.currentBranch = branchCatalog.currentBranch
           }
           jsonResponse(res, 200, health, sessionBootstrapHeadersForRequest(req, requestUrl, token))
           return

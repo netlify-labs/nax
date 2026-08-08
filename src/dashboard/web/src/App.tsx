@@ -5,6 +5,7 @@ import {
   ActionIcon,
   Alert,
   AppShell,
+  Autocomplete,
   Badge,
   Box,
   Burger,
@@ -23,7 +24,7 @@ import {
   useMantineColorScheme,
 } from '@mantine/core'
 import { useDisclosure, type UseSplitterReturnValue } from '@mantine/hooks'
-import { BookOpen, Bot, Check, Copy, FolderGit2, GitBranch, Moon, RefreshCw, Sun } from 'lucide-react'
+import { BookOpen, Check, ChevronDown, Copy, Folder, GitBranch, Moon, RefreshCw, Sun } from 'lucide-react'
 import { ReactFlowProvider } from '@xyflow/react'
 import { runEventsStream, type RunEventStream } from './api'
 import { WorkflowOutputTabs } from './components/DryRunPanel'
@@ -46,7 +47,7 @@ import {
   routeWorkflowStepId,
 } from './dashboard-routes'
 import { appendBoundedOutput, initialLiveRunState, liveRunReducer, visualStatus } from './liveRunReducer'
-import { configuredAgentInstance, instanceFromRun } from './agent-instances'
+import { MAX_STEP_AGENT_INSTANCES, configuredAgentInstance, instanceFromRun } from './agent-instances'
 import { dashboardQueryKeys } from './query-keys'
 import { invalidateDashboardLists, invalidateRunViews, sameRun, upsertRunInDashboardCache } from './queries/dashboard-cache'
 import { useCancelWorkflowRunMutation, useDryRunWorkflowMutation, useStartAgentRunMutation, useStartWorkflowRunMutation } from './queries/dashboard-mutations'
@@ -226,7 +227,7 @@ export default function App() {
   const routedWorkflowId = routeWorkflowId(routeState)
   const selectedRunId = routeRunId(routeState)
   const legacyWorkflowId = useMemo(() => legacyWorkflowFromUrl(), [])
-  const [navbarOpened, { toggle: toggleNavbar }] = useDisclosure(false)
+  const [navbarOpened, { toggle: toggleNavbar, close: closeNavbar }] = useDisclosure(false)
   const [eventDiagnosticsOpened, { open: openEventDiagnostics, close: closeEventDiagnostics }] = useDisclosure(false)
   const [agentRunOpened, { open: openAgentRun, close: closeAgentRun }] = useDisclosure(false)
   const { colorScheme, toggleColorScheme } = useMantineColorScheme()
@@ -635,9 +636,10 @@ export default function App() {
       setError('Those agent instances are already in this step.')
       return
     }
-    if (next.length > 6 && !window.confirm(
-      `This step will run ${next.length} agent instances. Continue past the recommended limit of 6?`,
-    )) return
+    if (next.length > MAX_STEP_AGENT_INSTANCES) {
+      setError(`A step can run at most ${MAX_STEP_AGENT_INSTANCES} agent instances.`)
+      return
+    }
     setError('')
     setDryRunOptions((options) => ({
       ...options,
@@ -920,6 +922,17 @@ export default function App() {
         : 'No workflow selected'
   const workflowCanvasMode = selectedRunId || activeRun ? 'inspect' : 'configure'
   const repoName = repoNameFromPath(projectRoot)
+  const branchOptions = useMemo(() => [...new Set([
+    dryRunOptions.branch,
+    healthQuery.data?.currentBranch || '',
+    ...(healthQuery.data?.branches || []),
+    ...runs.map((run) => run.branch || ''),
+  ].map((branch) => branch.trim()).filter(Boolean))], [
+    dryRunOptions.branch,
+    healthQuery.data?.branches,
+    healthQuery.data?.currentBranch,
+    runs,
+  ])
   const startupNode = useMemo(() => {
     if (!runRunning || !graph) return null
     if (activeRun && runGraphQuery.data) return null
@@ -1155,34 +1168,23 @@ export default function App() {
               </Box>
             </Group>
             <Group gap="xs" wrap="nowrap" className="header-actions">
-              <Button
-                aria-label="Run agent"
-                className="header-agent-run"
-                size="xs"
-                variant="light"
-                color="violet"
-                leftSection={<Bot size={15} />}
-                onClick={() => {
-                  setAgentRunError('')
-                  openAgentRun()
-                }}
-                disabled={!capabilities.canStartRuns}
-              >
-                Run agent
-              </Button>
               <Tooltip label={projectRoot || 'Project root'}>
                 <Group gap={6} wrap="nowrap" className="header-repo">
-                  <FolderGit2 size={15} />
+                  <Folder size={15} />
                   <Text size="sm" fw={700} truncate>{repoName}</Text>
                 </Group>
               </Tooltip>
               <NetlifyTargetMenu context={netlifyContext} />
-              <TextInput
+              <Autocomplete
                 aria-label="Branch"
                 className="header-branch"
+                data={branchOptions}
                 leftSection={<GitBranch size={14} />}
+                rightSection={<ChevronDown aria-hidden size={14} />}
+                rightSectionPointerEvents="none"
+                placeholder="Branch"
                 value={dryRunOptions.branch}
-                onChange={(event) => setDryRunOptions((options) => ({ ...options, branch: event.currentTarget.value }))}
+                onChange={(branch) => setDryRunOptions((options) => ({ ...options, branch }))}
                 size="xs"
               />
               <Tooltip label="Open documentation">
@@ -1228,6 +1230,12 @@ export default function App() {
             workflows={workflows}
             selectedWorkflowId={selectedWorkflowId}
             loading={loadingWorkflows}
+            canRunAgent={capabilities.canStartRuns}
+            onRunAgent={() => {
+              setAgentRunError('')
+              openAgentRun()
+              closeNavbar()
+            }}
             onSelect={selectWorkflowDefinition}
           />
         </AppShell.Navbar>

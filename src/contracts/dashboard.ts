@@ -75,6 +75,8 @@ export type HealthResponse = {
   capabilities?: DashboardCapabilities
   netlifyAccess?: NetlifyAccessVerdict
   netlifyContext?: DashboardNetlifyContext
+  branches?: string[]
+  currentBranch?: string
 }
 
 export type Target = {

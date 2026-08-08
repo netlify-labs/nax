@@ -1,6 +1,6 @@
 # Review Flow
 
-Three-agent code review with adversarial cross-check: Claude, Gemini, and Codex review the project independently, critique each other's findings, and produce one ranked consensus plan.
+Up to four agent instances review the project independently, cross-grade their peers' findings, and produce one ranked consensus plan.
 
 Catches things any single reviewer would miss and filters out findings the other models disagree with.
 

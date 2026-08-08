@@ -33,7 +33,7 @@ steps:
     submit: follow-up
     input:
       - step: review
-        results: all
+        results: peers
     waitFor: agent-results
 
   - id: synthesize

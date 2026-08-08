@@ -146,6 +146,13 @@ test('dashboard agent-instance mutations reject provider arrays and resolve obje
     { agent: 'codex', model: 'gpt-5.6-sol', effort: 'high', id: 'codex:gpt-5.6-sol:high', resolvedFrom: 'pinned' },
     { agent: 'codex', model: 'gpt-5.6-sol', effort: 'medium', id: 'codex:gpt-5.6-sol:medium', resolvedFrom: 'pinned' },
   ])
+  assert.throws(
+    () => normalizeDashboardInstances(Array.from({ length: 5 }, (_, index) => ({
+      agent: 'claude',
+      model: `future-model-${index + 1}`,
+    }))),
+    { code: 'step_instance_limit' },
+  )
 })
 
 test('dashboard run projection upgrades stale non-terminal workflow status from steps', () => {

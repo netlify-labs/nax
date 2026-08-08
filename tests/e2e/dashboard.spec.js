@@ -130,6 +130,23 @@ async function computedTextColor(locator) {
 }
 
 /**
+ * @param {Locator} locator
+ * @returns {Promise<{ backgroundImage: string, borderColor: string, color: string }>}
+ */
+async function computedPalette(locator) {
+  return locator.evaluate((element) => {
+    const target = /** @type {{ ownerDocument: { defaultView: { getComputedStyle: (element: unknown) => { backgroundImage: string, borderColor: string, color: string } } | null } }} */ (element)
+    const view = target.ownerDocument.defaultView
+    const style = view?.getComputedStyle(element)
+    return {
+      backgroundImage: style?.backgroundImage || '',
+      borderColor: style?.borderColor || '',
+      color: style?.color || '',
+    }
+  })
+}
+
+/**
  * @param {string} projectRoot
  * @param {{ staleRunStatus?: string, staleWorkflowStatus?: string, partialFailure?: boolean }} [options]
  * @returns {string}
@@ -307,15 +324,15 @@ function writeRunningRunFixture(projectRoot) {
         title: 'Audit Security',
         status: 'running',
         agents: ['claude', 'gemini', 'codex'],
-        runs: [{
-          agent: 'claude',
+        runs: ['claude', 'gemini', 'codex'].map((agent) => ({
+          agent,
           status: 'submitted',
-          runnerId: 'runner-claude',
-          sessionId: 'session-claude',
+          runnerId: `runner-${agent}`,
+          sessionId: `session-${agent}`,
           links: {
-            sessionUrl: 'https://example.test/session-claude',
+            sessionUrl: `https://example.test/session-${agent}`,
           },
-        }],
+        })),
       },
     ],
   }, null, 2))
@@ -395,6 +412,7 @@ test('dashboard renders Review graph on desktop', async ({ page }, testInfo) => 
   const inheritedModels = ['Fable 5', 'Opus 5', 'Opus 4.8', 'Sonnet 5']
   await expect(review.locator('.agent-chip-config')).toHaveText(inheritedModels)
   await expect(crossReview.locator('.agent-chip-config')).toHaveText(inheritedModels)
+  await expect(crossReview.locator('.node-footer')).toHaveCSS('min-height', '30px')
   await expect(crossReview.getByText('Inherits surviving instances from review')).toBeVisible()
   await expect(crossReview.getByRole('button', { name: 'Add agent' })).toHaveCount(0)
   await testInfo.attach('desktop', {
@@ -668,8 +686,8 @@ test('dashboard visibly preserves partial failures per instance', async ({ page 
     await page.locator('.run-item').filter({ hasText: runId }).click()
     const reviewNode = page.locator('.workflow-node').filter({ hasText: 'Review' })
     await expect(reviewNode.locator('.node-state-badge')).toHaveText('Completed with failures')
-    await expect(reviewNode.locator('.agent-chip.codex .agent-chip-status')).toHaveText('Completed')
-    await expect(reviewNode.locator('.agent-chip.claude .agent-chip-status')).toHaveText('Failed')
+    await expect(reviewNode.locator('.agent-chip.codex.agent-completed + .agent-chip-terminal .lucide-check')).toBeVisible()
+    await expect(reviewNode.locator('.agent-chip.claude.agent-failed + .agent-chip-terminal .lucide-circle-alert')).toBeVisible()
     await expect(reviewNode).toHaveClass(/status-completed_with_failures/)
   } finally {
     await server.close()
@@ -746,10 +764,18 @@ test('dashboard dry-run simulation updates step, agent pill, and output without 
 
   await page.locator('.workflow-item').filter({ hasText: 'Local Smoke Test' }).click()
   await expect(page.locator('.workflow-node')).toHaveCount(1)
+  const nodeFooter = page.locator('.workflow-node .node-footer')
+  await expect(nodeFooter).toHaveCSS('min-height', '30px')
+  await expect(page.getByRole('button', { name: 'Add agent' })).toBeVisible()
 
   await page.getByRole('button', { name: 'Dry run' }).click()
 
   await expect(page.locator('.workflow-node.status-running')).toHaveCount(1, { timeout: 2000 })
+  await expect(page.getByRole('button', { name: 'Add agent' })).toHaveCount(0)
+  await expect(nodeFooter).toBeEmpty()
+  await expect(nodeFooter).toHaveCSS('min-height', '30px')
+  await expect(page.locator('.workflow-node.status-running .agent-chip-activity .lucide-loader-circle')).toBeVisible()
+  await expect(page.locator('.workflow-node.status-running .agent-chip')).toBeDisabled()
   await expect(page.locator('.agent-chip.agent-completed')).toHaveCount(1, { timeout: 7000 })
   await expect(page.locator('.workflow-node.status-dry-run')).toHaveCount(1, { timeout: 2000 })
   await expect(page.getByText(/Dry run only/)).toBeVisible()
@@ -832,6 +858,42 @@ test('run details timeline shows all configured agents for running steps', async
   }
 })
 
+test('workflow agent chip controls follow runner lifecycle and share the pill palette', async ({ page }) => {
+  const projectRoot = tmpRoot()
+  const runId = writeRunningRunFixture(projectRoot)
+  const stopped = []
+  const server = await startDashboardServer({
+    projectRoot,
+    initialWorkflow: 'security-audit',
+    cancelStopRun: async ({ runnerId }) => {
+      stopped.push(runnerId)
+      return { stopped: true, error: '' }
+    },
+  })
+
+  try {
+    await page.setViewportSize({ width: 1360, height: 860 })
+    await page.goto(server.url, { waitUntil: 'networkidle' })
+    await page.locator('.run-item').filter({ hasText: runId }).click()
+
+    const auditNode = page.locator('.workflow-node').filter({ has: page.getByRole('heading', { name: 'Audit Security', exact: true }) })
+    const claudeChip = auditNode.locator('.agent-chip.claude')
+    const cancelClaude = auditNode.getByRole('button', { name: 'Cancel Claude Auto for Audit Security' })
+    await expect(cancelClaude).toBeVisible()
+    await expect(auditNode.getByRole('button', { name: 'Configure Claude Auto for Audit Security' })).toHaveCount(0)
+
+    const palettes = await Promise.all([claudeChip, cancelClaude].map(computedPalette))
+    expect(palettes[1]).toEqual(palettes[0])
+
+    page.once('dialog', (dialog) => dialog.accept())
+    await cancelClaude.click()
+    await expect(auditNode.getByRole('button', { name: 'Retry Claude Auto for Audit Security' })).toBeVisible()
+    expect(stopped).toEqual(['runner-claude'])
+  } finally {
+    await server.close()
+  }
+})
+
 test('dashboard deep-links run details modal routes', async ({ page }) => {
   const projectRoot = tmpRoot()
   const runId = writeCompletedRunFixture(projectRoot)
@@ -902,6 +964,8 @@ test('dashboard opens shared run details modal from runs and graph agent results
     await expect(page.locator('.workflow-node.status-completed')).toHaveCount(1)
 
     const reviewNode = page.locator('.workflow-node').filter({ has: page.getByRole('heading', { name: 'Review', exact: true }) })
+    await expect(reviewNode.getByRole('button', { name: 'Configure Codex Auto for Review' })).toHaveCount(0)
+    await expect(reviewNode.locator('.agent-chip-terminal .lucide-check')).toBeVisible()
     await reviewNode.getByRole('button', { name: 'Codex' }).click()
 
     await expect(page.getByRole('dialog', { name: /Workflow results for "Review"/ })).toBeVisible()

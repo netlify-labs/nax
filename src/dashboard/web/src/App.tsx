@@ -47,18 +47,18 @@ import {
   routeWorkflowStepId,
 } from './dashboard-routes'
 import { appendBoundedOutput, initialLiveRunState, liveRunReducer, visualStatus } from './liveRunReducer'
-import { MAX_STEP_AGENT_INSTANCES, configuredAgentInstance, instanceFromRun } from './agent-instances'
+import { MAX_STEP_AGENT_INSTANCES, configuredAgentInstance, instanceDisplayName, instanceFromRun } from './agent-instances'
 import { dashboardQueryKeys } from './query-keys'
 import { invalidateDashboardLists, invalidateRunViews, sameRun, upsertRunInDashboardCache } from './queries/dashboard-cache'
-import { useCancelWorkflowRunMutation, useDryRunWorkflowMutation, useStartAgentRunMutation, useStartWorkflowRunMutation } from './queries/dashboard-mutations'
+import { useCancelAgentRunMutation, useCancelWorkflowRunMutation, useDryRunWorkflowMutation, useRetryAgentRunMutation, useStartAgentRunMutation, useStartWorkflowRunMutation } from './queries/dashboard-mutations'
 import { useDashboardHealthQuery, useRunGraphQuery, useRunsQuery, useWorkflowGraphQuery, useWorkflowsQuery } from './queries/dashboard-queries'
 import { applyRunnerEventToDashboardCache } from './queries/query-event-bridge'
 import { dashboardRouteSpec } from './route-spec'
 import { projectWorkflowGraph, workflowGraphNodeByStepId } from './run-projection'
-import { recordValue } from './run-format'
+import { agentLabel, recordValue } from './run-format'
 import type { RunDetailsSelector } from './run-details-selection'
 import { isActiveStatus, isTerminalStatus, statusKey } from './status-model'
-import type { AgentInstanceDescriptor, AgentRunRequest, DryRunOptions, DryRunResult, RunFollowupResponse, RunnerEvent, DashboardRun, Workflow, WorkflowGraph, WorkflowGraphNodeData } from './types'
+import type { AgentInstanceDescriptor, AgentRunRequest, DashboardRun, DryRunOptions, DryRunResult, RunAgentTarget, RunFollowupResponse, RunnerEvent, Workflow, WorkflowGraph, WorkflowGraphNodeData } from './types'
 
 type ContextModalAction = '' | 'dry-run' | 'run'
 type DetailsModalContext = {
@@ -147,6 +147,25 @@ function latestAgentEvent(events: RunnerEvent[], node: WorkflowGraphNodeData, in
     if (event.type === 'agent_status' && event.stepId === node.stepId && eventInstanceId === instanceId) return event
   }
   return null
+}
+
+function agentActionTarget(
+  events: RunnerEvent[],
+  node: WorkflowGraphNodeData,
+  instanceId: string,
+): RunAgentTarget | null {
+  const instance = (node.selectedAgents || node.instances).find((candidate) => candidate.id === instanceId)
+  const run = runForAgent(node, instanceId)
+  const event = latestAgentEvent(events, node, instanceId)
+  const agent = runValue(run, 'agent') || event?.agent || instance?.agent || ''
+  if (!agent) return null
+  return {
+    stepId: node.stepId,
+    instanceId,
+    agent,
+    runnerId: runValue(run, 'runnerId') || event?.runnerId || '',
+    sessionId: runValue(run, 'sessionId') || event?.sessionId || '',
+  }
 }
 
 function liveAgentUrl(event: RunnerEvent | null): string {
@@ -282,10 +301,14 @@ export default function App() {
   const dryRunMutation = useDryRunWorkflowMutation()
   const startWorkflowRunMutation = useStartWorkflowRunMutation()
   const startAgentRunMutation = useStartAgentRunMutation()
+  const cancelAgentRunMutation = useCancelAgentRunMutation()
   const cancelWorkflowRunMutation = useCancelWorkflowRunMutation()
+  const retryAgentRunMutation = useRetryAgentRunMutation()
   const workflows = workflowsQuery.data?.items || []
   const projectRoot = healthQuery.data?.projectRoot || ''
   const capabilities = healthQuery.data?.capabilities || defaultDashboardCapabilities
+  const individualAgentRunTransport = activeRun?.transport || runGraphQuery.data?.run.transport || ''
+  const canControlIndividualAgentRuns = ['netlify-api', 'local'].includes(individualAgentRunTransport)
   const netlifyAccess = healthQuery.data?.netlifyAccess
   const netlifyContext = healthQuery.data?.netlifyContext
   const runsList = runsQuery.data || { runs: [], hasMore: false, shownCount: 0, totalCount: 0 }
@@ -688,6 +711,57 @@ export default function App() {
     if (!runId) return
     navigateRunStep(runId, node.stepId)
   }, [activeRun?.id, activeRun?.runId, navigateRunStep, selectedRunId])
+
+  const applyAgentActionRun = useCallback((run: DashboardRun) => {
+    setActiveRun((current) => current && sameRun(current, run) ? { ...current, ...run } : current)
+    const statusMaps = liveStatusMapsFromRun(run)
+    setLiveStepStatuses((current) => ({ ...current, ...statusMaps.stepStatuses }))
+    setLiveAgentStatuses((current) => ({ ...current, ...statusMaps.agentStatuses }))
+  }, [setLiveAgentStatuses, setLiveStepStatuses])
+
+  const cancelCanvasAgentRun = useCallback(async (node: WorkflowGraphNodeData, instanceId: string) => {
+    const runId = selectedRunId || activeRun?.runId || activeRun?.id || ''
+    const target = agentActionTarget(liveRunState.rawEvents, node, instanceId)
+    const instance = (node.selectedAgents || node.instances).find((candidate) => candidate.id === instanceId)
+    if (!runId || !target?.runnerId) {
+      setRunError('This agent runner has not finished starting yet, so it cannot be cancelled individually.')
+      return
+    }
+    const label = `${agentLabel(instance?.agent || target.agent)} ${instanceDisplayName(instance || { id: instanceId, agent: target.agent })}`
+    if (!window.confirm(`Cancel ${label}?\n\nOnly this agent runner will be cancelled. Other agents in the step will continue.`)) return
+    setRunError('')
+    try {
+      const response = await cancelAgentRunMutation.mutateAsync({
+        runId,
+        target: { ...target, reason: 'cancelled from workflow graph' },
+      })
+      applyAgentActionRun(response.run)
+    } catch (error) {
+      setRunError(error instanceof Error ? error.message : String(error))
+    }
+  }, [activeRun?.id, activeRun?.runId, applyAgentActionRun, cancelAgentRunMutation, liveRunState.rawEvents, selectedRunId])
+
+  const retryCanvasAgentRun = useCallback(async (node: WorkflowGraphNodeData, instanceId: string) => {
+    const runId = selectedRunId || activeRun?.runId || activeRun?.id || ''
+    const target = agentActionTarget(liveRunState.rawEvents, node, instanceId)
+    const instance = (node.selectedAgents || node.instances).find((candidate) => candidate.id === instanceId)
+    if (!runId || !target) {
+      setRunError('This agent result is no longer retryable.')
+      return
+    }
+    const label = `${agentLabel(instance?.agent || target.agent)} ${instanceDisplayName(instance || { id: instanceId, agent: target.agent })}`
+    if (!window.confirm(`Retry ${label}?\n\nThis starts a new Agent Runner attempt and may consume additional credits.`)) return
+    setRunError('')
+    try {
+      const response = await retryAgentRunMutation.mutateAsync({
+        runId,
+        target: { ...target, reason: 'retried from workflow graph' },
+      })
+      applyAgentActionRun(response.run)
+    } catch (error) {
+      setRunError(error instanceof Error ? error.message : String(error))
+    }
+  }, [activeRun?.id, activeRun?.runId, applyAgentActionRun, liveRunState.rawEvents, retryAgentRunMutation, selectedRunId])
 
   const runWorkflow = async (workflowOverride?: Workflow, optionsOverride: DryRunOptions = dryRunOptions, confirmed = false) => {
     const workflow = workflowOverride || selectedWorkflow
@@ -1290,6 +1364,8 @@ export default function App() {
                         onSelectNode={selectCanvasNode}
                         onViewNodeDetails={openNodeDetails}
                         onViewAgentResult={openAgentResult}
+                        onCancelAgentRun={capabilities.canCancelRuns && canControlIndividualAgentRuns ? cancelCanvasAgentRun : undefined}
+                        onRetryAgentRun={capabilities.canStartRuns && canControlIndividualAgentRuns ? retryCanvasAgentRun : undefined}
                       />
                     </Splitter.Pane>
                     <Splitter.Pane defaultSize={5} min={5}>

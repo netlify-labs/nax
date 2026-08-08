@@ -372,6 +372,101 @@ async function retryAgentRun({ projectRoot, durable, body = {}, env, submitRun =
   }
 }
 
+/**
+ * @param {Record<string, unknown>} durable
+ * @param {Record<string, unknown>} body
+ * @returns {{ step: Record<string, unknown>, run: Record<string, unknown>, stepId: string, instanceId: string, agent: string }}
+ */
+function cancellableAgentTarget(durable, body = {}) {
+  const stepId = stringValue(body.stepId).trim()
+  const instanceId = stringValue(body.instanceId).trim()
+  const agent = stringValue(body.agent).trim().toLowerCase()
+  const runnerId = stringValue(body.runnerId).trim()
+  if (!stepId || (!instanceId && !agent)) {
+    throw requestError(400, 'missing_cancel_target', 'Select a workflow step and agent runner to cancel.')
+  }
+  const steps = Array.isArray(durable.steps) ? durable.steps.map(objectValue) : []
+  const step = steps.find((candidate) => stringValue(candidate.id) === stepId) || null
+  if (!step) throw requestError(404, 'cancel_step_not_found', `Workflow step "${stepId}" was not found.`)
+  const runs = Array.isArray(step.runs) ? step.runs.map(objectValue) : []
+  const matches = runs.filter((run) => {
+    const runInstanceId = stringValue(run.instanceId) || [
+      stringValue(run.agent).toLowerCase(),
+      stringValue(run.model) || 'auto',
+      stringValue(run.effort) || 'auto',
+    ].join(':')
+    if (instanceId && runInstanceId !== instanceId) return false
+    if (agent && stringValue(run.agent).toLowerCase() !== agent) return false
+    if (runnerId && stringValue(run.runnerId) !== runnerId) return false
+    return true
+  })
+  if (matches.length === 0) throw requestError(404, 'cancel_run_not_found', `No active agent runner was found for step "${stepId}".`)
+  if (matches.length > 1) throw requestError(409, 'ambiguous_cancel_target', `More than one agent runner matched step "${stepId}".`)
+  const run = matches[0]
+  const status = stringValue(run.status).trim().toLowerCase()
+  if (!isActiveWorkflowStepStatus(status)) {
+    throw requestError(409, 'cancel_run_not_active', `The ${stringValue(run.agent) || 'agent'} runner is no longer active.`)
+  }
+  if (!stringValue(run.runnerId).trim()) {
+    throw requestError(409, 'cancel_runner_pending', `The ${stringValue(run.agent) || 'agent'} runner has not finished starting yet.`)
+  }
+  return {
+    step,
+    run,
+    stepId,
+    instanceId: stringValue(run.instanceId) || instanceId,
+    agent: stringValue(run.agent).toLowerCase() || agent,
+  }
+}
+
+/**
+ * @param {{
+ *   projectRoot: string,
+ *   durable: Record<string, unknown>,
+ *   body?: Record<string, unknown>,
+ *   env: NodeJS.ProcessEnv,
+ *   stopRun: (input: {
+ *     projectRoot?: string,
+ *     runnerId?: string,
+ *     siteId?: string,
+ *     env?: NodeJS.ProcessEnv,
+ *     sdkHandle?: import('nax-agent-runner-sdk').Handle,
+ *   }) => Promise<{ stopped?: boolean, error?: string }>,
+ * }} input
+ */
+async function cancelAgentRun({ projectRoot, durable, body = {}, env, stopRun }) {
+  if (!isNetlifyApiTransport(durable.transport)) {
+    throw requestError(409, 'unsupported_cancel_transport', `Run ${stringValue(durable.runId)} uses ${stringValue(durable.transport) || 'unknown'} transport; individual cancellation supports Netlify API runs only.`)
+  }
+  const target = cancellableAgentTarget(durable, body)
+  const runnerId = stringValue(target.run.runnerId).trim()
+  const result = await stopRun({
+    projectRoot,
+    runnerId,
+    siteId: stringValue(target.run.netlifySiteId || objectValue(durable.options).netlifySiteId),
+    env,
+    ...(target.run.sdkHandle ? { sdkHandle: /** @type {import('nax-agent-runner-sdk').Handle} */ (target.run.sdkHandle) } : {}),
+  })
+  if (result?.stopped !== true) {
+    throw requestError(502, 'agent_cancel_failed', result?.error || `The ${target.agent} runner did not confirm cancellation.`)
+  }
+  const cancelledAt = new Date().toISOString()
+  target.run.status = 'cancelled'
+  target.run.cancelledAt = cancelledAt
+  target.run.cancelReason = stringValue(body.reason).trim() || 'cancelled from dashboard'
+  const saved = saveRunState(durable)
+  return {
+    run: publicRunState(saved),
+    cancelled: true,
+    stepId: target.stepId,
+    instanceId: target.instanceId,
+    agent: target.agent,
+    runnerId,
+    remoteStopped: true,
+    warnings: [],
+  }
+}
+
 /** @param {SubmitFollowupInput} input */
 async function submitFollowup({
   projectRoot,
@@ -635,6 +730,7 @@ function titleCaseAgent(agent = '') {
 }
 
 module.exports = {
+  cancelAgentRun,
   cancelFollowup,
   cancelReviewGate,
   cancelRun,

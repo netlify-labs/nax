@@ -1,4 +1,4 @@
-import type { AgentRunRequest, AgentRunResponse, DryRunOptions, DryRunResponse, HealthResponse, RunDetailsResponse, RunFollowupRequest, RunFollowupResponse, RunGraphResponse, RunRetryRequest, RunRetryResponse, RunsResponse, StartRunResponse, WorkflowGraphResponse, WorkflowListResponse, DashboardRun } from './types'
+import type { AgentRunRequest, AgentRunResponse, DashboardRun, DryRunOptions, DryRunResponse, HealthResponse, RunAgentCancelResponse, RunAgentTarget, RunDetailsResponse, RunFollowupRequest, RunFollowupResponse, RunGraphResponse, RunRetryRequest, RunRetryResponse, RunsResponse, StartRunResponse, WorkflowGraphResponse, WorkflowListResponse } from './types'
 
 type DashboardWindow = Window & {
   NAX_DASHBOARD_API_BASE?: string
@@ -165,6 +165,19 @@ export async function cancelWorkflowRun(id: string): Promise<{ run: DashboardRun
     method: 'POST',
     headers: {
     },
+  })
+}
+
+export async function cancelAgentRun(
+  id: string,
+  target: RunAgentTarget,
+): Promise<RunAgentCancelResponse> {
+  return fetchJson<RunAgentCancelResponse>(`/api/runs/${encodeURIComponent(id)}/agents/cancel`, {
+    method: 'POST',
+    headers: {
+      'content-type': 'application/json',
+    },
+    body: JSON.stringify(target),
   })
 }
 

@@ -38,6 +38,8 @@ type Props = {
   onSelectNode: (node: WorkflowGraphNodeData | null) => void
   onViewNodeDetails: (node: WorkflowGraphNodeData) => void
   onViewAgentResult: (node: WorkflowGraphNodeData, agent: string) => void
+  onCancelAgentRun?: (node: WorkflowGraphNodeData, instanceId: string) => void | Promise<void>
+  onRetryAgentRun?: (node: WorkflowGraphNodeData, instanceId: string) => void | Promise<void>
 }
 
 type FlowBodyProps = Props & {
@@ -239,6 +241,8 @@ export function WorkflowCanvas(props: Props) {
             onRemoveAgent: props.mode === 'inspect' ? undefined : props.onRemoveStepAgent,
             onAddInstances: props.mode === 'inspect' ? undefined : props.onAddStepAgents,
             onViewAgentResult: props.mode === 'inspect' ? props.onViewAgentResult : undefined,
+            onCancelAgentRun: props.mode === 'inspect' ? props.onCancelAgentRun : undefined,
+            onRetryAgentRun: props.mode === 'inspect' ? props.onRetryAgentRun : undefined,
           },
         }
       }),
@@ -251,6 +255,8 @@ export function WorkflowCanvas(props: Props) {
     props.onRemoveStepAgent,
     props.onAddStepAgents,
     props.onViewAgentResult,
+    props.onCancelAgentRun,
+    props.onRetryAgentRun,
   ])
 
   const supportedProviders = useMemo(

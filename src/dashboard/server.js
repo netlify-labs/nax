@@ -44,6 +44,7 @@ const { createLocalRunStore } = require('./storage/local-runs')
 const { createLocalEventStore } = require('./storage/local-events')
 const { createLocalEventStreamAdapter } = require('./events/local-stream')
 const {
+  cancelAgentRun: cancelAgentRunService,
   cancelFollowup: cancelFollowupService,
   cancelReviewGate: cancelReviewGateService,
   cancelRun: cancelRunService,
@@ -307,7 +308,7 @@ function isReadOnlyDashboardApiPath(pathname) {
 function isMutationDashboardApiPath(pathname) {
   if (pathname === '/api/files/open' || pathname === '/api/agent-runs') return true
   if (/^\/api\/workflows\/[^/]+\/(?:dry-run|runs)$/.test(pathname)) return true
-  return /^\/api\/runs\/[^/]+\/(?:cancel|review\/approve|review\/cancel|followups|followups\/cancel)$/.test(pathname)
+  return /^\/api\/runs\/[^/]+\/(?:cancel|agents\/cancel|review\/approve|review\/cancel|followups|followups\/cancel)$/.test(pathname)
 }
 
 /**
@@ -1093,6 +1094,19 @@ function createRequestHandler(options = {}) {
             recordEvent,
             recordCancelSemantics,
             publicRun,
+          }),
+        }
+      },
+      cancelAgentRun: async (id, body) => {
+        const durable = durableRunStateForId(safeDecode(id))
+        if (!durable) return null
+        return {
+          body: await cancelAgentRunService({
+            projectRoot,
+            durable,
+            body,
+            env,
+            stopRun: cancelStopRun,
           }),
         }
       },

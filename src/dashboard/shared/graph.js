@@ -15,6 +15,7 @@ const WORKFLOW_NODE_LAYOUT = {
   agentChipGap: 8,
   agentChipBaseWidth: 40,
   agentChipCharacterWidth: 7,
+  footerHeight: 38,
 }
 
 function normalizeSelectedAgents(selectedAgents) {
@@ -266,7 +267,13 @@ function estimatedWorkflowNodeHeight(step = {}, agents = []) {
     agentRows * WORKFLOW_NODE_LAYOUT.agentChipHeight +
     Math.max(0, agentRows - 1) * WORKFLOW_NODE_LAYOUT.agentRowGap
 
-  return Math.ceil(WORKFLOW_NODE_LAYOUT.headerHeight + titleOverflowHeight + descriptionHeight + agentRowsHeight)
+  return Math.ceil(
+    WORKFLOW_NODE_LAYOUT.headerHeight +
+    titleOverflowHeight +
+    descriptionHeight +
+    agentRowsHeight +
+    WORKFLOW_NODE_LAYOUT.footerHeight,
+  )
 }
 
 /**

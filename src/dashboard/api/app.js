@@ -477,6 +477,15 @@ function createDashboardApi({
     return json(c, result.body, result.statusCode)
   })
 
+  app.post('/api/runs/:id/agents/cancel', async (c) => {
+    assertHonoToken(c, token)
+    requireCapability(capabilities, 'canCancelRuns')
+    if (typeof mutations.cancelAgentRun !== 'function') throw requestError(501, 'unsupported_capability', 'Individual agent cancellation is not available in this runtime.')
+    const result = mutationResult(await mutations.cancelAgentRun(c.req.param('id'), await honoJsonBody(c)))
+    if (!result) throw requestError(404, 'not_found', 'Unknown dashboard run.')
+    return json(c, result.body, result.statusCode)
+  })
+
   app.post('/api/runs/:id/review/approve', async (c) => {
     assertHonoToken(c, token)
     requireCapability(capabilities, 'canReviewGates')

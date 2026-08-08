@@ -901,6 +901,81 @@ test('dashboard cancel endpoint stops durable workflow runners without a live ru
   }
 })
 
+test('dashboard agent cancel endpoint stops only the selected workflow runner', async () => {
+  const projectRoot = tmpRoot()
+  const runId = 'fixture-agent-cancel'
+  const dir = path.join(projectRoot, '.nax', 'workflows', runId)
+  fs.mkdirSync(dir, { recursive: true })
+  fs.writeFileSync(path.join(dir, 'workflow.json'), JSON.stringify({
+    schemaVersion: 1,
+    runId,
+    flowId: 'review',
+    flowTitle: 'Review',
+    projectRoot,
+    status: 'running',
+    transport: 'netlify-api',
+    branch: 'main',
+    options: { branch: 'main', transport: 'netlify-api' },
+    createdAt: '2026-06-21T00:00:00.000Z',
+    updatedAt: '2026-06-21T00:01:00.000Z',
+    dir,
+    steps: [{
+      id: 'review',
+      title: 'Review',
+      status: 'running',
+      runs: [
+        {
+          agent: 'claude',
+          instanceId: 'claude:claude-opus-5:auto',
+          status: 'submitted',
+          runnerId: 'runner-claude',
+          sessionId: 'session-claude',
+        },
+        {
+          agent: 'gemini',
+          instanceId: 'gemini:gemini-3.1-pro:auto',
+          status: 'running',
+          runnerId: 'runner-gemini',
+          sessionId: 'session-gemini',
+        },
+      ],
+    }],
+  }, null, 2))
+
+  const stopped = []
+  const server = await startDashboardServer({
+    projectRoot,
+    cancelStopRun: async ({ runnerId }) => {
+      stopped.push(runnerId)
+      return { stopped: true, error: '' }
+    },
+  })
+  try {
+    const response = await postJson(
+      `http://127.0.0.1:${server.port}/api/runs/${runId}/agents/cancel`,
+      server.token,
+      {
+        stepId: 'review',
+        instanceId: 'gemini:gemini-3.1-pro:auto',
+        agent: 'gemini',
+        runnerId: 'runner-gemini',
+      },
+    )
+    assert.equal(response.statusCode, 200, response.payload?.error?.message)
+    assert.equal(response.payload.cancelled, true)
+    assert.equal(response.payload.instanceId, 'gemini:gemini-3.1-pro:auto')
+    assert.equal(response.payload.remoteStopped, true)
+    assert.deepEqual(stopped, ['runner-gemini'])
+
+    const state = JSON.parse(fs.readFileSync(path.join(dir, 'workflow.json'), 'utf8'))
+    assert.equal(state.status, 'running')
+    assert.equal(state.steps[0].status, 'running')
+    assert.deepEqual(state.steps[0].runs.map((run) => run.status), ['submitted', 'cancelled'])
+  } finally {
+    await server.close()
+  }
+})
+
 test('dashboard runs API reads durable workflow state from .nax', async () => {
   const projectRoot = tmpRoot()
   const flowDir = path.join(projectRoot, '.github', 'nax-flows', 'review')

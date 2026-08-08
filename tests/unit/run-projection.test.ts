@@ -95,6 +95,27 @@ test('projectWorkflowGraph reports a terminal mixed lineup without hiding succes
   assert.equal(projected?.nodes[0].data.status, 'completed_with_failures')
 })
 
+test('projectWorkflowGraph keeps a step active while sibling agents remain in progress', () => {
+  const projected = projectWorkflowGraph({
+    graph: graphWithStep({
+      status: 'running',
+      selectedAgents: [
+        { agent: 'claude', id: 'claude:auto:auto', resolvedFrom: 'open' },
+        { agent: 'gemini', id: 'gemini:auto:auto', resolvedFrom: 'open' },
+      ],
+    }),
+    stepAgents: {},
+    stepStatuses: {},
+    stepAgentStatuses: {
+      review: {
+        'claude:auto:auto': 'cancelled',
+        'gemini:auto:auto': 'running',
+      },
+    },
+  })
+  assert.equal(projected?.nodes[0].data.status, 'running')
+})
+
 test('projectWorkflowGraph completes active step when all selected agents are completed', () => {
   const projected = projectWorkflowGraph({
     graph: graphWithStep({

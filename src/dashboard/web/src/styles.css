@@ -1387,10 +1387,6 @@ body {
   padding: 12px;
 }
 
-.agent-row > .add-agent-button {
-  align-self: center;
-}
-
 .agent-chip {
   border: 1px solid color-mix(in srgb, var(--mantine-primary-color-4), transparent 16%);
   padding: 4px 10px;
@@ -1451,15 +1447,6 @@ body {
   background: color-mix(in srgb, var(--mantine-color-red-5), transparent 88%);
   color: light-dark(var(--mantine-color-red-9), var(--mantine-color-red-1));
   box-shadow: 0 0 0 1px color-mix(in srgb, var(--mantine-color-red-5), transparent 74%), 0 0 18px color-mix(in srgb, var(--mantine-color-red-5), transparent 86%);
-}
-
-.agent-chip-status {
-  color: currentColor;
-  font-size: 9px;
-  font-weight: 800;
-  line-height: 1.1;
-  opacity: 0.82;
-  text-transform: uppercase;
 }
 
 .agent-chip:hover {
@@ -1598,7 +1585,7 @@ body {
 }
 
 /* Lift the chip and its caret together on hover so they never detach. */
-.agent-chip-wrap:hover {
+.agent-chip-wrap:not(.agent-chip-wrap-static):hover {
   transform: translateY(-1px);
 }
 
@@ -1643,37 +1630,132 @@ body {
   color: var(--mantine-color-text);
 }
 
-.agent-chip-wrap:has(.agent-chip-caret) .agent-chip {
+.agent-chip-wrap:has(.agent-chip-control) .agent-chip {
   border-top-right-radius: 0;
   border-bottom-right-radius: 0;
 }
 
-.agent-chip-caret {
+.agent-chip-control {
   display: inline-flex;
   align-items: center;
   justify-content: center;
+  min-width: 27px;
   padding: 0 5px;
-  cursor: pointer;
   border: 1px solid color-mix(in srgb, var(--mantine-primary-color-4), transparent 16%);
   border-left: none;
   border-radius: 0 8px 8px 0;
-  background: color-mix(in srgb, var(--mantine-primary-color-5), transparent 82%);
+  background: color-mix(in srgb, var(--mantine-primary-color-5), transparent 86%);
   color: light-dark(var(--mantine-primary-color-9), var(--mantine-color-white));
-  transition: background-color 120ms ease, color 120ms ease;
+  box-shadow: 0 0 18px color-mix(in srgb, var(--mantine-primary-color-5), transparent 88%);
+  transition: border-color 120ms ease, background-color 120ms ease, box-shadow 120ms ease, color 120ms ease, opacity 120ms ease;
 }
 
-[data-mantine-color-scheme='dark'] .agent-chip-caret {
-  background: color-mix(in srgb, var(--mantine-primary-color-6), transparent 74%);
+[data-mantine-color-scheme='dark'] .agent-chip-control {
+  background: color-mix(in srgb, var(--mantine-primary-color-6), transparent 80%);
   border-color: color-mix(in srgb, var(--mantine-color-teal-3), transparent 10%);
 }
 
-.agent-chip-caret:hover {
-  background: color-mix(in srgb, var(--mantine-primary-color-5), transparent 68%);
+.agent-chip-caret,
+.agent-chip-action {
+  cursor: pointer;
 }
 
-.agent-chip-caret:focus-visible {
+.agent-chip-caret:hover,
+.agent-chip-action:hover {
+  border-color: light-dark(var(--mantine-primary-color-5), var(--mantine-color-teal-2));
+  background: color-mix(in srgb, var(--mantine-primary-color-5), transparent 78%);
+  box-shadow: 0 0 22px color-mix(in srgb, var(--mantine-primary-color-4), transparent 82%);
+}
+
+.agent-chip-control:is(
+  .agent-running,
+  .agent-booting,
+  .agent-submitted,
+  .agent-waiting,
+  .agent-retrying,
+  .agent-queued,
+  .agent-awaiting_review
+) {
+  border-color: var(--mantine-color-yellow-4);
+  background:
+    linear-gradient(
+      90deg,
+      color-mix(in srgb, var(--mantine-color-yellow-4), transparent 92%) 0%,
+      color-mix(in srgb, var(--mantine-color-yellow-3), transparent 82%) 25%,
+      color-mix(in srgb, var(--mantine-color-yellow-4), transparent 92%) 50%,
+      color-mix(in srgb, var(--mantine-color-yellow-3), transparent 82%) 75%,
+      color-mix(in srgb, var(--mantine-color-yellow-4), transparent 92%) 100%
+    );
+  background-size: 200% 100%;
+  color: light-dark(var(--mantine-color-yellow-9), var(--mantine-color-yellow-1));
+  box-shadow: 0 0 20px color-mix(in srgb, var(--mantine-color-yellow-4), transparent 84%);
+  animation: agent-chip-progress 4.5s linear infinite;
+}
+
+.agent-chip-action:is(
+  .agent-running,
+  .agent-booting,
+  .agent-submitted,
+  .agent-waiting,
+  .agent-retrying,
+  .agent-queued,
+  .agent-awaiting_review
+):hover {
+  border-color: var(--mantine-color-yellow-4);
+  background: color-mix(in srgb, var(--mantine-color-yellow-4), transparent 76%);
+  color: light-dark(var(--mantine-color-yellow-9), var(--mantine-color-yellow-1));
+  box-shadow: 0 0 20px color-mix(in srgb, var(--mantine-color-yellow-4), transparent 78%);
+}
+
+.agent-chip-control:is(.agent-completed, .agent-dry-run) {
+  border-color: var(--mantine-color-green-4);
+  background: color-mix(in srgb, var(--mantine-color-green-4), transparent 88%);
+  color: light-dark(var(--mantine-color-green-9), var(--mantine-color-green-1));
+  box-shadow: 0 0 18px color-mix(in srgb, var(--mantine-color-green-4), transparent 86%);
+}
+
+.agent-chip-control:is(.agent-failed, .agent-cancelled, .agent-abandoned) {
+  border-color: var(--mantine-color-red-5);
+  background: color-mix(in srgb, var(--mantine-color-red-5), transparent 88%);
+  color: light-dark(var(--mantine-color-red-9), var(--mantine-color-red-1));
+  box-shadow: 0 0 18px color-mix(in srgb, var(--mantine-color-red-5), transparent 86%);
+}
+
+.agent-chip-action:is(.agent-failed, .agent-cancelled, .agent-abandoned):hover {
+  border-color: var(--mantine-color-red-5);
+  background: color-mix(in srgb, var(--mantine-color-red-5), transparent 78%);
+  color: light-dark(var(--mantine-color-red-9), var(--mantine-color-red-1));
+  box-shadow: 0 0 20px color-mix(in srgb, var(--mantine-color-red-5), transparent 78%);
+}
+
+.agent-chip-terminal {
+  cursor: default;
+}
+
+.agent-chip:disabled {
+  cursor: default;
+}
+
+.agent-chip-control:disabled {
+  cursor: wait;
+  opacity: 0.6;
+}
+
+.agent-chip-control:focus-visible {
   outline: 2px solid var(--mantine-primary-color-5);
   outline-offset: 2px;
+}
+
+.node-footer {
+  display: flex;
+  min-height: 30px;
+  align-items: center;
+  justify-content: center;
+  margin: -4px 12px 12px;
+}
+
+.node-footer > .add-agent-button {
+  align-self: center;
 }
 
 .inherited-lineup-note {
@@ -1681,7 +1763,7 @@ body {
   align-items: center;
   justify-content: center;
   gap: 5px;
-  margin: -4px 12px 12px;
+  margin: 0;
 }
 
 .agent-icon {

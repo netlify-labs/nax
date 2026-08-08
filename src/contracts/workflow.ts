@@ -71,6 +71,8 @@ export type WorkflowGraphNodeData = {
   onRemoveAgent?: (stepId: string, instanceId: string) => void
   onAddInstances?: (stepId: string, instances: AgentInstanceDescriptor[]) => void
   onViewAgentResult?: (node: WorkflowGraphNodeData, instanceId: string) => void
+  onCancelAgentRun?: (node: WorkflowGraphNodeData, instanceId: string) => void | Promise<void>
+  onRetryAgentRun?: (node: WorkflowGraphNodeData, instanceId: string) => void | Promise<void>
 }
 
 export type WorkflowGraph = {

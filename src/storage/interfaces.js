@@ -215,6 +215,7 @@
  *   dryRunWorkflow?: (id: string, body: JsonObject) => Promise<DashboardMutationResult>,
  *   startWorkflow?: (id: string, body: JsonObject) => Promise<DashboardMutationResult>,
  *   startAgentRun?: (body: JsonObject) => Promise<DashboardMutationResult>,
+ *   cancelAgentRun?: (id: string, body: JsonObject) => Promise<DashboardMutationResult>,
  *   cancelRun?: (id: string, body: JsonObject) => Promise<DashboardMutationResult>,
  *   approveReview?: (id: string, body: JsonObject) => Promise<DashboardMutationResult>,
  *   cancelReview?: (id: string, body: JsonObject) => Promise<DashboardMutationResult>,

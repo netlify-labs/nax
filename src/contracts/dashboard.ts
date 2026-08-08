@@ -335,14 +335,29 @@ export type RunFollowupRequest = {
   artifacts: Array<{ id: string; kind: string }>
 }
 
-export type RunRetryRequest = {
+export type RunAgentTarget = {
   stepId: string
   agent: string
-  model?: string
-  effort?: string
+  instanceId?: string
   runnerId?: string
   sessionId?: string
   reason?: string
+}
+
+export type RunAgentCancelResponse = {
+  run: DashboardRun
+  cancelled: boolean
+  stepId: string
+  instanceId: string
+  agent: string
+  runnerId: string
+  remoteStopped: boolean
+  warnings: string[]
+}
+
+export type RunRetryRequest = RunAgentTarget & {
+  model?: string
+  effort?: string
 }
 
 export type RunRetryResponse = {

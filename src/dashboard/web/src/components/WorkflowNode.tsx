@@ -1,11 +1,11 @@
 import { memo, useEffect, useState } from 'react'
 import { Handle, Position, type NodeProps } from '@xyflow/react'
 import { Button, Group, Popover, Text } from '@mantine/core'
-import { ChevronDown, LockKeyhole, Trash2, UserCheck } from 'lucide-react'
+import { Check, ChevronDown, CircleAlert, LoaderCircle, LockKeyhole, RotateCcw, Trash2, UserCheck, X } from 'lucide-react'
 
 import { MAX_STEP_AGENT_INSTANCES, instanceDisplayName } from '../agent-instances'
 import { agentLabel, statusLabel } from '../run-format'
-import { isActiveStatus, isCompletedStatus } from '../status-model'
+import { isActiveStatus, isCancelledStatus, isCompletedStatus, isFailedStatus, statusKey } from '../status-model'
 import type { AgentInstanceDescriptor, WorkflowGraphNodeData } from '../types'
 import { useAgentCatalog } from '../agent-catalog-context'
 import { AddAgentInstances } from './AddAgentInstances'
@@ -29,6 +29,8 @@ function instanceStatusTitle(
   hasResult: boolean,
 ): string {
   const label = `${agentLabel(instance.agent)} ${instanceDisplayName(instance)}`
+  if (isActiveStatus(status) && node.agentInteraction !== 'view-result') return `${label} is in progress`
+  if (isCompletedStatus(status) && node.agentInteraction !== 'view-result') return `${label} completed`
   if (node.agentInteraction !== 'view-result') return `Configure ${label} for ${node.title}`
   if (hasResult) return `View ${label} result for ${node.title}`
   if (isActiveStatus(status)) return `${label} is in progress; view available run details`
@@ -66,6 +68,7 @@ export const WorkflowNode = memo(function WorkflowNode({ data, selected }: NodeP
   const catalogContext = useAgentCatalog()
   const [configInstanceId, setConfigInstanceId] = useState<string | null>(null)
   const [draftConfig, setDraftConfig] = useState({ model: 'auto', effort: 'auto' })
+  const [actingInstanceId, setActingInstanceId] = useState<string | null>(null)
 
   useEffect(() => {
     if (!configInstanceId) return undefined
@@ -83,7 +86,9 @@ export const WorkflowNode = memo(function WorkflowNode({ data, selected }: NodeP
   const humanReview = node.action === 'human-review' || node.submit === 'human-review'
   const inherited = Boolean(node.inheritedFromStepId)
   const progressLabel = humanReview ? '' : nodeProgressLabel(node, selectedInstances)
+  const isDefinition = !node.status || node.status === 'definition'
   const configurable = node.agentInteraction !== 'view-result' && !inherited
+  const canAddAgents = configurable && isDefinition
   const githubTransport = catalogContext?.transport === 'github' || catalogContext?.transport === 'github-actions'
   const canConfigure = configurable && Boolean(catalogContext) && Boolean(node.onConfigureAgent)
 
@@ -114,21 +119,34 @@ export const WorkflowNode = memo(function WorkflowNode({ data, selected }: NodeP
           </span>
         ) : selectedInstances.map((instance) => {
           const agentStatus = node.agentStatuses?.[instance.id] || instance.status || ''
+          const normalizedAgentStatus = statusKey(agentStatus)
+          const active = Boolean(agentStatus) && isActiveStatus(agentStatus)
+          const completed = Boolean(agentStatus) && isCompletedStatus(agentStatus)
+          const failed = Boolean(agentStatus) && (isFailedStatus(agentStatus) || isCancelledStatus(agentStatus))
+          const canRetry = failed && isActiveStatus(node.status || '') && Boolean(node.onRetryAgentRun)
+          const canConfigureInstance = canConfigure && !active && !completed && !failed
+          const controlStatusClass = agentStatus ? ` agent-${normalizedAgentStatus}` : ''
+          const busy = actingInstanceId === instance.id
           const hasResult = hasCompletedRun(node, instance)
+          const canOpenAgentDetails = node.agentInteraction === 'view-result' && Boolean(node.onViewAgentResult)
           const model = instance.model || 'auto'
           const effort = instance.effort || 'auto'
           const config = catalogContext
             ? describeAgentConfig(catalogContext.catalog, instance.agent, model, effort)
             : { modelLabel: instanceDisplayName(instance), effortLabel: instance.effort || '' }
           return (
-            <div className="agent-chip-wrap" key={instance.id}>
+            <div
+              className={`agent-chip-wrap${canOpenAgentDetails || canConfigureInstance || (active && Boolean(node.onCancelAgentRun)) || canRetry ? '' : ' agent-chip-wrap-static'}`}
+              key={instance.id}
+            >
               <button
-                className={`agent-chip ${instance.agent}${agentStatus ? ` agent-${agentStatus}` : ''}`}
+                className={`agent-chip ${instance.agent}${agentStatus ? ` agent-${normalizedAgentStatus}` : ''}`}
                 type="button"
                 title={instanceStatusTitle(node, instance, agentStatus, hasResult)}
+                disabled={!canOpenAgentDetails}
                 onClick={(event) => {
                   event.stopPropagation()
-                  if (node.agentInteraction === 'view-result') node.onViewAgentResult?.(node, instance.id)
+                  if (canOpenAgentDetails) node.onViewAgentResult?.(node, instance.id)
                 }}
               >
                 <AgentIcon agent={instance.agent} />
@@ -136,10 +154,9 @@ export const WorkflowNode = memo(function WorkflowNode({ data, selected }: NodeP
                   <span className="agent-chip-name">{agentLabel(instance.agent)}</span>
                   <span className="agent-chip-config">{config.modelLabel || 'Auto'}</span>
                   {config.effortLabel ? <span className="agent-chip-effort">{config.effortLabel}</span> : null}
-                  {agentStatus ? <span className="agent-chip-status">{statusLabel(agentStatus)}</span> : null}
                 </span>
               </button>
-              {canConfigure ? (
+              {canConfigureInstance ? (
                 <Popover
                   opened={configInstanceId === instance.id}
                   onChange={(opened) => setConfigInstanceId(opened ? instance.id : null)}
@@ -154,7 +171,7 @@ export const WorkflowNode = memo(function WorkflowNode({ data, selected }: NodeP
                   <Popover.Target>
                     <button
                       type="button"
-                      className="agent-chip-caret nodrag nopan"
+                      className={`agent-chip-control agent-chip-caret nodrag nopan${controlStatusClass}`}
                       aria-label={`Configure ${agentLabel(instance.agent)} ${instanceDisplayName(instance)} for ${node.title}`}
                       onClick={(event) => {
                         event.stopPropagation()
@@ -209,23 +226,83 @@ export const WorkflowNode = memo(function WorkflowNode({ data, selected }: NodeP
                     </Group>
                   </Popover.Dropdown>
                 </Popover>
+              ) : active && node.onCancelAgentRun ? (
+                <button
+                  type="button"
+                  className={`agent-chip-control agent-chip-action nodrag nopan${controlStatusClass}`}
+                  aria-label={`Cancel ${agentLabel(instance.agent)} ${instanceDisplayName(instance)} for ${node.title}`}
+                  title={`Cancel this ${agentLabel(instance.agent)} runner`}
+                  disabled={busy}
+                  onClick={(event) => {
+                    event.stopPropagation()
+                    setActingInstanceId(instance.id)
+                    void Promise.resolve(node.onCancelAgentRun?.(node, instance.id)).finally(() => setActingInstanceId(null))
+                  }}
+                >
+                  <X size={13} />
+                </button>
+              ) : active ? (
+                <span
+                  className={`agent-chip-control agent-chip-activity${controlStatusClass}`}
+                  title={`${agentLabel(instance.agent)} is in progress`}
+                  aria-hidden="true"
+                >
+                  <LoaderCircle className="spin" size={13} />
+                </span>
+              ) : completed ? (
+                <span
+                  className={`agent-chip-control agent-chip-terminal${controlStatusClass}`}
+                  title={`${agentLabel(instance.agent)} completed`}
+                  aria-hidden="true"
+                >
+                  <Check size={13} />
+                </span>
+              ) : failed ? (
+                canRetry ? (
+                  <button
+                    type="button"
+                    className={`agent-chip-control agent-chip-action nodrag nopan${controlStatusClass}`}
+                    aria-label={`Retry ${agentLabel(instance.agent)} ${instanceDisplayName(instance)} for ${node.title}`}
+                    title={`Retry this ${agentLabel(instance.agent)} runner`}
+                    disabled={busy}
+                    onClick={(event) => {
+                      event.stopPropagation()
+                      setActingInstanceId(instance.id)
+                      void Promise.resolve(node.onRetryAgentRun?.(node, instance.id)).finally(() => setActingInstanceId(null))
+                    }}
+                  >
+                    <RotateCcw size={12} />
+                  </button>
+                ) : (
+                  <span
+                    className={`agent-chip-control agent-chip-terminal${controlStatusClass}`}
+                    title={`${agentLabel(instance.agent)} ${statusLabel(agentStatus).toLowerCase()}`}
+                    aria-hidden="true"
+                  >
+                    <CircleAlert size={12} />
+                  </span>
+                )
               ) : null}
             </div>
           )
         })}
-        {!humanReview && configurable && catalogContext ? (
-          <AddAgentInstances
-            catalog={catalogContext.catalog}
-            disabled={selectedInstances.length >= MAX_STEP_AGENT_INSTANCES}
-            maxInstances={MAX_STEP_AGENT_INSTANCES - selectedInstances.length}
-            onAdd={(instances) => node.onAddInstances?.(node.stepId, instances)}
-          />
-        ) : null}
       </div>
-      {inherited && node.agentInteraction !== 'view-result' ? (
-        <Text className="inherited-lineup-note" size="xs" c="dimmed">
-          <LockKeyhole size={12} /> Inherits surviving instances from {node.inheritedFromStepId}
-        </Text>
+      {!humanReview ? (
+        <div className="node-footer">
+          {canAddAgents && catalogContext ? (
+            <AddAgentInstances
+              catalog={catalogContext.catalog}
+              disabled={selectedInstances.length >= MAX_STEP_AGENT_INSTANCES}
+              maxInstances={MAX_STEP_AGENT_INSTANCES - selectedInstances.length}
+              onAdd={(instances) => node.onAddInstances?.(node.stepId, instances)}
+            />
+          ) : null}
+          {isDefinition && inherited && node.agentInteraction !== 'view-result' ? (
+            <Text className="inherited-lineup-note" size="xs" c="dimmed">
+              <LockKeyhole size={12} /> Inherits surviving instances from {node.inheritedFromStepId}
+            </Text>
+          ) : null}
+        </div>
       ) : null}
       <Handle className="hidden-handle workflow-source-handle" type="source" position={Position.Bottom} />
     </div>

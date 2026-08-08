@@ -98,6 +98,9 @@ export function displayStepStatus(
   const selectedStatuses = selectedAgents.map((instance) => agentStatuses[instance.id] || '').filter(Boolean)
   const failedCount = selectedStatuses.filter((status) => failedStatuses.has(status)).length
   const completedCount = selectedStatuses.filter((status) => completedStatuses.has(status)).length
+  if (activeStatuses.has(stepStatus) && selectedStatuses.some((status) => activeStatuses.has(status))) {
+    return stepStatus
+  }
   if (
     failedCount > 0 &&
     completedCount > 0 &&
@@ -112,7 +115,6 @@ export function displayStepStatus(
   ) {
     return 'completed'
   }
-  if (activeStatuses.has(stepStatus) && selectedStatuses.some((status) => activeStatuses.has(status))) return stepStatus
   return stepStatus
 }
 

@@ -1,6 +1,7 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import {
   approveHumanReviewGate,
+  cancelAgentRun,
   cancelFollowupRun,
   cancelHumanReviewGate,
   cancelWorkflowRun,
@@ -10,7 +11,7 @@ import {
   startRunFollowup,
   startWorkflowRun,
 } from '../api'
-import type { AgentRunRequest, DryRunOptions, RunFollowupRequest, RunRetryRequest } from '../types'
+import type { AgentRunRequest, DryRunOptions, RunAgentTarget, RunFollowupRequest, RunRetryRequest } from '../types'
 import { invalidateRunViews, upsertRunInDashboardCache } from './dashboard-cache'
 
 export function useDryRunWorkflowMutation() {
@@ -45,6 +46,17 @@ export function useCancelWorkflowRunMutation() {
   const queryClient = useQueryClient()
   return useMutation({
     mutationFn: (runId: string) => cancelWorkflowRun(runId),
+    onSuccess(response) {
+      upsertRunInDashboardCache(queryClient, response.run)
+      void invalidateRunViews(queryClient, response.run.runId || response.run.id)
+    },
+  })
+}
+
+export function useCancelAgentRunMutation() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: ({ runId, target }: { runId: string; target: RunAgentTarget }) => cancelAgentRun(runId, target),
     onSuccess(response) {
       upsertRunInDashboardCache(queryClient, response.run)
       void invalidateRunViews(queryClient, response.run.runId || response.run.id)

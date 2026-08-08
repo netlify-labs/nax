@@ -1,3 +1,12 @@
+---
+id: 01KW0X6BJ8M65SCSFJGADJ9CG6
+status: draft
+createdAt: 2026-06-25T19:47:25-07:00
+updatedAt: 2026-06-25T19:47:25-07:00
+origin: manual
+type: plan
+---
+
 # Spec: Single-Source Run State for the Dashboard
 
 Status: DRAFT - implementation spec

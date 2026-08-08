@@ -1,3 +1,12 @@
+---
+id: 01KVHEPEARBTQSJ1986N4P9YRC
+status: draft
+createdAt: 2026-06-19T19:45:27-07:00
+updatedAt: 2026-06-21T22:39:02-07:00
+origin: manual
+type: plan
+---
+
 # Nax Oversized-Prompt Blob Offload Plan
 
 ## Summary

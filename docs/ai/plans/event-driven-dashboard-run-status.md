@@ -1,3 +1,12 @@
+---
+id: 01KVGFDKZ0PCZBJ44KS8V2WXRJ
+status: draft
+createdAt: 2026-06-19T10:38:52-07:00
+updatedAt: 2026-06-21T22:39:02-07:00
+origin: manual
+type: plan
+---
+
 # Event-Driven Dashboard Run Status Plan
 
 ## Summary

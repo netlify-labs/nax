@@ -1,3 +1,12 @@
+---
+id: 01KVMDVYCGZCQG138S1MSBX7EX
+status: draft
+createdAt: 2026-06-20T23:28:42-07:00
+updatedAt: 2026-06-25T12:40:58-07:00
+origin: manual
+type: plan
+---
+
 # Plan: `nax try` — offline mock transport
 
 > Exercise the full `nax` flow engine with zero setup: no `gh` auth, no Netlify

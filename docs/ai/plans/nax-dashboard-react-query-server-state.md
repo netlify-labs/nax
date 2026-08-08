@@ -1,3 +1,12 @@
+---
+id: 01KVRF7M3R77Q94CV0DSAZKE91
+status: draft
+createdAt: 2026-06-22T13:09:31-07:00
+updatedAt: 2026-06-22T13:09:31-07:00
+origin: manual
+type: plan
+---
+
 # NAX Dashboard React Query Server-State Plan
 
 > Status: Draft for review.

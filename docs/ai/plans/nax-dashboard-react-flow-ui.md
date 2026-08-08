@@ -1,3 +1,12 @@
+---
+id: 01KVF3AFQ0WB6J09HMJYR8GK2G
+status: draft
+createdAt: 2026-06-18T21:48:12-07:00
+updatedAt: 2026-06-21T22:39:02-07:00
+origin: manual
+type: plan
+---
+
 # Nax Dashboard React Flow UI Plan
 
 ## Summary

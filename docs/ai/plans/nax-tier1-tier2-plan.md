@@ -1,3 +1,12 @@
+---
+id: 01KVJX1S48EJE4CEPB70PC7FZK
+status: draft
+createdAt: 2026-06-20T09:15:33-07:00
+updatedAt: 2026-06-21T22:39:02-07:00
+origin: manual
+type: plan
+---
+
 # Nax Tier 1 + Tier 2 Plan — Blob Offload, Flow Validator, Branch Truth Contract
 
 > Status: DRAFT for review (planning-workflow). Three workstreams, dependency-ordered.

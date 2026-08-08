@@ -1,3 +1,12 @@
+---
+id: 01KVRPNAJ018XGKT8ZWR3NEK8T
+status: draft
+createdAt: 2026-06-22T15:19:20-07:00
+updatedAt: 2026-06-22T15:43:38-07:00
+origin: manual
+type: plan
+---
+
 # NAX Dashboard Route Consolidation Plan
 
 > Status: Implemented on 2026-06-22.

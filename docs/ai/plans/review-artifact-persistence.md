@@ -1,3 +1,12 @@
+---
+id: 01KS3NWCE0480PZGQRXZ82NJ4D
+status: draft
+createdAt: 2026-05-20T14:50:16-07:00
+updatedAt: 2026-06-03T17:49:56-07:00
+origin: manual
+type: plan
+---
+
 # Workflow Artifact Persistence Spec
 
 > Status: partially superseded by `docs/plans/artifact-directory-restructure.md` and the current implementation.

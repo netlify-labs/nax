@@ -1,3 +1,12 @@
+---
+id: 01KVM2RN805HKD4EPCK9J23M6N
+status: draft
+createdAt: 2026-06-20T20:14:40-07:00
+updatedAt: 2026-06-21T22:39:02-07:00
+origin: manual
+type: plan
+---
+
 # Spec - Dashboard Follow-up Continuity UX
 
 > Status: PLANNING.

@@ -1,3 +1,12 @@
+---
+id: 01KVKGDJ4GEB2HC3QHR6KHXNJG
+status: draft
+createdAt: 2026-06-20T14:54:02-07:00
+updatedAt: 2026-06-21T22:39:02-07:00
+origin: manual
+type: plan
+---
+
 # Spec - Dashboard `Run a followup`
 
 > Status: IMPLEMENTED.

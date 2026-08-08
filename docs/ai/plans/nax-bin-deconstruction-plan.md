@@ -1,3 +1,12 @@
+---
+id: 01KVNRF7CG22PZG9BDXJKNDWPT
+status: draft
+createdAt: 2026-06-21T11:53:14-07:00
+updatedAt: 2026-06-24T11:57:38-07:00
+origin: manual
+type: plan
+---
+
 # Deconstruct `bin/nax.js`
 
 ## Goal

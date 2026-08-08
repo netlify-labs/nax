@@ -1,3 +1,12 @@
+---
+id: 01KVRTENC0KNHDPW2NFSREDWDK
+status: draft
+createdAt: 2026-06-22T16:25:36-07:00
+updatedAt: 2026-06-22T17:47:27-07:00
+origin: manual
+type: plan
+---
+
 # NAX Runtime-Agnostic Dashboard API Plan
 
 > Status: Implemented closeout for `nax-boo3`.

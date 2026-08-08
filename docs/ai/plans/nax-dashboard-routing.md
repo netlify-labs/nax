@@ -1,3 +1,12 @@
+---
+id: 01KVRJZ4AR9TDWAK78H8NXFNFW
+status: draft
+createdAt: 2026-06-22T14:14:47-07:00
+updatedAt: 2026-06-22T15:43:38-07:00
+origin: manual
+type: plan
+---
+
 # NAX Dashboard Routing Plan
 
 ## Goal

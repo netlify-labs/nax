@@ -1,3 +1,12 @@
+---
+id: 01KVRZ4H8RWW397YQ82EED17DK
+status: draft
+createdAt: 2026-06-22T17:47:27-07:00
+updatedAt: 2026-06-22T17:47:27-07:00
+origin: manual
+type: plan
+---
+
 # NAX `src/` Ownership Inventory
 
 > Status: Closeout ownership map for `nax-boo3`.

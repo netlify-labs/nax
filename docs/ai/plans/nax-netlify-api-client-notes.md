@@ -1,3 +1,12 @@
+---
+id: 01KVRZ4H8R7DV7JPDG89J4NX0T
+status: draft
+createdAt: 2026-06-22T17:47:27-07:00
+updatedAt: 2026-06-22T17:47:27-07:00
+origin: manual
+type: plan
+---
+
 # Netlify API Client Notes
 
 ## Purpose

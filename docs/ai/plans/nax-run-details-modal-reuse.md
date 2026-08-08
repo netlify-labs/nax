@@ -1,3 +1,12 @@
+---
+id: 01KVK6YSN8E9F72TRBZ5M8JBGE
+status: draft
+createdAt: 2026-06-20T12:08:41-07:00
+updatedAt: 2026-06-21T22:39:02-07:00
+origin: manual
+type: plan
+---
+
 # Plan — Reusable `RunDetailsModal` + Replace the Individual Agent-Result Modal
 
 > Status: DRAFT for review (planning-workflow). UI refactor, staged, grounded against current code.

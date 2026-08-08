@@ -1,3 +1,12 @@
+---
+id: 01KS400PBRP8R8VCY8FDV2KYBB
+status: draft
+createdAt: 2026-05-20T17:47:23-07:00
+updatedAt: 2026-06-03T17:49:56-07:00
+origin: manual
+type: plan
+---
+
 # Nax Artifact Directory Restructure Plan
 
 ## Summary

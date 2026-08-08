@@ -1,3 +1,12 @@
+---
+id: 01KVV0DJW8Y4PQXTWPVPPAZWQX
+status: draft
+createdAt: 2026-06-23T12:48:21-07:00
+updatedAt: 2026-06-24T11:57:38-07:00
+origin: manual
+type: plan
+---
+
 # `nax` Source Spring-Cleaning Completion Notes
 
 ## Scope

@@ -1,3 +1,12 @@
+---
+id: 01KTS0BM2GPJDAA94WP4E3WP63
+status: draft
+createdAt: 2026-06-10T07:53:06-07:00
+updatedAt: 2026-06-24T11:57:38-07:00
+origin: manual
+type: plan
+---
+
 # nax Roadmap Ideas
 
 Sixteen improvement ideas for `nax`, generated from a deep read of the codebase, README, and known pain points. Each idea exists as a bead (`br show <id>` for the full self-documenting spec with design details, acceptance criteria, and test plans). Ordered roughly best-first.

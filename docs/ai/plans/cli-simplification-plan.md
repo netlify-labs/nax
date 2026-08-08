@@ -1,3 +1,12 @@
+---
+id: 01KVXFXE6GEP6N72K4A81ZTPRJ
+status: draft
+createdAt: 2026-06-24T11:57:38-07:00
+updatedAt: 2026-06-24T11:57:38-07:00
+origin: manual
+type: plan
+---
+
 # `nax` CLI Simplification Spec
 
 ## Status

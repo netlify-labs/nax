@@ -57,7 +57,7 @@ test('mock four-instance step holds at most four submit-through-result lifecycle
   await executeLocalFlow({
     flow,
     steps: [step],
-    options: { branch: 'feature/mock', timeoutMinutes: 1 },
+    options: { branch: 'feature/mock', timeoutMinutes: 1, autoContext: false },
     runState,
     projectRoot,
     submitAgentRun: async ({ run }) => {

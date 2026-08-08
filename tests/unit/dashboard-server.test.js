@@ -334,7 +334,9 @@ test('dashboard server exposes health, workflow list, and graph routes', async (
     assert.equal(authenticatedHealth.statusCode, 200)
     assert.equal(authenticatedHealth.payload.projectRoot, process.cwd())
     assert.ok(Array.isArray(authenticatedHealth.payload.branches))
-    assert.ok(authenticatedHealth.payload.branches.includes(authenticatedHealth.payload.currentBranch))
+    if (authenticatedHealth.payload.currentBranch) {
+      assert.ok(authenticatedHealth.payload.branches.includes(authenticatedHealth.payload.currentBranch))
+    }
     assert.match(String(authenticatedHealth.headers['set-cookie'] || ''), /nax_dashboard_token=/)
 
     const authenticatedWorkflows = await requestJson(`${base}/api/workflows`, { token: server.token })

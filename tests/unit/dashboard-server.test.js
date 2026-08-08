@@ -1666,6 +1666,43 @@ test('cancellableWorkflowRunnerIds selects submitted fresh runners only', () => 
   }), ['runner-1'])
 })
 
+test('cancellableWorkflowRunnerIds keeps same-provider instances distinct during event recovery', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'nax-instance-cancel-'))
+  const logPath = path.join(dir, 'events.jsonl')
+  appendEventLog(logPath, {
+    type: 'agent_status',
+    seq: 1,
+    stepId: 'review',
+    agent: 'claude',
+    instanceId: 'claude:claude-opus-5:auto',
+    runnerId: 'runner-opus',
+    status: 'running',
+  })
+  appendEventLog(logPath, {
+    type: 'agent_status',
+    seq: 2,
+    stepId: 'review',
+    agent: 'claude',
+    instanceId: 'claude:claude-sonnet-4-5:auto',
+    runnerId: 'runner-sonnet',
+    status: 'running',
+  })
+  const runState = {
+    dir,
+    steps: [{
+      id: 'review',
+      runs: [
+        { agent: 'claude', instanceId: 'claude:claude-opus-5:auto', status: 'completed' },
+        { agent: 'claude', instanceId: 'claude:claude-sonnet-4-5:auto', status: 'running' },
+      ],
+    }],
+  }
+
+  assert.deepEqual(_private.cancellableWorkflowRunnerIds(runState), ['runner-sonnet'])
+  assert.equal(runState.steps[0].runs[0].runnerId, 'runner-opus')
+  assert.equal(runState.steps[0].runs[1].runnerId, 'runner-sonnet')
+})
+
 test('stopWorkflowRunners stops cancellable workflow runners and reports warnings', async () => {
   const calls = []
   const result = await _private.stopWorkflowRunners({

@@ -9,6 +9,7 @@ const { listFlows, loadFlow } = require('../workflows/catalog/flows')
 const { listRunStates, listWorkflowStatePage, saveRunState } = require('../storage/local/run-state')
 const { flowToGraph } = require('./shared/graph')
 const { normalizeAgentList, selectionValidationErrors } = require('../core/agents/selection')
+const { agentInstanceId } = require('../core/agents/instances')
 const {
   normalizeProviderEffortMap,
   normalizeProviderModelMap,
@@ -672,11 +673,14 @@ function workflowAgentEventSnapshots(runState = {}) {
     if (event?.type !== 'agent_status') continue
     const stepId = String(event.stepId || '').trim()
     const agent = String(event.agent || '').trim()
+    const instanceId = String(event.instanceId || '').trim()
     const runnerId = String(event.runnerId || '').trim()
     if (!stepId || !agent || !runnerId || event.existingRunnerId) continue
-    snapshots.set(`${stepId}\0${agent}`, {
+    const identity = instanceId ? `instance:${instanceId}` : `runner:${runnerId}`
+    snapshots.set(`${stepId}\0${identity}`, {
       stepId,
       agent,
+      instanceId,
       runnerId,
       sessionId: String(event.sessionId || ''),
       links: event.links && typeof event.links === 'object' && !Array.isArray(event.links) ? event.links : {},
@@ -691,13 +695,43 @@ function hydrateWorkflowRunsFromEvents(runState = {}) {
   const snapshots = workflowAgentEventSnapshots(runState)
   if (snapshots.length === 0) return runState
 
-  const byStepAgent = new Map(snapshots.map((snapshot) => [`${snapshot.stepId}\0${snapshot.agent}`, snapshot]))
+  const byStepInstance = new Map()
+  const byStepRunner = new Map()
+  const legacyByStepAgent = new Map()
+  for (const snapshot of snapshots) {
+    if (snapshot.instanceId) byStepInstance.set(`${snapshot.stepId}\0${snapshot.instanceId}`, snapshot)
+    byStepRunner.set(`${snapshot.stepId}\0${snapshot.runnerId}`, snapshot)
+    if (!snapshot.instanceId) {
+      const key = `${snapshot.stepId}\0${snapshot.agent}`
+      const candidates = legacyByStepAgent.get(key) || []
+      candidates.push(snapshot)
+      legacyByStepAgent.set(key, candidates)
+    }
+  }
   for (const step of Array.isArray(runState.steps) ? runState.steps : []) {
     const stepId = String(step?.id || '').trim()
     if (!stepId) continue
-    for (const run of Array.isArray(step.runs) ? step.runs : []) {
+    const runs = Array.isArray(step.runs) ? step.runs : []
+    const providerCounts = new Map()
+    for (const run of runs) {
       const agent = String(run?.agent || '').trim()
-      const snapshot = byStepAgent.get(`${stepId}\0${agent}`)
+      if (agent) providerCounts.set(agent, (providerCounts.get(agent) || 0) + 1)
+    }
+    for (const run of runs) {
+      const agent = String(run?.agent || '').trim()
+      const explicitInstanceId = String(run?.instanceId || '').trim()
+      const model = String(run?.model || '').trim()
+      const effort = String(run?.effort || '').trim()
+      const derivedInstanceId = explicitInstanceId || (agent && (model || effort)
+        ? agentInstanceId(agent, model || undefined, effort || undefined)
+        : '')
+      const runnerId = String(run?.runnerId || '').trim()
+      let snapshot = derivedInstanceId ? byStepInstance.get(`${stepId}\0${derivedInstanceId}`) : null
+      if (!snapshot && runnerId) snapshot = byStepRunner.get(`${stepId}\0${runnerId}`)
+      if (!snapshot && agent && providerCounts.get(agent) === 1) {
+        const candidates = legacyByStepAgent.get(`${stepId}\0${agent}`) || []
+        if (candidates.length === 1) snapshot = candidates[0]
+      }
       if (!snapshot) continue
       if (!String(run.runnerId || '').trim()) run.runnerId = snapshot.runnerId
       if (!String(run.sessionId || '').trim() && snapshot.sessionId) run.sessionId = snapshot.sessionId
@@ -715,7 +749,8 @@ function hydrateWorkflowRunsFromEvents(runState = {}) {
 function cancellableWorkflowRunnerIds(runState = {}) {
   hydrateWorkflowRunsFromEvents(runState)
   const runnerIds = []
-  const terminalStepAgents = new Set()
+  const terminalRunnerIds = new Set()
+  const terminalStepInstances = new Set()
   const add = (runnerId) => {
     const normalized = String(runnerId || '').trim()
     if (normalized) runnerIds.push(normalized)
@@ -724,8 +759,12 @@ function cancellableWorkflowRunnerIds(runState = {}) {
     const stepId = String(step?.id || '').trim()
     for (const run of Array.isArray(step.runs) ? step.runs : []) {
       const status = String(run.status || '').toLowerCase()
-      if (stepId && run.agent && isTerminalRunStatus(status)) terminalStepAgents.add(`${stepId}\0${run.agent}`)
       const runnerId = String(run.runnerId || '').trim()
+      const instanceId = String(run.instanceId || '').trim()
+      if (isTerminalRunStatus(status)) {
+        if (runnerId) terminalRunnerIds.add(runnerId)
+        if (stepId && instanceId) terminalStepInstances.add(`${stepId}\0${instanceId}`)
+      }
       if (!runnerId || run.existingRunnerId) continue
       if (isTerminalRunStatus(status)) continue
       add(runnerId)
@@ -735,7 +774,8 @@ function cancellableWorkflowRunnerIds(runState = {}) {
   for (const snapshot of workflowAgentEventSnapshots(runState)) {
     const status = String(snapshot.status || '').toLowerCase()
     if (isTerminalRunStatus(status)) continue
-    if (terminalStepAgents.has(`${snapshot.stepId}\0${snapshot.agent}`)) continue
+    if (terminalRunnerIds.has(snapshot.runnerId)) continue
+    if (snapshot.instanceId && terminalStepInstances.has(`${snapshot.stepId}\0${snapshot.instanceId}`)) continue
     add(snapshot.runnerId)
   }
   return [...new Set(runnerIds)]
@@ -1230,6 +1270,10 @@ function createRequestHandler(options = {}) {
           stepId: step.id || '',
           stepTitle: step.title || step.id || '',
           agent: agentRun.agent || '',
+          model: agentRun.model || '',
+          effort: agentRun.effort || '',
+          instanceId: agentRun.instanceId || '',
+          instanceLabel: agentRun.instanceLabel || '',
           status: remoteSubmitted ? 'abandoned' : 'cancelled',
           runnerId: agentRun.runnerId || '',
           sessionId: agentRun.sessionId || '',

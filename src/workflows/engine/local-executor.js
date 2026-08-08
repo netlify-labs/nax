@@ -49,6 +49,7 @@ const {
   contextForRunState,
   contextWithOutputBudget,
   firstRunnableStepIndex,
+  sourceRunInstanceId,
   sourceRunsForStep,
 } = require('./execution-context')
 const {
@@ -378,7 +379,7 @@ function completedContinuationRuns(step, completedStepStates) {
  */
 function continuationRunForInstance(inheritedRuns, instance) {
   return inheritedRuns.find((sourceRun) => sourceRun.runnerId
-    && (sourceRun.instanceId ? sourceRun.instanceId === instance.id : sourceRun.agent === instance.agent)) || null
+    && sourceRunInstanceId(sourceRun) === instance.id) || null
 }
 
 /**
@@ -886,7 +887,7 @@ async function executeLocalFlow({ flow, steps, options, runState, projectRoot, c
         agent: sourceRun.agent,
         ...(sourceRun.model ? { model: sourceRun.model } : {}),
         ...(sourceRun.effort ? { effort: sourceRun.effort } : {}),
-        id: sourceRun.instanceId || `${sourceRun.agent}:auto:auto`,
+        id: sourceRunInstanceId(sourceRun),
         resolvedFrom: sourceRun.resolvedFrom || 'open',
         ...(sourceRun.instanceLabel ? { label: sourceRun.instanceLabel } : {}),
       }))

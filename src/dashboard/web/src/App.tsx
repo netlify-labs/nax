@@ -57,6 +57,7 @@ import { dashboardRouteSpec } from './route-spec'
 import { projectWorkflowGraph, workflowGraphNodeByStepId } from './run-projection'
 import { agentLabel, recordValue } from './run-format'
 import type { RunDetailsSelector } from './run-details-selection'
+import { withCurrentBranchDefault } from './run-options'
 import { isActiveStatus, isTerminalStatus, statusKey } from './status-model'
 import type { AgentInstanceConfiguration, AgentInstanceDescriptor, AgentRunRequest, DashboardRun, DryRunOptions, DryRunResult, RunAgentTarget, RunFollowupResponse, RunnerEvent, Workflow, WorkflowGraph, WorkflowGraphNodeData } from './types'
 
@@ -251,7 +252,7 @@ export default function App() {
   const [agentRunOpened, { open: openAgentRun, close: closeAgentRun }] = useDisclosure(false)
   const { colorScheme, toggleColorScheme } = useMantineColorScheme()
   const [dryRunOptions, setDryRunOptions] = useState<DryRunOptions>({
-    branch: 'master',
+    branch: '',
     transport: 'netlify-api',
     agents: [],
     stepAgents: {},
@@ -522,6 +523,12 @@ export default function App() {
       capabilities: defaultDashboardCapabilities,
     })
   }, [healthQuery.error, queryClient])
+
+  useEffect(() => {
+    const currentBranch = healthQuery.data?.currentBranch || ''
+    if (!currentBranch) return
+    setDryRunOptions((options) => withCurrentBranchDefault(options, currentBranch))
+  }, [healthQuery.data?.currentBranch])
 
   useEffect(() => {
     if (!selectedWorkflowId || selectedRunId) return

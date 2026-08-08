@@ -556,14 +556,20 @@ function validateFlowStructure(flow, { existsSync = fs.existsSync } = {}) {
         })
       } catch (error) {
         const typed = /** @type {{ code?: string, message?: string }} */ (error)
-        if (typed.code === 'step_instance_limit') {
-          errors.push(flowDiagnostic({
-            stepId,
-            code: typed.code,
-            message: typed.message || `Step "${stepId}" exceeds the agent instance limit.`,
-            hint: 'Reduce the models/efforts fan-out or split the work into another step.',
-          }))
-        }
+        const code = typed.code || 'invalid_lineup'
+        const hint = code === 'step_instance_limit'
+          ? 'Reduce the models/efforts fan-out or split the work into another step.'
+          : code === 'duplicate_instance'
+            ? 'Vary the model or effort for repeated providers, or remove the duplicate entry.'
+            : code === 'github_transport_unsupported'
+              ? 'Use the Netlify API transport for pinned models, efforts, or multiple instances from one provider.'
+              : 'Review this step\'s agent lineup, model, and effort configuration.'
+        errors.push(flowDiagnostic({
+          stepId,
+          code,
+          message: typed.message || `Step "${stepId}" has an invalid agent lineup.`,
+          hint,
+        }))
       }
     }
   }

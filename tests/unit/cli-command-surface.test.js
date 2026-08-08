@@ -213,6 +213,19 @@ test('agent names are restricted to supported Netlify agents', () => {
   assert.throws(() => validateAgentName('gpt-9'), /Expected one of: claude, gemini, codex, opencode/)
 })
 
+test('dashboard tails by default and --no-tail opts out', async () => {
+  const defaultInvocation = makeProgram()
+  await parse(defaultInvocation.program, ['dashboard', 'review'])
+
+  const quietInvocation = makeProgram()
+  await parse(quietInvocation.program, ['dashboard', '--no-tail'])
+
+  assert.equal(defaultInvocation.calls[0].name, 'dashboard')
+  assert.equal(/** @type {{ tail?: boolean }} */ (defaultInvocation.calls[0].args[1]).tail, true)
+  assert.equal(quietInvocation.calls[0].name, 'dashboard')
+  assert.equal(/** @type {{ tail?: boolean }} */ (quietInvocation.calls[0].args[1]).tail, false)
+})
+
 test('handoff, admin, and hidden ci route to their handlers', async () => {
   const { calls, program } = makeProgram()
 

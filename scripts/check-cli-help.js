@@ -33,7 +33,10 @@ const targets = [
   },
   {
     args: ['dashboard', '--help'],
-    mustContain: ['Usage: nax dashboard [options] [workflow]'],
+    mustContain: [
+      'Usage: nax dashboard [options] [workflow]',
+      '--no-tail',
+    ],
   },
   {
     args: ['handoff', '--help'],

@@ -550,7 +550,7 @@ function buildNaxProgram({
     .addOption(hiddenOption('--port <port>', 'Port for the local dashboard server; defaults to an available port'))
     .option('--run <runId>', 'Open a saved workflow run directly in the details view')
     .option('--no-open', 'Print the dashboard URL without opening a browser')
-    .option('--tail', 'Stream child workflow stdout/stderr to this terminal while using the dashboard')
+    .option('--no-tail', 'Do not stream child workflow stdout/stderr to this terminal')
     .addOption(hiddenOption('--dev', 'Use development-mode dashboard behavior')), collectOption)
     .action((flow, options, command) => {
       return settleAction(handlers.dashboard(flow || '', actionOptions(options, command)))

@@ -576,10 +576,16 @@ async function handleCosts(options = {}) {
   for (const line of formatCostsTable(report)) console.log(line)
 }
 
+/**
+ * @param {string} flowId
+ * @param {import('../types').JsonMap} [options]
+ * @returns {Promise<void>}
+ */
 async function handleDashboard(flowId, options = {}) {
   const invocationDir = process.cwd()
-  const projectRoot = resolveProjectRoot(options.projectRoot, { cwd: invocationDir })
+  const projectRoot = resolveProjectRoot(String(options.projectRoot || ''), { cwd: invocationDir })
   const runId = typeof options.run === 'string' ? options.run.trim() : ''
+  const tail = options.tail !== false
   if (flowId && runId) throw new Error('Pass either a dashboard workflow argument or --run, not both.')
   if (flowId) {
     await loadFlow(flowId, flowLoadOptions(options, projectRoot))
@@ -619,7 +625,7 @@ async function handleDashboard(flowId, options = {}) {
     initialWorkflow: flowId || '',
     initialPath: runId ? `/runs/${encodeURIComponent(runId)}/details` : '',
     dev: options.dev === true,
-    tail: options.tail === true,
+    tail,
     netlifyAccess,
     netlifyContext: publicNetlifyContext,
     defaultRunOptions,
@@ -628,7 +634,7 @@ async function handleDashboard(flowId, options = {}) {
   console.log(`Nax dashboard: ${instance.url}`)
   console.log(`Project root:  ${instance.projectRoot}`)
   for (const line of formatDashboardNetlifyContext(netlifyContext)) console.log(line)
-  if (options.tail === true) console.log('Tail output:   on')
+  if (tail) console.log('Tail output:   on')
 
   if (options.open !== false) {
     const openBrowser = (await import('open')).default

@@ -112,8 +112,11 @@ Runs that reported no usage are listed without numbers.
 ```sh
 nax dashboard [workflow]
 nax dashboard --run <runId>
-nax dashboard --no-open --tail
+nax dashboard --no-open --no-tail
 ```
+
+Dashboard runs stream child workflow output to the terminal by default. Pass
+`--no-tail` to keep the dashboard terminal quiet.
 
 ## `nax admin`
 

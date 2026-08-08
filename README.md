@@ -330,7 +330,7 @@ nax admin skills install  Install bundled agent skills into detected harness dir
 nax dashboard review
 nax dashboard --run <workflow-run-id>
 nax dashboard --no-open
-nax dashboard --no-open --tail
+nax dashboard --no-open --no-tail
 nax dashboard --project-root ../my-site --flows-dir .github/nax-flows
 ```
 
@@ -362,7 +362,7 @@ read-only. Requested values remain distinct from the backend-observed
 
 Dashboard follow-up submission returns after Netlify accepts the runner/session, not after the remote agent finishes. The notification includes remote links and any local artifact path the server could persist. Fresh runner submissions are saved as one-step pseudo-workflow runs so they can be opened from Recent runs. If Netlify accepts work but local artifact persistence fails, the API still returns success with `warnings[]` so the remote link is not lost.
 
-Live graph status is event-driven. When the dashboard starts a real run, the child `nax run` process writes JSONL lifecycle events on file descriptor 3 while stdout/stderr are captured for the UI. The dashboard server relays those structured events to the browser with Server-Sent Events at `/api/runs/<id>/events`, and the UI reducer updates step cards, agent pills, edges, output, and diagnostics from those events. Pass `--tail` to also stream the child workflow stdout/stderr back to the `nax dashboard` terminal while debugging.
+Live graph status is event-driven. When the dashboard starts a real run, the child `nax run` process writes JSONL lifecycle events on file descriptor 3 while stdout/stderr are captured for the UI. The dashboard server relays those structured events to the browser with Server-Sent Events at `/api/runs/<id>/events`, and the UI reducer updates step cards, agent pills, edges, output, and diagnostics from those events. Child workflow stdout/stderr also streams to the `nax dashboard` terminal by default; pass `--no-tail` to keep that terminal quiet.
 
 Each durable run also stores the same structured stream at:
 
@@ -392,10 +392,10 @@ By default, `npm run dashboard:dev` serves read-only workflow data from Vite so 
 node src/cli/nax.js dashboard --no-open --port 53734
 ```
 
-For terminal-side debugging of runs started from the browser:
+To keep runs started from the browser out of the dashboard terminal:
 
 ```bash
-node src/cli/nax.js dashboard --no-open --tail --port 53734
+node src/cli/nax.js dashboard --no-open --no-tail --port 53734
 ```
 
 Copy the `token` value from the printed URL, then start Vite in another terminal:

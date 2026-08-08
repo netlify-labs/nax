@@ -11,7 +11,7 @@ The dashboard is a local browser workbench for browsing workflows, previewing dr
 
 ## Open it
 
-<Tabs items={['Workflow', 'Saved run', 'No browser', 'Debug tail']}>
+<Tabs items={['Workflow', 'Saved run', 'No browser', 'Quiet terminal']}>
   <Tabs.Tab>
 
 ```sh
@@ -36,11 +36,14 @@ nax dashboard --no-open
   <Tabs.Tab>
 
 ```sh
-nax dashboard --no-open --tail
+nax dashboard --no-open --no-tail
 ```
 
   </Tabs.Tab>
 </Tabs>
+
+The dashboard streams child workflow output to its terminal by default. Use
+`--no-tail` when you want workflow activity to remain in the browser only.
 
 ## Surfaces
 

@@ -150,7 +150,6 @@ const {
   shouldPollGithubRun,
   shouldPollLocalRun,
   startSubmissionHeartbeat,
-  submissionFailureSummary,
   visibleLength,
 } = require('../workflows/engine/progress')
 const {

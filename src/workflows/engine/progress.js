@@ -410,18 +410,6 @@ function conciseErrorMessage(error, { maxLength = 700 } = {}) {
 }
 
 /**
- * Formats aggregate submission failures.
- * @param {Array<{ label?: string, error?: unknown }>} failures
- * @returns {string}
- */
-function submissionFailureSummary(failures) {
-  const lines = failures
-    .filter((failure) => failure?.label)
-    .map((failure) => `- ${failure.label}: ${conciseErrorMessage(failure.error)}`)
-  return `Netlify agent submission failed for ${lines.length} ${lines.length === 1 ? 'run' : 'runs'}:\n${lines.join('\n')}`
-}
-
-/**
  * Starts a TTY-only heartbeat while submissions are pending.
  * @param {{
  *   pendingLabels?: Set<string>,
@@ -864,7 +852,6 @@ module.exports = {
   shouldPollLocalRun,
   startSubmissionHeartbeat,
   stepDurationMs,
-  submissionFailureSummary,
   visibleLength,
   wrapLine,
 }

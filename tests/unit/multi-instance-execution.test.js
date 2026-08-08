@@ -46,6 +46,22 @@ test('follow-up inherits successful instances from only its first input', () => 
   assert.equal(continuationRunForInstance(inherited, { agent: 'claude', id: OPUS }).runnerId, 'runner-opus')
 })
 
+test('follow-up matches legacy source runs by derived model and effort identity', () => {
+  const inherited = [
+    { agent: 'claude', model: 'claude-opus-5', runnerId: 'runner-opus', status: 'completed' },
+    { agent: 'claude', model: 'claude-sonnet-4-5', effort: 'high', runnerId: 'runner-sonnet', status: 'completed' },
+  ]
+
+  assert.equal(
+    continuationRunForInstance(inherited, { agent: 'claude', id: OPUS }).runnerId,
+    'runner-opus',
+  )
+  assert.equal(
+    continuationRunForInstance(inherited, { agent: 'claude', id: 'claude:claude-sonnet-4-5:high' }).runnerId,
+    'runner-sonnet',
+  )
+})
+
 test('follow-up with no successful continuation source fails instead of starting fresh runners', () => {
   const step = { id: 'continue', submit: 'follow-up', input: [{ step: 'source' }] }
   const states = new Map([['source', { runs: [{ agent: 'claude', instanceId: OPUS, runnerId: 'runner-opus', status: 'failed' }] }]])

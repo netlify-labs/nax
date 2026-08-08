@@ -12,7 +12,7 @@ const read = (rel) => fs.readFileSync(path.join(ROOT, rel), 'utf8')
 
 test('multi-instance execution anchors stay instance-aware', () => {
   // follow-up planning retains instance identity
-  assert.match(read('src/workflows/engine/local-executor.js'), /sourceRun\.instanceId === instance\.id/)
+  assert.match(read('src/workflows/engine/local-executor.js'), /sourceRunInstanceId\(sourceRun\) === instance\.id/)
   // step status derives partial success across instances
   assert.match(read('src/workflows/engine/local-executor.js'), /function localStepStatus/)
   assert.match(read('src/workflows/engine/local-executor.js'), /waitForLocalRunSubset/)

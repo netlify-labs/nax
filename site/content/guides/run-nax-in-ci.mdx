@@ -53,7 +53,7 @@ jobs:
 
       - name: Run NAX
         id: nax
-        uses: netlify-labs/nax@v1.0.2
+        uses: netlify-labs/nax@v1.0.5
         with:
           flow: ${{ github.event.inputs.flow || 'review' }}
           repo: ${{ github.repository }}

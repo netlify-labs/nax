@@ -439,6 +439,28 @@ test('validateFlowStructure accepts a valid bundled resolved flow', async () => 
   assert.deepEqual(validateFlowStructure(flow), { errors: [], warnings: [] })
 })
 
+test('validateFlowStructure reports duplicate resolved instances', () => {
+  const result = validateFlowStructure({
+    id: 'duplicate-lineup',
+    dir: '/tmp/duplicate-lineup',
+    defaults: {},
+    steps: [{
+      id: 'review',
+      action: 'issue',
+      submit: 'new-run',
+      waitFor: 'agent-results',
+      prompt: 'prompt.md',
+      agents: ['claude', 'claude'],
+      lineup: ['claude', 'claude'],
+    }],
+  }, { existsSync: () => true })
+
+  assert.equal(result.errors.length, 1)
+  assert.equal(result.errors[0].stepId, 'review')
+  assert.equal(result.errors[0].code, 'duplicate_instance')
+  assert.match(result.errors[0].message, /Duplicate agent instance/)
+})
+
 test('loadFlow rejects missing prompt files with the resolved path', async () => {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'nax-flow-test-'))
   const flowDir = path.join(tmp, 'missing-prompt')

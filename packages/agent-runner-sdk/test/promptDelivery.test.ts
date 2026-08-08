@@ -179,6 +179,7 @@ test('blob fallback stores semantic bytes and submits only the fetch wrapper', a
       safeBytes: 1_024,
       hardMaxBytes: 10_000,
       blobTtlSeconds: 600,
+      inlineInstructions: 'Fix the confirmed issues first.',
       tenant: ({ siteId }) => `${siteId}/artifact-1`,
       key: 'artifact-1-prompt',
     },
@@ -194,6 +195,10 @@ test('blob fallback stores semantic bytes and submits only the fetch wrapper', a
   assert.equal(planned.deliveredPrompt?.includes(semanticPrompt), false)
   assert.match(
     planned.deliveredPrompt ?? '',
+    /## Request instructions\n\nFix the confirmed issues first\./,
+  )
+  assert.match(
+    planned.deliveredPrompt ?? '',
     /netlify blobs:get safe-store tenants\/hash\/prompt/,
   )
   assert.equal(
@@ -205,6 +210,32 @@ test('blob fallback stores semantic bytes and submits only the fetch wrapper', a
     planned.effectivePrompt,
     { promptRef: planned.attempt.promptRef },
   )
+  assert.ok(planned.attempt.submittedBytes <= 1_024)
+})
+
+test('blob wrappers keep oversized request instructions visible and bounded', async () => {
+  const blobStore = new FakeBlobStore()
+  const semanticPrompt = `complete prompt ${'x'.repeat(2_000)}`
+  const inlineInstructions = `Fix the confirmed issues. ${'detail '.repeat(500)}instruction-tail`
+  const planned = await preparePromptDelivery({
+    ...baseOptions(semanticPrompt),
+    blobStore,
+    policy: {
+      env: {},
+      safeBytes: 1_024,
+      hardMaxBytes: 10_000,
+      inlineInstructions,
+    },
+  })
+
+  assert.equal(planned.attempt.kind, 'blob')
+  assert.match(planned.deliveredPrompt ?? '', /Fix the confirmed issues\./)
+  assert.match(
+    planned.deliveredPrompt ?? '',
+    /remaining instructions are in the offloaded full prompt/,
+  )
+  assert.doesNotMatch(planned.deliveredPrompt ?? '', /instruction-tail/)
+  assert.equal(blobStore.puts[0]?.text, semanticPrompt)
   assert.ok(planned.attempt.submittedBytes <= 1_024)
 })
 

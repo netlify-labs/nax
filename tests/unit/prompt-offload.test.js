@@ -22,6 +22,27 @@ test('compactTextByBytes respects UTF-8 byte limits', () => {
   assert.match(compacted, /Prior Agent Results compacted/)
 })
 
+test('compactTextByBytes keeps fenced code blocks balanced around an omission', () => {
+  const text = [
+    'Before',
+    '',
+    '```json',
+    '[',
+    ...Array.from({ length: 120 }, (_, index) => `  {"id":"R${index}","claim":"${'detail '.repeat(8)}"},`),
+    ']',
+    '```',
+    '',
+    'After',
+  ].join('\n')
+  const compacted = compactTextByBytes(text, 700, 'review result')
+  const fences = compacted.match(/^```/gm) || []
+
+  assert.ok(utf8ByteLength(compacted) <= 700)
+  assert.equal(fences.length % 2, 0)
+  assert.match(compacted, /\n```\n\n\[review result compacted/)
+  assert.match(compacted, /\[review result compacted[^\]]+\]\n\n```json\n/)
+})
+
 test('safePromptBytes uses a conservative floor', () => {
   assert.equal(safePromptBytes({ safePromptBytes: 12 }), 1024)
   assert.equal(safePromptBytes({ safePromptBytes: 2000 }), 2000)

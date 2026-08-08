@@ -78,6 +78,7 @@ test('nax SDK adapter owns blob delivery and exposes only safe artifact metadata
     env: {},
     siteId: 'site-1',
     promptTenant: 'site-1/workflow-1',
+    inlinePromptText: 'Fix the confirmed issues first.',
     safePromptBytes: 1_024,
   })
 
@@ -94,6 +95,7 @@ test('nax SDK adapter owns blob delivery and exposes only safe artifact metadata
   assert.equal(handle.promptDelivery?.kind, 'blob')
   assert.deepEqual(handle.input.promptRef, ref)
   assert.equal(harness.submitted().includes(semanticPrompt), false)
+  assert.match(harness.submitted(), /## Request instructions\n\nFix the confirmed issues first\./)
   assert.match(harness.submitted(), /netlify blobs:get/)
   assert.deepEqual(artifact?.blobRef, {
     ...ref,
@@ -123,16 +125,25 @@ test('nax SDK adapter omits unknown prompt bytes when reusing a blob ref', () =>
   assert.equal(Object.hasOwn(artifact || {}, 'promptBytes'), false)
 })
 
-test('nax SDK adapter gives deterministic compaction precedence over blob upload', async () => {
+test('nax SDK adapter prefers complete blob delivery over deterministic compaction', async () => {
   let writes = 0
+  const ref = {
+    store: 'nax-agent-runner-prompts',
+    key: 'tenants/hash/prompt-uuid',
+    tenant: 'site-1/workflow-1',
+    expiresAt: Date.now() + 60_000,
+  }
   const blobStore = /** @type {import('nax-agent-runner-sdk').BlobStore} */ ({
     async put() {
       writes += 1
-      throw new Error('compact delivery should not write a blob')
+      return ref
     },
     async delete() {},
     runnerFetchInstruction() {
-      throw new Error('compact delivery should not build a fetch instruction')
+      return {
+        shell: "netlify blobs:get 'nax-agent-runner-prompts' 'tenants/hash/prompt-uuid'",
+        sentinel: 'sentinel-safe',
+      }
     },
   })
   const harness = transportHarness()
@@ -151,7 +162,30 @@ test('nax SDK adapter gives deterministic compaction precedence over blob upload
     prompt: semanticPrompt,
   })
 
-  assert.equal(writes, 0)
+  assert.equal(writes, 1)
+  assert.equal(handle.promptDelivery?.kind, 'blob')
+  assert.deepEqual(handle.input.promptRef, ref)
+  assert.match(harness.submitted(), /netlify blobs:get/)
+  assert.equal(harness.submitted().includes('bounded semantic summary'), false)
+  assert.equal(harness.submitted().includes('semantic-tail'), false)
+})
+
+test('nax SDK adapter compacts when blob delivery is unavailable', async () => {
+  const harness = transportHarness()
+  const semanticPrompt = `semantic ${'A'.repeat(3_000)} semantic-tail`
+  const sdk = createNaxAgentRunnerSdk({
+    transport: harness.transport,
+    env: {},
+    siteId: 'site-1',
+    compactPromptText: 'bounded semantic summary',
+    safePromptBytes: 1_024,
+  })
+
+  const handle = await sdk.start({
+    siteId: 'site-1',
+    prompt: semanticPrompt,
+  })
+
   assert.equal(handle.promptDelivery?.kind, 'compact')
   assert.equal(handle.input.prompt, semanticPrompt)
   assert.match(harness.submitted(), /bounded semantic summary/)

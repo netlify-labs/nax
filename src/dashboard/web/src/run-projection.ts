@@ -28,6 +28,14 @@ type ProjectWorkflowGraphOptions = {
   stepAgentStatuses: Record<string, Record<string, string>>
 }
 
+function definitionInstances(instances: AgentInstanceDescriptor[]): AgentInstanceDescriptor[] {
+  return instances.map((instance) => {
+    const definition = { ...instance }
+    delete definition.status
+    return definition
+  })
+}
+
 function runString(run: Record<string, unknown>, key: string): string {
   const value = run[key]
   return typeof value === 'string' ? value : ''
@@ -156,7 +164,7 @@ export function projectWorkflowGraph({
         ? selectedByStep.get(node.data.inheritedFromStepId)
         : undefined
       const selectedAgents = inheritedDefinition !== undefined
-        ? inheritedDefinition
+        ? definitionInstances(inheritedDefinition)
         : Object.prototype.hasOwnProperty.call(stepAgents, node.data.stepId)
           ? stepAgents[node.data.stepId]
           : node.data.selectedAgents || node.data.instances

@@ -195,6 +195,7 @@
  *   status?: string,
  *   promptText?: string,
  *   compactPromptText?: string,
+ *   inlinePromptText?: string,
  *   resultText?: string,
  *   runnerId?: string,
  *   sessionId?: string,

@@ -25,6 +25,7 @@ const DEFAULT_RETRY_DELAY_MS = 5000
  *   siteId?: string,
  *   promptTenant?: string,
  *   compactPromptText?: string,
+ *   inlinePromptText?: string,
  *   safePromptBytes?: number,
  *   promptBlobDisable?: boolean,
  *   retryAttempts?: number,
@@ -49,6 +50,7 @@ function createNaxAgentRunnerSdk({
   siteId,
   promptTenant,
   compactPromptText = '',
+  inlinePromptText = '',
   safePromptBytes,
   promptBlobDisable = false,
   retryAttempts = DEFAULT_RETRY_ATTEMPTS,
@@ -61,15 +63,19 @@ function createNaxAgentRunnerSdk({
   const delayMs = Math.max(0, Math.floor(Number(retryDelayMs) || DEFAULT_RETRY_DELAY_MS))
   const token = String(env.NETLIFY_AUTH_TOKEN || '').trim()
   const resolvedSiteId = String(siteId || env.NETLIFY_SITE_ID || '').trim()
-  const blobStore = configuredBlobStore || (
-    !promptBlobDisable && resolvedSiteId && token
-      ? createNetlifyBlobStore({
-          siteId: resolvedSiteId,
-          token,
-        })
-      : undefined
-  )
-  const compact = compactPromptText
+  const blobStore = promptBlobDisable
+    ? undefined
+    : configuredBlobStore || (
+      resolvedSiteId && token
+        ? createNetlifyBlobStore({
+            siteId: resolvedSiteId,
+            token,
+          })
+        : undefined
+    )
+  // Preserve the complete semantic prompt whenever blob delivery is available.
+  // Compaction is the fallback for explicitly disabled or unavailable storage.
+  const compact = compactPromptText && !blobStore
     ? (_prompt, { maxBytes }) => compactPromptByBytes(
         compactPromptText,
         { maxBytes },
@@ -85,6 +91,7 @@ function createNaxAgentRunnerSdk({
     promptDelivery: {
       env,
       ...(safePromptBytes === undefined ? {} : { safeBytes: safePromptBytes }),
+      ...(inlinePromptText.trim() ? { inlineInstructions: inlinePromptText.trim() } : {}),
       ...(promptTenant ? { tenant: promptTenant } : {}),
       ...(compact ? { compact } : {}),
     },

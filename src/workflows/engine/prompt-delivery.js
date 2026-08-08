@@ -425,12 +425,17 @@ function formatCompactLocalRunResults(runs, {
     const run = completed[index]
     const source = run.sourceStep ? ` from ${run.sourceStep}` : ''
     const title = `${titleCase(run.agent || 'agent')}${source}`
-    const blockPrefix = ['', `<details>`, `<summary>${title}</summary>`, ''].join('\n')
-    const blockSuffix = ['', `</details>`].join('\n')
+    const blockPrefix = ['', `<details>`, `<summary>${title}</summary>`, '', ''].join('\n')
+    const blockSuffix = ['', '', `</details>`].join('\n')
     const remaining = totalLimit - used
-    const contentLimit = Math.min(perRunLimit, remaining - utf8ByteLength(blockPrefix) - utf8ByteLength(blockSuffix))
+    const joinSeparatorBytes = utf8ByteLength('\n')
+    const contentLimit = Math.min(
+      perRunLimit,
+      remaining - joinSeparatorBytes - utf8ByteLength(blockPrefix) - utf8ByteLength(blockSuffix),
+    )
     if (contentLimit < 200) {
-      parts.push('', `[${completed.length - index} prior results omitted to fit retry prompt size.]`)
+      const omitted = `\n[${completed.length - index} prior results omitted to fit retry prompt size.]`
+      if (used + joinSeparatorBytes + utf8ByteLength(omitted) <= totalLimit) parts.push(omitted)
       break
     }
     const content = compactLocalTextByBytes(run.resultText, contentLimit, `${title} result`)
@@ -444,9 +449,9 @@ function formatCompactLocalRunResults(runs, {
       `</details>`,
     ].join('\n')
     parts.push(block)
-    used += utf8ByteLength(block)
+    used += joinSeparatorBytes + utf8ByteLength(block)
   }
-  return compactLocalTextByBytes(parts.join('\n'), totalLimit, 'Prior Agent Results')
+  return parts.join('\n')
 }
 
 /**

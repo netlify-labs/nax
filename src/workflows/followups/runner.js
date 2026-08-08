@@ -37,7 +37,7 @@ function buildFollowupPrompt({ instructions = '', contextText = '' } = {}) {
   ].filter(Boolean).join('\n')
 }
 
-function baseRun({ agent, model, effort, promptText, raw = {}, existingRunnerId = '' }) {
+function baseRun({ agent, model, effort, promptText, inlinePromptText = '', raw = {}, existingRunnerId = '' }) {
   return {
     transport: 'netlify-api',
     agent,
@@ -46,6 +46,7 @@ function baseRun({ agent, model, effort, promptText, raw = {}, existingRunnerId 
     status: 'pending',
     promptText,
     compactPromptText: '',
+    inlinePromptText,
     resultText: '',
     runnerId: '',
     sessionId: '',
@@ -165,6 +166,7 @@ function persistSubmittedArtifacts({
  *   model?: string,
  *   effort?: string,
  *   promptText?: string,
+ *   inlinePromptText?: string,
  *   source?: import('../../types').JsonMap,
  *   raw?: import('../../types').JsonMap,
  *   existingRunnerId?: string,
@@ -189,6 +191,7 @@ async function submitAgentRun({
   model,
   effort,
   promptText,
+  inlinePromptText = '',
   source = { type: 'dashboard-followup' },
   raw = {},
   existingRunnerId = '',
@@ -204,7 +207,7 @@ async function submitAgentRun({
   persistSession,
   persistRunner,
 } = {}) {
-  const run = baseRun({ agent, model, effort, promptText, raw, existingRunnerId })
+  const run = baseRun({ agent, model, effort, promptText, inlinePromptText, raw, existingRunnerId })
   logger.info?.(`Submitting ${agent}${existingRunnerId ? ' follow-up session' : ' fresh runner'}.`)
   const submitted = await submitRun({
     run,

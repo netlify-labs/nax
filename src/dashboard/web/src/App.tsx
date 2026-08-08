@@ -32,7 +32,7 @@ import { AgentRunModal } from './components/AgentRunModal'
 import { Inspector } from './components/Inspector'
 import { NetlifyTargetMenu } from './components/NetlifyTargetMenu'
 import { RecentRuns } from './components/RecentRuns'
-import { RunDetailsModal, type RunDetailsLiveContext, type TimelineEntry } from './components/RunDetailsModal'
+import { RunDetailsModal, RunDetailsTimeline, type RunDetailsLiveContext, type TimelineEntry } from './components/RunDetailsModal'
 import { WorkflowCanvas } from './components/WorkflowCanvas'
 import { WorkflowControls } from './components/WorkflowControls'
 import { WorkflowList } from './components/WorkflowList'
@@ -88,6 +88,37 @@ function stepAgentsFromRunGraph(graph: WorkflowGraph): Record<string, AgentInsta
     out[node.data.stepId] = selectedAgents
   }
   return out
+}
+
+function workflowRunNodes(graph: WorkflowGraph | null, options: DryRunOptions): WorkflowGraph['nodes'] {
+  if (!graph) return []
+  const nodes = [...graph.nodes].sort((left, right) => left.data.graphIndex - right.data.graphIndex)
+  const fromStepIndex = options.fromStep
+    ? nodes.findIndex((node) => node.data.stepId === options.fromStep)
+    : -1
+  return options.step
+    ? nodes.filter((node) => node.data.stepId === options.step)
+    : fromStepIndex >= 0
+      ? nodes.slice(fromStepIndex)
+      : nodes
+}
+
+function workflowAgentRunCount(graph: WorkflowGraph | null, options: DryRunOptions): number {
+  return workflowRunNodes(graph, options).reduce((count, node) => {
+    if (node.data.action === 'human-review' || node.data.submit === 'human-review') return count
+    return count + (node.data.selectedAgents || node.data.instances).length
+  }, 0)
+}
+
+function workflowRunSummary(count: number, workflowTitle: string): string {
+  const runSummary = count === 0
+    ? 'has no agent runs configured'
+    : `will launch ${count} agent ${count === 1 ? 'run' : 'runs'} to complete the task`
+  return `This will start Netlify Agent Runners in your connected Netlify account and consume agent credits. The selected ${workflowTitle} workflow ${runSummary}.`
+}
+
+function workflowRunButtonLabel(count: number, workflowTitle: string): string {
+  return `Run ${count} agent ${workflowTitle} workflow`
 }
 
 function legacyWorkflowFromUrl(): string {
@@ -784,7 +815,7 @@ export default function App() {
       ] : []),
       `Agents: ${agents}`,
       '',
-      'This can create remote work and spend Netlify agent credits.',
+      'This will create remote work in your Netlify account and spend Netlify agent credit.',
     ].join('\n'))
     if (!allowed) return
     setRunRunning(true)
@@ -1048,6 +1079,31 @@ export default function App() {
     stepStatuses: projectedStepStatuses,
     stepAgentStatuses: projectedAgentStatuses,
   }), [dryRunOptions.stepAgents, graph, projectedAgentStatuses, projectedStepStatuses])
+  const configuredAgentRunCount = useMemo(
+    () => workflowAgentRunCount(projectedGraph, dryRunOptions),
+    [dryRunOptions, projectedGraph],
+  )
+  const configuredWorkflowNodes = useMemo(
+    () => workflowRunNodes(projectedGraph, dryRunOptions),
+    [dryRunOptions, projectedGraph],
+  )
+  const configuredWorkflowTimelineEntries = useMemo<TimelineEntry[]>(() => (
+    configuredWorkflowNodes.map((node, index) => {
+      const agents = [...new Set((node.data.selectedAgents || node.data.instances)
+        .map((instance) => agentLabel(instance.agent)))]
+      return {
+        id: `step:${node.data.stepId}`,
+        kind: 'step',
+        title: node.data.title,
+        subtitle: [node.data.action, node.data.submit, agents.join(', ')].filter(Boolean).join(' · '),
+        status: node.data.status,
+        path: '',
+        absolutePath: '',
+        markdown: '',
+        stepNumber: index + 1,
+      }
+    })
+  ), [configuredWorkflowNodes])
   const selectedWorkflowStepId = routeWorkflowStepId(routeState)
   const selectedNode = useMemo(
     () => workflowGraphNodeByStepId(projectedGraph, selectedWorkflowStepId),
@@ -1421,24 +1477,46 @@ export default function App() {
         opened={Boolean(contextModalAction)}
         onClose={closeContextModal}
         title={contextModalAction === 'dry-run' ? 'Dry run workflow' : `Run ${selectedWorkflow?.title || 'workflow'}`}
-        size="lg"
+        size="xl"
         centered
       >
         <Stack gap="md">
-          <Textarea
-            label="Optional context"
-            description="Add instructions or constraints to append to this workflow run."
-            placeholder="Example: focus on frontend polish and avoid unrelated refactors."
-            value={contextDraft}
-            onChange={(event) => setContextDraft(event.currentTarget.value)}
-            minRows={10}
-            autosize
-          />
-          {contextModalAction === 'run' ? (
-            <Text size="xs" c="dimmed">
-              This can create remote work and spend Netlify agent credits.
-            </Text>
-          ) : null}
+          <Box className="workflow-run-modal-layout">
+            <Stack gap="md">
+              <Box className="workflow-run-summary" px="sm" py="xs">
+                <Text size="xs" fw={700} tt="uppercase" c="dimmed">Workflow</Text>
+                <Text size="sm" fw={700}>{selectedWorkflow?.title || 'Workflow'}</Text>
+                {selectedWorkflow?.description ? (
+                  <Text size="xs" c="dimmed">{selectedWorkflow.description}</Text>
+                ) : null}
+              </Box>
+              <Textarea
+                label="Optional context"
+                description="Add instructions or constraints to append to this workflow run."
+                placeholder="Example: focus on frontend polish and avoid unrelated refactors."
+                value={contextDraft}
+                onChange={(event) => setContextDraft(event.currentTarget.value)}
+                minRows={10}
+                autosize
+              />
+              {contextModalAction === 'run' ? (
+                <Text size="sm" c="dimmed">
+                  {workflowRunSummary(configuredAgentRunCount, selectedWorkflow?.title || 'workflow')}
+                </Text>
+              ) : null}
+            </Stack>
+            <Box className="workflow-run-timeline">
+              <RunDetailsTimeline
+                activeTimelineId=""
+                parentTimelineEntries={configuredWorkflowTimelineEntries}
+                timelineEntries={configuredWorkflowTimelineEntries}
+                timelineProgressIndex={Math.max(0, configuredWorkflowTimelineEntries.length - 1)}
+                timelineColor="gray"
+                heading="Workflow steps"
+                ariaLabel="Workflow steps"
+              />
+            </Box>
+          </Box>
           <Group justify="space-between">
             <Text size="xs" c="dimmed">Agent instances are configured directly on each workflow step.</Text>
             <Group gap="xs">
@@ -1448,7 +1526,9 @@ export default function App() {
                 onClick={submitContextModal}
                 loading={contextModalAction === 'run' ? runRunning : dryRunRunning}
               >
-                {contextModalAction === 'run' ? 'Run' : 'Dry Run'}
+                {contextModalAction === 'run'
+                  ? workflowRunButtonLabel(configuredAgentRunCount, selectedWorkflow?.title || 'workflow')
+                  : 'Dry Run'}
               </Button>
             </Group>
           </Group>

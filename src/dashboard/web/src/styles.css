@@ -886,6 +886,16 @@ body {
   background: light-dark(var(--mantine-color-gray-0), color-mix(in srgb, var(--mantine-color-dark-4), transparent 24%));
 }
 
+.run-details-timeline-button[aria-disabled='true'],
+.run-details-timeline-child-button[aria-disabled='true'] {
+  cursor: default;
+}
+
+.run-details-timeline-button[aria-disabled='true']:hover,
+.run-details-timeline-child-button[aria-disabled='true']:hover {
+  background: transparent;
+}
+
 .run-details-timeline-button.active,
 .run-details-timeline-child-button.active {
   background: var(--mantine-primary-color-light);
@@ -941,6 +951,24 @@ body {
 .run-details-handoff-feedback {
   display: block;
   margin: 2px 0 0 8px;
+}
+
+.workflow-run-summary {
+  border: 1px solid var(--mantine-color-default-border);
+  border-radius: var(--mantine-radius-sm);
+  background: var(--mantine-color-default-hover);
+}
+
+.workflow-run-modal-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 5fr) minmax(280px, 4fr);
+  gap: var(--mantine-spacing-lg);
+}
+
+.workflow-run-timeline {
+  min-width: 0;
+  padding-left: var(--mantine-spacing-lg);
+  border-left: 1px solid var(--mantine-color-default-border);
 }
 
 .run-followup-modal-content {
@@ -2072,6 +2100,17 @@ body {
 }
 
 @media (max-width: 720px) {
+  .workflow-run-modal-layout {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .workflow-run-timeline {
+    padding-top: var(--mantine-spacing-md);
+    padding-left: 0;
+    border-top: 1px solid var(--mantine-color-default-border);
+    border-left: 0;
+  }
+
   .agent-add-layout {
     grid-template-columns: minmax(0, 1fr);
     gap: var(--mantine-spacing-md);

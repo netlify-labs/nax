@@ -8,7 +8,7 @@ const {
 const { isNetlifyApiTransport } = require('../../core/runs/resumable')
 const { isTerminalRunStatus } = require('../../core/status')
 const { targetBranch } = require('../../integrations/git/target')
-const { resolveNetlifyProjectTarget, submitLocalAgentRun } = require('../../integrations/netlify/local-runner')
+const { buildNetlifyEnv, resolveNetlifyProjectTarget, submitLocalAgentRun } = require('../../integrations/netlify/local-runner')
 const { netlifyOptionsFromTarget } = require('../../integrations/netlify/project-selection')
 const { saveRunState } = require('../../storage/local/run-state')
 const { buildFollowupContextPackage } = require('../../workflows/followups/context')
@@ -517,6 +517,11 @@ async function submitFollowup({
     instructions: normalized.prompt,
     contextText: delivery.promptContext,
   })
+  const netlify = buildNetlifyEnv({
+    env,
+    projectRoot,
+    siteId: followupSiteId || stringValue(durableOptions.netlifySiteId),
+  })
   const id = followupId(sourceWorkflowRunId)
   const results = await submitFollowupPlan({
     projectRoot,
@@ -524,9 +529,10 @@ async function submitFollowup({
     submissions: plan.submissions,
     shared: {
       branch: normalized.targetBranch,
-      siteId: followupSiteId,
+      siteId: netlify.siteId,
       netlifyFilter: followupNetlifyFilter,
-      env,
+      env: netlify.env,
+      inlinePromptText: normalized.prompt,
       submitRun: followupSubmitRun,
       linkRun: linkSubmittedRun({ siteName: followupSiteName }),
       source: {

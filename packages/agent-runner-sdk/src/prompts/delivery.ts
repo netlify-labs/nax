@@ -55,6 +55,7 @@ export interface PromptDeliveryPolicyOptions {
   safeBytes?: number
   hardMaxBytes?: number
   blobTtlSeconds?: number
+  inlineInstructions?: string
   tenant?: ContextValue
   key?: ContextValue
   compact?: PromptCompactor
@@ -147,8 +148,22 @@ function promptTooLarge(): never {
   )
 }
 
-export function promptFetchWrapper(shell: string): string {
+export function promptFetchWrapper(
+  shell: string,
+  inlineInstructions = '',
+): string {
+  const instructions = inlineInstructions.trim()
   return [
+    instructions
+      ? [
+          '## Request instructions',
+          '',
+          instructions,
+          '',
+          'These instructions are repeated in the offloaded full prompt.',
+          '',
+        ].join('\n')
+      : '',
     '## Full prompt (offloaded)',
     '',
     'Before you do anything else, run this command in the Agent Runner:',
@@ -159,7 +174,41 @@ export function promptFetchWrapper(shell: string): string {
     'After loading it, echo the exact NAX-BLOB-SENTINEL line found at the top of the blob.',
     '',
     'The blob contains the complete prompt. Do not proceed from this wrapper alone.',
-  ].join('\n')
+  ].filter(Boolean).join('\n')
+}
+
+function compactInlineInstructions(value: string, maximumBytes: number): string {
+  if (byteLength(value) <= maximumBytes) return value
+  const notice = '\n\n[... remaining instructions are in the offloaded full prompt ...]'
+  const noticeBytes = byteLength(notice)
+  if (noticeBytes >= maximumBytes) return takePrefix(value, maximumBytes)
+  return `${takePrefix(value, maximumBytes - noticeBytes)}${notice}`
+}
+
+function boundedPromptFetchWrapper(
+  shell: string,
+  inlineInstructions: string,
+  decorate: (deliveredPrompt: string) => string,
+  maximumBytes: number,
+): string {
+  const instructions = inlineInstructions.trim()
+  let instructionBudget = byteLength(instructions)
+  let wrapper = promptFetchWrapper(shell, instructions)
+  let submittedBytes = byteLength(decorate(wrapper))
+  while (submittedBytes > maximumBytes && instructionBudget > 1) {
+    const nextBudget = Math.max(
+      1,
+      instructionBudget - Math.max(1, submittedBytes - maximumBytes),
+    )
+    if (nextBudget === instructionBudget) break
+    instructionBudget = nextBudget
+    wrapper = promptFetchWrapper(
+      shell,
+      compactInlineInstructions(instructions, instructionBudget),
+    )
+    submittedBytes = byteLength(decorate(wrapper))
+  }
+  return wrapper
 }
 
 function safeFetchInstruction(
@@ -204,6 +253,16 @@ export async function preparePromptDelivery(
     DEFAULT_PROMPT_BLOB_TTL_SECONDS,
   )
   const now = options.now ?? Date.now
+  const inlineInstructions = policy.inlineInstructions === undefined
+    ? ''
+    : policy.inlineInstructions
+  if (typeof inlineInstructions !== 'string') {
+    throw new BasicAgentRunnerSdkError(
+      'validation-error',
+      'inlineInstructions must be a string.',
+    )
+  }
+  const wrapperByteCeiling = Math.min(safeBytes, hardMaxBytes)
 
   if (options.promptInput.promptRef !== undefined) {
     const ref = options.promptInput.promptRef
@@ -227,7 +286,12 @@ export async function preparePromptDelivery(
       }
     } else if (options.blobStore !== undefined) {
       const instruction = safeFetchInstruction(options.blobStore, ref)
-      deliveredPrompt = promptFetchWrapper(instruction.shell)
+      deliveredPrompt = boundedPromptFetchWrapper(
+        instruction.shell,
+        inlineInstructions,
+        options.decorate,
+        wrapperByteCeiling,
+      )
       sentinel = instruction.sentinel
     } else {
       throw new BasicAgentRunnerSdkError(
@@ -346,7 +410,12 @@ export async function preparePromptDelivery(
     }
     throw error
   }
-  const deliveredPrompt = promptFetchWrapper(instruction.shell)
+  const deliveredPrompt = boundedPromptFetchWrapper(
+    instruction.shell,
+    inlineInstructions,
+    options.decorate,
+    wrapperByteCeiling,
+  )
   const submittedBytes = byteLength(options.decorate(deliveredPrompt))
   if (submittedBytes > safeBytes || submittedBytes > hardMaxBytes) {
     try {

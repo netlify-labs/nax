@@ -199,3 +199,54 @@ test('projectWorkflowGraph mirrors definition overrides into inherited follow-up
   assert.deepEqual(projected?.nodes[0].data.selectedAgents, claudeModels)
   assert.deepEqual(projected?.nodes[1].data.selectedAgents, claudeModels)
 })
+
+test('projectWorkflowGraph does not leak source runtime state into an inherited definition step', () => {
+  const graph = graphWithStep({
+    status: 'running',
+    selectedAgents: [
+      { agent: 'claude', id: 'claude:auto:auto', resolvedFrom: 'open', status: 'running' },
+      { agent: 'gemini', id: 'gemini:auto:auto', resolvedFrom: 'open', status: 'completed' },
+      { agent: 'codex', id: 'codex:auto:auto', resolvedFrom: 'open', status: 'completed' },
+    ],
+  })
+  graph.nodes.push({
+    ...graph.nodes[0],
+    id: 'cross-review',
+    data: {
+      ...graph.nodes[0].data,
+      stepId: 'cross-review',
+      graphIndex: 1,
+      number: 2,
+      title: 'Cross Review',
+      status: 'definition',
+      submit: 'follow-up',
+      inheritedFromStepId: 'review',
+      selectedAgents: undefined,
+      runs: [],
+    },
+  })
+
+  const projected = projectWorkflowGraph({
+    graph,
+    stepAgents: {},
+    stepStatuses: { review: 'running' },
+    stepAgentStatuses: {
+      review: {
+        'claude:auto:auto': 'running',
+        'gemini:auto:auto': 'completed',
+        'codex:auto:auto': 'completed',
+      },
+    },
+  })
+
+  const source = projected?.nodes[0].data
+  const followup = projected?.nodes[1].data
+  assert.deepEqual(source?.agentStatuses, {
+    'claude:auto:auto': 'running',
+    'gemini:auto:auto': 'completed',
+    'codex:auto:auto': 'completed',
+  })
+  assert.equal(followup?.status, 'definition')
+  assert.deepEqual(followup?.agentStatuses, {})
+  assert.deepEqual(followup?.selectedAgents?.map((instance) => instance.status), [undefined, undefined, undefined])
+})

@@ -58,11 +58,13 @@ NAX_SAFE_PROMPT_BYTES=32768 nax run review
 ```
 
 For `netlify-api` runs, `nax-agent-runner-sdk` measures the final
-request-marker-decorated UTF-8 prompt. It tries inline delivery, then
-deterministic compaction, then a site-scoped Netlify Blob. The SDK returns
-`prompt-too-large` only when none of those paths fits. Confirm that the selected
-site is correct and that `NETLIFY_AUTH_TOKEN` can access it before increasing
-the budget.
+request-marker-decorated UTF-8 prompt. It sends the prompt inline when safe.
+When the prompt is oversized and site-scoped storage is available, NAX stores
+the complete prompt in a Netlify Blob and submits a small fetch wrapper.
+Deterministic compaction is used only when blob delivery is disabled or
+unavailable. The SDK returns `prompt-too-large` only when no configured path
+fits. Confirm that the selected site is correct and that `NETLIFY_AUTH_TOKEN`
+can access it before increasing the budget.
 
 `prompt-ref-expired` means a retained failed-run reference reached its expiry
 before a resume or retry. Start a fresh run so the SDK can upload a new prompt;

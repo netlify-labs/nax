@@ -89,6 +89,7 @@ test('submitFollowupSession passes existing runner id and persists submitted ses
     projectRoot,
     agent: 'codex',
     promptText: 'Follow up',
+    inlinePromptText: 'Fix the confirmed issue.',
     existingRunnerId: 'runner-1',
     now: () => '2026-06-20T00:00:00.000Z',
     submitRun: async (input) => ({
@@ -102,6 +103,7 @@ test('submitFollowupSession passes existing runner id and persists submitted ses
 
   assert.equal(result.run.runnerId, 'runner-1')
   assert.equal(result.run.sessionId, 'session-2')
+  assert.equal(result.run.inlinePromptText, 'Fix the confirmed issue.')
   assert.equal(fs.existsSync(path.join(projectRoot, '.nax', 'agent-sessions', 'session-2', 'summary.md')), true)
   assert.equal(fs.existsSync(path.join(projectRoot, '.nax', 'agent-runners', 'runner-1', 'summary.md')), true)
 })

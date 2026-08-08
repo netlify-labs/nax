@@ -790,6 +790,22 @@ test('formatCompactLocalRunResults truncates prior local outputs for retry promp
   assert.ok(formatted.length < longResult.length)
 })
 
+test('formatCompactLocalRunResults does not run a second whole-section compaction pass', () => {
+  const formatted = formatCompactLocalRunResults([
+    { agent: 'claude', sourceStep: 'review', resultText: `Claude ${'A'.repeat(3000)} tail` },
+    { agent: 'gemini', sourceStep: 'review', resultText: `Gemini ${'B'.repeat(3000)} tail` },
+    { agent: 'codex', sourceStep: 'review', resultText: `Codex ${'C'.repeat(3000)} tail` },
+  ], {
+    perRunLimit: 900,
+    totalLimit: 2900,
+  })
+
+  assert.ok(Buffer.byteLength(formatted, 'utf8') <= 2900)
+  assert.doesNotMatch(formatted, /Prior Agent Results compacted/)
+  assert.equal((formatted.match(/<details>/g) || []).length, 3)
+  assert.equal((formatted.match(/<\/details>/g) || []).length, 3)
+})
+
 test('usageSummariesForRunState aggregates usage by step and total', () => {
   const summary = usageSummariesForRunState({
     steps: [

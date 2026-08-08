@@ -992,8 +992,9 @@ export function RunDetailsTimeline({
   timelineProgressIndex,
   timelineColor,
   heading = 'Timeline',
+  ariaLabel = 'Workflow timeline',
   onSelect,
-  canRunFollowup,
+  canRunFollowup = false,
   onRunFollowup,
 }: {
   activeTimelineId: string
@@ -1002,9 +1003,10 @@ export function RunDetailsTimeline({
   timelineProgressIndex: number
   timelineColor?: string
   heading?: string
-  onSelect: (entry: TimelineEntry) => void
-  canRunFollowup: boolean
-  onRunFollowup: () => void
+  ariaLabel?: string
+  onSelect?: (entry: TimelineEntry) => void
+  canRunFollowup?: boolean
+  onRunFollowup?: () => void
 }) {
   const [handoffFeedback, setHandoffFeedback] = useState('')
   const copyHandoffValue = async (value: string, label: string) => {
@@ -1020,7 +1022,7 @@ export function RunDetailsTimeline({
   const handoffEntry = parentTimelineEntries.find((entry) => entry.kind === 'summary' && isSuccessfulWorkflowStatus(entry.status))
 
   return (
-    <Box className="run-details-timeline" component="nav" aria-label="Workflow timeline">
+    <Box className="run-details-timeline" component="nav" aria-label={ariaLabel}>
       <Text className="run-details-timeline-heading" size="xs" fw={800} c="dimmed">{heading}</Text>
       <Timeline active={timelineProgressIndex} bulletSize={18} lineWidth={2} color={timelineColor}>
         {parentTimelineEntries.map((entry) => {
@@ -1041,7 +1043,9 @@ export function RunDetailsTimeline({
                 <Paper className="run-details-timeline-card" withBorder>
                   <UnstyledButton
                     className={`run-details-timeline-button${entry.id === activeTimelineId ? ' active' : ''}`}
-                    onClick={() => onSelect(entry)}
+                    aria-disabled={onSelect ? undefined : true}
+                    tabIndex={onSelect ? undefined : -1}
+                    onClick={onSelect ? () => onSelect(entry) : undefined}
                   >
                     <Group gap={6} wrap="nowrap" className="run-details-timeline-title">
                       <Text size="sm" fw={700} truncate>{entry.title}</Text>
@@ -1056,7 +1060,9 @@ export function RunDetailsTimeline({
                           <UnstyledButton
                             key={child.id}
                             className={`run-details-timeline-child-button${child.id === activeTimelineId ? ' active' : ''}`}
-                            onClick={() => onSelect(child)}
+                            aria-disabled={onSelect ? undefined : true}
+                            tabIndex={onSelect ? undefined : -1}
+                            onClick={onSelect ? () => onSelect(child) : undefined}
                           >
                             <Group gap={6} wrap="nowrap" className="run-details-timeline-title session">
                               {agent ? <AgentIcon agent={agent} /> : null}

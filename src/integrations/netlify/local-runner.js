@@ -150,6 +150,7 @@ const NETLIFY_CONFIG_SCAN_SKIP_DIRS = new Set([
  * Netlify environment build options.
  * @typedef {{
  *   env?: NodeJS.ProcessEnv,
+ *   home?: string,
  *   projectRoot?: string,
  *   siteId?: string,
  * }} NetlifyEnvOptions
@@ -689,8 +690,11 @@ function runAsync(command, args, { cwd, env = process.env, allowFailure = false,
 }
 
 /** @param {NetlifyEnvOptions} param0 */
-function buildNetlifyEnv({ env = process.env, projectRoot, siteId: explicitSiteId } = {}) {
-  const token = readNetlifyCliToken({ env })
+function buildNetlifyEnv({ env = process.env, home = env.HOME, projectRoot, siteId: explicitSiteId } = {}) {
+  const token = readNetlifyCliToken({
+    env,
+    ...(home ? { home } : {}),
+  })
   const siteId = explicitSiteId || readLinkedSiteId(projectRoot, env)
   if (!siteId) {
     throw new Error(`No Netlify site is linked in ${projectRoot}. Run nax init first.`)
@@ -816,6 +820,7 @@ async function submitLocalAgentRun({
       run.raw?.workflowRunId || run.raw?.stepId || 'nax',
     ].filter(Boolean).join('/'),
     compactPromptText: run.compactPromptText,
+    inlinePromptText: run.inlinePromptText,
     safePromptBytes,
     promptBlobDisable: ['1', 'true', 'yes', 'on'].includes(disableValue),
     retryAttempts,

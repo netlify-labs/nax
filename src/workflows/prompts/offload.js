@@ -52,6 +52,57 @@ function sliceUtf8(value, maxBytes) {
   return out
 }
 
+/**
+ * @typedef {{ marker: string, info: string }} MarkdownFence
+ */
+
+/** @param {unknown} value @returns {MarkdownFence | null} */
+function openMarkdownFence(value) {
+  /** @type {MarkdownFence | null} */
+  let active = null
+  for (const line of String(value || '').split('\n')) {
+    const match = line.match(/^ {0,3}(`{3,}|~{3,})(.*)$/)
+    if (!match) continue
+    const marker = match[1]
+    const info = match[2].trim()
+    if (!active) {
+      active = { marker, info }
+      continue
+    }
+    if (marker[0] === active.marker[0] && marker.length >= active.marker.length && !info) {
+      active = null
+    }
+  }
+  return active
+}
+
+/** @param {string} value @param {number} maxBytes */
+function sliceUtf8Suffix(value, maxBytes) {
+  const characters = [...value]
+  let output = ''
+  let used = 0
+  for (let index = characters.length - 1; index >= 0; index -= 1) {
+    const character = characters[index]
+    const size = utf8ByteLength(character)
+    if (used + size > maxBytes) break
+    output = character + output
+    used += size
+  }
+  return output
+}
+
+/** @param {string} value */
+function trimPartialHeadLine(value) {
+  const newline = value.lastIndexOf('\n')
+  return newline < 0 ? value : value.slice(0, newline)
+}
+
+/** @param {string} value */
+function trimPartialTailLine(value) {
+  const newline = value.indexOf('\n')
+  return newline < 0 ? value : value.slice(newline + 1)
+}
+
 /** @param {unknown} text @param {number} maxBytes @param {string} [label] */
 function compactTextByBytes(text, maxBytes, label = 'content') {
   const value = String(text || '').trim()
@@ -59,13 +110,27 @@ function compactTextByBytes(text, maxBytes, label = 'content') {
   if (maxBytes < MIN_ESSENTIAL_EXCERPT_BYTES) return sliceUtf8(value, maxBytes).trim()
   const note = `\n\n[${label} compacted from ${utf8ByteLength(value).toLocaleString()} bytes. Middle omitted.]\n\n`
   const noteBytes = utf8ByteLength(note)
-  const available = Math.max(0, maxBytes - noteBytes)
-  const headBytes = Math.ceil(available * 0.65)
-  const tailBytes = Math.max(0, available - headBytes)
-  const head = sliceUtf8(value, headBytes).trimEnd()
-  const tailSource = [...value].reverse().join('')
-  const tail = [...sliceUtf8(tailSource, tailBytes)].reverse().join('').trimStart()
-  return `${head}${note}${tail}`.trim()
+  let available = Math.max(0, maxBytes - noteBytes)
+
+  while (available > 0) {
+    const headBytes = Math.ceil(available * 0.65)
+    const tailBytes = Math.max(0, available - headBytes)
+    const head = trimPartialHeadLine(sliceUtf8(value, headBytes)).trimEnd()
+    const tail = trimPartialTailLine(sliceUtf8Suffix(value, tailBytes)).trimStart()
+    const headFence = openMarkdownFence(head)
+    const tailStart = Math.max(0, value.length - tail.length)
+    const tailFence = openMarkdownFence(value.slice(0, tailStart))
+    const closedHead = headFence ? `${head}\n${headFence.marker}` : head
+    const openedTail = tailFence
+      ? `${tailFence.marker}${tailFence.info ? tailFence.info : ''}\n${tail}`
+      : tail
+    const compacted = `${closedHead}${note}${openedTail}`.trim()
+    const compactedBytes = utf8ByteLength(compacted)
+    if (compactedBytes <= maxBytes) return compacted
+    available = Math.max(0, available - (compactedBytes - maxBytes) - 8)
+  }
+
+  return sliceUtf8(note.trim(), maxBytes).trim()
 }
 
 /** @param {unknown} rendered */

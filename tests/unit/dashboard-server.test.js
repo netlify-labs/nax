@@ -150,6 +150,7 @@ function writeFollowupRunFixture(projectRoot, runId = 'fixture-followup-run') {
     },
     options: {
       branch: 'main',
+      netlifySiteId: 'fixture-site-id',
       transport: 'netlify-api',
       stepAgents: {
         review: ['codex'],
@@ -1437,6 +1438,17 @@ test('dashboard run graph syncs completed remote follow-up sessions', async () =
 
 test('dashboard follow-up endpoint delegates oversized context to SDK delivery', async () => {
   const projectRoot = tmpRoot()
+  const authHome = path.join(projectRoot, 'home')
+  const cliConfigPath = path.join(authHome, 'Library', 'Preferences', 'netlify', 'config.json')
+  fs.mkdirSync(path.dirname(cliConfigPath), { recursive: true })
+  fs.writeFileSync(cliConfigPath, JSON.stringify({
+    userId: 'test-user',
+    users: {
+      'test-user': {
+        auth: { token: 'test-cli-token' },
+      },
+    },
+  }))
   fs.mkdirSync(path.join(projectRoot, '.netlify'), { recursive: true })
   fs.writeFileSync(path.join(projectRoot, '.netlify', 'state.json'), JSON.stringify({ siteId: 'linked-site-id' }))
   const { runId, dir } = writeFollowupRunFixture(projectRoot)
@@ -1447,7 +1459,7 @@ test('dashboard follow-up endpoint delegates oversized context to SDK delivery',
     projectRoot,
     siteName: 'netlify-agent-executor',
     env: {
-      ...process.env,
+      HOME: authHome,
       NETLIFY_SITE_ID: '',
       NAX_SAFE_PROMPT_BYTES: '1024',
     },
@@ -1480,6 +1492,8 @@ test('dashboard follow-up endpoint delegates oversized context to SDK delivery',
     assert.equal(blobWrites.length, 0)
     assert.equal(submissions.length, 1)
     assert.equal(submissions[0].siteId, 'linked-site-id')
+    assert.equal(submissions[0].env.NETLIFY_AUTH_TOKEN, 'test-cli-token')
+    assert.equal(submissions[0].run.inlinePromptText, 'Fix the confirmed security issues.')
     assert.match(submissions[0].run.promptText, /prior result detail/)
     assert.doesNotMatch(submissions[0].run.promptText, /blobs:get/)
   } finally {

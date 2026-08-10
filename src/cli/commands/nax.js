@@ -44,6 +44,9 @@ const TEAL_COLOR = '#0d9488'
  *   issue: (prompt: string | undefined, options: JsonMap) => CommandActionResult,
  *   costs: (options: JsonMap) => CommandActionResult,
  *   list: (options: JsonMap) => CommandActionResult,
+ *   mcp: (options: JsonMap) => CommandActionResult,
+ *   mcpDoctor: (options: JsonMap) => CommandActionResult,
+ *   mcpSetupClaude: (options: JsonMap) => CommandActionResult,
  *   previewBoxes: (flow: string | undefined, options: JsonMap) => CommandActionResult,
  *   previewSpinner: (options: JsonMap) => CommandActionResult,
  *   retry: (runId: string, options: JsonMap) => CommandActionResult,
@@ -551,9 +554,42 @@ function buildNaxProgram({
     .option('--run <runId>', 'Open a saved workflow run directly in the details view')
     .option('--no-open', 'Print the dashboard URL without opening a browser')
     .option('--no-tail', 'Do not stream child workflow stdout/stderr to this terminal')
+    .addOption(hiddenOption('--no-mcp-advertise', 'Run without advertising this dashboard to local MCP adapters'))
     .addOption(hiddenOption('--dev', 'Use development-mode dashboard behavior')), collectOption)
     .action((flow, options, command) => {
       return settleAction(handlers.dashboard(flow || '', actionOptions(options, command)))
+    })
+
+  const mcp = program
+    .command('mcp')
+    .description('Serve the NAX control plane over MCP stdio')
+    .option('--project-root <path>', 'Use this project as the default MCP scope')
+    .action((options, command) => settleAction(handlers.mcp(actionOptions(options, command))))
+
+  mcp
+    .command('doctor')
+    .description('Check Claude, project, and local dashboard MCP readiness')
+    .option('--project-root <path>', 'Project root whose control plane should be checked')
+    .action((options, command) => {
+      const resolved = actionOptions(options, command)
+      if (!resolved.projectRoot && mcp.opts().projectRoot) resolved.projectRoot = mcp.opts().projectRoot
+      return settleAction(handlers.mcpDoctor(resolved))
+    })
+
+  const mcpSetup = mcp
+    .command('setup')
+    .description('Configure an MCP client for NAX')
+
+  mcpSetup
+    .command('claude')
+    .description('Configure NAX as a Claude Code stdio MCP server')
+    .addOption(new Option('--scope <scope>', 'Claude configuration scope').choices(['local', 'project', 'user']).default('project'))
+    .option('--project-root <path>', 'Project root used for project and local scope')
+    .option('--dry-run', 'Show the exact configuration change without writing files')
+    .action((options, command) => {
+      const resolved = actionOptions(options, command)
+      if (!resolved.projectRoot && mcp.opts().projectRoot) resolved.projectRoot = mcp.opts().projectRoot
+      return settleAction(handlers.mcpSetupClaude(resolved))
     })
 
   const admin = program

@@ -39,6 +39,13 @@ const targets = [
     ],
   },
   {
+    args: ['mcp', '--help'],
+    mustContain: [
+      'Usage: nax mcp [options]',
+      '--project-root <path>',
+    ],
+  },
+  {
     args: ['handoff', '--help'],
     mustContain: ['Usage: nax handoff [options] [run-id]'],
   },

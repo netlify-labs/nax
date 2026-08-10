@@ -47,6 +47,9 @@ function makeProgram() {
       init: (options) => record('init', options),
       issue: (prompt, options) => record('issue', prompt, options),
       list: (options) => record('list', options),
+      mcp: (options) => record('mcp', options),
+      mcpDoctor: (options) => record('mcpDoctor', options),
+      mcpSetupClaude: (options) => record('mcpSetupClaude', options),
       previewBoxes: (flow, options) => record('previewBoxes', flow, options),
       previewSpinner: (options) => record('previewSpinner', options),
       retry: (runId, options) => record('retry', runId, options),
@@ -125,6 +128,7 @@ test('advanced help reveals hidden admin and engineering commands', async () => 
   assert.match(output(), /admin\s+Advanced maintenance commands/)
   assert.match(output(), /ci \[options\] <command\.\.\.>/)
   assert.match(output(), /issue \[options\] \[prompt\]/)
+  assert.match(output(), /mcp \[options\]\s+Serve the NAX control plane over MCP stdio/)
 })
 
 test('nax run routes workflow execution and retry execution', async () => {
@@ -224,6 +228,34 @@ test('dashboard tails by default and --no-tail opts out', async () => {
   assert.equal(/** @type {{ tail?: boolean }} */ (defaultInvocation.calls[0].args[1]).tail, true)
   assert.equal(quietInvocation.calls[0].name, 'dashboard')
   assert.equal(/** @type {{ tail?: boolean }} */ (quietInvocation.calls[0].args[1]).tail, false)
+})
+
+test('dashboard advertises MCP discovery by default and supports an explicit opt-out', async () => {
+  const defaultInvocation = makeProgram()
+  await parse(defaultInvocation.program, ['dashboard'])
+
+  const unadvertisedInvocation = makeProgram()
+  await parse(unadvertisedInvocation.program, ['dashboard', '--no-mcp-advertise'])
+
+  assert.equal(/** @type {{ mcpAdvertise?: boolean }} */ (defaultInvocation.calls[0].args[1]).mcpAdvertise, true)
+  assert.equal(/** @type {{ mcpAdvertise?: boolean }} */ (unadvertisedInvocation.calls[0].args[1]).mcpAdvertise, false)
+})
+
+test('nax mcp serves directly and routes setup and doctor subcommands', async () => {
+  const serve = makeProgram()
+  await parse(serve.program, ['mcp', '--project-root', '/tmp/nax-project'])
+  assert.equal(serve.calls[0].name, 'mcp')
+  assert.equal(/** @type {{ projectRoot?: string }} */ (serve.calls[0].args[0]).projectRoot, '/tmp/nax-project')
+
+  const setup = makeProgram()
+  await parse(setup.program, ['mcp', 'setup', 'claude', '--scope', 'local', '--project-root', '/tmp/nax-project', '--dry-run'])
+  assert.equal(setup.calls[0].name, 'mcpSetupClaude')
+  assert.deepEqual(setup.calls[0].args[0], { scope: 'local', projectRoot: '/tmp/nax-project', dryRun: true })
+
+  const doctor = makeProgram()
+  await parse(doctor.program, ['mcp', 'doctor', '--project-root', '/tmp/nax-project'])
+  assert.equal(doctor.calls[0].name, 'mcpDoctor')
+  assert.deepEqual(doctor.calls[0].args[0], { projectRoot: '/tmp/nax-project' })
 })
 
 test('handoff, admin, and hidden ci route to their handlers', async () => {

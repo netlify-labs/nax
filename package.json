@@ -1,6 +1,6 @@
 {
   "name": "netlify-agent-executor",
-  "version": "2.0.0",
+  "version": "3.0.0",
   "description": "Run multi step Netlify agent workflows using the world's leading AI models.",
   "type": "commonjs",
   "workspaces": [
@@ -11,6 +11,7 @@
   },
   "files": [
     "src",
+    "scripts/run-mcp-agent-canary.mjs",
     "workflows",
     "src/dashboard/web/dist",
     "README.md",
@@ -18,7 +19,7 @@
     "LICENSE"
   ],
   "engines": {
-    "node": ">=18"
+    "node": ">=20"
   },
   "scripts": {
     "start": "node src/cli/nax.js",
@@ -43,6 +44,7 @@
     "dashboard:smoke": "playwright test tests/e2e/dashboard.spec.js",
     "probe:model-effort": "node scripts/probe-agent-runner-model-effort.mjs",
     "canary:multi-instance": "node scripts/run-multi-instance-canary.mjs",
+    "canary:mcp-agent": "node scripts/run-mcp-agent-canary.mjs",
     "prepare": "npm run sdk:build && npm run dashboard:build",
     "prepack": "npm run dashboard:build",
     "test": "node --import tsx --test tests/unit/*.test.js tests/unit/*.test.ts tests/integration/*.test.js",
@@ -75,17 +77,19 @@
     "@davidwells/box-logger": "^2.0.8",
     "@davidwells/graceful-exit": "^0.0.2",
     "@davidwells/md-utils": "^0.0.54",
+    "@modelcontextprotocol/server": "^2.0.0",
     "@netlify/blobs": "^10.7.9",
     "@netlify/build-info": "^10.5.1",
     "@tanstack/react-query": "^5.101.0",
     "@tanstack/react-router": "^1.170.16",
-    "nax-agent-runner-sdk": "0.3.0",
     "commander": "^14.0.3",
     "comment-block-parser": "^1.5.4",
     "configorama": "^1.0.0",
     "hono": "^4.12.26",
     "json5": "^2.2.3",
-    "open": "^10.2.0"
+    "nax-agent-runner-sdk": "0.3.0",
+    "open": "^10.2.0",
+    "zod": "^4.4.3"
   },
   "devDependencies": {
     "@mantine/core": "^9.3.2",

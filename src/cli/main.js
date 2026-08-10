@@ -81,6 +81,8 @@ const {
 } = require('./display/flow-list')
 const { buildCostsReport, formatCostsTable } = require('./display/costs-report')
 const { terminalTrafficLights } = require('./display/terminal')
+const { formatMcpDoctor, runMcpDoctor } = require('../mcp/doctor')
+const { formatClaudeMcpSetupPreview, setupClaudeMcp } = require('../mcp/setup')
 const {
   buildHandoffPrompt,
   copyToClipboard,
@@ -228,8 +230,8 @@ const {
 const {
   formatAgentInstanceSpec,
   parseAgentInstanceList,
-  resolveLineup,
 } = require('../core/agents/instances')
+const { findStepRange, resolvedLineupForStep } = require('../core/planning/workflow')
 const {
   archiveAgentRun,
   buildNetlifyEnv,
@@ -628,6 +630,7 @@ async function handleDashboard(flowId, options = {}) {
     netlifyAccess,
     netlifyContext: publicNetlifyContext,
     defaultRunOptions,
+    advertiseMcp: options.mcpAdvertise !== false,
   })
 
   console.log(`Nax dashboard: ${instance.url}`)
@@ -653,6 +656,47 @@ async function handleDashboard(flowId, options = {}) {
   process.once('SIGTERM', () => {
     close().finally(() => process.exit(0))
   })
+}
+
+/**
+ * Starts the MCP stdio adapter without starting or owning the dashboard.
+ * @param {import('../types').JsonMap} [options]
+ */
+function handleMcp(options = {}) {
+  const { serveMcpStdio } = require('../mcp/server')
+  return serveMcpStdio({
+    projectRoot: String(options.projectRoot || ''),
+  })
+}
+
+/**
+ * Configures the portable NAX stdio entry in Claude Code.
+ * @param {import('../types').JsonMap} [options]
+ */
+function handleMcpSetupClaude(options = {}) {
+  const projectRoot = resolveProjectRoot(String(options.projectRoot || ''), { cwd: process.cwd() })
+  const result = setupClaudeMcp({
+    projectRoot,
+    scope: /** @type {'local' | 'project' | 'user'} */ (String(options.scope || 'project')),
+    dryRun: options.dryRun === true,
+    onPreview(preview) {
+      console.log(formatClaudeMcpSetupPreview(preview))
+    },
+  })
+  if (result.dryRun) console.log('Dry run complete; no files changed.')
+  else if (result.changed) console.log('Claude MCP configuration updated.')
+  else console.log('Claude MCP configuration is already current.')
+}
+
+/**
+ * Runs read-only MCP installation and local control-plane diagnostics.
+ * @param {import('../types').JsonMap} [options]
+ */
+async function handleMcpDoctor(options = {}) {
+  const projectRoot = resolveProjectRoot(String(options.projectRoot || ''), { cwd: process.cwd() })
+  const result = await runMcpDoctor({ projectRoot })
+  console.log(formatMcpDoctor(result))
+  if (!result.ok) process.exitCode = 1
 }
 
 function isAdHocRunTarget(value) {
@@ -1399,39 +1443,6 @@ function withSelectedAgents(flow, selectedAgents) {
 }
 
 /**
- * Resolve one workflow step with every declaration and CLI override applied in precedence order.
- * @param {import('../types').WorkflowFlow} flow
- * @param {import('../types').WorkflowStep} step
- * @param {import('../types').JsonMap} [options]
- * @param {string} [requestedTransport]
- */
-function resolvedLineupForStep(flow, step, options = {}, requestedTransport) {
-  const models = normalizeProviderModelMap(options.models)
-  const efforts = normalizeProviderEffortMap(options.efforts)
-  const stepModels = normalizeStepProviderModelMap(options.stepModels)
-  const stepEfforts = normalizeStepProviderEffortMap(options.stepEfforts)
-  const transport = requestedTransport ||
-    (typeof options.transport === 'string' ? options.transport : '') ||
-    flow.defaults?.transport ||
-    'auto'
-  return resolveLineup(Array.isArray(step.lineup) ? step.lineup : step.agents || [], {
-    requestedTransport: transport,
-    models: {
-      ...normalizeProviderModelMap(flow.defaults?.models),
-      ...normalizeProviderModelMap(step.models),
-      ...models,
-      ...(stepModels[step.id] || {}),
-    },
-    efforts: {
-      ...normalizeProviderEffortMap(flow.defaults?.efforts),
-      ...normalizeProviderEffortMap(step.efforts),
-      ...efforts,
-      ...(stepEfforts[step.id] || {}),
-    },
-  })
-}
-
-/**
  * @param {import('../types').WorkflowFlow} flow
  * @param {import('../types').JsonMap} options
  * @returns {{
@@ -1659,11 +1670,26 @@ async function configureAgentsInteractively({ clack, flow, options, agents, exit
 }
 
 function withSelectedStepAgents(flow, options = {}) {
+  const plannedLineups = options.controlPlaneLineups && typeof options.controlPlaneLineups === 'object' && !Array.isArray(options.controlPlaneLineups)
+    ? options.controlPlaneLineups
+    : null
+  const plannedFlow = plannedLineups
+    ? {
+        ...flow,
+        steps: (flow.steps || []).map((step) => {
+          if (!Object.prototype.hasOwnProperty.call(plannedLineups, step.id)) return step
+          const lineup = plannedLineups[step.id]
+          if (!Array.isArray(lineup)) throw new Error(`Control-plane lineup for step "${step.id}" must be an array.`)
+          const agents = [...new Set(lineup.map((entry) => String(entry?.agent || '')).filter(Boolean))]
+          return { ...step, agents, lineup: lineup.map((entry) => ({ ...entry })) }
+        }),
+      }
+    : flow
   const agents = parseCsv(options.agents)
   const stepAgents = selectedStepAgents(options)
   const selection = { agents, stepAgents }
-  assertValidAgentSelection(flow, selection)
-  const configuredFlow = applyAgentSelection(flow, selection)
+  assertValidAgentSelection(plannedFlow, selection)
+  const configuredFlow = applyAgentSelection(plannedFlow, selection)
   const configuration = selectedAgentConfiguration(configuredFlow, options)
   return {
     flow: configuredFlow,
@@ -1673,9 +1699,12 @@ function withSelectedStepAgents(flow, options = {}) {
 }
 
 function runnableSteps(flow, options) {
-  return findStepRange(flow, options).filter((step) => (
-    isHumanReviewStep(step) || step.submit === 'follow-up' || normalizeArray(step.agents).length > 0
-  ))
+  const selectedStepIds = Array.isArray(options.controlPlaneSelectedSteps)
+    ? new Set(options.controlPlaneSelectedSteps.map(String))
+    : null
+  return findStepRange(flow, options)
+    .filter((step) => !selectedStepIds || selectedStepIds.has(String(step.id || '')))
+    .filter((step) => isHumanReviewStep(step) || step.submit === 'follow-up' || normalizeArray(step.agents).length > 0)
 }
 
 /**
@@ -2228,20 +2257,6 @@ function artifactDirectoryHasFiles(dir) {
     if (entry.isDirectory() && artifactDirectoryHasFiles(path.join(dir, entry.name))) return true
   }
   return false
-}
-
-function findStepRange(flow, options) {
-  let steps = flow.steps
-  if (options.step) {
-    steps = steps.filter((step) => step.id === options.step)
-    if (steps.length === 0) throw new Error(`Unknown step "${options.step}" in flow "${flow.id}"`)
-  }
-  if (options.fromStep) {
-    const index = flow.steps.findIndex((step) => step.id === options.fromStep)
-    if (index === -1) throw new Error(`Unknown from-step "${options.fromStep}" in flow "${flow.id}"`)
-    steps = flow.steps.slice(index)
-  }
-  return steps
 }
 
 function cancellableLocalRunnerIds(runState = {}) {
@@ -2811,18 +2826,32 @@ async function handleRunEngine(flowId, options) {
     return
   }
 
-  const runContext = buildFlowRunContext({ options: configuredOptions, projectRoot, transport, target })
+  const controlPlaneTarget = configuredOptions.controlPlaneTarget && typeof configuredOptions.controlPlaneTarget === 'object' && !Array.isArray(configuredOptions.controlPlaneTarget)
+    ? configuredOptions.controlPlaneTarget
+    : null
+  if (controlPlaneTarget && (
+    controlPlaneTarget.verified !== true ||
+    String(controlPlaneTarget.branch || '') !== String(target.branch || '') ||
+    String(controlPlaneTarget.siteId || '') !== String(configuredOptions.netlifySiteId || configuredOptions.siteId || '')
+  )) {
+    throw Object.assign(new Error('The control-plane target no longer matches the verified workflow target.'), { code: 'project_scope_mismatch' })
+  }
+  const runTarget = controlPlaneTarget ? { ...target, ...controlPlaneTarget } : target
+  const runContext = buildFlowRunContext({ options: configuredOptions, projectRoot, transport, target: runTarget })
 
   const runState = createRunState({
     projectRoot,
     flow: configuredFlow,
     transport,
-    target,
+    target: runTarget,
     options: {
       ...configuredOptions,
       projectRoot,
     },
   })
+  if (configuredOptions.controlPlane && typeof configuredOptions.controlPlane === 'object' && !Array.isArray(configuredOptions.controlPlane)) {
+    runState.source = { type: 'mcp', ...configuredOptions.controlPlane }
+  }
   trackRunState(runState, {
     onInterrupt: async ({ runState: activeRunState, reason }) => {
       cleanupWorkflowBlobsForRun({
@@ -3026,6 +3055,9 @@ function buildProgram() {
       costs: handleCosts,
       issue: issueHandlers.handleIssue,
       list: handleList,
+      mcp: handleMcp,
+      mcpDoctor: handleMcpDoctor,
+      mcpSetupClaude: handleMcpSetupClaude,
       previewBoxes: handlePreviewBoxes,
       previewSpinner: handlePreviewSpinner,
       retry: handleRetry,
@@ -3064,6 +3096,9 @@ module.exports = {
   findRunStateForRetry,
   handleAdHocAgentRun,
   handleHandoff,
+  handleMcp,
+  handleMcpDoctor,
+  handleMcpSetupClaude,
   handleRetry,
   handleRun,
   handleRunEngine,

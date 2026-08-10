@@ -1,0 +1,285 @@
+---
+title: MCP Reference
+description: NAX MCP tools, resources, prompts, result envelopes, safety boundaries, and limits.
+---
+
+import { Callout } from 'nextra/components'
+
+# MCP reference
+
+NAX exposes 13 entity-first tools. Names use `noun_action`, so related operations sort together and remain predictable for agents.
+
+Every tool returns concise text plus a structured envelope containing `ok`, `data` or `error`, an optional scoped `context`, and bounded `next_actions`. Exact IDs and cursors come from prior results; placeholders, URLs, wildcard targets, credentials, transport overrides, and site overrides are rejected by strict schemas. Local paths are accepted only as `context_get.project_ref` values.
+
+One `nax mcp` process can route among several local projects. Call `context_get` with an exact project reference, then preserve its returned `scope_id` in every later tool call. All other tools accept optional `scope_id`, and NAX includes it in returned tool follow-ups automatically. Omitting selection uses Claude's current project as the backward-compatible default.
+
+## Tool catalog
+
+| Tool | Purpose | Mutation |
+| --- | --- | --- |
+| `context_get` | Resolve a project and read its scope, target, capabilities, branch, and agent catalog. | No |
+| `workflow_list` | Discover exact workflow IDs. | No |
+| `workflow_get` | Read one workflow and optional graph. | No |
+| `workflow_plan` | Prepare an immutable workflow plan. | No remote mutation |
+| `agent_run_plan` | Prepare one standalone Agent Runner plan. | No remote mutation |
+| `run_start` | Start one reviewed plan. | Yes; idempotent |
+| `run_list` | Discover compact run and control-target IDs. | No |
+| `run_get` | Read one bounded run view. | No |
+| `run_wait` | Wait for events or a state transition. | No |
+| `run_cancel` | Cancel one run or exact agent run. | Yes; destructive |
+| `agent_run_retry` | Retry one exact agent run. | Yes; idempotent |
+| `agent_run_followup` | Continue from one exact agent result. | Yes; idempotent |
+| `review_gate_resolve` | Approve or cancel one exact review gate. | Yes; destructive |
+
+## Context and discovery
+
+### `context_get`
+
+Call first and after any capability or target error. It accepts optional `project_ref` or `scope_id` and returns the authenticated runtime, immutable scope, selected Netlify target, current and known branches, capability map, and server-owned agent/model/effort catalog. The selectors are mutually exclusive. It never accepts a token, actor, site, or branch override.
+
+`project_ref` may be an exact absolute directory or an exact alias from a running dashboard: project basename, NAX project ID, scope ID, repository ID, Netlify site ID, or site name. No fuzzy match is auto-selected. Ambiguous aliases return candidates. If both selectors are omitted, the router uses the current Claude project.
+
+```json
+{
+  "project_ref": "/workspace/gtm-services"
+}
+```
+
+Typical next actions are `workflow_list` and `run_list`. If the dashboard is absent, the result points to a project-specific `nax dashboard --project-root ... --no-open` command.
+
+### `workflow_list`
+
+Accepts optional `source`, `limit` from 1 to 100, and an opaque `cursor`. Use it to copy an exact `workflow_id`; do not invent one. Repeat only when `next_cursor` is present.
+
+```json
+{
+  "source": "project",
+  "limit": 20
+}
+```
+
+### `workflow_get`
+
+Requires an exact `workflow_id`. Set `include_graph` when dependency structure matters. The tool is read-only and returns a bounded workflow definition; unknown IDs point back to `workflow_list` and may include conservative suggestions.
+
+```json
+{
+  "workflow_id": "security-review",
+  "include_graph": true
+}
+```
+
+## Planning and start
+
+### `workflow_plan`
+
+Requires `workflow_id`. Optional fields are `branch`, structured `instances`, per-step `step_instances`, bounded `context`, `only_step`, and `from_step`. `only_step` and `from_step` are mutually exclusive.
+
+Planning resolves and validates the target, instances, workflow steps, warnings, expected Agent Runner count, and expiry. It does not start Agent Runners. MCP v1 plans Netlify API remote execution only; transport and credential fields are not accepted.
+
+```json
+{
+  "workflow_id": "security-review",
+  "instances": [
+    {
+      "agent": "claude",
+      "model": "claude-opus-5",
+      "effort": "high"
+    }
+  ],
+  "only_step": "audit"
+}
+```
+
+### `agent_run_plan`
+
+Requires a bounded `prompt` and one structured `instance`; `branch` is optional. Use catalog IDs from `context_get`. A bare provider string, provider-keyed model map, credentials, transport, or site override is invalid.
+
+```json
+{
+  "prompt": "Audit the authorization boundary.",
+  "instance": {
+    "agent": "codex",
+    "model": "gpt-5.6-sol",
+    "effort": "high"
+  },
+  "branch": "main"
+}
+```
+
+### `run_start`
+
+Requires the exact `plan_id` and a caller-generated stable `request_id`. Review the plan before calling it. `run_start` accepts no branch, instance, prompt, site, or transport override.
+
+The operation is durably idempotent. Repeating the same plan and request IDs returns the original run with `replayed: true`. An expired plan must be recreated. Reusing an ID for different intent returns `idempotency_conflict`.
+
+The next action is normally `run_wait` for active work or `run_get` for an already-terminal run.
+
+## Run observation
+
+### `run_list`
+
+Accepts optional exact `status`, `workflow_id`, `limit` from 1 to 100, and opaque `cursor`. It returns compact summaries with exact run, agent-run, and review-gate IDs. Use `run_wait` for progress instead of polling this list.
+
+```json
+{
+  "status": "running",
+  "limit": 20
+}
+```
+
+### `run_get`
+
+Requires `run_id` and one `view`: `summary`, `details`, `graph`, or `events`.
+
+- `section_id` is valid only with `details`.
+- `since` and `limit` are valid only with `events`.
+- Event limits range from 1 to 200.
+- The first details response is an index; request one returned section ID for its Markdown.
+
+```json
+{
+  "run_id": "run_01JEXAMPLE",
+  "view": "events",
+  "since": "12",
+  "limit": 100
+}
+```
+
+### `run_wait`
+
+Requires `run_id`; `since` and `timeout_ms` are optional. Timeout ranges from 0 through 30000 milliseconds. Pass the returned cursor into the next wait.
+
+The wait reason is one of `events`, `terminal`, `review`, `stalled`, or `timeout`. A hosted runtime may return an immediate timeout with retry guidance. Client cancellation aborts the underlying wait.
+
+```json
+{
+  "run_id": "run_01JEXAMPLE",
+  "since": "12",
+  "timeout_ms": 30000
+}
+```
+
+## Targeted controls
+
+<Callout type="warning">
+  Read the current run immediately before a consequential control. Never substitute a provider name, URL, wildcard, or remembered ID for a target returned by the scoped control plane.
+</Callout>
+
+### `run_cancel`
+
+Requires `run_id`; add `agent_run_id` to stop only one exact active agent run. `reason` is optional and bounded. Omitting `agent_run_id` intentionally targets the whole run. The operation is state-idempotent but destructive, and remote stop confirmation may return warnings.
+
+### `agent_run_retry`
+
+Requires `run_id`, one exact terminal `agent_run_id`, and a stable `request_id`. It retries only that target and returns the replacement agent-run ID. Identical requests replay the stored result; ambiguous or stale IDs lead back to `run_get`.
+
+```json
+{
+  "run_id": "run_01JEXAMPLE",
+  "agent_run_id": "agent_run_01JEXAMPLE",
+  "request_id": "request_retry_01JEXAMPLE"
+}
+```
+
+### `agent_run_followup`
+
+Requires `run_id`, exact source `agent_run_id`, stable `request_id`, and a bounded `prompt`. Optional fields are `mode` (`follow-up-thread` or `fresh-runner`), exact `artifact_ids` owned by the run, and structured `instances` for a fresh runner.
+
+The operation is durably idempotent. Read needed artifacts before composing instructions and inspect the resulting run afterward.
+
+### `review_gate_resolve`
+
+Requires `run_id`, exact pending `review_gate_id`, and `decision` (`approve` or `cancel`); `reason` is optional. It resolves one gate, never every gate. Repeating the same decision is idempotent; a stale gate points back to current run details.
+
+```json
+{
+  "run_id": "run_01JEXAMPLE",
+  "review_gate_id": "review_gate_01JEXAMPLE",
+  "decision": "approve",
+  "reason": "The proposed target and runner count are correct."
+}
+```
+
+## Resources
+
+Resources are scoped by the opaque `scope_id` returned from `context_get`.
+
+| Template | Content |
+| --- | --- |
+| `nax://scopes/{scope_id}/context` | Authenticated context and catalog. |
+| `nax://scopes/{scope_id}/workflows/{workflow_id}` | Workflow definition and graph. |
+| `nax://scopes/{scope_id}/runs/{run_id}` | Durable run summary. |
+| `nax://scopes/{scope_id}/runs/{run_id}/details` | Details index and artifact links. |
+| `nax://scopes/{scope_id}/runs/{run_id}/events{?since}` | Bounded event page from an opaque cursor. |
+| `nax://scopes/{scope_id}/runs/{run_id}/artifacts/{artifact_id}` | One exact text or binary artifact owned by the run. |
+
+Cross-scope IDs and artifacts that are not members of the named run are rejected. Text is size-bounded and secret-redacted. Binary artifacts are returned with their MIME type and blob encoding.
+
+## Prompts
+
+| Prompt | Arguments | Purpose |
+| --- | --- | --- |
+| `run_remote_workflow` | optional `project_ref`, `workflow_id`, and `objective` | Guides scoped context discovery, planning, approval-aware start, waiting, and result inspection. |
+| `follow_up_on_run` | optional `project_ref`, required `run_id`, optional `agent_run_id` and `instructions` | Guides scoped result targeting, artifact selection, idempotent follow-up, and verification. |
+
+Prompts provide a safe operating procedure; they do not bypass tool schemas or approval decisions.
+
+## Limits and safety
+
+- Tool structured output is capped at 256 KiB; oversized data collapses to linked resource URIs.
+- Concise text is capped at 2 KiB, and individual strings at 64 KiB.
+- Workflow context is capped at 64 KiB; agent prompts at 80 KiB; reasons at 4 KiB.
+- Lists return at most 100 entries, event pages at most 200, and next actions at most eight.
+- Local artifact reads are capped and constrained to exact run-owned regular files; path and symlink escapes are rejected.
+- Common credential shapes and secret-keyed fields are redacted from results, resources, prompts, errors, and audit records.
+- Local MCP audit events are stored privately under `.nax/audit` without prompt bodies, tokens, or arbitrary argument values.
+
+## Project routing and isolation
+
+The stdio process has one default project hint but is not permanently bound to it. `context_get` resolves an exact `project_ref` into an opaque scope, and every operation routes independently by `scope_id`. The router never changes cwd or shared current-project state. Local scope resolution uses the private per-user registry of running dashboards; dashboard tokens and project paths are never returned as project candidates.
+
+One local dashboard must be running for each project being controlled. An absolute directory can still be resolved when its dashboard is absent, producing a targeted `nax dashboard --project-root ... --no-open` recovery command. Short aliases are discoverable only for running dashboards.
+
+The interface remains runtime-neutral: desktop can map `scope_id` to an application workspace, and hosted control planes can map it to an authenticated account/project authorization. Tools cannot override the selected Netlify site or authenticated actor.
+
+There are also no broadcast controls. `run_cancel`, retry, follow-up, and review resolution operate on one exact entity so an agent cannot accidentally fan a consequential action across projects or runs.
+
+## Opt-in real Agent Runner canary
+
+The real MCP canary is never part of `npm test` or ordinary CI. It requires a
+running dashboard and every explicit guard below before it can reach
+`run_start`:
+
+```sh
+export NAX_MCP_CANARY=1
+export NAX_MCP_CANARY_PROJECT_ROOT=/path/to/allowed-project
+export NAX_MCP_CANARY_REPOSITORY=owner/allowed-repository
+export NAX_MCP_CANARY_SITE_ID=allowed-site-id
+export NAX_MCP_CANARY_ACCOUNT_SLUG=allowed-account
+export NAX_MCP_CANARY_BRANCH=canary/mcp
+export NAX_MCP_CANARY_AGENT=codex
+export NAX_MCP_CANARY_REQUEST_ID=request_unique_canary_id
+export NAX_MCP_CANARY_MAX_RUNNERS=1
+export NAX_MCP_CANARY_MAX_CREDITS=25
+export NAX_MCP_CANARY_TIMEOUT_MS=900000
+npm run canary:mcp-agent
+```
+
+The script verifies `context_get`, prepares a one-agent plan, confirms its
+human-readable site/branch/runner summary, starts it, replays the same start,
+waits for a terminal result, reads details and one artifact resource, and
+checks reported credits against the supplied ceiling. The runner count is a
+hard pre-start gate. The credit ceiling is a required post-run assertion
+because the Agent Runner API does not expose a per-request credit-cap field.
+
+Diagnostics contain timings, state, cursors, counts, and opaque IDs—not the
+prompt, authentication tokens, or artifact content. If a create response is
+ambiguous, preserve the same `plan_id` and `request_id`; changing the request
+ID can authorize another run.
+
+## See also
+
+- [Use NAX with Claude](/guides/use-nax-with-claude) for setup and the recommended flow.
+- [Security policies](/reference/security-policies) for local and remote trust boundaries.
+- [Troubleshooting](/troubleshooting#mcp-control-plane) for error recovery.

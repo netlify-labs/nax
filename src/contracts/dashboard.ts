@@ -1,4 +1,5 @@
 import type { AgentInstanceDescriptor, Workflow, WorkflowGraph } from './workflow'
+import type { ControlPlaneAgentCatalog, ControlPlaneUsageTotals } from './control-plane'
 
 export type DashboardDeploymentMode = 'local' | 'desktop' | 'web'
 
@@ -8,6 +9,8 @@ export type DashboardCapabilities = {
   canReadRuns: boolean
   canReadRunDetails: boolean
   canReadEventsJson: boolean
+  canPlanRuns: boolean
+  canReadRunArtifacts: boolean
   canStartRuns: boolean
   canDryRun: boolean
   canCancelRuns: boolean
@@ -18,21 +21,7 @@ export type DashboardCapabilities = {
   canServeStaticAssets: boolean
   requiresAuth: boolean
   agentConfiguration: {
-    catalog: {
-      provenance: { source: string, commit: string, syncedAt: string }
-      providers: Array<{
-        id: string
-        label: string
-        defaultModel: string
-        models: Array<{
-          id: string
-          label: string
-          efforts: Array<{ id: string, label: string, wireValue?: string }>
-          aliasFor?: string
-          upstreamDefaultEffort?: string
-        }>
-      }>
-    }
+    catalog: ControlPlaneAgentCatalog
     transports: Record<string, { models: boolean, efforts: boolean }>
   }
 }
@@ -69,6 +58,8 @@ export type DashboardNetlifyContext = {
 
 export type HealthResponse = {
   ok: boolean
+  version?: string
+  projectId?: string
   projectRoot?: string
   tokenRequiredForMutations: boolean
   tokenRequiredForSensitiveReads: boolean
@@ -119,12 +110,7 @@ export type DryRunResponse = {
   dryRun: DryRunResult
 }
 
-export type UsageTotals = {
-  totalTokens?: number
-  totalCreditsCost?: number
-  stepsCount?: number
-  creditLimitExceeded?: boolean
-}
+export type UsageTotals = ControlPlaneUsageTotals
 
 export type DashboardRun = {
   id: string

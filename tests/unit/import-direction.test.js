@@ -81,3 +81,30 @@ test('import direction checker rejects SDK imports from nax application source',
   assert.notEqual(result.status, 0)
   assert.match(result.stderr, /sdk-imports-nax-application/)
 })
+
+test('import direction checker keeps the control plane runtime-neutral', () => {
+  const root = fixtureRoot({
+    'src/control-plane/service.js': "const fs = require('node:fs/promises')\nconst dashboard = require('../dashboard/server')\nmodule.exports = { fs, dashboard }\n",
+    'src/dashboard/server.js': 'module.exports = {}\n',
+  })
+
+  const result = runChecker(root)
+
+  assert.notEqual(result.status, 0)
+  assert.match(result.stderr, /control-plane-node-runtime-import/)
+  assert.match(result.stderr, /control-plane-runtime-import/)
+})
+
+test('import direction checker prevents MCP tools from bypassing the client facade', () => {
+  const root = fixtureRoot({
+    'src/mcp/tools/runs.js': "const childProcess = require('node:child_process')\nconst service = require('../../control-plane/service')\nconst dashboard = require('../../dashboard/server')\nmodule.exports = { childProcess, service, dashboard }\n",
+    'src/control-plane/service.js': 'module.exports = {}\n',
+    'src/dashboard/server.js': 'module.exports = {}\n',
+  })
+
+  const result = runChecker(root)
+
+  assert.notEqual(result.status, 0)
+  assert.match(result.stderr, /mcp-tool-node-runtime-import/)
+  assert.match(result.stderr, /mcp-tool-bypasses-client/)
+})

@@ -14,6 +14,7 @@ const NODE_BUILTINS = new Set([
   'crypto',
   'events',
   'fs',
+  'fs/promises',
   'http',
   'https',
   'module',
@@ -23,6 +24,7 @@ const NODE_BUILTINS = new Set([
   'node:crypto',
   'node:events',
   'node:fs',
+  'node:fs/promises',
   'node:http',
   'node:https',
   'node:module',
@@ -216,6 +218,69 @@ function checkCore(filePath, imports, findings) {
 }
 
 /**
+ * The application control plane must remain portable to desktop and hosted
+ * runtimes. Runtime-specific implementations belong behind its ports.
+ * @param {string} filePath
+ * @param {ImportReference[]} imports
+ * @param {BoundaryFinding[]} findings
+ */
+function checkControlPlane(filePath, imports, findings) {
+  if (!isUnder(filePath, path.join(PROJECT_ROOT, 'src', 'control-plane'))) return
+  for (const ref of imports) {
+    if (NODE_BUILTINS.has(ref.specifier)) {
+      addFinding(findings, filePath, 'control-plane-node-runtime-import', ref.specifier)
+    }
+    if (
+      ref.specifier === 'electron'
+      || ref.specifier.startsWith('@tauri-apps/')
+      || importsPath(ref, [
+        'src/cli',
+        'src/dashboard',
+        'src/integrations',
+        'src/mcp',
+        'src/storage/local',
+      ])
+    ) {
+      addFinding(findings, filePath, 'control-plane-runtime-import', ref.resolvedPath)
+    }
+  }
+}
+
+/**
+ * Tool handlers use the MCP client facade and shared protocol helpers. They
+ * must not bypass the application boundary to reach a concrete runtime.
+ * @param {string} filePath
+ * @param {ImportReference[]} imports
+ * @param {BoundaryFinding[]} findings
+ */
+function checkMcpTool(filePath, imports, findings) {
+  const toolFile = isUnder(filePath, path.join(PROJECT_ROOT, 'src', 'mcp', 'tools'))
+  const protocolFile = [
+    path.join(PROJECT_ROOT, 'src', 'mcp', 'resources.js'),
+    path.join(PROJECT_ROOT, 'src', 'mcp', 'prompts.js'),
+  ].includes(path.resolve(filePath))
+  if (!toolFile && !protocolFile) return
+  for (const ref of imports) {
+    if (NODE_BUILTINS.has(ref.specifier)) {
+      addFinding(findings, filePath, 'mcp-tool-node-runtime-import', ref.specifier)
+    }
+    if (
+      ref.specifier === 'electron'
+      || ref.specifier.startsWith('@tauri-apps/')
+      || importsPath(ref, [
+        'src/cli',
+        'src/control-plane',
+        'src/dashboard',
+        'src/integrations',
+        'src/storage',
+      ])
+    ) {
+      addFinding(findings, filePath, 'mcp-tool-bypasses-client', ref.resolvedPath)
+    }
+  }
+}
+
+/**
  * The independently-published SDK may use platform/runtime dependencies, but
  * it must never reach back into nax application source.
  * @param {string} filePath
@@ -277,6 +342,8 @@ for (const filePath of listSourceFiles(path.join(PROJECT_ROOT, 'src'))) {
   checkDashboardApi(filePath, imports, findings)
   checkDashboardWeb(filePath, imports, findings)
   checkCore(filePath, imports, findings)
+  checkControlPlane(filePath, imports, findings)
+  checkMcpTool(filePath, imports, findings)
 }
 
 for (const filePath of listSourceFiles(PACKAGES_ROOT)) {

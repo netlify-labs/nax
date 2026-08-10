@@ -15,11 +15,13 @@
   },
   "include": [
     "src/**/*.js",
+    "src/**/*.ts",
     "tests/**/*.js",
     "tests/**/*.ts"
   ],
   "exclude": [
     "src/dashboard/web/dist",
+    "src/dashboard/web/src",
     "node_modules"
   ]
 }

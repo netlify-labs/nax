@@ -118,6 +118,27 @@ nax dashboard --no-open --no-tail
 Dashboard runs stream child workflow output to the terminal by default. Pass
 `--no-tail` to keep the dashboard terminal quiet.
 
+## `nax mcp`
+
+```sh
+nax mcp
+nax mcp setup claude --scope <project|local|user> [--dry-run]
+nax mcp doctor
+```
+
+The bare command serves the multi-project NAX control plane over stdio and is
+normally launched by an MCP client. `--project-root <path>` changes only the
+default project hint; individual calls can route by `project_ref` and
+`scope_id`. `setup claude` previews and writes the portable, path-free Claude
+Code entry while preserving unrelated servers. Project scope provides a
+reviewable `.mcp.json`; local scope keeps the entry out of the repository;
+user scope creates one entry shared across Claude projects.
+
+`doctor` is read-only. It checks the executable, package, MCP SDK, Claude
+configuration, project identity, private dashboard registry, health and auth,
+version, selected Netlify target, capabilities, and `context_get`. It never
+plans or starts a remote run.
+
 ## `nax admin`
 
 ```sh
@@ -139,3 +160,4 @@ Outside Agent Runner, `nax ci` exits successfully without running the command. I
 - [Run workflows](/guides/run-workflows) for task-oriented examples.
 - [Workflow file reference](/reference/workflow-files) for `flow.*` files.
 - [Configuration reference](/reference/configuration) for environment variables.
+- [MCP reference](/reference/mcp) for tools, resources, prompts, and safety behavior.

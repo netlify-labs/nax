@@ -11,6 +11,8 @@ const { localDashboardCapabilities } = require('../../src/dashboard/api/capabili
 const { buildRunDetails } = require('../../src/dashboard/shared/run-details')
 const { appendFollowupRunsToWorkflow } = require('../../src/workflows/followups/persistence')
 const { appendEventLog } = require('../../src/workflows/events/runner-event-log')
+const { readDashboardInstance } = require('../../src/runtime/local/mcp-instance-registry')
+const { controlPlaneAgentRunId } = require('../../src/control-plane/entity-ids')
 
 /** @param {string} url @param {{ token?: string, cookie?: string, headers?: Record<string, string> }} [options] */
 function requestJson(url, { token, cookie, headers = {} } = {}) {
@@ -325,7 +327,7 @@ test('dashboard server exposes health, workflow list, and graph routes', async (
     assert.equal(Object.hasOwn(health.payload, 'projectRoot'), false)
     assert.equal(Object.hasOwn(health.payload, 'branches'), false)
     assert.equal(health.payload.tokenRequiredForSensitiveReads, true)
-    assert.deepEqual(health.payload.capabilities, localDashboardCapabilities())
+    assert.deepEqual(health.payload.capabilities, localDashboardCapabilities({ canPlanRuns: true }))
 
     const workflows = await requestJson(`${base}/api/workflows`)
     assert.equal(workflows.statusCode, 401)
@@ -422,6 +424,25 @@ test('dashboard server startup url includes a removable session token', async ()
   }
 })
 
+test('dashboard advertisement publishes authenticated project identity and cleans up instance-safely', async () => {
+  const projectRoot = tmpRoot()
+  const registry = { tempDir: tmpRoot(), userId: 'test-user', env: {} }
+  const server = await startDashboardServer({ projectRoot, advertiseMcp: true, mcpRegistry: registry })
+  const record = readDashboardInstance(projectRoot, registry)
+  try {
+    assert.equal(record?.instanceId, server.mcpInstanceId)
+    assert.equal(record?.projectId, server.projectId)
+    assert.equal(record?.origin, `http://127.0.0.1:${server.port}`)
+    const health = await requestJson(`${record?.origin}/api/health`, { token: server.token })
+    assert.equal(health.statusCode, 200)
+    assert.equal(health.payload.projectId, server.projectId)
+    assert.equal(health.payload.version, record?.version)
+  } finally {
+    await server.close()
+  }
+  assert.equal(readDashboardInstance(projectRoot, registry), null)
+})
+
 test('dashboard server startup url can deep link to run details', async () => {
   const server = await startDashboardServer({ projectRoot: process.cwd(), initialPath: '/runs/run-1/details' })
   try {
@@ -479,6 +500,90 @@ test('dashboard server returns structured 404 for unknown workflows', async () =
     assert.equal(response.statusCode, 404)
     assert.equal(response.payload.error.code, 'not_found')
     assert.match(response.payload.error.message, /Unknown flow "nope"/)
+  } finally {
+    await server.close()
+  }
+})
+
+test('dashboard server plans and idempotently starts an immutable MCP run through application APIs', async () => {
+  const projectRoot = tmpRoot()
+  writeProjectFlow(projectRoot, 'control-plane-flow', { title: 'Control Plane Flow' })
+  let starts = 0
+  const server = await startDashboardServer({
+    projectRoot,
+    netlifyAccess: {
+      ok: true,
+      code: 'ok',
+      message: 'Accessible.',
+      account: { email: 'test@example.com' },
+      site: { id: 'site_test', name: 'test-site', accountSlug: 'team-test' },
+    },
+    netlifyContext: {
+      account: { email: 'test@example.com' },
+      linkedSites: [],
+      target: {
+        siteId: 'site_test',
+        name: 'test-site',
+        adminUrl: '',
+        source: 'test',
+        configSource: '',
+        filter: '',
+        accessible: true,
+        accessCode: 'ok',
+        reason: 'Test target.',
+      },
+      targetError: '',
+    },
+    controlPlaneIdentity: {
+      scope: { scopeId: 'scope_test', projectId: 'project_test' },
+      actor: { actorId: 'actor_test', kind: 'local-session', authenticated: true },
+    },
+    resolveControlPlaneGitTarget: ({ options }) => ({
+      branch: String(options.branch || 'main'),
+      ref: `origin/${String(options.branch || 'main')}`,
+      sha: '0123456789abcdef0123456789abcdef01234567',
+      sourceType: 'explicit-branch',
+      verified: true,
+      caveats: [],
+    }),
+    workflowExecutionBackend: {
+      async startPlan(plan) {
+        starts += 1
+        return { run: { runId: 'run_control_plane', workflowId: plan.workflowId, status: 'running', source: 'mcp' }, accepted: true, replayed: false }
+      },
+      async reconcilePlan(plan) {
+        return plan.runId
+          ? { run: { runId: plan.runId, workflowId: plan.workflowId, status: 'running', source: 'mcp' }, accepted: false, replayed: true }
+          : null
+      },
+    },
+  })
+  try {
+    const base = `http://127.0.0.1:${server.port}`
+    const planned = await postJson(`${base}/api/run-plans/workflows/control-plane-flow`, server.token, {
+      branch: 'main',
+      instances: [{ agent: 'codex' }],
+    })
+    assert.equal(planned.statusCode, 201, planned.payload?.error?.message)
+    assert.equal(planned.payload.plan.workflowId, 'control-plane-flow')
+    assert.equal(planned.payload.plan.target.siteId, 'site_test')
+    assert.equal(planned.payload.plan.target.accountSlug, 'team-test')
+    assert.equal(planned.payload.plan.expectedAgentRuns, 1)
+
+    const planId = planned.payload.plan.planId
+    const read = await requestJson(`${base}/api/run-plans/${encodeURIComponent(planId)}`, { token: server.token })
+    assert.equal(read.statusCode, 200)
+    assert.equal(read.payload.plan.planId, planId)
+    assert.equal(Object.hasOwn(read.payload.plan, 'normalizedInput'), false)
+
+    const first = await postJson(`${base}/api/run-plans/${encodeURIComponent(planId)}/start`, server.token, { requestId: 'request_test' })
+    const replay = await postJson(`${base}/api/run-plans/${encodeURIComponent(planId)}/start`, server.token, { requestId: 'request_test' })
+    assert.equal(first.statusCode, 202, first.payload?.error?.message)
+    assert.equal(replay.statusCode, 202, replay.payload?.error?.message)
+    assert.equal(first.payload.run.runId, 'run_control_plane')
+    assert.equal(replay.payload.run.runId, 'run_control_plane')
+    assert.equal(replay.payload.replayed, true)
+    assert.equal(starts, 1)
   } finally {
     await server.close()
   }
@@ -1288,6 +1393,109 @@ test('dashboard follow-up endpoint validates auth, prompt, artifact IDs, and run
     assert.equal(invalidArtifact.payload.error.code, 'unknown_artifact')
   } finally {
     await server.close()
+  }
+})
+
+test('dashboard persists MCP follow-up idempotency across process restarts', async () => {
+  const projectRoot = tmpRoot()
+  const { runId } = writeFollowupRunFixture(projectRoot)
+  const agentRunId = controlPlaneAgentRunId(runId, 'review', {
+    agent: 'codex', runnerId: 'runner-1', sessionId: 'session-1',
+  }, 0)
+  const request = {
+    prompt: 'Verify the proposed fix.',
+    mode: 'follow-up-thread',
+    targetId: 'agent-result:review:runner-1:session-1:codex',
+    agents: ['codex'],
+    requestId: 'request_followup_durable',
+    agentRunId,
+    artifactIds: [],
+    instances: [{ agent: 'codex' }],
+  }
+  let submissions = 0
+  const options = {
+    projectRoot,
+    followupSubmitRun: async ({ run }) => {
+      submissions += 1
+      return { ...run, status: 'submitted', runnerId: run.existingRunnerId || 'runner-new', sessionId: 'session-followup' }
+    },
+  }
+
+  const firstServer = await startDashboardServer(options)
+  let first
+  try {
+    first = await postJson(`http://127.0.0.1:${firstServer.port}/api/runs/${runId}/followups`, firstServer.token, request)
+    assert.equal(first.statusCode, 202, first.payload?.error?.message)
+    assert.equal(first.payload.followup.replayed, false)
+    assert.equal(submissions, 1)
+  } finally {
+    await firstServer.close()
+  }
+
+  const restartedServer = await startDashboardServer(options)
+  try {
+    const replay = await postJson(`http://127.0.0.1:${restartedServer.port}/api/runs/${runId}/followups`, restartedServer.token, request)
+    assert.equal(replay.statusCode, 202, replay.payload?.error?.message)
+    assert.equal(replay.payload.followup.replayed, true)
+    assert.deepEqual(replay.payload.followup.submissions, first.payload.followup.submissions)
+    assert.equal(submissions, 1)
+
+    const conflict = await postJson(`http://127.0.0.1:${restartedServer.port}/api/runs/${runId}/followups`, restartedServer.token, { ...request, prompt: 'Changed intent.' })
+    assert.equal(conflict.statusCode, 409)
+    assert.equal(conflict.payload.error.code, 'idempotency_conflict')
+    assert.equal(submissions, 1)
+  } finally {
+    await restartedServer.close()
+  }
+})
+
+test('dashboard persists MCP retry idempotency across target replacement and restart', async () => {
+  const projectRoot = tmpRoot()
+  const { runId, dir } = writeFollowupRunFixture(projectRoot, 'fixture-retry-run')
+  const workflowPath = path.join(dir, 'workflow.json')
+  const workflow = JSON.parse(fs.readFileSync(workflowPath, 'utf8'))
+  workflow.status = 'running'
+  workflow.steps[0].status = 'running'
+  workflow.steps[0].runs[0] = {
+    ...workflow.steps[0].runs[0],
+    status: 'failed',
+    promptText: 'Review this repository.',
+    resultText: 'Previous failure.',
+  }
+  fs.writeFileSync(workflowPath, JSON.stringify(workflow, null, 2))
+  const agentRunId = controlPlaneAgentRunId(runId, 'review', workflow.steps[0].runs[0], 0)
+  const request = { requestId: 'request_retry_durable', agentRunId }
+  let submissions = 0
+  const options = {
+    projectRoot,
+    env: { ...process.env, NETLIFY_SITE_ID: 'fixture-site-id' },
+    retrySubmitRun: async ({ run }) => {
+      submissions += 1
+      return { ...run, status: 'submitted', runnerId: 'runner-replacement', sessionId: 'session-replacement' }
+    },
+  }
+
+  const firstServer = await startDashboardServer(options)
+  let first
+  try {
+    first = await postJson(`http://127.0.0.1:${firstServer.port}/api/runs/${runId}/retry`, firstServer.token, request)
+    assert.equal(first.statusCode, 202, first.payload?.error?.message)
+    assert.equal(first.payload.replayed, false)
+    assert.equal(first.payload.runnerId, 'runner-replacement')
+    assert.equal(submissions, 1)
+  } finally {
+    await firstServer.close()
+  }
+
+  const restartedServer = await startDashboardServer(options)
+  try {
+    const replay = await postJson(`http://127.0.0.1:${restartedServer.port}/api/runs/${runId}/retry`, restartedServer.token, request)
+    assert.equal(replay.statusCode, 202, replay.payload?.error?.message)
+    assert.equal(replay.payload.replayed, true)
+    assert.equal(replay.payload.runnerId, first.payload.runnerId)
+    assert.equal(submissions, 1)
+  } finally {
+    await restartedServer.close()
   }
 })
 

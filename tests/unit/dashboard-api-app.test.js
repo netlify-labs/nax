@@ -30,6 +30,9 @@ function fakeApi(overrides = {}) {
       getRun: (id) => (id === 'run-1' ? { runId: id, flowId: 'review' } : null),
       getRunGraph: async (id) => (id === 'run-1' ? { run: { runId: id }, workflow: { id: 'review' }, graph: { nodes: [], edges: [] } } : null),
       getRunDetails: async (id) => (id === 'run-1' ? { run: { runId: id }, details: { sections: [] } } : null),
+      getRunArtifact: async (id, artifactId) => (id === 'run-1' && artifactId === 'workflow-summary:summary.md'
+        ? { runId: id, artifactId, contentType: 'text/markdown', sizeBytes: 9, encoding: 'utf8', content: '# Result\n' }
+        : null),
       ...overrides.runStore,
     },
     eventStore: {
@@ -41,6 +44,7 @@ function fakeApi(overrides = {}) {
       getActiveRun: (id) => (id === 'active-1' ? { id, status: 'running' } : null),
       ...overrides.liveRuns,
     },
+    runPlans: overrides.runPlans,
   })
 }
 
@@ -66,6 +70,62 @@ test('Hono dashboard API requires auth for sensitive read routes', async () => {
   assert.equal((await json(response)).error.code, 'unauthorized')
 })
 
+test('Hono dashboard API exposes authenticated application run-plan routes', async () => {
+  const calls = []
+  const plan = {
+    planId: 'plan-1',
+    kind: 'workflow',
+    status: 'prepared',
+    scope: { scopeId: 'scope-1', projectId: 'project-1' },
+    target: { siteId: 'site-1', siteName: 'Site', branch: 'main', verified: true, caveats: [] },
+    expiresAt: '2026-08-08T12:10:00.000Z',
+    workflowId: 'review',
+    steps: [],
+    instances: [],
+    expectedAgentRuns: 0,
+    warnings: [],
+    summary: 'Prepared.',
+  }
+  const app = fakeApi({
+    runtime: { capabilities: localDashboardCapabilities({ canPlanRuns: true }) },
+    runPlans: {
+      createWorkflowPlan: async (workflowId, body) => {
+        calls.push(['workflow', workflowId, body])
+        return plan
+      },
+      createAgentRunPlan: async (body) => {
+        calls.push(['agent', body])
+        return { ...plan, kind: 'agent-run' }
+      },
+      getPlan: async (planId) => {
+        calls.push(['get', planId])
+        return plan
+      },
+      startPlan: async (planId, body) => {
+        calls.push(['start', planId, body])
+        return { run: { runId: 'run-1', status: 'running' }, accepted: true, replayed: false }
+      },
+    },
+  })
+  const headers = { 'x-nax-token': 'token-1', 'content-type': 'application/json' }
+
+  assert.equal((await app.request('/api/run-plans/workflows/review', { method: 'POST', body: JSON.stringify({ branch: 'main' }) })).status, 401)
+  const workflow = await app.request('/api/run-plans/workflows/review', { method: 'POST', headers, body: JSON.stringify({ branch: 'main' }) })
+  assert.equal(workflow.status, 201)
+  assert.equal((await json(workflow)).plan.planId, 'plan-1')
+  assert.equal((await json(await app.request('/api/run-plans/agents', { method: 'POST', headers, body: JSON.stringify({ prompt: 'Audit.' }) }))).plan.kind, 'agent-run')
+  assert.equal((await json(await app.request('/api/run-plans/plan-1', { headers }))).plan.planId, 'plan-1')
+  const started = await app.request('/api/run-plans/plan-1/start', { method: 'POST', headers, body: JSON.stringify({ requestId: 'request-1' }) })
+  assert.equal(started.status, 202)
+  assert.equal((await json(started)).run.runId, 'run-1')
+  assert.deepEqual(calls, [
+    ['workflow', 'review', { branch: 'main' }],
+    ['agent', { prompt: 'Audit.' }],
+    ['get', 'plan-1'],
+    ['start', 'plan-1', { requestId: 'request-1' }],
+  ])
+})
+
 test('Hono dashboard API serves read-only workflow, run, and event routes', async () => {
   const app = fakeApi()
   const headers = { 'x-nax-token': 'token-1' }
@@ -87,6 +147,7 @@ test('Hono dashboard API serves read-only workflow, run, and event routes', asyn
   assert.equal((await json(await app.request('/api/runs/run-1', { headers }))).run.runId, 'run-1')
   assert.deepEqual((await json(await app.request('/api/runs/run-1/graph', { headers }))).graph, { nodes: [], edges: [] })
   assert.deepEqual((await json(await app.request('/api/runs/run-1/details', { headers }))).details, { sections: [] })
+  assert.equal((await json(await app.request('/api/runs/run-1/artifacts/workflow-summary%3Asummary.md', { headers }))).artifact.content, '# Result\n')
   assert.equal((await json(await app.request('/api/runs/run-1/events.json?since=1', { headers }))).events[0].type, 'stdout')
 })
 

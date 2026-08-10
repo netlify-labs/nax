@@ -53,6 +53,9 @@ function cancelReviewGate({ runState, body = {} }) {
  *   netlifyFilter: string,
  *   submitRun?: import('../../workflows/followups/runner').HandoffSubmitRun,
  *   linkSubmittedRun: (input: { siteName: string }) => (run?: Record<string, unknown>) => Record<string, unknown>,
+ *   source?: Record<string, unknown>,
+ *   target?: import('../../types').TargetLike | null,
+ *   now?: () => Date,
  * }} SubmitAdHocAgentRunInput
  */
 
@@ -66,6 +69,9 @@ async function submitAdHocAgentRun({
   netlifyFilter,
   submitRun,
   linkSubmittedRun,
+  source = {},
+  target = null,
+  now = () => new Date(),
 }) {
   const prompt = stringValue(body.prompt).trim()
   if (!prompt) throw requestError(400, 'missing_prompt', 'Enter instructions before starting an agent run.')
@@ -93,7 +99,13 @@ async function submitAdHocAgentRun({
   }
 
   const branch = stringValue(body.branch).trim()
-  const sourceId = `agent-run-${Date.now().toString(36)}`
+  const sourceId = stringValue(source.id || `agent-run-${now().getTime().toString(36)}`)
+  const submissionSource = {
+    id: sourceId,
+    type: 'dashboard-ad-hoc',
+    mode: 'fresh-runner',
+    ...source,
+  }
   const submitted = await submitFreshAgentRunner({
     projectRoot,
     agent: configuration.agent,
@@ -106,15 +118,12 @@ async function submitAdHocAgentRun({
     env,
     submitRun,
     linkRun: linkSubmittedRun({ siteName }),
-    source: {
-      id: sourceId,
-      type: 'dashboard-ad-hoc',
-      mode: 'fresh-runner',
-    },
+    source: submissionSource,
     raw: {
       dashboardAdHoc: {
         id: sourceId,
       },
+      ...(source.controlPlane ? { controlPlane: source.controlPlane } : {}),
     },
   })
   const warnings = [...configuration.warnings, ...(submitted.warnings || [])]
@@ -122,15 +131,12 @@ async function submitAdHocAgentRun({
     projectRoot,
     runs: [submitted.run],
     promptText: prompt,
-    target: {
+    target: target || {
       branch,
       sourceType: 'dashboard-ad-hoc',
     },
-    source: {
-      id: sourceId,
-      type: 'dashboard-ad-hoc',
-      mode: 'fresh-runner',
-    },
+    source: submissionSource,
+    now: now(),
     title: `${titleCaseAgent(configuration.agent)} agent run`,
     stepTitle: `${titleCaseAgent(configuration.agent)} agent run`,
   })

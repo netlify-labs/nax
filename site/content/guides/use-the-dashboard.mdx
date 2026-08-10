@@ -45,6 +45,12 @@ nax dashboard --no-open --no-tail
 The dashboard streams child workflow output to its terminal by default. Use
 `--no-tail` when you want workflow activity to remain in the browser only.
 
+When started normally, the dashboard also advertises a private,
+project-scoped MCP control plane for `nax mcp`. The advertisement contains the
+ephemeral loopback address and per-process token with private filesystem
+permissions. Restarting the dashboard does not require an MCP configuration
+change because the stdio adapter rediscovers it before every operation.
+
 ## Surfaces
 
 | Surface | What it does |
@@ -127,3 +133,4 @@ with the resolved provider, model, and effort.
 - [Run workflows](/guides/run-workflows) for command-line equivalents.
 - [Configuration reference](/reference/configuration) for dashboard environment variables.
 - [Troubleshooting](/troubleshooting) for common dashboard failures.
+- [Use NAX with Claude](/guides/use-nax-with-claude) for MCP setup and remote workflow control.

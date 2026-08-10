@@ -21,6 +21,9 @@ nax init
 nax run
 ```
 
+To control NAX workflows from Claude Code, see the canonical
+[NAX MCP guide](https://netlify-agent-executor.netlify.app/guides/use-nax-with-claude).
+
 ---
 
 ## Demo

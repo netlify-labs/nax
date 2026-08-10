@@ -16,6 +16,7 @@ export default {
       'run-workflows': 'Run Workflows',
       'write-custom-workflows': 'Write Custom Workflows',
       'use-the-dashboard': 'Use the Dashboard',
+      'use-nax-with-claude': 'Use NAX With Claude',
       'run-nax-in-ci': 'Run NAX in CI',
       'agent-runner-sdk': 'Agent Runner SDK'
     }
@@ -24,6 +25,7 @@ export default {
     title: 'Reference',
     items: {
       commands: 'Commands',
+      mcp: 'MCP',
       'workflow-files': 'Workflow Files',
       'security-policies': 'Security Policies',
       configuration: 'Configuration'

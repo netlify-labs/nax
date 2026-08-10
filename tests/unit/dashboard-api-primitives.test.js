@@ -11,7 +11,7 @@ const {
 } = require('../../src/dashboard/api/auth')
 const { readJsonBody } = require('../../src/dashboard/api/request')
 const { securityHeaders } = require('../../src/dashboard/api/security')
-const { normalizeDashboardInstances } = require('../../src/dashboard/api/instances')
+const { normalizeDashboardInstances, publicInstances } = require('../../src/dashboard/api/instances')
 const { inferRunStateStatus, projectRunSnapshot, publicFlow, publicRunOptions, publicRunState } = require('../../src/dashboard/api/serializers')
 
 function requestWithBody(body) {
@@ -132,6 +132,25 @@ test('dashboard API serializers keep public workflow and run shapes', () => {
     step: '',
     fromStep: '',
   })
+})
+
+test('dashboard read serializers degrade a malformed durable lineup instead of throwing', () => {
+  assert.deepEqual(publicInstances(['claude', 'claude']), [])
+
+  const flow = publicFlow({
+    id: 'review',
+    steps: [{ id: 'one', agents: ['claude', 'claude'] }],
+  })
+  assert.deepEqual(flow.steps[0].instances, [])
+
+  const runState = {
+    runId: 'run-1',
+    options: { agents: ['claude', 'claude'], stepAgents: { one: ['claude', 'claude'] } },
+    steps: [],
+  }
+  const options = publicRunOptions(runState)
+  assert.deepEqual(options.agents, [])
+  assert.deepEqual(options.stepAgents, { one: [] })
 })
 
 test('dashboard agent-instance mutations reject provider arrays and resolve object descriptors', () => {

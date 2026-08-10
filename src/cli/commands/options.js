@@ -13,6 +13,7 @@
  *   flow?: string,
  *   force?: boolean,
  *   githubActions?: boolean,
+ *   mcpAdvertise?: boolean,
  *   netlifySiteId?: string,
  *   projectRoot?: string,
  *   provider?: string[],

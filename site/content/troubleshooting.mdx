@@ -103,8 +103,101 @@ The published package should include `src/dashboard/web/dist`; source checkouts 
   Remote model status is best effort. If dashboard pills stay on `submitted` or `waiting`, inspect `.nax/workflows/<run-id>/events.jsonl` for the raw event stream.
 </Callout>
 
+## MCP control plane
+
+Start with the read-only diagnostic:
+
+```sh
+nax mcp doctor
+```
+
+### `dashboard_not_running`
+
+Start the control plane in the project named by the error. Cross-project errors include the exact root:
+
+```sh
+nax dashboard --project-root '/workspace/gtm-services' --no-open
+```
+
+The MCP child discovers the new process and port on its next call. You do not
+need to rewrite `.mcp.json` or restart Claude.
+
+### `dashboard_unreachable` or `dashboard_timeout`
+
+The advertised process is alive but its loopback API did not answer. Stop and
+restart the dashboard, then retry the same read. Do not copy a token or port
+into MCP arguments.
+
+### `dashboard_auth_failed`
+
+The private registry token and dashboard process no longer agree. Restart the
+dashboard so both are replaced together. Registry files with symlink or broad
+permission problems are rejected rather than trusted.
+
+### `dashboard_version_mismatch`
+
+Claude's `nax mcp` child and the dashboard came from different NAX versions.
+Restart both from the same installed package. A running MCP process never
+silently talks to a mismatched dashboard.
+
+### `project_scope_mismatch` or `scope_forbidden`
+
+The supplied scope is unknown, stale, or did not match the selected dashboard.
+Call `context_get` with the intended absolute `project_ref`, verify the returned
+project and Netlify target, then copy its exact `scope_id` into the next call.
+Tools cannot override the selected site or actor.
+
+### `project_not_found` or `project_ambiguous`
+
+Use an exact absolute directory in `context_get.project_ref`. Short project,
+repository, and site aliases resolve only against currently running dashboards
+and are never fuzzy-selected. For an ambiguous alias, choose one returned
+`scope_id`. For a missing alias, start that project's dashboard and retry.
+
+### `no_token`, `bad_token`, `no_site`, or `no_access`
+
+These errors concern the selected Netlify target, not the private dashboard
+token:
+
+```sh
+netlify login
+netlify link
+nax mcp doctor
+```
+
+Confirm the exact site reported by `context_get` before planning again.
+
+### Agent, model, or capability errors
+
+Call `context_get` again and choose exact agent, model, and effort IDs from its
+catalog. If a capability is unavailable, follow its reason and use only tools
+marked available for the current runtime. Desktop and hosted runtimes are
+future-compatible but are not shipped yet.
+
+### `run_plan_expired`
+
+Create a fresh `workflow_plan` or `agent_run_plan`, review its target and runner
+count, then start the new plan. An expired plan cannot be extended at start
+time.
+
+### Duplicate, conflicting, or uncertain starts
+
+Retry an uncertain `run_start` with the same `plan_id` and `request_id`; NAX
+returns the original durable run. `idempotency_conflict` means that key was
+already used for different intent, so review the change and generate a new
+request ID. `duplicate_run` points to the existing run you should inspect or
+wait on.
+
+### Ambiguous or stale control targets
+
+Call `run_get` with `view: "details"` and copy one exact current
+`agent_run_id`, `review_gate_id`, or artifact ID. NAX intentionally rejects
+provider names, URLs, wildcards, and broadcast targets.
+
 ## See also
 
 - [Get started](/get-started) for first-run setup.
 - [Configuration reference](/reference/configuration) for environment variables.
 - [Artifacts](/concepts/artifacts) for recovery and handoff paths.
+- [Use NAX with Claude](/guides/use-nax-with-claude) for setup and safe operation.
+- [MCP reference](/reference/mcp) for the complete tool and resource surface.

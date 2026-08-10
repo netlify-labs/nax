@@ -566,7 +566,7 @@ test('dashboard adds an opencode instance and changes another instance provider 
     await page.getByRole('button', { name: 'Run', exact: true }).click()
     const runDialog = page.getByRole('dialog', { name: 'Run Do Next' })
     await expect(runDialog).toBeVisible()
-    await runDialog.getByRole('button', { name: 'Run', exact: true }).click()
+    await runDialog.getByRole('button', { name: /^Run \d+ agents? Do Next workflow$/ }).click()
 
     await expect.poll(() => requests.length).toBe(1)
     expect(requests[0].stepAgents.propose).toEqual(expect.arrayContaining([
@@ -777,7 +777,7 @@ test('dashboard builds bake-off and effort-sweep lineups with arena presets', as
 
     await page.getByRole('button', { name: 'Run', exact: true }).click()
     const runDialog = page.getByRole('dialog', { name: 'Run Do Next' })
-    await runDialog.getByRole('button', { name: 'Run', exact: true }).click()
+    await runDialog.getByRole('button', { name: /^Run \d+ agents? Do Next workflow$/ }).click()
     await expect.poll(() => requests.length).toBe(1)
     const instances = requests[0].stepAgents.propose
     const ids = instances.map((instance) => instance.id)
@@ -1164,6 +1164,7 @@ test('dashboard submits a follow-up from run details composer', async ({ page })
   const server = await startDashboardServer({
     projectRoot,
     initialWorkflow: 'review',
+    siteId: 'site-mock',
     siteName: 'netlify-agent-executor',
     followupSyncRunner: async () => ({ sessions: [] }),
     followupSubmitRun: async ({ run }) => {

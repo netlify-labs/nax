@@ -2845,6 +2845,28 @@ test('withSelectedStepAgents applies step-specific agent overrides', () => {
   assert.deepEqual(runnableSteps(configured.flow, {}).map((step) => step.id), ['review'])
 })
 
+test('control-plane selection preserves structured lineups and excludes every unplanned step', () => {
+  const flow = {
+    id: 'review',
+    defaults: { agents: ['claude', 'codex'] },
+    steps: [
+      { id: 'review', agents: ['claude', 'codex'] },
+      { id: 'cross-review', agents: [], submit: 'follow-up', input: [{ step: 'review', results: 'all' }] },
+      { id: 'summarize', agents: ['codex'] },
+    ],
+  }
+  const options = {
+    controlPlaneLineups: {
+      review: [{ agent: 'claude', model: 'claude-opus-5', effort: 'high', label: 'deep' }],
+    },
+    controlPlaneSelectedSteps: ['review'],
+  }
+  const configured = withSelectedStepAgents(flow, options)
+
+  assert.deepEqual(configured.flow.steps[0].lineup, options.controlPlaneLineups.review)
+  assert.deepEqual(runnableSteps(configured.flow, options).map((step) => step.id), ['review'])
+})
+
 test('workflowPickerHint uses compact bundled flow descriptions without source labels', () => {
   assert.equal(workflowPickerHint({
     id: 'performance-audit',

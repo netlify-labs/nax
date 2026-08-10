@@ -8,12 +8,14 @@ const { localDashboardCapabilities } = require('./capabilities')
 /**
  * @typedef {{
  *   mode?: 'local-node' | 'netlify-function',
- *   deploymentMode?: 'local' | 'desktop' | 'web',
+ *   deploymentMode?: import('../../contracts').DashboardDeploymentMode,
+ *   version?: string,
+ *   projectId?: string,
  *   projectRoot?: string,
  *   capabilities?: Partial<import('../../contracts').DashboardCapabilities>,
  *   healthCapabilities?: Partial<import('../../contracts').DashboardCapabilities>,
- *   netlifyAccess?: Record<string, unknown>,
- *   netlifyContext?: Record<string, unknown>,
+ *   netlifyAccess?: import('../../contracts').NetlifyAccessVerdict,
+ *   netlifyContext?: import('../../contracts').DashboardNetlifyContext,
  *   branches?: string[],
  *   currentBranch?: string,
  * }} DashboardApiRuntime
@@ -26,6 +28,7 @@ const { localDashboardCapabilities } = require('./capabilities')
  *   eventStore?: import('../../storage/interfaces').EventStore,
  *   liveRuns?: import('../../storage/interfaces').LiveRuns,
  *   mutations?: import('../../storage/interfaces').DashboardMutations,
+ *   runPlans?: import('../../storage/interfaces').DashboardRunPlanService,
  * }} CreateDashboardApiOptions
  */
 
@@ -235,6 +238,10 @@ function statusCodeForError(error) {
   const status = error && typeof error === 'object' && 'statusCode' in error && typeof error.statusCode === 'number'
     ? error.statusCode
     : 500
+  if (status === 500) {
+    const code = codeForError(error)
+    if (code === 'idempotency_conflict' || code === 'mutation_in_progress') return 409
+  }
   return contentfulStatusCode(status)
 }
 
@@ -261,14 +268,22 @@ function createDashboardApi({
   eventStore = {},
   liveRuns = {},
   mutations = {},
+  runPlans = {},
 } = {}) {
   const app = new Hono()
+  /** @type {import('../../contracts').DashboardCapabilities} */
   const capabilities = {
     ...localDashboardCapabilities(),
     ...(runtime.capabilities || {}),
   }
-  const healthCapabilities = runtime.healthCapabilities || capabilities
-  const deploymentMode = String(runtime.deploymentMode || capabilities.deploymentMode || 'local')
+  /** @type {import('../../contracts').DashboardCapabilities} */
+  const healthCapabilities = {
+    ...capabilities,
+    ...(runtime.healthCapabilities || {}),
+  }
+  const deploymentMode = /** @type {import('../../contracts').DashboardDeploymentMode} */ (
+    String(runtime.deploymentMode || capabilities.deploymentMode || 'local')
+  )
   const sessionCookieOptions = {
     secure: deploymentMode === 'web' || runtime.mode === 'netlify-function',
   }
@@ -282,7 +297,15 @@ function createDashboardApi({
 
   app.onError((error, c) => {
     const statusCode = statusCodeForError(error)
-    return json(c, errorPayload(statusCode, codeForError(error), messageForError(error)), statusCode)
+    const metadata = error && typeof error === 'object'
+      ? {
+          ...('recoverable' in error && typeof error.recoverable === 'boolean' ? { recoverable: error.recoverable } : {}),
+          ...('details' in error && error.details && typeof error.details === 'object' && !Array.isArray(error.details)
+            ? { details: /** @type {Record<string, unknown>} */ (error.details) }
+            : {}),
+        }
+      : {}
+    return json(c, errorPayload(statusCode, codeForError(error), messageForError(error), metadata), statusCode)
   })
 
   app.notFound((c) => json(c, errorPayload(404, 'not_found', 'Not found'), 404))
@@ -290,8 +313,10 @@ function createDashboardApi({
   app.get('/api/health', (c) => {
     const provided = tokenFromContext(c)
     const headers = sessionHeaders(c)
+    /** @type {import('../../contracts').HealthResponse} */
     const health = {
       ok: true,
+      ...(runtime.version ? { version: String(runtime.version) } : {}),
       tokenRequiredForMutations: true,
       tokenRequiredForSensitiveReads: true,
       capabilities: {
@@ -300,6 +325,7 @@ function createDashboardApi({
       },
     }
     if (timingSafeTokenEqual(provided, token)) {
+      if (runtime.projectId) health.projectId = runtime.projectId
       if (runtime.projectRoot) health.projectRoot = runtime.projectRoot
       if (runtime.netlifyAccess) health.netlifyAccess = runtime.netlifyAccess
       if (runtime.netlifyContext) health.netlifyContext = runtime.netlifyContext
@@ -412,6 +438,15 @@ function createDashboardApi({
     return json(c, details, 200, sessionHeaders(c))
   })
 
+  app.get('/api/runs/:id/artifacts/:artifactId', async (c) => {
+    assertHonoToken(c, token)
+    requireCapability(capabilities, 'canReadRunArtifacts')
+    if (typeof runStore.getRunArtifact !== 'function') throw requestError(501, 'hosted_storage_unavailable', 'Artifact storage is not available in this runtime.')
+    const artifact = await runStore.getRunArtifact(c.req.param('id'), c.req.param('artifactId'))
+    if (!artifact) throw requestError(404, 'not_found', 'Unknown dashboard run.')
+    return json(c, { artifact }, 200, sessionHeaders(c))
+  })
+
   app.get('/api/runs/:id/events.json', async (c) => {
     assertHonoToken(c, token)
     requireCapability(capabilities, 'canReadEventsJson')
@@ -466,6 +501,34 @@ function createDashboardApi({
     if (typeof mutations.startAgentRun !== 'function') throw requestError(501, 'unsupported_capability', 'Starting single-agent runs is not available in this runtime.')
     const result = mutationResult(await mutations.startAgentRun(await honoJsonBody(c)))
     return json(c, result.body, result.statusCode)
+  })
+
+  app.post('/api/run-plans/workflows/:workflowId', async (c) => {
+    assertHonoToken(c, token)
+    requireCapability(capabilities, 'canPlanRuns')
+    if (typeof runPlans.createWorkflowPlan !== 'function') throw requestError(501, 'unsupported_capability', 'Workflow run planning is not available in this runtime.')
+    return json(c, { plan: await runPlans.createWorkflowPlan(c.req.param('workflowId'), await honoJsonBody(c)) }, 201)
+  })
+
+  app.post('/api/run-plans/agents', async (c) => {
+    assertHonoToken(c, token)
+    requireCapability(capabilities, 'canPlanRuns')
+    if (typeof runPlans.createAgentRunPlan !== 'function') throw requestError(501, 'unsupported_capability', 'Agent run planning is not available in this runtime.')
+    return json(c, { plan: await runPlans.createAgentRunPlan(await honoJsonBody(c)) }, 201)
+  })
+
+  app.get('/api/run-plans/:planId', async (c) => {
+    assertHonoToken(c, token)
+    requireCapability(capabilities, 'canPlanRuns')
+    if (typeof runPlans.getPlan !== 'function') throw requestError(501, 'unsupported_capability', 'Run plan reads are not available in this runtime.')
+    return json(c, { plan: await runPlans.getPlan(c.req.param('planId')) }, 200, sessionHeaders(c))
+  })
+
+  app.post('/api/run-plans/:planId/start', async (c) => {
+    assertHonoToken(c, token)
+    requireCapability(capabilities, 'canPlanRuns')
+    if (typeof runPlans.startPlan !== 'function') throw requestError(501, 'unsupported_capability', 'Starting saved run plans is not available in this runtime.')
+    return json(c, await runPlans.startPlan(c.req.param('planId'), await honoJsonBody(c)), 202)
   })
 
   app.post('/api/runs/:id/cancel', async (c) => {

@@ -19,6 +19,8 @@ export const defaultDashboardCapabilities: DashboardCapabilities = {
   canReadRuns: true,
   canReadRunDetails: true,
   canReadEventsJson: true,
+  canPlanRuns: false,
+  canReadRunArtifacts: true,
   canStartRuns: true,
   canDryRun: true,
   canCancelRuns: true,

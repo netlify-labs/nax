@@ -92,6 +92,7 @@ function normalizedAlias(value) {
  *   listInstances?: (options?: import('../runtime/local/mcp-instance-registry').RegistryPathOptions & { isProcessAlive?: (pid: number) => boolean }) => DashboardInstanceRecord[],
  *   canonicalize?: (projectRoot: string) => string,
  *   stat?: (projectRoot: string) => import('node:fs').Stats,
+ *   ensureDashboard?: (projectRoot: string) => Promise<unknown> | void,
  * }} input
  */
 function createMcpProjectRouter({
@@ -101,12 +102,27 @@ function createMcpProjectRouter({
   listInstances = listDashboardInstances,
   canonicalize = canonicalProjectRoot,
   stat = fs.statSync,
+  ensureDashboard = async () => {},
 }) {
   const defaultRoot = canonicalize(defaultProjectRoot)
   /** @type {Map<string, NaxControlPlaneClient>} */
   const clients = new Map()
   /** @type {Map<string, string>} */
   const scopeRoots = new Map()
+  /** @type {Map<string, Promise<unknown>>} */
+  const ensuring = new Map()
+
+  // Dedupe concurrent auto-start attempts for the same root; re-run after each
+  // settles so a dashboard that later stops is brought back on the next call.
+  /** @param {string} root */
+  function ensureDashboardOnce(root) {
+    let pending = ensuring.get(root)
+    if (!pending) {
+      pending = Promise.resolve().then(() => ensureDashboard(root)).finally(() => ensuring.delete(root))
+      ensuring.set(root, pending)
+    }
+    return pending
+  }
 
   /** @param {string} projectRoot */
   function clientForRoot(projectRoot) {
@@ -174,6 +190,7 @@ function createMcpProjectRouter({
     }
 
     if (!scopeId && !projectRef) {
+      await ensureDashboardOnce(defaultRoot)
       const client = clientForRoot(defaultRoot)
       const context = await client.getContext()
       scopeRoots.set(context.scope.scopeId, defaultRoot)
@@ -182,6 +199,7 @@ function createMcpProjectRouter({
 
     const root = projectRef ? explicitProjectRoot(projectRef) : ''
     if (root) {
+      await ensureDashboardOnce(root)
       const advertised = listInstances(registry).some((record) => record.projectRoot === root)
       if (!advertised) {
         throw new McpProjectRouterError('dashboard_not_running', 'No running NAX dashboard is advertised for the selected project.', {

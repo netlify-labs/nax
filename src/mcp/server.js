@@ -5,7 +5,8 @@ const { McpServer } = require('@modelcontextprotocol/server')
 const { StdioServerTransport, serveStdio } = require('@modelcontextprotocol/server/stdio')
 
 const { PACKAGE_VERSION } = require('../core/artifact-metadata')
-const { canonicalProjectRoot } = require('../runtime/local/mcp-instance-registry')
+const { canonicalProjectRoot, discoverDashboardInstance } = require('../runtime/local/mcp-instance-registry')
+const { autostartEnabled, ensureDashboardRunning } = require('./autostart')
 const { createLocalDashboardClient } = require('./adapters/local-dashboard')
 const { createMcpProjectRouter } = require('./project-router')
 const { registerNaxPrompts } = require('./prompts')
@@ -86,6 +87,7 @@ function resolveMcpProjectRoot({
  *   projectRouter?: ReturnType<typeof createMcpProjectRouter>,
  *   registry?: import('../runtime/local/mcp-instance-registry').RegistryPathOptions,
  *   clientFactory?: (options: { projectRoot: string }) => import('../contracts').NaxControlPlaneClient,
+ *   ensureDashboard?: (projectRoot: string) => Promise<unknown> | void,
  *   registerSurface?: (context: McpSurfaceContext) => void,
  * }} [options]
  */
@@ -97,10 +99,13 @@ function buildServer({
   projectRouter,
   registry = {},
   clientFactory = createLocalDashboardClient,
+  // Auto-start is owned by the stdio CLI (serveMcpStdio), not every buildServer
+  // call, so in-process builds never spawn a dashboard. Default is a no-op.
+  ensureDashboard = async () => {},
   registerSurface,
 } = {}) {
   const router = projectRouter || (!client && !resolveClient
-    ? createMcpProjectRouter({ defaultProjectRoot: projectRoot, registry, clientFactory })
+    ? createMcpProjectRouter({ defaultProjectRoot: projectRoot, registry, clientFactory, ensureDashboard })
     : null)
   const selectedClient = client || router?.defaultClient || clientFactory({ projectRoot })
   const selectedResolver = resolveClient || router?.resolveClient
@@ -161,9 +166,16 @@ function serveMcpStdio({
     clientRoots,
     cwd,
   })
+  // Auto-start a dashboard on demand for the real stdio session (opt out with
+  // NAX_MCP_AUTOSTART=0), so `nax mcp` works without a separately-started one.
+  const ensureDashboard = (root) => ensureDashboardRunning({
+    projectRoot: root,
+    autostart: autostartEnabled(env),
+    discover: (candidate) => discoverDashboardInstance({ projectRoot: candidate }),
+  })
   const transport = new StdioServerTransport(stdin, stdout)
   const handle = serveStdioImpl(
-    (requestContext) => buildServer({ projectRoot, requestContext, registerSurface }),
+    (requestContext) => buildServer({ projectRoot, requestContext, registerSurface, ensureDashboard }),
     {
       transport,
       onerror: (error) => stderr.write(`[nax mcp] ${errorMessage(error)}\n`),

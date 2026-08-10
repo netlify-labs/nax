@@ -185,7 +185,8 @@ test('nax mcp negotiates stdio and lists tools without contaminating stdout', as
   const projectRoot = tempRoot()
   const child = spawn(process.execPath, ['src/cli/nax.js', 'mcp', '--project-root', projectRoot], {
     cwd: path.resolve(__dirname, '../..'),
-    env: { ...process.env, FORCE_COLOR: '0', NO_COLOR: '1' },
+    // Disable dashboard auto-start so this exercises the no-dashboard relay path.
+    env: { ...process.env, FORCE_COLOR: '0', NO_COLOR: '1', NAX_MCP_AUTOSTART: '0' },
     stdio: ['pipe', 'pipe', 'pipe'],
   })
   /** @type {{ messages: Array<Record<string, unknown>> }} */

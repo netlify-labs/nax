@@ -129,3 +129,39 @@ test('router rejects nonexistent explicit directories and conflicting selectors'
   await assert.rejects(router.resolveClient({ projectRef: defaultRoot }), { code: 'dashboard_not_running' })
   await assert.rejects(router.resolveClient({ projectRef: defaultRoot, scopeId: scopeIdForProject('project_default') }), { code: 'invalid_arguments' })
 })
+
+test('default resolve auto-starts a dashboard before building a client', async () => {
+  const root = tempRoot('autostart')
+  const ensured = []
+  const router = createMcpProjectRouter({
+    defaultProjectRoot: root,
+    listInstances: () => [],
+    ensureDashboard: async (projectRoot) => { ensured.push(projectRoot) },
+    clientFactory: () => /** @type {import('../../src/contracts').NaxControlPlaneClient} */ ({
+      getContext: async () => contextFor(root, 'project_autostart'),
+    }),
+  })
+  const resolved = await router.resolveClient()
+  assert.equal(resolved.projectRoot, root)
+  assert.deepEqual(ensured, [root])
+})
+
+test('concurrent default resolves dedupe a single auto-start attempt', async () => {
+  const root = tempRoot('autostart-dedupe')
+  let calls = 0
+  /** @type {(value?: unknown) => void} */
+  let release = () => {}
+  const gate = new Promise((resolve) => { release = resolve })
+  const router = createMcpProjectRouter({
+    defaultProjectRoot: root,
+    listInstances: () => [],
+    ensureDashboard: async () => { calls += 1; await gate },
+    clientFactory: () => /** @type {import('../../src/contracts').NaxControlPlaneClient} */ ({
+      getContext: async () => contextFor(root, 'project_dedupe'),
+    }),
+  })
+  const both = Promise.all([router.resolveClient(), router.resolveClient()])
+  release()
+  await both
+  assert.equal(calls, 1)
+})

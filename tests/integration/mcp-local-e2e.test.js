@@ -89,7 +89,9 @@ function writeCompletedRun(projectRoot) {
 class StdioMcpClient {
   /** @param {string} projectRoot */
   constructor(projectRoot) {
-    const env = /** @type {NodeJS.ProcessEnv} */ ({ ...process.env, FORCE_COLOR: '0', CLAUDE_PROJECT_DIR: projectRoot })
+    // This suite drives dashboard presence explicitly (start/stop/stale/missing),
+    // so disable auto-start to keep those transitions deterministic.
+    const env = /** @type {NodeJS.ProcessEnv} */ ({ ...process.env, FORCE_COLOR: '0', CLAUDE_PROJECT_DIR: projectRoot, NAX_MCP_AUTOSTART: '0' })
     delete env.NO_COLOR
     this.child = spawn(process.execPath, ['src/cli/nax.js', 'mcp'], {
       cwd: REPOSITORY_ROOT,
@@ -363,6 +365,7 @@ test('stdio MCP reports registry, scope, auth, version, stale, and missing-dashb
   const dashboard = await startFixtureDashboard({ projectRoot })
   const record = /** @type {import('../../src/runtime/local/mcp-instance-registry').DashboardInstanceRecord} */ (readDashboardInstance(projectRoot))
   const registryPath = dashboardInstancePath(projectRoot)
+  process.stderr.write(`PROBE after-fixture exists=${require("node:fs").existsSync(registryPath)}\n`)
   const client = new StdioMcpClient(projectRoot)
 
   /** @param {string} expectedCode */
@@ -379,6 +382,7 @@ test('stdio MCP reports registry, scope, auth, version, stale, and missing-dashb
 
   try {
     await client.initialize()
+    process.stderr.write(`PROBE after-init exists=${require("node:fs").existsSync(registryPath)}\n`)
 
     if (process.platform !== 'win32') {
       fs.chmodSync(registryPath, 0o644)

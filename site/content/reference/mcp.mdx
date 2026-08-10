@@ -239,7 +239,7 @@ Prompts provide a safe operating procedure; they do not bypass tool schemas or a
 
 The stdio process has one default project hint but is not permanently bound to it. `context_get` resolves an exact `project_ref` into an opaque scope, and every operation routes independently by `scope_id`. The router never changes cwd or shared current-project state. Local scope resolution uses the private per-user registry of running dashboards; dashboard tokens and project paths are never returned as project candidates.
 
-One local dashboard must be running for each project being controlled. An absolute directory can still be resolved when its dashboard is absent, producing a targeted `nax dashboard --project-root ... --no-open` recovery command. Short aliases are discoverable only for running dashboards.
+Each controlled project needs a local dashboard as its control plane. When the default project has none, `nax mcp` auto-starts one on demand (opt out with `NAX_MCP_AUTOSTART=0`, which restores the recovery message below). An absolute directory can still be resolved when its dashboard is absent, producing a targeted `nax dashboard --project-root ... --no-open` recovery command. Short aliases are discoverable only for running dashboards.
 
 The interface remains runtime-neutral: desktop can map `scope_id` to an application workspace, and hosted control planes can map it to an authenticated account/project authorization. Tools cannot override the selected Netlify site or authenticated actor.
 

@@ -6,7 +6,7 @@ const path = require('path')
 
 const { createLocalArtifactStore } = require('../../src/dashboard/storage/local-artifacts')
 const { createLocalEventStore } = require('../../src/dashboard/storage/local-events')
-const { createLocalRunStore, decodeRunsCursor } = require('../../src/dashboard/storage/local-runs')
+const { MAX_ARTIFACT_BYTES, createLocalRunStore, decodeRunsCursor } = require('../../src/dashboard/storage/local-runs')
 const { createLocalWorkflowStore } = require('../../src/dashboard/storage/local-workflows')
 const { appendEventLog } = require('../../src/workflows/events/runner-event-log')
 
@@ -260,6 +260,64 @@ test('local artifact store builds details and follow-up context packages', () =>
   assert.equal(details.summaryMarkdown.trim(), '# artifact-run')
   assert.equal(contextPackage.artifactCount, 1)
   assert.match(contextPackage.markdown, /artifact-run/)
+})
+
+test('local run store reads only exact run-owned artifacts with bounded MIME-aware content', async () => {
+  const projectRoot = tmpRoot()
+  const dir = writeRunState(projectRoot, 'artifact-resource-run')
+  const artifactsDir = path.join(dir, 'artifacts')
+  fs.writeFileSync(path.join(artifactsDir, 'usage.json'), '{"requests":1}\n')
+  const store = createLocalRunStore({ projectRoot })
+  const details = await store.getRunDetails('artifact-resource-run')
+  const summary = details.details.followupArtifacts.find((artifact) => artifact.kind === 'workflow-summary')
+  const usage = details.details.followupArtifacts.find((artifact) => artifact.kind === 'usage-json')
+  assert.ok(summary)
+  assert.ok(usage)
+
+  assert.deepEqual(await store.getRunArtifact('artifact-resource-run', summary.id), {
+    runId: 'artifact-resource-run',
+    artifactId: summary.id,
+    contentType: 'text/markdown',
+    sizeBytes: Buffer.byteLength('# artifact-resource-run\n'),
+    encoding: 'utf8',
+    content: '# artifact-resource-run\n',
+  })
+  const jsonArtifact = await store.getRunArtifact('artifact-resource-run', usage.id)
+  assert.equal(jsonArtifact.contentType, 'application/json')
+  assert.equal(jsonArtifact.encoding, 'utf8')
+  assert.equal(jsonArtifact.content, '{"requests":1}\n')
+  await assert.rejects(store.getRunArtifact('artifact-resource-run', 'workflow-summary:..:summary.md'), {
+    statusCode: 404,
+    code: 'artifact_not_found',
+  })
+})
+
+test('local run artifact reads reject symlink escape and oversized content', async () => {
+  const projectRoot = tmpRoot()
+  const dir = writeRunState(projectRoot, 'artifact-boundary-run')
+  const summaryPath = path.join(dir, 'artifacts', 'summary.md')
+  const outsidePath = path.join(projectRoot, 'outside.md')
+  fs.writeFileSync(outsidePath, '# Outside\n')
+  fs.unlinkSync(summaryPath)
+  fs.symlinkSync(outsidePath, summaryPath)
+  const store = createLocalRunStore({ projectRoot })
+  const details = await store.getRunDetails('artifact-boundary-run')
+  const linked = details.details.followupArtifacts.find((artifact) => artifact.kind === 'workflow-summary')
+  assert.ok(linked)
+  await assert.rejects(store.getRunArtifact('artifact-boundary-run', linked.id), {
+    statusCode: 403,
+    code: 'artifact_scope_forbidden',
+  })
+
+  fs.unlinkSync(summaryPath)
+  fs.writeFileSync(summaryPath, Buffer.alloc(MAX_ARTIFACT_BYTES + 1, 97))
+  const oversizedDetails = await store.getRunDetails('artifact-boundary-run')
+  const oversized = oversizedDetails.details.followupArtifacts.find((artifact) => artifact.kind === 'workflow-summary')
+  assert.ok(oversized)
+  await assert.rejects(store.getRunArtifact('artifact-boundary-run', oversized.id), {
+    statusCode: 413,
+    code: 'artifact_too_large',
+  })
 })
 
 test('local run store rejects invalid opaque cursors', () => {

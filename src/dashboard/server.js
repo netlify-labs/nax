@@ -19,6 +19,7 @@ const { formatAgentRunUrl } = require('../workflows/results/agent-run-results')
 const { findReviewStep } = require('../workflows/human-review')
 const { archiveAgentRun, stopAgentRun } = require('../integrations/netlify/local-runner')
 const { readLinkedSiteId } = require('../integrations/netlify/init')
+const { resolveTarget: resolveGitTarget } = require('../integrations/git/target')
 const { isTerminalRunStatus } = require('../core/status')
 const { errorPayload, requestError } = require('./api/errors')
 const {
@@ -42,6 +43,8 @@ const { localDashboardCapabilities } = require('./api/capabilities')
 const { createLocalWorkflowStore } = require('./storage/local-workflows')
 const { createLocalRunStore } = require('./storage/local-runs')
 const { createLocalEventStore } = require('./storage/local-events')
+const { createLocalRunPlanStore } = require('./storage/local-run-plans')
+const { createLocalMutationStore } = require('./storage/local-mutations')
 const { createLocalEventStreamAdapter } = require('./events/local-stream')
 const {
   cancelAgentRun: cancelAgentRunService,
@@ -56,6 +59,13 @@ const { dryRunWorkflow, resumeWorkflowRun } = require('./transports/local-in-pro
 const { createRunnerEventParser, runWorkflowChild } = require('./transports/local-process')
 const { openLocalFile } = require('./runtime/local-files')
 const { listKnownGitBranches } = require('./runtime/git-branches')
+const { advertiseDashboardInstance } = require('./runtime/mcp-instance-registry')
+const { createLocalWorkflowExecutionBackend } = require('./runtime/local-workflow-execution')
+const { createDashboardRunPlanService } = require('./services/run-plans')
+const { localControlPlaneIdentity } = require('../runtime/local/control-plane-identity')
+const { controlPlaneAgentRunId } = require('../control-plane/entity-ids')
+const { runIdempotentMutation } = require('../control-plane/idempotent-mutations')
+const { PACKAGE_VERSION } = require('../core/artifact-metadata')
 const {
   MAX_FINISHED_RUNS,
   MAX_LIVE_EVENTS,
@@ -117,7 +127,65 @@ function legacyHealthCapabilities(env) {
 function localServerCapabilities(env) {
   return localDashboardCapabilities({
     ...legacyHealthCapabilities(env),
+    canPlanRuns: true,
   })
+}
+
+/**
+ * @param {{
+ *   projectRoot: string,
+ *   branch?: string,
+ *   netlifyContext?: import('../contracts').DashboardNetlifyContext | null,
+ *   netlifyAccess?: import('../contracts').NetlifyAccessVerdict | null,
+ *   resolveGitTarget?: typeof resolveGitTarget,
+ * }} input
+ * @returns {import('../contracts').ControlPlaneTarget}
+ */
+function resolveLocalControlPlaneTarget({
+  projectRoot,
+  branch,
+  netlifyContext = null,
+  netlifyAccess = null,
+  resolveGitTarget: resolveBranch = resolveGitTarget,
+}) {
+  const selected = netlifyContext?.target
+  const siteId = String(selected?.siteId || netlifyAccess?.site?.id || '')
+  const siteName = String(selected?.name || netlifyAccess?.site?.name || siteId)
+  if (!siteId) {
+    throw Object.assign(new Error(netlifyContext?.targetError || 'No Netlify Agent Runner site is selected.'), {
+      code: 'no_site',
+      recoverable: true,
+    })
+  }
+  let gitTarget
+  try {
+    gitTarget = resolveBranch({
+      options: { branch: branch || '' },
+      projectRoot,
+      transport: 'netlify-api',
+    })
+  } catch (error) {
+    throw Object.assign(error instanceof Error ? error : new Error(String(error)), {
+      code: 'unverified_target',
+      recoverable: true,
+    })
+  }
+  const accessible = selected?.accessible === true || netlifyAccess?.ok === true
+  return {
+    ...(netlifyAccess?.site?.accountSlug ? { accountSlug: netlifyAccess.site.accountSlug } : {}),
+    siteId,
+    siteName,
+    branch: gitTarget.branch,
+    ...(gitTarget.ref ? { ref: gitTarget.ref } : {}),
+    sha: gitTarget.sha,
+    verified: gitTarget.verified === true && accessible,
+    caveats: [...new Set([
+      ...(gitTarget.caveats || []),
+      ...(!accessible && selected?.accessCode ? [selected.accessCode] : []),
+      ...(!accessible && selected?.reason ? [selected.reason] : []),
+      ...(!accessible && netlifyContext?.targetError ? [netlifyContext.targetError] : []),
+    ])],
+  }
 }
 
 const DEFAULT_RUNS_DURABLE_LIMIT = 50
@@ -300,15 +368,61 @@ function durableRunIdFromActiveRunStates(states, active = {}) {
 /** @param {string} pathname */
 function isReadOnlyDashboardApiPath(pathname) {
   if (pathname === '/api/health' || pathname === '/api/workflows' || pathname === '/api/runs') return true
+  if (/^\/api\/run-plans\/[^/]+$/.test(pathname)) return true
   if (/^\/api\/workflows\/[^/]+(?:\/graph)?$/.test(pathname)) return true
+  if (/^\/api\/runs\/[^/]+\/artifacts\/[^/]+$/.test(pathname)) return true
   return /^\/api\/runs\/[^/]+(?:\/graph|\/details|\/events\.json)?$/.test(pathname)
 }
 
 /** @param {string} pathname */
 function isMutationDashboardApiPath(pathname) {
   if (pathname === '/api/files/open' || pathname === '/api/agent-runs') return true
+  if (pathname === '/api/run-plans/agents') return true
+  if (/^\/api\/run-plans\/workflows\/[^/]+$/.test(pathname)) return true
+  if (/^\/api\/run-plans\/[^/]+\/start$/.test(pathname)) return true
   if (/^\/api\/workflows\/[^/]+\/(?:dry-run|runs)$/.test(pathname)) return true
-  return /^\/api\/runs\/[^/]+\/(?:cancel|agents\/cancel|review\/approve|review\/cancel|followups|followups\/cancel)$/.test(pathname)
+  return /^\/api\/runs\/[^/]+\/(?:cancel|agents\/cancel|review\/approve|review\/cancel|retry|followups|followups\/cancel)$/.test(pathname)
+}
+
+/**
+ * Resolves one MCP opaque agent-run ID back to the dashboard mutation
+ * selectors without accepting provider-wide or broadcast targets.
+ * @param {Record<string, unknown>} durable
+ * @param {string} agentRunId
+ */
+function dashboardAgentRunTarget(durable, agentRunId) {
+  const runId = String(durable.runId || durable.id || '')
+  const candidates = []
+  for (const stepValue of Array.isArray(durable.steps) ? durable.steps : []) {
+    const step = stepValue && typeof stepValue === 'object' && !Array.isArray(stepValue) ? stepValue : {}
+    const stepId = String(step.id || step.stepId || '')
+    const runs = Array.isArray(step.runs) ? step.runs : []
+    runs.forEach((runValue, index) => {
+      const run = runValue && typeof runValue === 'object' && !Array.isArray(runValue) ? runValue : {}
+      const id = controlPlaneAgentRunId(runId, stepId, run, index)
+      candidates.push({
+        agentRunId: id,
+        stepId,
+        agent: String(run.agent || ''),
+        runnerId: String(run.runnerId || ''),
+        sessionId: String(run.sessionId || ''),
+      })
+    })
+  }
+  const matches = candidates.filter((candidate) => candidate.agentRunId === agentRunId)
+  if (matches.length === 0) {
+    throw requestError(404, 'agent_run_not_found', `Agent run "${agentRunId}" was not found in this workflow run.`, {
+      recoverable: true,
+      details: { runId, agentRunId, agentRunIds: candidates.map((candidate) => candidate.agentRunId) },
+    })
+  }
+  if (matches.length > 1) {
+    throw requestError(409, 'ambiguous_agent_run', `Agent run "${agentRunId}" is ambiguous in legacy run data.`, {
+      recoverable: true,
+      details: { runId, agentRunId, agentRunIds: matches.map((candidate) => candidate.agentRunId) },
+    })
+  }
+  return matches[0]
 }
 
 /**
@@ -956,6 +1070,7 @@ function createRequestHandler(options = {}) {
   const followupSiteName = options.siteName || env.NETLIFY_SITE_NAME || ''
   const followupNetlifyFilter = options.netlifyFilter || ''
   const followupSubmitRun = options.followupSubmitRun
+  const retrySubmitRun = options.retrySubmitRun
   const followupStopRun = options.followupStopRun || stopAgentRun
   const cancelStopRun = options.cancelStopRun || stopAgentRun
   const followupSyncRunner = options.followupSyncRunner
@@ -998,10 +1113,53 @@ function createRequestHandler(options = {}) {
   })
   const capabilities = localServerCapabilities(env)
   const healthCapabilities = capabilities
+  let resolvedRunPlanService = options.runPlanService || null
+  let resolvedMutationStore = options.mutationStore || null
+  function localMutationStore() {
+    if (resolvedMutationStore) return resolvedMutationStore
+    resolvedMutationStore = createLocalMutationStore({ projectRoot })
+    return resolvedMutationStore
+  }
+  function localRunPlanService() {
+    if (resolvedRunPlanService) return resolvedRunPlanService
+    const controlPlaneIdentity = options.controlPlaneIdentity || localControlPlaneIdentity(projectRoot)
+    const runPlanStore = options.runPlanStore || createLocalRunPlanStore({ projectRoot })
+    const workflowExecutionBackend = options.workflowExecutionBackend || createLocalWorkflowExecutionBackend({
+      projectRoot,
+      env,
+      netlifyFilter: followupNetlifyFilter || String(netlifyContext?.target?.filter || ''),
+      submitRun: followupSubmitRun,
+      linkSubmittedRun: linkSubmittedRunFactory,
+    })
+    resolvedRunPlanService = createDashboardRunPlanService({
+      store: runPlanStore,
+      executionBackend: workflowExecutionBackend,
+      workflowStore,
+      scope: controlPlaneIdentity.scope,
+      actor: controlPlaneIdentity.actor,
+      createPlanId: () => `plan_${crypto.randomUUID().replaceAll('-', '')}`,
+      resolveTarget: (branch) => resolveLocalControlPlaneTarget({
+        projectRoot,
+        branch,
+        netlifyContext,
+        netlifyAccess,
+        resolveGitTarget: options.resolveControlPlaneGitTarget || resolveGitTarget,
+      }),
+    })
+    return resolvedRunPlanService
+  }
+  const runPlans = {
+    createWorkflowPlan: (workflowId, body) => localRunPlanService().createWorkflowPlan(workflowId, body),
+    createAgentRunPlan: (body) => localRunPlanService().createAgentRunPlan(body),
+    getPlan: (planId) => localRunPlanService().getPlan(planId),
+    startPlan: (planId, body) => localRunPlanService().startPlan(planId, body),
+  }
   const readOnlyApi = createDashboardApi({
     runtime: {
       mode: 'local-node',
       deploymentMode: dashboardDeploymentMode(env),
+      version: options.version || PACKAGE_VERSION,
+      projectId: options.projectId || '',
       projectRoot,
       capabilities,
       healthCapabilities,
@@ -1014,7 +1172,8 @@ function createRequestHandler(options = {}) {
     workflowStore,
     runStore,
     eventStore,
-      liveRuns: {
+    runPlans,
+    liveRuns: {
       listActiveRuns: () => listPublicActiveRuns(),
       getActiveRun: (id) => {
         const run = liveRunRegistry.getRawRun(safeDecode(id))
@@ -1130,7 +1289,38 @@ function createRequestHandler(options = {}) {
         return durable ? { body: cancelReviewGateService({ runState: durable, body }) } : null
       },
       retryAgentRun: async (id, body) => {
-        const durable = durableRunStateForId(safeDecode(id))
+        const runId = safeDecode(id)
+        const requestId = String(body.requestId || '').trim()
+        const agentRunId = String(body.agentRunId || '').trim()
+        if (requestId && agentRunId) {
+          const result = await runIdempotentMutation({
+            store: localMutationStore(),
+            operation: 'agent-run-retry',
+            requestId,
+            intent: { runId, agentRunId },
+            execute: async () => {
+              const durable = durableRunStateForId(runId)
+              if (!durable) throw requestError(404, 'not_found', 'Unknown dashboard run.')
+              const target = dashboardAgentRunTarget(durable, agentRunId)
+              return retryAgentRunService({
+                projectRoot,
+                durable,
+                body: {
+                  stepId: target.stepId,
+                  agent: target.agent,
+                  ...(target.runnerId ? { runnerId: target.runnerId } : {}),
+                  ...(target.sessionId ? { sessionId: target.sessionId } : {}),
+                  requestId,
+                  reason: String(body.reason || 'MCP agent_run_retry'),
+                },
+                env,
+                ...(retrySubmitRun ? { submitRun: retrySubmitRun } : {}),
+              })
+            },
+          })
+          return { statusCode: 202, body: result }
+        }
+        const durable = durableRunStateForId(runId)
         if (!durable) return null
         return {
           statusCode: 202,
@@ -1139,11 +1329,52 @@ function createRequestHandler(options = {}) {
             durable,
             body,
             env,
+            ...(retrySubmitRun ? { submitRun: retrySubmitRun } : {}),
           }),
         }
       },
       submitFollowup: async (id, body) => {
         const sourceRunId = safeDecode(id)
+        const requestId = String(body.requestId || '').trim()
+        const agentRunId = String(body.agentRunId || '').trim()
+        if (requestId && agentRunId) {
+          const artifactIds = Array.isArray(body.artifactIds) ? body.artifactIds.map(String) : []
+          const instances = Array.isArray(body.instances) ? body.instances : []
+          const result = await runIdempotentMutation({
+            store: localMutationStore(),
+            operation: 'agent-run-followup',
+            requestId,
+            intent: {
+              runId: sourceRunId,
+              agentRunId,
+              prompt: String(body.prompt || ''),
+              mode: String(body.mode || ''),
+              artifactIds,
+              instances,
+            },
+            execute: async () => {
+              const durable = durableRunStateForId(sourceRunId)
+              if (!durable) throw requestError(404, 'not_found', 'Unknown dashboard run.')
+              return submitFollowupService({
+                projectRoot,
+                sourceRunId,
+                durable,
+                body,
+                env,
+                followupSiteId,
+                followupSiteName,
+                followupNetlifyFilter,
+                followupSubmitRun,
+                normalizeFollowupRequest,
+                linkSubmittedRun: linkSubmittedRunFactory,
+                followupId,
+                freshFollowupTitle,
+                submissionResponseItem,
+              })
+            },
+          })
+          return { statusCode: 202, body: { followup: result } }
+        }
         const durable = durableRunStateForId(sourceRunId)
         if (!durable) return null
         return {
@@ -2119,7 +2350,14 @@ function createRequestHandler(options = {}) {
 function startDashboardServer(options = {}) {
   const host = options.host || '127.0.0.1'
   const port = normalizePort(options.port)
-  const handler = createRequestHandler(options)
+  const identity = options.advertiseMcp === true
+    ? ensureDashboardProjectIdentity(options.projectRoot || process.cwd())
+    : null
+  const handler = createRequestHandler({
+    ...options,
+    version: options.version || PACKAGE_VERSION,
+    projectId: identity?.projectId || options.projectId || '',
+  })
   const server = http.createServer((req, res) => {
     handler.handle(req, res)
   })
@@ -2130,24 +2368,52 @@ function startDashboardServer(options = {}) {
       server.off('error', reject)
       const address = server.address()
       const actualPort = typeof address === 'object' && address ? address.port : port
+      const originHost = host.includes(':') && !host.startsWith('[') ? `[${host}]` : host
+      const origin = `http://${originHost}:${actualPort}`
       const params = new URLSearchParams({ token: handler.token })
       if (options.initialWorkflow) params.set('workflow', options.initialWorkflow)
       const initialPath = dashboardInitialPath(options.initialPath)
-      const url = `http://${host}:${actualPort}${initialPath}?${params.toString()}`
+      const url = `${origin}${initialPath}?${params.toString()}`
+      let mcpAdvertisement = null
+      try {
+        if (options.advertiseMcp === true) {
+          mcpAdvertisement = advertiseDashboardInstance({
+            projectRoot: identity.projectRoot,
+            origin,
+            token: handler.token,
+            version: options.version || PACKAGE_VERSION,
+            registry: options.mcpRegistry || {},
+          })
+        }
+      } catch (error) {
+        try { handler.shutdown() } catch (_err) { /* best-effort cleanup */ }
+        server.close(() => reject(error))
+        return
+      }
       resolve({
         server,
         host,
         port: actualPort,
         token: handler.token,
         url,
-        projectRoot: path.resolve(options.projectRoot || process.cwd()),
+        projectId: identity?.projectId || '',
+        mcpInstanceId: mcpAdvertisement?.instanceId || '',
+        mcpRegistryPath: mcpAdvertisement?.registryPath || '',
+        projectRoot: identity?.projectRoot || path.resolve(options.projectRoot || process.cwd()),
         close: () => new Promise((closeResolve, closeReject) => {
           try { handler.shutdown() } catch (_err) { /* best-effort cleanup */ }
+          try { mcpAdvertisement?.close() } catch (_err) { /* best-effort cleanup */ }
           server.close((error) => (error ? closeReject(error) : closeResolve()))
         }),
       })
     })
   })
+}
+
+/** @param {string} projectRoot */
+function ensureDashboardProjectIdentity(projectRoot) {
+  const { ensureStableProjectIdentity } = require('../runtime/local/mcp-instance-registry')
+  return ensureStableProjectIdentity(projectRoot)
 }
 
 module.exports = {

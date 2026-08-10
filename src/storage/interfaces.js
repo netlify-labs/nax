@@ -147,6 +147,7 @@
  *   getRun?: (id: string) => DashboardRunPayload | null | Promise<DashboardRunPayload | null>,
  *   getRunGraph?: (id: string) => Promise<RunGraphPayload | null>,
  *   getRunDetails?: (id: string) => Promise<RunDetailsPayloadResponse | null>,
+ *   getRunArtifact?: (id: string, artifactId: string) => Promise<JsonObject | null>,
  *   getRunState?: (id: string) => JsonObject | null,
  * }} RunStore
  *
@@ -223,6 +224,13 @@
  *   submitFollowup?: (id: string, body: JsonObject) => Promise<DashboardMutationResult>,
  *   cancelFollowup?: (id: string, body: JsonObject) => Promise<DashboardMutationResult>,
  * }} DashboardMutations
+ *
+ * @typedef {{
+ *   createWorkflowPlan?: (workflowId: string, body: JsonObject) => Promise<import('../contracts').ControlPlanePlan>,
+ *   createAgentRunPlan?: (body: JsonObject) => Promise<import('../contracts').ControlPlanePlan>,
+ *   getPlan?: (planId: string) => Promise<import('../contracts').ControlPlanePlan>,
+ *   startPlan?: (planId: string, body: JsonObject) => Promise<import('../contracts').ControlPlaneStartResult>,
+ * }} DashboardRunPlanService
  *
  * @typedef {{
  *   readText?: (path: string) => Promise<string | null> | string | null,

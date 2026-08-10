@@ -1,3 +1,6 @@
+const fs = require('node:fs')
+const path = require('node:path')
+
 const { listRunStates, listWorkflowStatePage } = require('../../storage/local/run-state')
 const { flowToGraph } = require('../shared/graph')
 const { buildRunDetails } = require('../shared/run-details')
@@ -11,6 +14,34 @@ const { hasUsage, usageSummariesForRunState } = require('../../workflows/results
 const DEFAULT_RUNS_DURABLE_LIMIT = 50
 const MAX_RUNS_DURABLE_LIMIT = 200
 const DEFAULT_REFRESH_COOLDOWN_MS = 15000
+const MAX_ARTIFACT_BYTES = 2 * 1024 * 1024
+
+const TEXT_EXTENSIONS = new Map([
+  ['.css', 'text/css'],
+  ['.csv', 'text/csv'],
+  ['.html', 'text/html'],
+  ['.js', 'text/javascript'],
+  ['.json', 'application/json'],
+  ['.jsonl', 'application/x-ndjson'],
+  ['.log', 'text/plain'],
+  ['.md', 'text/markdown'],
+  ['.mjs', 'text/javascript'],
+  ['.svg', 'image/svg+xml'],
+  ['.toml', 'text/plain'],
+  ['.ts', 'text/typescript'],
+  ['.txt', 'text/plain'],
+  ['.yaml', 'application/yaml'],
+  ['.yml', 'application/yaml'],
+])
+const BINARY_CONTENT_TYPES = new Map([
+  ['.gif', 'image/gif'],
+  ['.jpeg', 'image/jpeg'],
+  ['.jpg', 'image/jpeg'],
+  ['.pdf', 'application/pdf'],
+  ['.png', 'image/png'],
+  ['.webp', 'image/webp'],
+  ['.zip', 'application/zip'],
+])
 
 /**
  * @param {string | number | null | undefined} value
@@ -78,6 +109,69 @@ function safeDecode(value) {
     return decodeURIComponent(value)
   } catch (_err) {
     return value
+  }
+}
+
+/** @param {string} filePath */
+function artifactContentType(filePath) {
+  const extension = path.extname(filePath).toLowerCase()
+  return TEXT_EXTENSIONS.get(extension) || BINARY_CONTENT_TYPES.get(extension) || 'application/octet-stream'
+}
+
+/** @param {string} root @param {string} candidate */
+function pathWithin(root, candidate) {
+  return candidate === root || candidate.startsWith(`${root}${path.sep}`)
+}
+
+/**
+ * @param {Record<string, unknown>} durable
+ * @param {string} artifactId
+ */
+function readRunArtifact(durable, artifactId) {
+  const runId = String(durable.runId || '')
+  const details = buildRunDetails(durable)
+  const candidates = Array.isArray(details.followupArtifacts) ? details.followupArtifacts : []
+  const matches = candidates.filter((artifact) => String(artifact.id || '') === artifactId)
+  if (matches.length === 0) {
+    throw requestError(404, 'artifact_not_found', `Artifact "${artifactId}" does not belong to run "${runId}".`, {
+      recoverable: true,
+      details: { runId, artifactId, artifactIds: candidates.map((artifact) => String(artifact.id || '')).filter(Boolean) },
+    })
+  }
+  if (matches.length > 1) throw requestError(409, 'ambiguous_artifact', `Artifact "${artifactId}" is ambiguous in this run.`, { recoverable: true, details: { runId, artifactId } })
+  const filePath = String(matches[0].absolutePath || '')
+  const runDir = String(durable.dir || '')
+  if (!filePath || !runDir) throw requestError(404, 'artifact_not_found', `Artifact "${artifactId}" has no durable content.`, { recoverable: true, details: { runId, artifactId } })
+
+  let realRoot
+  let realFile
+  try {
+    realRoot = fs.realpathSync(runDir)
+    realFile = fs.realpathSync(filePath)
+  } catch (_error) {
+    throw requestError(404, 'artifact_not_found', `Artifact "${artifactId}" is no longer available.`, { recoverable: true, details: { runId, artifactId } })
+  }
+  if (!pathWithin(realRoot, realFile)) {
+    throw requestError(403, 'artifact_scope_forbidden', 'Artifact content resolves outside its owning run.', { recoverable: false, details: { runId, artifactId } })
+  }
+  const stat = fs.statSync(realFile)
+  if (!stat.isFile()) throw requestError(404, 'artifact_not_found', `Artifact "${artifactId}" is not a regular file.`, { recoverable: true, details: { runId, artifactId } })
+  if (stat.size > MAX_ARTIFACT_BYTES) {
+    throw requestError(413, 'artifact_too_large', `Artifact "${artifactId}" exceeds the ${MAX_ARTIFACT_BYTES}-byte resource limit.`, {
+      recoverable: true,
+      details: { runId, artifactId, sizeBytes: stat.size, maxBytes: MAX_ARTIFACT_BYTES },
+    })
+  }
+  const contentType = artifactContentType(realFile)
+  const bytes = fs.readFileSync(realFile)
+  const text = TEXT_EXTENSIONS.has(path.extname(realFile).toLowerCase())
+  return {
+    runId,
+    artifactId,
+    contentType,
+    sizeBytes: bytes.length,
+    encoding: text ? 'utf8' : 'base64',
+    content: text ? bytes.toString('utf8') : bytes.toString('base64'),
   }
 }
 
@@ -226,15 +320,24 @@ function createLocalRunStore({
         details: buildRunDetails(durable, { flow }),
       }
     },
+    async getRunArtifact(id, artifactId) {
+      const durable = await refreshRunStateIfNeeded(getRunState(id), { view: 'details' })
+      if (!durable) return null
+      return readRunArtifact(durable, artifactId)
+    },
   }
 }
 
 module.exports = {
   DEFAULT_RUNS_DURABLE_LIMIT,
   DEFAULT_REFRESH_COOLDOWN_MS,
+  MAX_ARTIFACT_BYTES,
   MAX_RUNS_DURABLE_LIMIT,
+  artifactContentType,
   createLocalRunStore,
   decodeRunsCursor,
   encodeRunsCursor,
   parsePositiveInteger,
+  pathWithin,
+  readRunArtifact,
 }

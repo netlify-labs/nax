@@ -24,6 +24,9 @@
   writes.
 - `nax mcp doctor` for read-only Claude, package, project, registry, dashboard,
   Netlify target, capability, and `context_get` diagnostics.
+- `nax mcp` auto-starts a dashboard on demand when none is advertised for the
+  default project, so it works without separately running `nax dashboard`. Opt
+  out with `NAX_MCP_AUTOSTART=0`.
 - Runtime-neutral control-plane contracts and conformance fixtures for future
   desktop and hosted implementations. The shipped runtime remains local.
 

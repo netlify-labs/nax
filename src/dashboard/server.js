@@ -20,6 +20,7 @@ const { formatAgentRunUrl } = require('../workflows/results/agent-run-results')
 const { findReviewStep } = require('../workflows/human-review')
 const { archiveAgentRun, stopAgentRun } = require('../integrations/netlify/local-runner')
 const { readLinkedSiteId } = require('../integrations/netlify/init')
+const { writeTargetPreference } = require('../integrations/netlify/target-preference')
 const { resolveTarget: resolveGitTarget } = require('../integrations/git/target')
 const { isTerminalRunStatus } = require('../core/status')
 const { errorPayload, requestError } = require('./api/errors')
@@ -377,7 +378,7 @@ function isReadOnlyDashboardApiPath(pathname) {
 
 /** @param {string} pathname */
 function isMutationDashboardApiPath(pathname) {
-  if (pathname === '/api/files/open' || pathname === '/api/agent-runs') return true
+  if (pathname === '/api/files/open' || pathname === '/api/agent-runs' || pathname === '/api/netlify/target') return true
   if (pathname === '/api/run-plans/agents') return true
   if (/^\/api\/run-plans\/workflows\/[^/]+$/.test(pathname)) return true
   if (/^\/api\/run-plans\/[^/]+\/start$/.test(pathname)) return true
@@ -1100,8 +1101,8 @@ function createRequestHandler(options = {}) {
   }
   const token = options.token || crypto.randomBytes(24).toString('hex')
   const initialWorkflow = options.initialWorkflow || ''
-  const netlifyAccess = options.netlifyAccess || null
-  const netlifyContext = options.netlifyContext || null
+  let netlifyAccess = options.netlifyAccess || null
+  let netlifyContext = options.netlifyContext || null
   const defaultRunOptions = options.defaultRunOptions && typeof options.defaultRunOptions === 'object'
     ? options.defaultRunOptions
     : {}
@@ -1194,20 +1195,58 @@ function createRequestHandler(options = {}) {
     getPlan: (planId) => localRunPlanService().getPlan(planId),
     startPlan: (planId, body) => localRunPlanService().startPlan(planId, body),
   }
+  const apiRuntime = {
+    mode: 'local-node',
+    deploymentMode: dashboardDeploymentMode(env),
+    version: options.version || PACKAGE_VERSION,
+    projectId: options.projectId || '',
+    projectRoot,
+    capabilities,
+    healthCapabilities,
+    netlifyAccess,
+    netlifyContext,
+    branches: branchCatalog.branches,
+    currentBranch: branchCatalog.currentBranch,
+  }
+
+  // Selects an Agent Runner target from the linked sites, persists it, and
+  // updates the live context + run defaults so runs and the header follow it.
+  const setNetlifyTarget = async (siteId) => {
+    const site = (netlifyContext?.linkedSites || []).find((candidate) => candidate.siteId === siteId)
+    if (!site) {
+      throw Object.assign(new Error('Choose a Netlify site that is linked in this project.'), { code: 'unknown_target', statusCode: 404 })
+    }
+    const target = {
+      siteId: site.siteId,
+      name: site.name,
+      adminUrl: site.adminUrl,
+      source: site.source,
+      configSource: site.configSource,
+      filter: site.filter,
+      reason: 'selected in dashboard',
+      accessible: site.accessible,
+      accessCode: site.accessCode,
+    }
+    netlifyContext = { ...netlifyContext, target, targetError: '' }
+    netlifyAccess = {
+      ok: site.accessible === true,
+      code: site.accessCode || 'ok',
+      message: '',
+      site: { id: site.siteId, name: site.name, ...(netlifyContext.account?.slug ? { accountSlug: netlifyContext.account.slug } : {}) },
+      account: netlifyContext.account || null,
+    }
+    apiRuntime.netlifyContext = netlifyContext
+    apiRuntime.netlifyAccess = netlifyAccess
+    defaultRunOptions.siteId = site.siteId
+    defaultRunOptions.netlifySiteId = site.siteId
+    if (site.filter) defaultRunOptions.filter = site.filter
+    else delete defaultRunOptions.filter
+    writeTargetPreference(projectRoot, { siteId: site.siteId, filter: site.filter, source: site.source })
+    return { statusCode: 200, body: { netlifyContext, netlifyAccess } }
+  }
+
   const readOnlyApi = createDashboardApi({
-    runtime: {
-      mode: 'local-node',
-      deploymentMode: dashboardDeploymentMode(env),
-      version: options.version || PACKAGE_VERSION,
-      projectId: options.projectId || '',
-      projectRoot,
-      capabilities,
-      healthCapabilities,
-      netlifyAccess,
-      netlifyContext,
-      branches: branchCatalog.branches,
-      currentBranch: branchCatalog.currentBranch,
-    },
+    runtime: apiRuntime,
     token,
     workflowStore,
     runStore,
@@ -1230,6 +1269,7 @@ function createRequestHandler(options = {}) {
       },
     },
     mutations: {
+      setNetlifyTarget: async (body) => setNetlifyTarget(String(body?.siteId || '')),
       openFile: async (body) => ({
         body: {
           opened: true,

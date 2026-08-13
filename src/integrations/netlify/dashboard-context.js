@@ -7,6 +7,7 @@ const {
 } = require('./local-runner')
 const { chooseNetlifyFilterOption } = require('./project-selection')
 const { checkNetlifyAccess } = require('./preflight')
+const { readTargetPreference } = require('./target-preference')
 
 /**
  * @typedef {{
@@ -97,30 +98,47 @@ async function resolveDashboardNetlifyContext({
   const candidates = listNetlifyFilterCandidates(root)
   let resolvedTarget = null
   let targetError = ''
-  try {
-    const selected = await chooseTarget({
-      projectRoot: root,
-      invocationDir,
-      options: { yes: true },
-    })
-    const target = resolveTarget({
-      projectRoot: root,
-      siteId: selected.netlifySiteId,
-      filter: selected.filter,
-      netlifyConfig: selected.netlifyConfig,
-      env,
-    })
+
+  // A target chosen in the dashboard wins over auto-resolution and sidesteps
+  // the multiple-config ambiguity. Only honor it while its link still exists.
+  const preferred = readTargetPreference(root)
+  const preferredLink = preferred ? links.find((link) => link.siteId === preferred.siteId) : null
+
+  if (preferredLink) {
+    const candidate = candidates.find((item) => item.stateSource === preferredLink.source)
     resolvedTarget = {
-      ...target,
-      siteSource: selected.netlifySiteSource || target.siteSource,
-      configSource: selected.netlifyConfig || target.configSource,
+      siteId: preferredLink.siteId,
+      filter: preferred?.filter || candidate?.filter || '',
+      siteSource: preferredLink.source,
+      configSource: preferred?.source || candidate?.source || '',
+      selected: true,
     }
-  } catch (error) {
-    if (error?.code === 'multiple_netlify_configs') {
-      const count = error.candidates?.length || candidates.length
-      targetError = `Found ${count} Netlify apps in this repo, so no single Agent Runner target was auto-selected. Choose one from the linked sites below, or start nax with --filter <app>.`
-    } else {
-      targetError = error?.message || String(error || 'Could not resolve the Agent Runner site.')
+  } else {
+    try {
+      const selected = await chooseTarget({
+        projectRoot: root,
+        invocationDir,
+        options: { yes: true },
+      })
+      const target = resolveTarget({
+        projectRoot: root,
+        siteId: selected.netlifySiteId,
+        filter: selected.filter,
+        netlifyConfig: selected.netlifyConfig,
+        env,
+      })
+      resolvedTarget = {
+        ...target,
+        siteSource: selected.netlifySiteSource || target.siteSource,
+        configSource: selected.netlifyConfig || target.configSource,
+      }
+    } catch (error) {
+      if (error?.code === 'multiple_netlify_configs') {
+        const count = error.candidates?.length || candidates.length
+        targetError = `Found ${count} Netlify apps in this repo, so no single Agent Runner target was auto-selected. Choose one from the linked sites below, or start nax with --filter <app>.`
+      } else {
+        targetError = error?.message || String(error || 'Could not resolve the Agent Runner site.')
+      }
     }
   }
 
@@ -168,7 +186,7 @@ async function resolveDashboardNetlifyContext({
       source: resolvedTarget.siteSource || '',
       configSource: resolvedTarget.configSource || '',
       filter: resolvedTarget.filter || '',
-      reason: automaticTargetReason(candidates, resolvedTarget),
+      reason: resolvedTarget.selected ? 'selected in dashboard' : automaticTargetReason(candidates, resolvedTarget),
       accessible: targetAccess?.ok === true,
       accessCode: targetAccess?.code || 'network_error',
     }

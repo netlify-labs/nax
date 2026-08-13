@@ -479,6 +479,13 @@ function createDashboardApi({
     return json(c, result.body, result.statusCode)
   })
 
+  app.post('/api/netlify/target', async (c) => {
+    assertHonoToken(c, token)
+    if (typeof mutations.setNetlifyTarget !== 'function') throw requestError(501, 'unsupported_capability', 'Selecting a Netlify target is not available in this runtime.')
+    const result = mutationResult(await mutations.setNetlifyTarget(await honoJsonBody(c)))
+    return json(c, result.body, result.statusCode)
+  })
+
   app.post('/api/workflows/:id/dry-run', async (c) => {
     assertHonoToken(c, token)
     requireCapability(capabilities, 'canDryRun')

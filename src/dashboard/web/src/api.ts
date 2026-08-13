@@ -140,6 +140,16 @@ export async function runWorkflowDryRun(id: string, options: DryRunOptions): Pro
   })
 }
 
+export async function selectNetlifyTarget(siteId: string): Promise<void> {
+  await fetchJson<unknown>('/api/netlify/target', {
+    method: 'POST',
+    headers: {
+      'content-type': 'application/json',
+    },
+    body: JSON.stringify({ siteId }),
+  })
+}
+
 export async function startWorkflowRun(id: string, options: DryRunOptions): Promise<StartRunResponse> {
   return fetchJson<StartRunResponse>(`/api/workflows/${encodeURIComponent(id)}/runs`, {
     method: 'POST',

@@ -1,34 +1,55 @@
-import { Box, Button, Group, Menu, Stack, Text } from '@mantine/core'
+import { ActionIcon, Box, Button, Group, Menu, Stack, Text } from '@mantine/core'
 import { Check, Cloud, ExternalLink, TriangleAlert } from 'lucide-react'
 import type { DashboardLinkedNetlifySite, DashboardNetlifyContext } from '../types'
 
 type Props = {
   context?: DashboardNetlifyContext
+  onSelect?: (siteId: string) => void
 }
 
-function LinkedSiteItem({ site, selected }: { site: DashboardLinkedNetlifySite; selected: boolean }) {
-  const content = (
-    <Group gap="xs" justify="space-between" wrap="nowrap">
+function LinkedSiteItem({ site, selected, onSelect }: {
+  site: DashboardLinkedNetlifySite
+  selected: boolean
+  onSelect?: (siteId: string) => void
+}) {
+  return (
+    <Menu.Item
+      closeMenuOnClick={false}
+      aria-label={`Select Agent Runner target ${site.name}`}
+      onClick={() => onSelect?.(site.siteId)}
+      leftSection={selected
+        ? <Check aria-label="Selected Agent Runner target" color="var(--mantine-color-green-6)" size={15} />
+        : <Box w={15} />}
+      rightSection={(
+        <Group gap={6} wrap="nowrap">
+          {!site.accessible ? <TriangleAlert aria-label={`Access check: ${site.accessCode}`} color="var(--mantine-color-yellow-6)" size={15} /> : null}
+          {site.adminUrl ? (
+            <ActionIcon
+              aria-label={`Open ${site.name} agent runs`}
+              component="a"
+              href={site.adminUrl}
+              rel="noreferrer"
+              target="_blank"
+              size="sm"
+              variant="subtle"
+              color="gray"
+              onClick={(event) => event.stopPropagation()}
+            >
+              <ExternalLink size={13} />
+            </ActionIcon>
+          ) : null}
+        </Group>
+      )}
+    >
       <Box miw={0}>
         <Text size="sm" fw={selected ? 800 : 600} truncate>{site.name}</Text>
         <Text c="dimmed" ff="monospace" size="xs" truncate>{site.source}</Text>
       </Box>
-      <Group gap={5} wrap="nowrap">
-        {selected ? <Check aria-label="Agent Runner target" color="var(--mantine-color-green-6)" size={15} /> : null}
-        {!site.accessible ? <TriangleAlert aria-label={`Access check: ${site.accessCode}`} color="var(--mantine-color-yellow-6)" size={15} /> : null}
-        {site.adminUrl ? <ExternalLink aria-hidden size={13} /> : null}
-      </Group>
-    </Group>
-  )
-  if (!site.adminUrl) return <Menu.Item>{content}</Menu.Item>
-  return (
-    <Menu.Item component="a" href={site.adminUrl} rel="noreferrer" target="_blank">
-      {content}
     </Menu.Item>
   )
 }
 
-export function NetlifyTargetMenu({ context }: Props) {
+export function NetlifyTargetMenu({ context, onSelect }: Props) {
   if (!context) return null
   const target = context.target
   const label = target?.name || 'Target unresolved'
@@ -73,6 +94,7 @@ export function NetlifyTargetMenu({ context }: Props) {
             key={`${site.siteId}:${site.source}`}
             site={site}
             selected={site.siteId === target?.siteId}
+            onSelect={onSelect}
           />
         )) : (
           <Text c="dimmed" px="sm" pb="sm" size="xs">No .netlify/state.json links found.</Text>

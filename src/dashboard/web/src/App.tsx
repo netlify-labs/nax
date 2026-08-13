@@ -26,7 +26,7 @@ import {
 import { useDisclosure, type UseSplitterReturnValue } from '@mantine/hooks'
 import { BookOpen, Check, ChevronDown, Copy, Folder, GitBranch, Moon, RefreshCw, Sun } from 'lucide-react'
 import { ReactFlowProvider } from '@xyflow/react'
-import { runEventsStream, type RunEventStream } from './api'
+import { runEventsStream, selectNetlifyTarget, type RunEventStream } from './api'
 import { WorkflowOutputTabs } from './components/DryRunPanel'
 import { AgentRunModal } from './components/AgentRunModal'
 import { Inspector } from './components/Inspector'
@@ -343,6 +343,10 @@ export default function App() {
   const canControlIndividualAgentRuns = ['netlify-api', 'local'].includes(individualAgentRunTransport)
   const netlifyAccess = healthQuery.data?.netlifyAccess
   const netlifyContext = healthQuery.data?.netlifyContext
+  const selectNetlifyTargetSite = async (siteId: string) => {
+    await selectNetlifyTarget(siteId)
+    await queryClient.invalidateQueries({ queryKey: dashboardQueryKeys.health() })
+  }
   const runsList = runsQuery.data || { runs: [], hasMore: false, shownCount: 0, totalCount: 0 }
   const runs = runsList.runs
   const visibleRunActive = runs.some((run) => isActiveStatus(run.status || ''))
@@ -1311,7 +1315,7 @@ export default function App() {
                   <Text size="sm" fw={700} truncate>{repoName}</Text>
                 </Group>
               </Tooltip>
-              <NetlifyTargetMenu context={netlifyContext} />
+              <NetlifyTargetMenu context={netlifyContext} onSelect={selectNetlifyTargetSite} />
               <Autocomplete
                 aria-label="Branch"
                 className="header-branch"

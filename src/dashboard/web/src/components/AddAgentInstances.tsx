@@ -1,4 +1,4 @@
-import { Button, Group, MultiSelect, Popover, SegmentedControl, Select, Stack, Text } from '@mantine/core'
+import { Button, Divider, Group, MultiSelect, Popover, SegmentedControl, Select, Stack, Text } from '@mantine/core'
 import { Crown, Gauge, Layers3, Network, Plus, Sparkles } from 'lucide-react'
 import { useMemo, useState } from 'react'
 
@@ -53,7 +53,6 @@ export function AddAgentInstances({ catalog, disabled, existingInstances = [], m
   const [mode, setMode] = useState<AddMode>('single')
   const [agent, setAgent] = useState(firstProvider)
   const provider = catalog.providers.find((candidate) => candidate.id === agent)
-  const allModelsPresetLabel = `All ${provider?.label || 'provider'} models`
   const initialSelection = flagshipSelection(catalog, firstProvider, existingIds)
   const [models, setModels] = useState<string[]>(initialSelection.models)
   const [efforts, setEfforts] = useState<string[]>(initialSelection.efforts)
@@ -289,8 +288,8 @@ export function AddAgentInstances({ catalog, disabled, existingInstances = [], m
                 fullWidth
                 value={mode}
                 data={[
-                  { value: 'single', label: 'Single agent' },
-                  { value: 'multiple', label: 'Multiple agents' },
+                  { value: 'single', label: 'One agent' },
+                  { value: 'multiple', label: 'Several agents' },
                 ]}
                 onChange={(value) => changeMode(value as AddMode)}
               />
@@ -411,47 +410,57 @@ export function AddAgentInstances({ catalog, disabled, existingInstances = [], m
             <Stack className="agent-add-presets" gap="xs">
               <div className="agent-add-presets-heading">
                 <Text size="xs" fw={700}>Quick presets</Text>
-                <Text size="xs" c="dimmed">Build common lineups without configuring each instance.</Text>
+                <Text size="xs" c="dimmed">
+                  {mode === 'single' ? 'Fill in one agent fast.' : 'Build a lineup of agents fast.'}
+                </Text>
               </div>
-              <button className={presetClass('flagship')} aria-pressed={activePreset === 'flagship'} type="button" onClick={selectFlagshipPreset}>
-                <span className="agent-preset-icon"><Crown size={16} /></span>
-                <span className="agent-preset-copy">
-                  <span className="agent-preset-title">Flagship / highest</span>
-                  <span className="agent-preset-description">Select this provider’s strongest model and effort.</span>
-                </span>
-              </button>
-              <button
-                className={presetClass('all-efforts')}
-                aria-pressed={activePreset === 'all-efforts'}
-                type="button"
-                disabled={models.length !== 1}
-                onClick={selectAllEffortsForModel}
-              >
-                <span className="agent-preset-icon"><Gauge size={16} /></span>
-                <span className="agent-preset-copy">
-                  <span className="agent-preset-title">This model × all efforts</span>
-                  <span className="agent-preset-description">Run the selected model at every supported effort.</span>
-                </span>
-              </button>
-              <button className={presetClass('all-models')} aria-pressed={activePreset === 'all-models'} type="button" onClick={selectAllProviderModels}>
-                <span className="agent-preset-icon"><Layers3 size={16} /></span>
-                <span className="agent-preset-copy">
-                  <span className="agent-preset-title">{allModelsPresetLabel}</span>
-                  <span className="agent-preset-description">Select this provider’s strongest available models.</span>
-                </span>
-              </button>
+              {mode === 'single' ? (
+                <>
+                  <button className={presetClass('flagship')} aria-pressed={activePreset === 'flagship'} type="button" onClick={selectFlagshipPreset}>
+                    <span className="agent-preset-icon"><Crown size={16} /></span>
+                    <span className="agent-preset-copy">
+                      <span className="agent-preset-title">Best available</span>
+                      <span className="agent-preset-description">The strongest {provider?.label || 'provider'} model at its highest effort.</span>
+                    </span>
+                  </button>
+                  <button className={presetClass('auto')} aria-pressed={activePreset === 'auto'} type="button" onClick={selectAutoPreset}>
+                    <span className="agent-preset-icon"><Sparkles size={16} /></span>
+                    <span className="agent-preset-copy">
+                      <span className="agent-preset-title">Auto</span>
+                      <span className="agent-preset-description">Let Netlify pick the model and effort.</span>
+                    </span>
+                  </button>
+                </>
+              ) : (
+                <>
+                  <button
+                    className={presetClass('all-efforts')}
+                    aria-pressed={activePreset === 'all-efforts'}
+                    type="button"
+                    disabled={models.length !== 1}
+                    onClick={selectAllEffortsForModel}
+                  >
+                    <span className="agent-preset-icon"><Gauge size={16} /></span>
+                    <span className="agent-preset-copy">
+                      <span className="agent-preset-title">Every effort level</span>
+                      <span className="agent-preset-description">Run one model at each supported effort.</span>
+                    </span>
+                  </button>
+                  <button className={presetClass('all-models')} aria-pressed={activePreset === 'all-models'} type="button" onClick={selectAllProviderModels}>
+                    <span className="agent-preset-icon"><Layers3 size={16} /></span>
+                    <span className="agent-preset-copy">
+                      <span className="agent-preset-title">Every {provider?.label || 'provider'} model</span>
+                      <span className="agent-preset-description">One agent instance per available model.</span>
+                    </span>
+                  </button>
+                </>
+              )}
+              <Divider my={2} label="or across providers" labelPosition="left" />
               <button className="agent-preset-card" type="button" onClick={addFlagshipOfEveryProvider}>
                 <span className="agent-preset-icon"><Network size={16} /></span>
                 <span className="agent-preset-copy">
-                  <span className="agent-preset-title">Add flagship of every provider</span>
-                  <span className="agent-preset-description">Immediately add one top configuration per provider.</span>
-                </span>
-              </button>
-              <button className={presetClass('auto')} aria-pressed={activePreset === 'auto'} type="button" onClick={selectAutoPreset}>
-                <span className="agent-preset-icon"><Sparkles size={16} /></span>
-                <span className="agent-preset-copy">
-                  <span className="agent-preset-title">Auto</span>
-                  <span className="agent-preset-description">Let Agent Runner choose the model and effort.</span>
+                  <span className="agent-preset-title">One of each provider</span>
+                  <span className="agent-preset-description">Add the best config for every provider at once.</span>
                 </span>
               </button>
             </Stack>

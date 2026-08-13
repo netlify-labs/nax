@@ -98,6 +98,7 @@ async function resolveDashboardNetlifyContext({
   const candidates = listNetlifyFilterCandidates(root)
   let resolvedTarget = null
   let targetError = ''
+  let preferredSelected = false
 
   // A target chosen in the dashboard wins over auto-resolution and sidesteps
   // the multiple-config ambiguity. Only honor it while its link still exists.
@@ -106,12 +107,12 @@ async function resolveDashboardNetlifyContext({
 
   if (preferredLink) {
     const candidate = candidates.find((item) => item.stateSource === preferredLink.source)
+    preferredSelected = true
     resolvedTarget = {
       siteId: preferredLink.siteId,
       filter: preferred?.filter || candidate?.filter || '',
       siteSource: preferredLink.source,
       configSource: preferred?.source || candidate?.source || '',
-      selected: true,
     }
   } else {
     try {
@@ -186,7 +187,7 @@ async function resolveDashboardNetlifyContext({
       source: resolvedTarget.siteSource || '',
       configSource: resolvedTarget.configSource || '',
       filter: resolvedTarget.filter || '',
-      reason: resolvedTarget.selected ? 'selected in dashboard' : automaticTargetReason(candidates, resolvedTarget),
+      reason: preferredSelected ? 'selected in dashboard' : automaticTargetReason(candidates, resolvedTarget),
       accessible: targetAccess?.ok === true,
       accessCode: targetAccess?.code || 'network_error',
     }

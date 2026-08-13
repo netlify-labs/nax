@@ -1196,7 +1196,7 @@ function createRequestHandler(options = {}) {
     startPlan: (planId, body) => localRunPlanService().startPlan(planId, body),
   }
   const apiRuntime = {
-    mode: 'local-node',
+    mode: /** @type {'local-node'} */ ('local-node'),
     deploymentMode: dashboardDeploymentMode(env),
     version: options.version || PACKAGE_VERSION,
     projectId: options.projectId || '',

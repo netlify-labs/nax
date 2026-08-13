@@ -219,6 +219,23 @@ export function AddAgentInstances({ catalog, disabled, existingInstances = [], m
     setEfforts([])
   }
 
+  // Which quick preset the current selection corresponds to, so its card reads
+  // as selected. Derived from state so it stays accurate as the user edits.
+  const activePreset = useMemo(() => {
+    const sameSet = (a: string[], b: string[]) => a.length === b.length && a.every((value) => b.includes(value))
+    if (mode === 'single') {
+      if (models.length === 0) return 'auto'
+      const flagship = flagshipSelection(catalog, agent, existingIds)
+      if (sameSet(models, flagship.models) && sameSet(efforts, flagship.efforts)) return 'flagship'
+      return null
+    }
+    if (models.length === 1 && efforts.length > 0) return 'all-efforts'
+    if (models.length >= 1 && efforts.length === 0) return 'all-models'
+    return null
+  }, [agent, catalog, efforts, existingIds, models, mode])
+
+  const presetClass = (key: string) => `agent-preset-card${activePreset === key ? ' selected' : ''}`
+
   return (
     <Popover opened={opened} onChange={setOpened} width={720} position="bottom-start" withArrow shadow="md" trapFocus>
       <Popover.Target>
@@ -396,7 +413,7 @@ export function AddAgentInstances({ catalog, disabled, existingInstances = [], m
                 <Text size="xs" fw={700}>Quick presets</Text>
                 <Text size="xs" c="dimmed">Build common lineups without configuring each instance.</Text>
               </div>
-              <button className="agent-preset-card" type="button" onClick={selectFlagshipPreset}>
+              <button className={presetClass('flagship')} aria-pressed={activePreset === 'flagship'} type="button" onClick={selectFlagshipPreset}>
                 <span className="agent-preset-icon"><Crown size={16} /></span>
                 <span className="agent-preset-copy">
                   <span className="agent-preset-title">Flagship / highest</span>
@@ -404,7 +421,8 @@ export function AddAgentInstances({ catalog, disabled, existingInstances = [], m
                 </span>
               </button>
               <button
-                className="agent-preset-card"
+                className={presetClass('all-efforts')}
+                aria-pressed={activePreset === 'all-efforts'}
                 type="button"
                 disabled={models.length !== 1}
                 onClick={selectAllEffortsForModel}
@@ -415,7 +433,7 @@ export function AddAgentInstances({ catalog, disabled, existingInstances = [], m
                   <span className="agent-preset-description">Run the selected model at every supported effort.</span>
                 </span>
               </button>
-              <button className="agent-preset-card" type="button" onClick={selectAllProviderModels}>
+              <button className={presetClass('all-models')} aria-pressed={activePreset === 'all-models'} type="button" onClick={selectAllProviderModels}>
                 <span className="agent-preset-icon"><Layers3 size={16} /></span>
                 <span className="agent-preset-copy">
                   <span className="agent-preset-title">{allModelsPresetLabel}</span>
@@ -429,7 +447,7 @@ export function AddAgentInstances({ catalog, disabled, existingInstances = [], m
                   <span className="agent-preset-description">Immediately add one top configuration per provider.</span>
                 </span>
               </button>
-              <button className="agent-preset-card" type="button" onClick={selectAutoPreset}>
+              <button className={presetClass('auto')} aria-pressed={activePreset === 'auto'} type="button" onClick={selectAutoPreset}>
                 <span className="agent-preset-icon"><Sparkles size={16} /></span>
                 <span className="agent-preset-copy">
                   <span className="agent-preset-title">Auto</span>

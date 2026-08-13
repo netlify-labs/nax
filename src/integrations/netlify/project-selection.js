@@ -337,7 +337,14 @@ async function chooseNetlifyFilterOption({
       }
     }
     if (!workspaceDetection.isWorkspace) return options
-    throw new Error(formatNetlifyConfigAmbiguity(candidates))
+    // Typed so the dashboard can show a concise message instead of the full
+    // CLI list; the message stays the same for CLI callers.
+    const ambiguity = /** @type {Error & { code: string, candidates: NetlifyConfigCandidate[] }} */ (
+      new Error(formatNetlifyConfigAmbiguity(candidates))
+    )
+    ambiguity.code = 'multiple_netlify_configs'
+    ambiguity.candidates = candidates
+    throw ambiguity
   }
 
   const clack = await loadClack()

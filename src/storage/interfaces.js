@@ -212,6 +212,7 @@
  * @typedef {DashboardMutationEnvelope | JsonObject | null} DashboardMutationResult
  *
  * @typedef {{
+ *   setNetlifyTarget?: (body: JsonObject) => Promise<DashboardMutationResult>,
  *   openFile?: (body: JsonObject) => Promise<DashboardMutationResult>,
  *   dryRunWorkflow?: (id: string, body: JsonObject) => Promise<DashboardMutationResult>,
  *   startWorkflow?: (id: string, body: JsonObject) => Promise<DashboardMutationResult>,

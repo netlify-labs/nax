@@ -3,7 +3,7 @@ import path from 'path'
 import { fileURLToPath } from 'url'
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
-import { codeInspectorPlugin } from 'code-inspector-plugin'
+import { codeInspectorPlugin } from '@davidwells/code-inspector-plugin'
 
 const require = createRequire(import.meta.url)
 const { listFlows, loadFlow } = require('../../workflows/catalog/flows')

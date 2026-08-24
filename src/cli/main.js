@@ -617,21 +617,43 @@ async function handleDashboard(flowId, options = {}) {
     : {}
 
   const startServer = loadDashboardServer()
-  const instance = await startServer({
-    projectRoot,
-    flowsDir: options.flowsDir,
-    flowsDirs: options.flowsDirs,
-    host: options.host || '127.0.0.1',
-    port: options.port,
-    initialWorkflow: flowId || '',
-    initialPath: runId ? `/runs/${encodeURIComponent(runId)}/details` : '',
-    dev: options.dev === true,
-    tail,
-    netlifyAccess,
-    netlifyContext: publicNetlifyContext,
-    defaultRunOptions,
-    advertiseMcp: options.mcpAdvertise !== false,
-  })
+  let instance
+  try {
+    instance = await startServer({
+      projectRoot,
+      flowsDir: options.flowsDir,
+      flowsDirs: options.flowsDirs,
+      host: options.host || '127.0.0.1',
+      port: options.port,
+      initialWorkflow: flowId || '',
+      initialPath: runId ? `/runs/${encodeURIComponent(runId)}/details` : '',
+      dev: options.dev === true,
+      tail,
+      netlifyAccess,
+      netlifyContext: publicNetlifyContext,
+      defaultRunOptions,
+      advertiseMcp: options.mcpAdvertise !== false,
+    })
+  } catch (error) {
+    // A dashboard is already running for this project — point at it instead of failing.
+    if (error && error.code === 'dashboard_already_advertised' && error.details?.origin) {
+      const params = new URLSearchParams()
+      if (error.details.token) params.set('token', String(error.details.token))
+      if (flowId) params.set('workflow', flowId)
+      const openPath = runId ? `/runs/${encodeURIComponent(runId)}/details` : '/'
+      const query = params.toString()
+      const existingUrl = `${error.details.origin}${openPath}${query ? `?${query}` : ''}`
+      console.log('A nax dashboard is already running for this project.')
+      console.log(`Open it:       ${existingUrl}`)
+      if (error.details.pid) console.log(`Stop it:       kill ${error.details.pid}`)
+      if (options.open !== false) {
+        const openBrowser = (await import('open')).default
+        await openBrowser(existingUrl)
+      }
+      return
+    }
+    throw error
+  }
 
   console.log(`Nax dashboard: ${instance.url}`)
   console.log(`Project root:  ${instance.projectRoot}`)

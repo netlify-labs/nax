@@ -693,6 +693,14 @@ export default function App() {
     }))
   }, [selectedInstancesForStep])
 
+  const removeAllStepAgents = useCallback((stepId: string) => {
+    setDryRunOptions((options) => ({
+      ...options,
+      agents: [],
+      stepAgents: { ...options.stepAgents, [stepId]: [] },
+    }))
+  }, [])
+
   const addStepAgents = useCallback((stepId: string, added: AgentInstanceDescriptor[]) => {
     const current = selectedInstancesForStep(dryRunOptions, stepId)
     const existing = new Set(current.map((instance) => instance.id))
@@ -1427,6 +1435,7 @@ export default function App() {
                         transport={dryRunOptions.transport}
                         onConfigureStepAgent={configureStepAgent}
                         onRemoveStepAgent={removeStepAgent}
+                        onRemoveAllStepAgents={removeAllStepAgents}
                         onAddStepAgents={addStepAgents}
                         onSelectNode={selectCanvasNode}
                         onViewNodeDetails={openNodeDetails}

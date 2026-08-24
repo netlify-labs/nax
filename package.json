@@ -92,6 +92,7 @@
     "zod": "^4.4.3"
   },
   "devDependencies": {
+    "@davidwells/code-inspector-plugin": "^1.5.1",
     "@mantine/core": "^9.3.2",
     "@mantine/hooks": "^9.3.2",
     "@mantine/notifications": "^9.3.2",
@@ -102,7 +103,6 @@
     "@types/react-dom": "^19.2.3",
     "@vitejs/plugin-react": "^6.0.2",
     "@xyflow/react": "^12.11.0",
-    "code-inspector-plugin": "^1.6.1",
     "lucide-react": "^1.21.0",
     "markdown-magic": "^4.10.4",
     "react": "^19.2.7",

@@ -34,6 +34,7 @@ type Props = {
   transport: string
   onConfigureStepAgent: (stepId: string, instanceId: string, config: AgentInstanceConfiguration) => void
   onRemoveStepAgent: (stepId: string, instanceId: string) => void
+  onRemoveAllStepAgents: (stepId: string) => void
   onAddStepAgents: (stepId: string, instances: AgentInstanceDescriptor[]) => void
   onSelectNode: (node: WorkflowGraphNodeData | null) => void
   onViewNodeDetails: (node: WorkflowGraphNodeData) => void
@@ -239,6 +240,7 @@ export function WorkflowCanvas(props: Props) {
             agentInteraction,
             onConfigureAgent: props.mode === 'inspect' ? undefined : props.onConfigureStepAgent,
             onRemoveAgent: props.mode === 'inspect' ? undefined : props.onRemoveStepAgent,
+            onRemoveAllAgents: props.mode === 'inspect' ? undefined : props.onRemoveAllStepAgents,
             onAddInstances: props.mode === 'inspect' ? undefined : props.onAddStepAgents,
             onViewAgentResult: props.mode === 'inspect' ? props.onViewAgentResult : undefined,
             onCancelAgentRun: props.mode === 'inspect' ? props.onCancelAgentRun : undefined,
@@ -253,6 +255,7 @@ export function WorkflowCanvas(props: Props) {
     props.selectedNode,
     props.onConfigureStepAgent,
     props.onRemoveStepAgent,
+    props.onRemoveAllStepAgents,
     props.onAddStepAgents,
     props.onViewAgentResult,
     props.onCancelAgentRun,

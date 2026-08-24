@@ -1,6 +1,6 @@
-import { Button, Group, MultiSelect, Popover, SegmentedControl, Select, Stack, Text } from '@mantine/core'
-import { Crown, Gauge, Layers3, Network, Plus, Sparkles } from 'lucide-react'
-import { useMemo, useState } from 'react'
+import { Button, Divider, Group, MultiSelect, Popover, Select, Stack, Text } from '@mantine/core'
+import { Bot, ChevronLeft, Crown, Gauge, Layers3, Network, Plus, Sparkles } from 'lucide-react'
+import { useEffect, useMemo, useState } from 'react'
 
 import { MAX_STEP_AGENT_INSTANCES, agentInstanceId } from '../agent-instances'
 import type { AgentInstanceDescriptor } from '../types'
@@ -16,6 +16,7 @@ type Props = {
 }
 
 type AddMode = 'single' | 'multiple'
+type WizardStep = 'choose' | 'configure'
 
 function modelSelection(
   catalog: AgentCatalog,
@@ -50,10 +51,22 @@ export function AddAgentInstances({ catalog, disabled, existingInstances = [], m
   const firstProvider = catalog.providers[0]?.id || ''
   const existingIds = useMemo(() => new Set(existingInstances.map((instance) => instance.id)), [existingInstances])
   const [opened, setOpened] = useState(false)
+  const [step, setStep] = useState<WizardStep>('choose')
   const [mode, setMode] = useState<AddMode>('single')
   const [agent, setAgent] = useState(firstProvider)
+
+  // Close on Escape even when focus has left the dropdown (e.g. after clicking a
+  // preset), which Mantine's own trapFocus/closeOnEscape path can miss.
+  useEffect(() => {
+    if (!opened) return
+    const handleEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setOpened(false)
+    }
+    document.addEventListener('keydown', handleEscape)
+    return () => document.removeEventListener('keydown', handleEscape)
+  }, [opened])
+
   const provider = catalog.providers.find((candidate) => candidate.id === agent)
-  const allModelsPresetLabel = `All ${provider?.label || 'provider'} models`
   const initialSelection = flagshipSelection(catalog, firstProvider, existingIds)
   const [models, setModels] = useState<string[]>(initialSelection.models)
   const [efforts, setEfforts] = useState<string[]>(initialSelection.efforts)
@@ -146,14 +159,6 @@ export function AddAgentInstances({ catalog, disabled, existingInstances = [], m
         ? 'Agents cannot be added to this step.'
         : undefined
 
-  const changeMode = (nextMode: AddMode) => {
-    if (nextMode === 'single') {
-      setModels((current) => current.slice(0, 1))
-      setEfforts((current) => current.slice(0, 1))
-    }
-    setMode(nextMode)
-  }
-
   const add = () => {
     if (!agent || overLimit || noNewConfigurations) return
     onAdd(newCombinations)
@@ -188,7 +193,7 @@ export function AddAgentInstances({ catalog, disabled, existingInstances = [], m
   }
 
   const selectAllEffortsForModel = () => {
-    const model = models[0]
+    const model = models[0] || flagshipSelection(catalog, agent, existingIds).models[0] || orderedModels[0]?.id
     const definition = orderedModels.find((candidate) => candidate.id === model)
     if (!model || !definition) return
     const availableEfforts = definition.efforts
@@ -217,6 +222,16 @@ export function AddAgentInstances({ catalog, disabled, existingInstances = [], m
     setMode('single')
     setModels([])
     setEfforts([])
+  }
+
+  const startSingle = () => {
+    selectFlagshipPreset()
+    setStep('configure')
+  }
+
+  const startMultiple = () => {
+    selectAllProviderModels()
+    setStep('configure')
   }
 
   // Which quick preset the current selection corresponds to, so its card reads
@@ -249,6 +264,7 @@ export function AddAgentInstances({ catalog, disabled, existingInstances = [], m
           onClick={(event) => {
             event.stopPropagation()
             if (!opened) {
+              setStep('choose')
               const selection = flagshipSelection(catalog, agent, existingIds)
               setMode('single')
               setModels(selection.models)
@@ -266,212 +282,248 @@ export function AddAgentInstances({ catalog, disabled, existingInstances = [], m
         aria-label="Add new agents"
         onClick={(event) => event.stopPropagation()}
       >
-        <Stack gap="sm">
-          <Text component="h2" size="md" fw={700} lh={1.2}>Add new agent(s)</Text>
-          <div className="agent-add-layout">
-            <Stack className="agent-add-fields" gap="sm">
-              <AgentProviderSelect
-                catalog={catalog}
-                agent={agent}
-                withinPortal={false}
-                onChange={(value) => {
-                  const nextAgent = value || firstProvider
-                  const selection = flagshipSelection(catalog, nextAgent, existingIds)
-                  setAgent(nextAgent)
-                  setModels(selection.models)
-                  setEfforts(selection.efforts)
-                }}
-              />
-              <SegmentedControl
-                className="agent-add-mode"
-                aria-label="Agent selection mode"
-                size="xs"
-                fullWidth
-                value={mode}
-                data={[
-                  { value: 'single', label: 'Single agent' },
-                  { value: 'multiple', label: 'Multiple agents' },
-                ]}
-                onChange={(value) => changeMode(value as AddMode)}
-              />
-              {mode === 'single' ? (
-                <>
-                  <Select
-                    label="Model"
-                    description="Choose one model, or Auto to let Agent Runner decide."
-                    size="xs"
-                    data={singleModelOptions}
-                    value={singleModel}
-                    searchable
-                    allowDeselect={false}
-                    comboboxProps={{ withinPortal: false }}
-                    renderOption={({ option }) => {
-                      const existingEfforts = option.value === 'auto'
-                        ? existingIds.has(agentInstanceId(agent)) ? ['Already selected'] : []
-                        : existingEffortLabelsByModel.get(option.value) || []
-                      const note = option.value === 'auto'
-                        ? existingEfforts[0] || ''
-                        : existingEfforts.length > 0 ? `${existingEfforts.join(', ')} already selected` : ''
-                      return (
-                        <Group className="agent-selection-option" gap="xs" wrap="nowrap">
-                          <Text className="agent-selection-option-label" size="sm">{option.label}</Text>
-                          {note ? <Text className="agent-selection-option-note" size="xs">{note}</Text> : null}
-                        </Group>
-                      )
-                    }}
-                    onChange={(value) => {
-                      const selection = modelSelection(catalog, agent, value || 'auto', existingIds)
-                      setModels(selection.models)
-                      setEfforts(selection.efforts)
-                    }}
-                  />
-                  <Select
-                    label="Reasoning effort"
-                    description={singleModel === 'auto'
-                      ? 'Choose a model to configure effort.'
-                      : singleModelDefinition && singleModelDefinition.efforts.length === 0
-                        ? 'This model does not expose configurable reasoning effort.'
-                        : 'Choose one effort for this agent instance.'}
-                    size="xs"
-                    data={singleEffortOptions}
-                    value={efforts[0] || 'auto'}
-                    disabled={singleModel === 'auto' || Boolean(singleModelDefinition && singleModelDefinition.efforts.length === 0)}
-                    allowDeselect={false}
-                    comboboxProps={{ withinPortal: false }}
-                    renderOption={({ option }) => {
-                      const alreadySelected = existingIds.has(agentInstanceId(agent, singleModel, option.value))
-                      return (
-                        <Group className="agent-selection-option" gap="xs" wrap="nowrap">
-                          <Text className="agent-selection-option-label" size="sm">{option.label}</Text>
-                          {alreadySelected ? <Text className="agent-selection-option-note" size="xs">Already selected</Text> : null}
-                        </Group>
-                      )
-                    }}
-                    onChange={(value) => setEfforts(value && value !== 'auto' ? [value] : [])}
-                  />
-                </>
-              ) : (
-                <>
-                  <MultiSelect
-                    label="Models"
-                    description="Each selected model creates a separate agent instance."
-                    size="xs"
-                    data={modelOptions}
-                    value={models}
-                    maxValues={Math.max(1, maxInstances)}
-                    searchable
-                    comboboxProps={{ withinPortal: false }}
-                    renderOption={({ option }) => {
-                      const existingEfforts = existingEffortLabelsByModel.get(option.value) || []
-                      return (
-                        <Group className="agent-selection-option" gap="xs" wrap="nowrap">
-                          <Text className="agent-selection-option-label" size="sm">{option.label}</Text>
-                          {existingEfforts.length > 0 ? (
-                            <Text className="agent-selection-option-note" size="xs">
-                              {existingEfforts.join(', ')} already selected
-                            </Text>
-                          ) : null}
-                        </Group>
-                      )
-                    }}
-                    onChange={(value) => {
-                      setModels(value)
-                      setEfforts([])
-                    }}
-                  />
-                  <MultiSelect
-                    label="Reasoning efforts"
-                    description="Every selected effort combines with every selected model."
-                    size="xs"
-                    data={effortOptions}
-                    value={efforts}
-                    disabled={models.length === 0 || effortOptions.length === 0}
-                    comboboxProps={{ withinPortal: false }}
-                    renderOption={({ option }) => {
-                      const existingModelCount = models.filter((model) => (
-                        existingIds.has(agentInstanceId(agent, model, option.value))
-                      )).length
-                      const note = existingModelCount === models.length && models.length > 0
-                        ? 'Already selected'
-                        : existingModelCount > 0
-                          ? `Already selected for ${existingModelCount} of ${models.length} models`
-                          : ''
-                      return (
-                        <Group className="agent-selection-option" gap="xs" wrap="nowrap">
-                          <Text className="agent-selection-option-label" size="sm">{option.label}</Text>
-                          {note ? <Text className="agent-selection-option-note" size="xs">{note}</Text> : null}
-                        </Group>
-                      )
-                    }}
-                    onChange={setEfforts}
-                  />
-                </>
-              )}
-            </Stack>
-            <Stack className="agent-add-presets" gap="xs">
-              <div className="agent-add-presets-heading">
-                <Text size="xs" fw={700}>Quick presets</Text>
-                <Text size="xs" c="dimmed">Build common lineups without configuring each instance.</Text>
-              </div>
-              <button className={presetClass('flagship')} aria-pressed={activePreset === 'flagship'} type="button" onClick={selectFlagshipPreset}>
-                <span className="agent-preset-icon"><Crown size={16} /></span>
-                <span className="agent-preset-copy">
-                  <span className="agent-preset-title">Flagship / highest</span>
-                  <span className="agent-preset-description">Select this provider’s strongest model and effort.</span>
-                </span>
+        {step === 'choose' ? (
+          <Stack gap="sm">
+            <div className="agent-add-heading">
+              <Text component="h2" size="md" fw={700} lh={1.2}>Add new agents</Text>
+              <Text size="xs" c="dimmed">Start by choosing how many agents to add.</Text>
+            </div>
+            <div className="agent-choose-grid">
+              <button className="agent-choose-card" type="button" onClick={startSingle}>
+                <span className="agent-choose-icon"><Bot size={20} /></span>
+                <span className="agent-choose-title">One agent</span>
+                <span className="agent-choose-description">Configure a single model and reasoning effort.</span>
               </button>
-              <button
-                className={presetClass('all-efforts')}
-                aria-pressed={activePreset === 'all-efforts'}
-                type="button"
-                disabled={models.length !== 1}
-                onClick={selectAllEffortsForModel}
+              <button className="agent-choose-card" type="button" onClick={startMultiple}>
+                <span className="agent-choose-icon"><Layers3 size={20} /></span>
+                <span className="agent-choose-title">Several agents</span>
+                <span className="agent-choose-description">Build a lineup across models and efforts.</span>
+              </button>
+            </div>
+            <Divider my={2} label="or" labelPosition="center" />
+            <button className="agent-preset-card" type="button" onClick={addFlagshipOfEveryProvider}>
+              <span className="agent-preset-icon"><Network size={16} /></span>
+              <span className="agent-preset-copy">
+                <span className="agent-preset-title">One of each provider</span>
+                <span className="agent-preset-description">Add the best config for every provider at once.</span>
+              </span>
+            </button>
+            <Group justify="flex-end">
+              <Button size="xs" variant="subtle" color="gray" onClick={() => setOpened(false)}>Cancel</Button>
+            </Group>
+          </Stack>
+        ) : (
+          <Stack gap="sm">
+            <div className="agent-add-heading-row">
+              <Button
+                size="compact-xs"
+                variant="subtle"
+                color="gray"
+                leftSection={<ChevronLeft size={13} />}
+                onClick={() => setStep('choose')}
               >
-                <span className="agent-preset-icon"><Gauge size={16} /></span>
-                <span className="agent-preset-copy">
-                  <span className="agent-preset-title">This model × all efforts</span>
-                  <span className="agent-preset-description">Run the selected model at every supported effort.</span>
-                </span>
-              </button>
-              <button className={presetClass('all-models')} aria-pressed={activePreset === 'all-models'} type="button" onClick={selectAllProviderModels}>
-                <span className="agent-preset-icon"><Layers3 size={16} /></span>
-                <span className="agent-preset-copy">
-                  <span className="agent-preset-title">{allModelsPresetLabel}</span>
-                  <span className="agent-preset-description">Select this provider’s strongest available models.</span>
-                </span>
-              </button>
-              <button className="agent-preset-card" type="button" onClick={addFlagshipOfEveryProvider}>
-                <span className="agent-preset-icon"><Network size={16} /></span>
-                <span className="agent-preset-copy">
-                  <span className="agent-preset-title">Add flagship of every provider</span>
-                  <span className="agent-preset-description">Immediately add one top configuration per provider.</span>
-                </span>
-              </button>
-              <button className={presetClass('auto')} aria-pressed={activePreset === 'auto'} type="button" onClick={selectAutoPreset}>
-                <span className="agent-preset-icon"><Sparkles size={16} /></span>
-                <span className="agent-preset-copy">
-                  <span className="agent-preset-title">Auto</span>
-                  <span className="agent-preset-description">Let Agent Runner choose the model and effort.</span>
-                </span>
-              </button>
-            </Stack>
-          </div>
-          <Text size="xs" c={overLimit ? 'red' : 'dimmed'}>
-            {overLimit
-              ? `Choose at most ${maxInstances} instance${maxInstances === 1 ? '' : 's'} for the remaining capacity.`
-              : noNewConfigurations
-                ? 'That exact provider, model, and effort configuration is already selected.'
-                : duplicateCount > 0
-                  ? `Adds ${combinationCount} new instance${combinationCount === 1 ? '' : 's'}; skips ${duplicateCount} already selected.`
-                  : models.length === 0
-                    ? 'Adds 1 Auto instance.'
-                    : `Adds ${combinationCount} instance${combinationCount === 1 ? '' : 's'}.`}
-          </Text>
-          <Group justify="flex-end">
-            <Button size="xs" variant="subtle" color="gray" onClick={() => setOpened(false)}>Cancel</Button>
-            <Button size="xs" disabled={overLimit || noNewConfigurations} onClick={add}>Add</Button>
-          </Group>
-        </Stack>
+                Back
+              </Button>
+              <Text component="h2" size="md" fw={700} lh={1.2}>
+                {mode === 'single' ? 'Configure one agent' : 'Configure several agents'}
+              </Text>
+            </div>
+            <div className="agent-add-layout">
+              <Stack className="agent-add-fields" gap="sm">
+                <AgentProviderSelect
+                  catalog={catalog}
+                  agent={agent}
+                  withinPortal={false}
+                  onChange={(value) => {
+                    const nextAgent = value || firstProvider
+                    const selection = flagshipSelection(catalog, nextAgent, existingIds)
+                    setAgent(nextAgent)
+                    setModels(selection.models)
+                    setEfforts(selection.efforts)
+                  }}
+                />
+                {mode === 'single' ? (
+                  <>
+                    <Select
+                      label="Model"
+                      description="Choose one model, or Auto to let Agent Runner decide."
+                      size="xs"
+                      data={singleModelOptions}
+                      value={singleModel}
+                      searchable
+                      allowDeselect={false}
+                      comboboxProps={{ withinPortal: false }}
+                      renderOption={({ option }) => {
+                        const existingEfforts = option.value === 'auto'
+                          ? existingIds.has(agentInstanceId(agent)) ? ['Already selected'] : []
+                          : existingEffortLabelsByModel.get(option.value) || []
+                        const note = option.value === 'auto'
+                          ? existingEfforts[0] || ''
+                          : existingEfforts.length > 0 ? `${existingEfforts.join(', ')} already selected` : ''
+                        return (
+                          <Group className="agent-selection-option" gap="xs" wrap="nowrap">
+                            <Text className="agent-selection-option-label" size="sm">{option.label}</Text>
+                            {note ? <Text className="agent-selection-option-note" size="xs">{note}</Text> : null}
+                          </Group>
+                        )
+                      }}
+                      onChange={(value) => {
+                        const selection = modelSelection(catalog, agent, value || 'auto', existingIds)
+                        setModels(selection.models)
+                        setEfforts(selection.efforts)
+                      }}
+                    />
+                    <Select
+                      label="Reasoning effort"
+                      description={singleModel === 'auto'
+                        ? 'Choose a model to configure effort.'
+                        : singleModelDefinition && singleModelDefinition.efforts.length === 0
+                          ? 'This model does not expose configurable reasoning effort.'
+                          : 'Choose one effort for this agent instance.'}
+                      size="xs"
+                      data={singleEffortOptions}
+                      value={efforts[0] || 'auto'}
+                      disabled={singleModel === 'auto' || Boolean(singleModelDefinition && singleModelDefinition.efforts.length === 0)}
+                      allowDeselect={false}
+                      comboboxProps={{ withinPortal: false }}
+                      renderOption={({ option }) => {
+                        const alreadySelected = existingIds.has(agentInstanceId(agent, singleModel, option.value))
+                        return (
+                          <Group className="agent-selection-option" gap="xs" wrap="nowrap">
+                            <Text className="agent-selection-option-label" size="sm">{option.label}</Text>
+                            {alreadySelected ? <Text className="agent-selection-option-note" size="xs">Already selected</Text> : null}
+                          </Group>
+                        )
+                      }}
+                      onChange={(value) => setEfforts(value && value !== 'auto' ? [value] : [])}
+                    />
+                  </>
+                ) : (
+                  <>
+                    <MultiSelect
+                      label="Models"
+                      description="Each selected model creates a separate agent instance."
+                      size="xs"
+                      data={modelOptions}
+                      value={models}
+                      maxValues={Math.max(1, maxInstances)}
+                      searchable
+                      clearable
+                      comboboxProps={{ withinPortal: false }}
+                      renderOption={({ option }) => {
+                        const existingEfforts = existingEffortLabelsByModel.get(option.value) || []
+                        return (
+                          <Group className="agent-selection-option" gap="xs" wrap="nowrap">
+                            <Text className="agent-selection-option-label" size="sm">{option.label}</Text>
+                            {existingEfforts.length > 0 ? (
+                              <Text className="agent-selection-option-note" size="xs">
+                                {existingEfforts.join(', ')} already selected
+                              </Text>
+                            ) : null}
+                          </Group>
+                        )
+                      }}
+                      onChange={(value) => {
+                        setModels(value)
+                        setEfforts([])
+                      }}
+                    />
+                    <MultiSelect
+                      label="Reasoning efforts"
+                      description="Every selected effort combines with every selected model."
+                      size="xs"
+                      data={effortOptions}
+                      value={efforts}
+                      disabled={models.length === 0 || effortOptions.length === 0}
+                      clearable
+                      comboboxProps={{ withinPortal: false }}
+                      renderOption={({ option }) => {
+                        const existingModelCount = models.filter((model) => (
+                          existingIds.has(agentInstanceId(agent, model, option.value))
+                        )).length
+                        const note = existingModelCount === models.length && models.length > 0
+                          ? 'Already selected'
+                          : existingModelCount > 0
+                            ? `Already selected for ${existingModelCount} of ${models.length} models`
+                            : ''
+                        return (
+                          <Group className="agent-selection-option" gap="xs" wrap="nowrap">
+                            <Text className="agent-selection-option-label" size="sm">{option.label}</Text>
+                            {note ? <Text className="agent-selection-option-note" size="xs">{note}</Text> : null}
+                          </Group>
+                        )
+                      }}
+                      onChange={setEfforts}
+                    />
+                  </>
+                )}
+              </Stack>
+              <Stack className="agent-add-presets" gap="xs">
+                <div className="agent-add-presets-heading">
+                  <Text size="xs" fw={700}>Quick presets</Text>
+                  <Text size="xs" c="dimmed">
+                    {mode === 'single' ? 'Fill in one agent fast.' : 'Build a lineup of agents fast.'}
+                  </Text>
+                </div>
+                {mode === 'single' ? (
+                  <>
+                    <button className={presetClass('flagship')} aria-pressed={activePreset === 'flagship'} type="button" onClick={selectFlagshipPreset}>
+                      <span className="agent-preset-icon"><Crown size={16} /></span>
+                      <span className="agent-preset-copy">
+                        <span className="agent-preset-title">Best {provider?.label || 'provider'} model available</span>
+                        <span className="agent-preset-description">The strongest {provider?.label || 'provider'} model at its highest effort.</span>
+                      </span>
+                    </button>
+                    <button className={presetClass('auto')} aria-pressed={activePreset === 'auto'} type="button" onClick={selectAutoPreset}>
+                      <span className="agent-preset-icon"><Sparkles size={16} /></span>
+                      <span className="agent-preset-copy">
+                        <span className="agent-preset-title">Auto</span>
+                        <span className="agent-preset-description">Let Netlify pick the model and effort.</span>
+                      </span>
+                    </button>
+                  </>
+                ) : (
+                  <>
+                    <button
+                      className={presetClass('all-efforts')}
+                      aria-pressed={activePreset === 'all-efforts'}
+                      type="button"
+                      onClick={selectAllEffortsForModel}
+                    >
+                      <span className="agent-preset-icon"><Gauge size={16} /></span>
+                      <span className="agent-preset-copy">
+                        <span className="agent-preset-title">Every effort level</span>
+                        <span className="agent-preset-description">Run one model at each supported effort.</span>
+                      </span>
+                    </button>
+                    <button className={presetClass('all-models')} aria-pressed={activePreset === 'all-models'} type="button" onClick={selectAllProviderModels}>
+                      <span className="agent-preset-icon"><Layers3 size={16} /></span>
+                      <span className="agent-preset-copy">
+                        <span className="agent-preset-title">Every {provider?.label || 'provider'} model</span>
+                        <span className="agent-preset-description">One agent instance per available model.</span>
+                      </span>
+                    </button>
+                  </>
+                )}
+              </Stack>
+            </div>
+            <Text size="xs" c={overLimit ? 'red' : 'dimmed'}>
+              {overLimit
+                ? `Choose at most ${maxInstances} agent${maxInstances === 1 ? '' : 's'} for the remaining capacity.`
+                : noNewConfigurations
+                  ? 'That exact provider, model, and effort configuration is already selected.'
+                  : duplicateCount > 0
+                    ? `Adds ${combinationCount} new agent${combinationCount === 1 ? '' : 's'}; skips ${duplicateCount} already selected.`
+                    : models.length === 0
+                      ? 'Adds 1 Auto agent.'
+                      : `Adds ${combinationCount} agent${combinationCount === 1 ? '' : 's'}.`}
+            </Text>
+            <Group justify="flex-end">
+              <Button size="xs" variant="subtle" color="gray" onClick={() => setOpened(false)}>Cancel</Button>
+              <Button size="xs" disabled={overLimit || noNewConfigurations} onClick={add}>Add</Button>
+            </Group>
+          </Stack>
+        )}
       </Popover.Dropdown>
     </Popover>
   )

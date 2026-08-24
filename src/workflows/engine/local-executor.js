@@ -1034,6 +1034,10 @@ async function executeLocalFlow({ flow, steps, options, runState, projectRoot, c
           console.log(`  ${label}: submitted after ${elapsedSeconds}s`)
           pendingSubmissionLabels.delete(label)
           if (reporter) {
+            // Show the submitted run box before polling begins, so wait-for-results
+            // flows surface the runner/session/URL up front like fire-and-forget flows do.
+            const submittedBox = formatSubmittedLocalRunBoxes({ runs: [submitted], prompt, projectRoot, options })
+            if (submittedBox) console.log(`\n${submittedBox}`)
             phase = 'wait'
             const [terminalRun] = await waitForLocalRunSubset({
               runState,
@@ -1091,7 +1095,8 @@ async function executeLocalFlow({ flow, steps, options, runState, projectRoot, c
     })
     stepState.runs = submittedRuns
     saveRunState(runState)
-    const submissionBoxes = formatSubmittedLocalRunBoxes({ runs: submittedRuns, prompt, projectRoot, options })
+    // Wait-for-results flows already printed each run's box right after it submitted.
+    const submissionBoxes = reporter ? '' : formatSubmittedLocalRunBoxes({ runs: submittedRuns, prompt, projectRoot, options })
     if (submissionBoxes) {
       console.log('\nSubmitted Netlify agent runs:')
       console.log(submissionBoxes)

@@ -18,6 +18,8 @@ test('multi-instance execution anchors stay instance-aware', () => {
   assert.match(read('src/workflows/engine/local-executor.js'), /waitForLocalRunSubset/)
   // each scheduler worker holds its slot through result readiness
   assert.match(read('src/workflows/engine/local-executor.js'), /mapInWaves[\s\S]+waitForLocalRunSubset/)
+  // wait-for-results flows print the submitted run box before polling, not only at the end
+  assert.match(read('src/workflows/engine/local-executor.js'), /formatSubmittedLocalRunBoxes\(\{ runs: \[submitted\][\s\S]+waitForLocalRunSubset/)
   // transport currently derived from materialized config
   assert.match(read('src/cli/main.js'), /materializedAgentConfigurations/)
   // multi-input source collector preserves the source step

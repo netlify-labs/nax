@@ -477,8 +477,8 @@ catalog default and are recorded concretely for retry and resume. Exact
 duplicate tuples are rejected.
 
 Pinned or repeated-provider lineups select `netlify-api` under transport Auto.
-Local runs start in waves with at most five non-terminal runners. A step above
-six instances requires confirmation unless `--force` is set.
+Local runs execute in waves of at most four non-terminal runners. A step is
+capped at four resolved agent instances; `--force` does not bypass this limit.
 
 ### `nax admin sync`
 

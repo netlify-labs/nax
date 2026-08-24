@@ -1,8 +1,8 @@
 import { ActionIcon, Badge, Box, Button, Group, Paper, ScrollArea, Select, Stack, Text, TextInput, Title, Tooltip } from '@mantine/core'
 import { History, Info, RotateCcw, Search } from 'lucide-react'
 import { useMemo, useState } from 'react'
-import { filterRuns, runId, statusBadgeStyle, statusColor, statusLabel, usageBadgeText } from '../run-format'
-import { statusKey } from '../status-model'
+import { filterRuns, runId, statusLabel, usageBadgeText } from '../run-format'
+import { StatusBadge } from './StatusBadge'
 import type { DashboardRun } from '../types'
 
 const STATUS_FILTER_OPTIONS = [
@@ -140,15 +140,7 @@ export function RecentRuns({
                     </Group>
                   </Group>
                   <Box className="run-item-details-button">
-                    <Badge
-                      className={`run-status ${statusKey(run.status || '')}`}
-                      variant="light"
-                      color={statusColor(run.status || '')}
-                      size="xs"
-                      style={statusBadgeStyle(run.status || '')}
-                    >
-                      {statusLabel(run.status || 'unknown')}
-                    </Badge>
+                    <StatusBadge status={run.status || ''} label={statusLabel(run.status || 'unknown')} size="xs" />
                     {run.stalled ? (
                       <Tooltip label={run.lastEventAt ? `No events since ${new Date(run.lastEventAt).toLocaleTimeString()}` : 'No recent events'}>
                         <Badge className="run-stalled" variant="outline" color="yellow" size="xs">Stalled</Badge>

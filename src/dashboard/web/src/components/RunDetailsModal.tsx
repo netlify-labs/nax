@@ -5,7 +5,8 @@ import { openLocalFile } from '../api'
 import { agentInstanceId, instanceDisplayName, instanceFromRun } from '../agent-instances'
 import { useApproveHumanReviewGateMutation, useCancelFollowupRunMutation, useCancelHumanReviewGateMutation, useCancelWorkflowRunMutation, useRetryAgentRunMutation } from '../queries/dashboard-mutations'
 import { useRunDetailsQuery } from '../queries/dashboard-queries'
-import { agentLabel, isDoneStatus, recordList, recordValue, runId, statusBadgeStyle, statusColor, statusLabel, usageSummaryLabel, workflowName } from '../run-format'
+import { agentLabel, isDoneStatus, recordList, recordValue, runId, statusColor, statusLabel, usageSummaryLabel, workflowName } from '../run-format'
+import { StatusBadge } from './StatusBadge'
 import { extractMarkdownToc } from '../run-details-toc'
 import { selectRunDetailsSection, selectorKey, type RunDetailsSelector } from '../run-details-selection'
 import { displayAgentStatuses, displayStepStatus } from '../run-projection'
@@ -1208,15 +1209,7 @@ function RunDetailsContent({
       <Group gap="xs" wrap="wrap">
         <Title order={2} size="h4">{showingPrompt ? `${promptTitle} prompt` : timelineContentTitle(entry, name)}</Title>
         {!showingPrompt && entry.status ? (
-          <Badge
-            className={`run-status ${statusKey(entry.status)}`}
-            variant="light"
-            color={statusColor(entry.status)}
-            size="xs"
-            style={statusBadgeStyle(entry.status)}
-          >
-            {timelineStatusLabel(entry.status)}
-          </Badge>
+          <StatusBadge status={entry.status} label={timelineStatusLabel(entry.status)} size="xs" />
         ) : null}
         {actionFilePath || canCancel ? (
           <ArtifactActions
@@ -1474,15 +1467,7 @@ function RunDetailsStandaloneLivePanel({ context }: { context: RunDetailsLiveCon
     <Stack gap="sm">
       <Group gap="xs" wrap="wrap">
         <Title order={2} size="h4">{`${agentLabel(context.selector.agent)} · ${context.stepTitle}`}</Title>
-        <Badge
-          className={`run-status ${statusKey(context.status)}`}
-          variant="light"
-          color={statusColor(context.status)}
-          w="fit-content"
-          style={statusBadgeStyle(context.status)}
-        >
-          {timelineStatusLabel(context.status || 'unknown')}
-        </Badge>
+        <StatusBadge status={context.status} label={timelineStatusLabel(context.status || 'unknown')} w="fit-content" />
       </Group>
       <Box className="prompt-markdown run-details-markdown">
         <LivePanel context={context} />

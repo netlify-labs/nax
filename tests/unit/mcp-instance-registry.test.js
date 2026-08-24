@@ -126,7 +126,7 @@ test('registry refuses a second live dashboard and replaces a stale one', () => 
 
   assert.throws(
     () => writeDashboardInstance({ ...first, instanceId: 'instance_registry_second' }, { ...registry, isProcessAlive: () => true }),
-    /** @param {unknown} error */ (error) => error instanceof DashboardRegistryError && error.code === 'dashboard_already_advertised',
+    /** @param {unknown} error */ (error) => error instanceof DashboardRegistryError && error.code === 'dashboard_already_running',
   )
 
   const replacement = { ...first, instanceId: 'instance_registry_replaced', pid: 999999 }

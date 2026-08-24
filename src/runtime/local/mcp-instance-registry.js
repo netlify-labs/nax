@@ -287,7 +287,7 @@ function writeDashboardInstance(value, { isProcessAlive = processIsAlive, ...pat
         try { fs.unlinkSync(filePath) } catch (_unlinkError) { /* handled by write */ }
       }
       if (existing && existing.instanceId !== record.instanceId && isProcessAlive(existing.pid)) {
-        throw new DashboardRegistryError('dashboard_already_advertised', 'A nax dashboard is already running for this project.', {
+        throw new DashboardRegistryError('dashboard_already_running', 'A nax dashboard is already running for this project.', {
           projectRoot: record.projectRoot,
           instanceId: existing.instanceId,
           origin: existing.origin,

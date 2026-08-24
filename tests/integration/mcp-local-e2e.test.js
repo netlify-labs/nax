@@ -446,7 +446,7 @@ test('one MCP routes concurrent project dashboards by project_ref and scope with
 
     await assert.rejects(
       startFixtureDashboard({ projectRoot: firstRoot }),
-      /** @param {unknown} error */ (error) => Boolean(error && typeof error === 'object' && 'code' in error && error.code === 'dashboard_already_advertised'),
+      /** @param {unknown} error */ (error) => Boolean(error && typeof error === 'object' && 'code' in error && error.code === 'dashboard_already_running'),
     )
   } finally {
     await Promise.all([firstClient.close().catch(() => {}), secondClient.close().catch(() => {})])

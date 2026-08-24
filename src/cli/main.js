@@ -636,7 +636,7 @@ async function handleDashboard(flowId, options = {}) {
     })
   } catch (error) {
     // A dashboard is already running for this project — point at it instead of failing.
-    if (error && error.code === 'dashboard_already_advertised' && error.details?.origin) {
+    if (error && error.code === 'dashboard_already_running' && error.details?.origin) {
       const params = new URLSearchParams()
       if (error.details.token) params.set('token', String(error.details.token))
       if (flowId) params.set('workflow', flowId)

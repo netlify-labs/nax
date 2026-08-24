@@ -24,6 +24,7 @@ flowchart TD
   claude[Claude]
   gemini[Gemini]
   codex[Codex]
+  opencode[OpenCode, opt-in]
   cross[Cross-review findings]
   consensus[Consensus summary]
   artifacts[.nax artifacts]
@@ -34,9 +35,11 @@ flowchart TD
   fanout --> claude
   fanout --> gemini
   fanout --> codex
+  fanout --> opencode
   claude --> cross
   gemini --> cross
   codex --> cross
+  opencode --> cross
   cross --> consensus
   consensus --> artifacts
   consensus --> human
@@ -75,6 +78,8 @@ nax run review \
   --efforts claude=high
 nax run review --step-agents cross-review=gemini --step-agents synthesize=codex
 ```
+
+Bundled councils default to Claude, Gemini, and Codex. OpenCode is a selectable fourth member — add it with `--agents claude,gemini,codex,opencode` (or per step) when you want a wider spread of models.
 
 Use the full council when a task is high risk or ambiguous. Use a smaller agent set for cheap triage, targeted follow-up, or quick checks before spending more tokens.
 

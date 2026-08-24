@@ -238,7 +238,17 @@ nax run review --agents \
 
 # Bare council; model and effort stay omitted.
 nax run review --agents claude,gemini,codex --force
+
+# OpenCode uses provider-scoped model IDs; Max maps to xhigh on the wire.
+nax run review --agents \
+  opencode:z-ai/glm-5.2:max,opencode:moonshotai/kimi-k3:high \
+  --transport netlify-api --force
 ```
+
+OpenCode model IDs are provider-scoped (for example `moonshotai/kimi-k3`,
+`z-ai/glm-5.2`, `deepseek/deepseek-v4-pro`) and some expose only High/Max, where
+Max is sent as `xhigh`. See the [model and effort catalog](/reference/workflow-files#current-model-and-effort-catalog)
+for every provider's IDs and efforts, or query `context_get` for the live list.
 
 Each step accepts at most four resolved agent instances, and local execution
 can run all four concurrently. `--force` does not bypass this limit.

@@ -1,6 +1,6 @@
 import { Button, Divider, Group, MultiSelect, Popover, Select, Stack, Text } from '@mantine/core'
 import { Bot, ChevronLeft, Crown, Gauge, Layers3, Network, Plus, Sparkles } from 'lucide-react'
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useState, type ReactNode } from 'react'
 
 import { MAX_STEP_AGENT_INSTANCES, agentInstanceId } from '../agent-instances'
 import type { AgentInstanceDescriptor } from '../types'
@@ -45,6 +45,16 @@ function flagshipSelection(
 ): { models: string[]; efforts: string[] } {
   const { model } = defaultAgentConfig(catalog, agent)
   return modelSelection(catalog, agent, model, existingIds)
+}
+
+// A model/effort dropdown option with an optional "already selected" note.
+function SelectionOption({ label, note }: { label: ReactNode; note?: string }) {
+  return (
+    <Group className="agent-selection-option" gap="xs" wrap="nowrap">
+      <Text className="agent-selection-option-label" size="sm">{label}</Text>
+      {note ? <Text className="agent-selection-option-note" size="xs">{note}</Text> : null}
+    </Group>
+  )
 }
 
 export function AddAgentInstances({ catalog, disabled, existingInstances = [], maxInstances = MAX_STEP_AGENT_INSTANCES, onAdd }: Props) {
@@ -360,12 +370,7 @@ export function AddAgentInstances({ catalog, disabled, existingInstances = [], m
                         const note = option.value === 'auto'
                           ? existingEfforts[0] || ''
                           : existingEfforts.length > 0 ? `${existingEfforts.join(', ')} already selected` : ''
-                        return (
-                          <Group className="agent-selection-option" gap="xs" wrap="nowrap">
-                            <Text className="agent-selection-option-label" size="sm">{option.label}</Text>
-                            {note ? <Text className="agent-selection-option-note" size="xs">{note}</Text> : null}
-                          </Group>
-                        )
+                        return <SelectionOption label={option.label} note={note} />
                       }}
                       onChange={(value) => {
                         const selection = modelSelection(catalog, agent, value || 'auto', existingIds)
@@ -388,12 +393,7 @@ export function AddAgentInstances({ catalog, disabled, existingInstances = [], m
                       comboboxProps={{ withinPortal: false }}
                       renderOption={({ option }) => {
                         const alreadySelected = existingIds.has(agentInstanceId(agent, singleModel, option.value))
-                        return (
-                          <Group className="agent-selection-option" gap="xs" wrap="nowrap">
-                            <Text className="agent-selection-option-label" size="sm">{option.label}</Text>
-                            {alreadySelected ? <Text className="agent-selection-option-note" size="xs">Already selected</Text> : null}
-                          </Group>
-                        )
+                        return <SelectionOption label={option.label} note={alreadySelected ? 'Already selected' : ''} />
                       }}
                       onChange={(value) => setEfforts(value && value !== 'auto' ? [value] : [])}
                     />
@@ -412,16 +412,8 @@ export function AddAgentInstances({ catalog, disabled, existingInstances = [], m
                       comboboxProps={{ withinPortal: false }}
                       renderOption={({ option }) => {
                         const existingEfforts = existingEffortLabelsByModel.get(option.value) || []
-                        return (
-                          <Group className="agent-selection-option" gap="xs" wrap="nowrap">
-                            <Text className="agent-selection-option-label" size="sm">{option.label}</Text>
-                            {existingEfforts.length > 0 ? (
-                              <Text className="agent-selection-option-note" size="xs">
-                                {existingEfforts.join(', ')} already selected
-                              </Text>
-                            ) : null}
-                          </Group>
-                        )
+                        const note = existingEfforts.length > 0 ? `${existingEfforts.join(', ')} already selected` : ''
+                        return <SelectionOption label={option.label} note={note} />
                       }}
                       onChange={(value) => {
                         setModels(value)
@@ -446,12 +438,7 @@ export function AddAgentInstances({ catalog, disabled, existingInstances = [], m
                           : existingModelCount > 0
                             ? `Already selected for ${existingModelCount} of ${models.length} models`
                             : ''
-                        return (
-                          <Group className="agent-selection-option" gap="xs" wrap="nowrap">
-                            <Text className="agent-selection-option-label" size="sm">{option.label}</Text>
-                            {note ? <Text className="agent-selection-option-note" size="xs">{note}</Text> : null}
-                          </Group>
-                        )
+                        return <SelectionOption label={option.label} note={note} />
                       }}
                       onChange={setEfforts}
                     />

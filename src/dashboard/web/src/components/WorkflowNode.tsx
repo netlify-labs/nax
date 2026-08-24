@@ -92,17 +92,37 @@ export const WorkflowNode = memo(function WorkflowNode({ data, selected }: NodeP
   const canAddAgents = configurable && isDefinition
   const githubTransport = catalogContext?.transport === 'github' || catalogContext?.transport === 'github-actions'
   const canConfigure = configurable && Boolean(catalogContext) && Boolean(node.onConfigureAgent)
-  const addAgentInFooter = selectedInstances.length >= MAX_STEP_AGENT_INSTANCES
+  const atMaxInstances = selectedInstances.length >= MAX_STEP_AGENT_INSTANCES
   const addAgentControl = canAddAgents && catalogContext ? (
     <AddAgentInstances
       catalog={catalogContext.catalog}
-      disabled={addAgentInFooter}
+      disabled={atMaxInstances}
       existingInstances={selectedInstances}
       maxInstances={Math.max(0, MAX_STEP_AGENT_INSTANCES - selectedInstances.length)}
       onAdd={(instances) => node.onAddInstances?.(node.stepId, instances)}
     />
   ) : null
-  const addAgentSlot = addAgentControl ? <div className="add-agent-slot">{addAgentControl}</div> : null
+  const removeAgentsControl = canAddAgents && selectedInstances.length > 0 && node.onRemoveAllAgents ? (
+    <Button
+      className="remove-agents-button"
+      size="compact-xs"
+      variant="subtle"
+      color="red"
+      leftSection={<Trash2 size={13} />}
+      onClick={(event) => {
+        event.stopPropagation()
+        node.onRemoveAllAgents?.(node.stepId)
+      }}
+    >
+      Remove agents
+    </Button>
+  ) : null
+  const addAgentSlot = addAgentControl || removeAgentsControl ? (
+    <div className="add-agent-slot">
+      {addAgentControl}
+      {removeAgentsControl}
+    </div>
+  ) : null
 
   return (
     <div className={`workflow-node${statusClass}${selected ? ' selected' : ''}`}>
@@ -311,11 +331,10 @@ export const WorkflowNode = memo(function WorkflowNode({ data, selected }: NodeP
             </div>
           )
         })}
-        {!humanReview && !addAgentInFooter ? addAgentSlot : null}
       </div>
       {!humanReview ? (
         <div className="node-footer">
-          {addAgentInFooter ? addAgentSlot : null}
+          {addAgentSlot}
           {isDefinition && inherited && node.agentInteraction !== 'view-result' ? (
             <Text className="inherited-lineup-note" size="xs" c="dimmed">
               <LockKeyhole size={12} /> Inherits surviving instances from {node.inheritedFromStepId}

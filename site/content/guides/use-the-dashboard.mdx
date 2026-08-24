@@ -1,13 +1,17 @@
 ---
 title: Use The Dashboard
-description: Open the local dashboard, inspect runs, stream events, and submit follow-ups.
+description: Open the local dashboard to configure agent lineups, run and watch workflows, gate human review, resume runs, and hand off to follow-up agents.
 ---
 
 import { Callout, Tabs } from 'nextra/components'
 
 # Use the dashboard
 
-The dashboard is a local browser workbench for browsing workflows, previewing dry runs, starting real runs, watching structured events, and handing completed artifacts to follow-up agents. It exists because long multi-agent workflows are easier to inspect as stateful runs than as terminal output alone.
+The dashboard is a local browser workbench for browsing workflows, configuring
+agent lineups, previewing dry runs, starting real runs, watching structured
+per-agent events, gating human review, and handing completed artifacts to
+follow-up agents. Long multi-agent workflows are easier to inspect as stateful
+runs than as terminal output alone.
 
 ## Open it
 
@@ -42,34 +46,195 @@ nax dashboard --no-open --no-tail
   </Tabs.Tab>
 </Tabs>
 
-The dashboard streams child workflow output to its terminal by default. Use
-`--no-tail` when you want workflow activity to remain in the browser only.
+Passing a workflow name opens it on launch; `--run <id>` jumps straight to a
+saved run's details view. The dashboard streams child workflow output to its
+terminal by default — use `--no-tail` to keep workflow activity in the browser
+only, and `--no-open` to print the URL instead of launching a browser.
 
-When started normally, the dashboard also advertises a private,
-project-scoped MCP control plane for `nax mcp`. The advertisement contains the
-ephemeral loopback address and per-process token with private filesystem
-permissions. Restarting the dashboard does not require an MCP configuration
-change because the stdio adapter rediscovers it before every operation.
+When started normally, the dashboard also advertises a private, project-scoped
+MCP control plane for `nax mcp`. The advertisement contains the ephemeral
+loopback address and per-process token with private filesystem permissions.
+Restarting the dashboard does not require an MCP configuration change because the
+stdio adapter rediscovers it before every operation. Disable the advertisement
+with `--no-mcp-advertise`.
+
+<Callout type="info">
+  The opened URL carries a per-session `?token=`. Mutating endpoints require that
+  token (or an `x-nax-token` header), so share the exact URL, not just the host.
+</Callout>
 
 ## Surfaces
 
 | Surface | What it does |
 | --- | --- |
-| Workflow list | Reads the same workflows as `nax list`. |
-| Graph canvas | Shows one chip per instance, inputs, submit mode, and step/instance status. |
-| Dry Run | Runs `nax run <flow> --dry --force` through the local API. |
-| Run | Starts the workflow after browser confirmation. |
-| Run an individual agent | Opens the standalone provider runner from the top of the workflow sidebar. |
-| Branch | Suggests the current, local, and locally known remote branches while still accepting a branch name that has not been fetched. |
-| Instance configuration | Adds, edits, or removes exact provider/model/effort tuples on each runnable step. |
-| Recent runs | Reads `.nax/workflows` and highlights resumable or completed runs. |
-| Run details | Shows results, prompt source, artifacts, copy/open actions, and follow-up controls. |
+| Workflow sidebar | Lists the same workflows as `nax list`, with search and a **Run an individual agent** action. |
+| Graph canvas | Renders each step as a node and each configured instance as a chip, with inputs, submit mode, and live per-instance status. |
+| Add agent | Opens the two-step lineup wizard on a runnable step (choose how many, then configure). |
+| Remove agents | Clears every instance from a step in one click. |
+| Chip caret | Edits or removes a single provider/model/effort instance. |
+| Dry run | Runs `nax run <flow> --dry --force` through the local API and streams output. |
+| Run | Starts the workflow after an in-browser confirmation that names the Netlify site and credit spend. |
+| Output panel | Shows Dry Run / Run sections with status, command, streamed stdout/stderr, and a raw-event diagnostics view. |
+| Recent runs | Reads `.nax/workflows` with search, a status filter, durable pagination, and resume. |
+| Run details | Shows per-agent results, prompts, artifacts, copy/open actions, review gates, and follow-up controls. |
+| Branch | Suggests current, local, and locally known remote branches while still accepting an unfetched name. |
+| Netlify project | Inspects every local site link and marks the Agent Runner target. |
+
+## The workflow canvas
+
+Each step is a node showing its number, status badge, submit mode
+(`new agent run`, `follow-up session`, `human review`), title, and description.
+Every configured instance is a chip with the provider icon, model label (or
+**Auto**), and effort.
+
+During a run, chips are keyed by exact instance id, so two models from the same
+provider report independent status. Each chip's control reflects its state:
+
+| Chip state | Control |
+| --- | --- |
+| Running | **Cancel** (✕) — cancels only that runner; others in the step continue. |
+| Running (no cancel) | Spinner. |
+| Completed | Check. |
+| Failed / cancelled | **Retry** when the step is still active, otherwise an alert icon. |
+
+Because instances are tracked individually, a step where some agents succeed and
+others fail is marked **Completed with failures** rather than shown as an
+all-green step. In a saved run (inspect view), click any chip to open that
+agent's result.
+
+## Configure agent lineups
+
+Each runnable step card carries one chip per instance. Bare-provider flow
+entries load as **Auto** chips and stay Auto until you edit them. A step accepts
+at most **four** resolved instances, and local execution runs up to four at once.
+
+### Add agents
+
+Choose **Add agent** on a step to open the wizard.
+
+**Step 1 — choose how many.** The wizard opens on *Add new agents* with three
+options:
+
+| Choice | Result |
+| --- | --- |
+| **One agent** | Configure a single model and reasoning effort. |
+| **Several agents** | Build a lineup across models and efforts. |
+| **One of each provider** | Adds the flagship config for every provider at once and closes. |
+
+**Step 2 — configure.** After picking One or Several agents you land on
+*Configure one agent* / *Configure several agents*. Pick the **Provider**, then:
+
+- **One agent:** a **Model** select (or Auto) and a **Reasoning effort** select.
+- **Several agents:** clearable **Models** and **Reasoning efforts**
+  multi-selects. Every selected effort combines with every selected model, and
+  each model creates a separate instance.
+
+**Back** returns to the choice screen, and **Escape** closes the wizard at any
+point. A live summary ("Adds 3 agents.") and the **Add** button reflect exactly
+what will be created; already-selected tuples are skipped.
+
+### Quick presets
+
+The wizard's presets fill the fields in one click. The active preset stays
+highlighted as long as your selection matches it.
+
+| Mode | Preset | Effect |
+| --- | --- | --- |
+| One agent | **Best \{provider\} model available** | Strongest model at its highest effort. |
+| One agent | **Auto** | Let Netlify pick the model and effort. |
+| Several agents | **Every effort level** | One model at each supported effort. |
+| Several agents | **Every \{provider\} model** | One instance per available model. |
+
+### Edit or remove instances
+
+- **Edit one instance:** open a chip's caret to change its provider, model, or
+  effort, then **Save**. **Remove agent** deletes just that tuple without
+  affecting other instances of the same provider.
+- **Clear the step:** **Remove agents** (next to Add agent) removes every
+  instance at once — handy before rebuilding a lineup from scratch.
+
+### Follow-up steps inherit instances
+
+Follow-up step chips are read-only. They inherit the surviving instances from the
+first input step and continue each instance's own runner session; in the
+definition view, inherited chips mirror changes to that source step. An input
+configured with `results: peers` gives each continued instance the other
+instances' outputs for cross-grading.
+
+### Transport notes
+
+Pinned or repeated-provider lineups resolve to the Netlify API under transport
+Auto. GitHub transport disables model and effort configuration because the pinned
+GitHub Action supports provider selection only.
+
+## Run and watch a workflow
+
+- **Dry run** previews the workflow without spending credits and streams to the
+  **Output** panel.
+- **Run** opens a confirmation naming the workflow, branch, exact Agent Runner
+  site (and selection reason), and the agents — with a spend warning, since it
+  creates remote work in your Netlify account. You can append optional
+  instructions/context before starting.
+- While a real run is active, a red **Cancel** appears in the controls, and each
+  running chip can be cancelled or (once failed) retried individually.
+- The **Output** panel exposes **Copy output** and **View event diagnostics**
+  (the *Workflow event diagnostics* modal lists parser errors and recent
+  structured events).
+
+### Human review gates
+
+When a step reaches `awaiting_review`, open the run details and use **Continue**
+to approve or **Cancel flow** to stop before later steps run.
+
+## Browse and resume runs
+
+The **Runs** panel reads `.nax/workflows`. Search with **Search runs**, filter by
+**All statuses / Running / Completed / Failed / Cancelled**, and use **Load
+older** to page through durable history. Each run shows its status, a **Stalled**
+badge (with a last-event tooltip) when a run has gone quiet, and usage. Resumable
+runs expose **Resume run**.
+
+## Inspect a run
+
+Open **View run details** for the timeline. Each entry shows its result and, when
+a prompt was captured, a **Results / Prompt** switch with **Copy prompt
+markdown** / **Copy results markdown**. Retryable entries show **Retry result**.
+The metadata panel lists workflow, status, usage, transport, branch, target
+(with SHA and caveats), runner and session ids, and — when local file access is
+allowed — actions to open the run directory or copy its path. Artifacts expose
+**Copy file path**, **Open file**, and **Open in Netlify**.
+
+## Follow up from a run
+
+In run details, choose **Send to next agent**. The menu offers **Copy file path
+of results output**, **Copy results as markdown**, and **Run a followup**. The
+follow-up composer requires fresh instructions, defaults to the last meaningful
+artifact, and lets you choose the mode (follow up on a previous Agent Run, or
+start a fresh runner), the agents and their configuration, and which
+workflow/step/runner/session/result artifacts to include. Run history keeps the
+requested model/effort separate from the backend-observed `agent_config`.
+
+## Run a single agent
+
+For work that does not need a workflow, choose **Run an individual agent** in the
+sidebar. In *Run one agent*, select a provider, **Configure** its model and
+effort from the same server-owned catalog, enter instructions, and **Run agent**.
+Standalone runs need the Netlify API transport; they are persisted and appear in
+Recent runs with the resolved provider, model, and effort.
 
 ## Verify the Agent Runner site
 
-When the dashboard starts, the terminal lists every `.netlify/state.json` link found in the repository and marks the site selected for Agent Runner execution. The dashboard header exposes that target through the quiet **Netlify project · site-slug** menu, where you can inspect every local link and open the corresponding Netlify Agent Runs page.
+When the dashboard starts, the terminal lists every `.netlify/state.json` link
+found in the repository and marks the site selected for Agent Runner execution.
+The dashboard header exposes that target through the quiet **Netlify project ·
+site-slug** menu, where you can inspect every local link and open the
+corresponding Netlify Agent Runs page.
 
-In a monorepo, the repository-root link is not automatically the run target. If exactly one discovered `netlify.toml` contains a package-manager `--filter`, `nax` selects that app and its adjacent `.netlify/state.json`. The startup output and dashboard menu include this selection reason, and the run confirmation names the exact Netlify site before remote work begins.
+In a monorepo, the repository-root link is not automatically the run target. If
+exactly one discovered `netlify.toml` contains a package-manager `--filter`,
+`nax` selects that app and its adjacent `.netlify/state.json`. The startup output
+and dashboard menu include this selection reason, and the run confirmation names
+the exact Netlify site before remote work begins.
 
 ## Develop the dashboard UI
 
@@ -85,48 +250,9 @@ http://127.0.0.1:5173/?token=<token>&workflow=do-next
 ```
 
 <Callout type="warning">
-  Mutating dashboard endpoints require the token embedded in the opened URL or supplied as `x-nax-token`.
+  Mutating dashboard endpoints require the token embedded in the opened URL or
+  supplied as `x-nax-token`.
 </Callout>
-
-## Follow up from a run
-
-In Run details, choose **Send to next agent**. The composer requires fresh instructions, defaults to the last meaningful artifact, and lets you choose which workflow, step, runner, session, or result artifacts to include.
-
-## Configure instance lineups
-
-Each runnable step card shows one chip per instance. Existing bare-provider
-flow entries load as **Auto** chips and stay Auto unless you edit them. Open a
-chip's caret to pin its exact model and effort, or remove that tuple without
-affecting another instance of the same provider.
-
-Choose **Add agent** on a step to build a cartesian lineup from one provider,
-multiple models, and multiple efforts. The picker preselects that provider's
-flagship model and highest effort. Quick presets cover one flagship from every
-provider, one model at every effort, or the four strongest models from one
-provider. Each step is limited to four agent instances.
-
-Follow-up step chips are read-only. They inherit the surviving instances from
-the first input step and continue each instance's own runner session. In the
-definition view, inherited chips mirror changes made to that source step. An
-input configured with `results: peers` gives each continued instance the other
-instances' outputs for cross-grading. During a
-run, chips are keyed by exact instance id, so two Claude models can show
-different statuses. A mixed result is visibly marked **Completed with
-failures** rather than being shown as an all-green step.
-
-The follow-up composer opens its configuration drawer and initializes the
-matching provider from the selected source run or session. Changing it is an
-intentional override for the new submission. Run history and details keep the
-requested model/effort separate from the backend-observed `agent_config`.
-
-Pinned settings with transport Auto resolve to the Netlify API. GitHub
-transport disables model and effort configuration because the pinned GitHub
-Action supports provider selection only.
-
-For work that does not need a workflow, choose **Run agent** in the header.
-Select one provider, enter the prompt, and use the same server-owned model and
-effort catalog. The standalone run is persisted and appears in Recent runs
-with the resolved provider, model, and effort.
 
 ## See also
 

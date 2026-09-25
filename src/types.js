@@ -95,6 +95,7 @@
  *   efforts?: Record<string, string>,
  *   input?: StepInput[],
  *   runs?: AgentRun[],
+ *   attempts?: import("./workflows/engine/attempts").AttemptRecord[],
  *   status?: string,
  *   source?: JsonMap,
  *   review?: JsonMap,

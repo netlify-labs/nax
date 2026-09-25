@@ -40,5 +40,29 @@ if (args[0] === 'issue' && args[1] === 'create') {
   process.stdout.write(`${url}\n`)
   process.exit(0)
 }
+if (args[0] === 'pr' && args[1] === 'view') {
+  const selector = args[2]
+  const pull = (state.pulls || []).find((candidate) => String(candidate.number) === selector || candidate.headRefName === selector)
+  if (!pull) { process.stderr.write(`no pull requests found for branch "${selector}"\n`); process.exit(1) }
+  process.stdout.write(JSON.stringify({ number: pull.number, url: pull.url, headRefOid: pull.headRefOid, headRefName: pull.headRefName }))
+  process.exit(0)
+}
+if (args[0] === 'api') {
+  const route = args[1].match(/^repos\/[^/]+\/[^/]+\/pulls\/(\d+)\/(files|commits|reviews)$/)
+  const pull = route && (state.pulls || []).find((candidate) => String(candidate.number) === route[1])
+  if (!route || !pull) { process.stderr.write(`HTTP 404: Not Found (${args[1]})\n`); process.exit(1) }
+  if (route[2] === 'reviews' && flag('--method') === 'POST') {
+    const payload = JSON.parse(fs.readFileSync(flag('--input'), 'utf8'))
+    const id = (pull.reviews || []).length + 1
+    const review = { id, html_url: `${pull.url}#pullrequestreview-${id}`, ...payload }
+    pull.reviews = [...(pull.reviews || []), review]
+    save()
+    process.stdout.write(JSON.stringify(review))
+    process.exit(0)
+  }
+  const items = route[2] === 'files' ? pull.files : route[2] === 'commits' ? (pull.commits || []).map((sha) => ({ sha })) : (pull.reviews || [])
+  process.stdout.write(JSON.stringify(args.includes('--slurp') ? [items] : items))
+  process.exit(0)
+}
 process.stderr.write(`fake gh: unsupported command ${args.join(' ')}\n`)
 process.exit(2)

@@ -1216,6 +1216,7 @@ async function handleHandoff(runId, options) {
       includeRejected: options.includeRejected === true,
       labels: Array.isArray(options.label) ? options.label.map(String) : [],
       repo: options.repo ? String(options.repo) : '',
+      pr: Number(options.pr || 0),
       dry: options.dry === true,
       force: options.force === true,
       json: options.json === true,

@@ -1,7 +1,8 @@
-// Routes selected findings to outbound handoff targets (GitHub issues, ...).
+// Routes selected findings to outbound handoff targets: GitHub issues, beads, and PR reviews.
 // Every target plans its actions first so dry runs and tests share the same path as apply.
 const { githubIssuesTarget } = require('./github-issues')
 const { beadsTarget } = require('./beads')
+const { prReviewTarget } = require('./pr-review')
 
 const SEVERITY_ORDER = ['info', 'low', 'medium', 'high', 'critical']
 const HIDDEN_STATUSES = new Set(['rejected', 'dropped'])
@@ -17,7 +18,7 @@ const DEFAULT_PRESELECT_RANK = 5
  * }} FindingFilterOptions
  * @typedef {FindingFilterOptions & { select?: string[], limit?: number }} FindingSelectionOptions
  * @typedef {{ key: string, reason: string, existingUrl?: string }} SkippedAction
- * @typedef {{ type: string, key: string, title: string, body: string, labels: string[], issueType?: string, priority?: number }} HandoffAction
+ * @typedef {{ type: string, key: string, title: string, body: string, labels: string[], issueType?: string, priority?: number, payload?: Record<string, unknown> }} HandoffAction
  * @typedef {{ key: string, url: string }} AppliedAction
  * @typedef {{ actions: HandoffAction[], skipped: SkippedAction[] }} HandoffPlan
  * @typedef {{ applied: AppliedAction[], failed: Array<{ key: string, error: string }>, warnings: string[] }} HandoffApplyResult
@@ -34,6 +35,7 @@ const DEFAULT_PRESELECT_RANK = 5
 const HANDOFF_TARGETS = {
   'github-issues': githubIssuesTarget,
   beads: beadsTarget,
+  'pr-review': prReviewTarget,
 }
 
 /** @param {string} severity */

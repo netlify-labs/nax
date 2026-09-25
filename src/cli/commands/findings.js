@@ -55,6 +55,7 @@ function formatFindingsTable(artifact) {
  *   includeRejected?: boolean,
  *   labels?: string[],
  *   repo?: string,
+ *   pr?: number,
  *   dry?: boolean,
  *   force?: boolean,
  *   json?: boolean,
@@ -138,6 +139,8 @@ async function handleFindingsTarget(options, {
     artifact,
     labels: options.labels || [],
     ...(target.needsRepo ? { repo: options.repo || resolveRepo() } : {}),
+    ...(options.pr ? { pr: options.pr } : {}),
+    force: options.force === true,
     ...(gh ? { gh } : {}),
   }
   const planned = target.plan(selected, context)

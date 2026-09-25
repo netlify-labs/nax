@@ -1,5 +1,6 @@
 const { prepareAgentRunPlan, prepareWorkflowPlan } = require('../../control-plane/planner')
 const { startStoredPlan, storedPlanFromPrepared } = require('../../control-plane/run-plans')
+const { flowDigest } = require('../../workflows/catalog/flow-manifest')
 
 /** @typedef {import('../../contracts').ControlPlaneActor} ControlPlaneActor */
 /** @typedef {import('../../contracts').ControlPlaneJsonObject} ControlPlaneJsonObject */
@@ -172,6 +173,7 @@ function createDashboardRunPlanService({
           scope,
           target,
           flow,
+          flowDigest: flowDigest(flow),
           input: /** @type {import('../../contracts').ControlPlaneWorkflowPlanInput} */ ({ ...input, workflowId }),
         })
         return await persist(prepared, at)

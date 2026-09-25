@@ -33,3 +33,17 @@ test('flow_load_failed errors explain the flow file could not be parsed', () => 
   assert.equal(result.structuredContent.error.recoverable, true)
   assert.match(String(result.structuredContent.error.details?.fix), /could not be parsed/)
 })
+
+test('flow_changed_since_plan tells the agent to re-plan the workflow', () => {
+  const error = Object.assign(new Error('Workflow "review" changed after plan plan_1 was prepared.'), {
+    code: 'flow_changed_since_plan',
+    statusCode: 409,
+    recoverable: true,
+    details: { workflowId: 'review', planId: 'plan_1' },
+  })
+  const result = errorResult(error, { toolName: 'run_start' })
+  assert.equal(result.structuredContent.error.recoverable, true)
+  assert.match(String(result.structuredContent.error.details?.fix), /Create a fresh plan/)
+  const action = result.structuredContent.next_actions[0]
+  assert.equal(action.kind === 'tool' && action.tool, 'workflow_plan')
+})

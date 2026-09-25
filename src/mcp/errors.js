@@ -203,6 +203,12 @@ function recoveryGuidance(code, toolName, details) {
       }],
     }
   }
+  if (code === 'flow_changed_since_plan') {
+    return {
+      fix: 'The workflow changed after this plan was prepared. Create a fresh plan, review it, then start the new plan.',
+      actions: [{ kind: 'tool', tool: 'workflow_plan', arguments: details.workflowId ? { workflow_id: String(details.workflowId) } : {} }],
+    }
+  }
   if (code === 'invalid_flow' || code === 'flow_load_failed') {
     const flowId = typeof details.flowId === 'string' ? details.flowId : ''
     const lintCommand = `nax lint${flowId ? ` ${flowId}` : ''} --json`

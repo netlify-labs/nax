@@ -138,3 +138,28 @@ test('local workflow backend proves no mutation when the engine exits before dur
     /** @param {unknown} error */ (error) => errorHasNoMutation(error, 'run_binding_missing'),
   )
 })
+
+test('local workflow backend validatePlan rejects a flow that changed since planning', async () => {
+  const { flowDigest } = require('../../src/workflows/catalog/flow-manifest')
+  const flow = /** @type {import('../../src/types').WorkflowFlow} */ ({ id: 'review', title: 'Review', steps: [{ id: 'audit', title: 'Audit' }] })
+  const edited = { ...flow, steps: [{ id: 'audit', title: 'Audit (edited)' }] }
+  let current = flow
+  const backend = createLocalWorkflowExecutionBackend({ projectRoot: '/repo', loadWorkflow: async () => current })
+  const plan = /** @type {import('../../src/contracts').StoredControlPlanePlan} */ ({ ...basePlan, flowDigest: flowDigest(flow) })
+  await backend.validatePlan?.(plan)
+  current = edited
+  await assert.rejects(backend.validatePlan?.(plan) ?? Promise.resolve(), (error) => {
+    const coded = /** @type {Error & { code?: string, statusCode?: number, recoverable?: boolean }} */ (error)
+    assert.equal(coded.code, 'flow_changed_since_plan')
+    assert.equal(coded.statusCode, 409)
+    assert.equal(coded.recoverable, true)
+    return true
+  })
+})
+
+test('local workflow backend validatePlan skips plans without a flow digest', async () => {
+  let loads = 0
+  const backend = createLocalWorkflowExecutionBackend({ projectRoot: '/repo', loadWorkflow: async () => { loads += 1; return { id: 'review', steps: [] } } })
+  await backend.validatePlan?.(/** @type {import('../../src/contracts').StoredControlPlanePlan} */ (basePlan))
+  assert.equal(loads, 0)
+})

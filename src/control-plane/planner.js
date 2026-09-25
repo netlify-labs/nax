@@ -313,6 +313,7 @@ function uniqueWarnings(warnings) {
  *   input: ControlPlaneWorkflowPlanInput,
  *   transport?: string,
  *   promptBytesByStep?: Record<string, number>,
+ *   flowDigest?: string,
  * }} options
  * @returns {PreparedControlPlanePlan}
  */
@@ -326,6 +327,7 @@ function prepareWorkflowPlan({
   input,
   transport = REMOTE_TRANSPORT,
   promptBytesByStep = {},
+  flowDigest = '',
 }) {
   assertRemoteTransport(transport)
   assertPlanInputKeys(/** @type {Record<string, unknown>} */ (input), ['workflowId', 'branch', 'instances', 'stepInstances', 'context', 'onlyStep', 'fromStep'])
@@ -450,13 +452,14 @@ function prepareWorkflowPlan({
     target: { ...target, caveats: [...(target.caveats || [])] },
     expiresAt: new Date(now.getTime() + ttlMs).toISOString(),
     workflowId: input.workflowId,
+    ...(flowDigest ? { flowDigest } : {}),
     steps,
     instances,
     expectedAgentRuns,
     warnings: uniqueWarnings(warnings),
     summary: `${flow.title || flow.id} will run ${steps.length} step${steps.length === 1 ? '' : 's'} with ${expectedAgentRuns} remote Agent Runner submission${expectedAgentRuns === 1 ? '' : 's'} on ${target.siteName} (${target.siteId}), branch ${target.branch}.`,
   })
-  const hash = requestHash({ kind: 'workflow', scope, target, normalizedInput })
+  const hash = requestHash({ kind: 'workflow', scope, target, normalizedInput, ...(flowDigest ? { flowDigest } : {}) })
   return /** @type {PreparedControlPlanePlan} */ (deepFreeze({ plan, normalizedInput, requestHash: hash, transport: REMOTE_TRANSPORT }))
 }
 

@@ -245,6 +245,7 @@ export type ControlPlanePlan = {
   target: ControlPlaneTarget
   expiresAt: string
   workflowId?: string
+  flowDigest?: string
   steps: ControlPlaneWorkflowStep[]
   instances: ControlPlaneAgentInstanceInput[]
   expectedAgentRuns: number
@@ -576,6 +577,7 @@ export type ControlPlaneMutationStore = {
 export type WorkflowExecutionBackend = {
   startPlan(plan: StoredControlPlanePlan): Promise<ControlPlaneStartResult>
   reconcilePlan(plan: StoredControlPlanePlan): Promise<ControlPlaneStartResult | null>
+  validatePlan?(plan: StoredControlPlanePlan): Promise<void>
 }
 
 export type ControlPlaneEventStore = {

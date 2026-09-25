@@ -1,6 +1,7 @@
 const { isUnfinishedRun, listRunStates } = require('../../storage/local/run-state')
 const { submitAdHocAgentRun } = require('../services/mutations')
 const { publicRunState } = require('../api/serializers')
+const { flowDigest } = require('../../workflows/catalog/flow-manifest')
 
 /** @typedef {import('../../contracts').ControlPlaneAgentInstanceInput} ControlPlaneAgentInstanceInput */
 /** @typedef {import('../../contracts').ControlPlaneJsonObject} ControlPlaneJsonObject */
@@ -22,6 +23,7 @@ const ACTIVE_WORKFLOW_STATUSES = new Set(['awaiting_review', 'interrupted', 'pen
  *   submitAgentRun?: (input: Parameters<typeof submitAdHocAgentRun>[0]) => Promise<{ run: Record<string, unknown> }>,
  *   listRuns?: (projectRoot: string) => Array<Record<string, unknown>>,
  *   startupTimeoutMs?: number,
+ *   loadWorkflow?: (workflowId: string) => Promise<import('../../types').WorkflowFlow>,
  * }} LocalWorkflowExecutionOptions
  */
 
@@ -119,6 +121,7 @@ function createLocalWorkflowExecutionBackend({
   submitAgentRun = submitAdHocAgentRun,
   listRuns = listRunStates,
   startupTimeoutMs = 30_000,
+  loadWorkflow = (workflowId) => require('../../workflows/catalog/flows').loadFlow(workflowId, { projectRoot }),
 }) {
   if (!projectRoot) throw new TypeError('Local workflow execution requires a project root.')
   const startingWorkflowIds = new Set()
@@ -255,6 +258,17 @@ function createLocalWorkflowExecutionBackend({
   }
 
   return {
+    async validatePlan(plan) {
+      if (plan.kind !== 'workflow' || !plan.flowDigest || !plan.workflowId) return
+      const flow = await loadWorkflow(plan.workflowId)
+      if (flowDigest(flow) === plan.flowDigest) return
+      throw Object.assign(new Error(`Workflow "${plan.workflowId}" changed after plan ${plan.planId} was prepared. Create a new plan before starting.`), {
+        code: 'flow_changed_since_plan',
+        statusCode: 409,
+        recoverable: true,
+        details: { workflowId: plan.workflowId, planId: plan.planId, mutationTransmitted: false },
+      })
+    },
     async startPlan(plan) {
       assertExpectedSubmissions(plan)
       return plan.kind === 'workflow' ? startWorkflowPlan(plan) : startAgentPlan(plan)

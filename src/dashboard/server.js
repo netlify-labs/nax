@@ -1171,6 +1171,7 @@ function createRequestHandler(options = {}) {
       netlifyFilter: followupNetlifyFilter || String(netlifyContext?.target?.filter || ''),
       submitRun: followupSubmitRun,
       linkSubmittedRun: linkSubmittedRunFactory,
+      loadWorkflow: (workflowId) => loadFlow(workflowId, flowOptions),
     })
     resolvedRunPlanService = createDashboardRunPlanService({
       store: runPlanStore,

@@ -100,3 +100,11 @@ test('dashboard run-plan service rejects start overrides, expiration, and foreig
   })
   await assert.rejects(() => foreign.getPlan(plan.planId), (error) => errorCode(error) === 'scope_forbidden')
 })
+
+test('workflow plans pin the flow digest of the loaded workflow', async () => {
+  const { flowDigest } = require('../../src/workflows/catalog/flow-manifest')
+  const { service, store } = fixture({ now: () => new Date('2026-08-08T12:00:00.000Z') })
+  const plan = await service.createWorkflowPlan('review', { branch: 'main' })
+  const stored = await store.get(plan.planId)
+  assert.equal(stored?.flowDigest, flowDigest(/** @type {import('../../src/types').WorkflowFlow} */ (flow)))
+})

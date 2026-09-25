@@ -55,3 +55,39 @@ test('archiving the same attempt twice keeps one record', () => {
   supersedeRun(runState, step, 0, { agent: 'codex', attemptId: 'attempt-3', status: 'pending' })
   assert.deepEqual((step.attempts || []).map((attempt) => attempt.attemptId), ['attempt-1'])
 })
+
+test('resubmissionRun rebuilds delivery from the saved prompt and never reuses an expired blob ref', () => {
+  const { resubmissionRun } = require('../../src/workflows/engine/attempts')
+  const saved = /** @type {import('../../src/types').AgentRun} */ (/** @type {unknown} */ ({
+    agent: 'codex',
+    instanceId: 'codex:auto:auto',
+    attemptId: 'a1',
+    model: 'gpt-5.6-sol',
+    status: 'failed',
+    runnerId: 'runner-1',
+    sessionId: 'session-1',
+    sdkHandle: { v: 1, runnerId: 'runner-1' },
+    promptText: 'Full prompt',
+    compactPromptText: 'Short prompt',
+    promptDelivery: { mode: 'blob', blobRef: { store: 'nax-run', key: 'old-key', expiresAt: '2026-01-01T00:00:00.000Z', status: 'cleaned' } },
+    blobRef: { store: 'nax-run', key: 'old-key' },
+    resultText: 'error text',
+    raw: { stepId: 'review', workflowRunId: 'run-1', submissionError: 'boom', failurePhase: 'wait' },
+  }))
+  const replacement = resubmissionRun(saved)
+  assert.match(String(replacement.attemptId), /^[0-9a-f-]{36}$/)
+  assert.notEqual(replacement.attemptId, 'a1')
+  assert.equal(replacement.status, 'pending')
+  assert.equal(replacement.promptText, 'Full prompt')
+  assert.equal(replacement.runnerId, '')
+  assert.equal(replacement.sessionId, '')
+  assert.equal(replacement.sdkHandle, undefined)
+  assert.equal(replacement.blobRef, undefined)
+  assert.equal(JSON.stringify(replacement).includes('old-key'), false)
+  assert.equal(replacement.model, 'gpt-5.6-sol')
+  assert.equal(replacement.raw?.stepId, 'review')
+  assert.equal(replacement.raw?.submissionError, undefined)
+  const compact = resubmissionRun(saved, { useCompactPrompt: true, existingRunnerId: 'source-runner' })
+  assert.equal(compact.promptText, 'Short prompt')
+  assert.equal(compact.existingRunnerId, 'source-runner')
+})

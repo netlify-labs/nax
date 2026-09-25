@@ -9,6 +9,7 @@ export const dashboardQueryKeys = {
   runGraph: (runId: string) => [...dashboardQueryKeys.run(runId), 'graph'] as const,
   runDetails: (runId: string) => [...dashboardQueryKeys.run(runId), 'details'] as const,
   runFindings: (runId: string) => [...dashboardQueryKeys.run(runId), 'findings'] as const,
+  resumePreview: (runId: string, includeCancelled: boolean) => [...dashboardQueryKeys.run(runId), 'resume-preview', includeCancelled] as const,
 }
 
 export type DashboardQueryKey =

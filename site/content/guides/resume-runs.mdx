@@ -32,6 +32,10 @@ Resume 2026-09-25T12-00-00-000Z-review  (step 2/3: Cross review)
 
 `--dry` prints the preview and exits. In a terminal, resume asks for confirmation. In scripts and CI (non-TTY), pass `--force` to skip the prompt, or resume refuses and names the flag. When you start `nax run` in a terminal with an unfinished run, the resume offer shows the same preview.
 
+## From the dashboard
+
+Failed and interrupted runs show a **Resume run** panel in the run details modal. Opening it shows the same per-agent preview. Tick **Also resubmit cancelled agents** to include cancelled ones, then press **Resume**. If a run cannot resume (for example, another process is executing it, or a submission is ambiguous), the panel explains why and the button stays disabled. Overrides that need `--force` are only available from the CLI.
+
 ## What happens to each agent
 
 Resume starts at the first step that did not let the workflow continue, or at a final step that finished with some failed agents. It then decides one action for each saved agent instance of that step:

@@ -6,6 +6,7 @@ import { agentInstanceId, instanceDisplayName, instanceFromRun } from '../agent-
 import { useApproveHumanReviewGateMutation, useCancelFollowupRunMutation, useCancelHumanReviewGateMutation, useCancelWorkflowRunMutation, useRetryAgentRunMutation } from '../queries/dashboard-mutations'
 import { useRunDetailsQuery, useRunFindingsQuery } from '../queries/dashboard-queries'
 import { FindingsPanel } from './FindingsPanel'
+import { ResumePanel } from './ResumePanel'
 import { agentLabel, isDoneStatus, recordList, recordValue, runId, statusColor, statusLabel, usageSummaryLabel, workflowName } from '../run-format'
 import { StatusBadge } from './StatusBadge'
 import { extractMarkdownToc } from '../run-details-toc'
@@ -930,6 +931,7 @@ export function RunDetailsModal({
           ) : null}
           {selectionWarning ? <Alert color="yellow" variant="light">{selectionWarning}</Alert> : null}
           <FindingsPanel artifact={findingsQuery.data?.findings} />
+          <ResumePanel runId={detailRun?.runId || detailsRunId} status={String(detailRun?.status || '')} />
           <Box className="run-details-layout">
             {timelineEntries.length > 0 ? (
               <RunDetailsTimeline

@@ -37,6 +37,9 @@
 - Run lock: one process executes a run at a time (`run.lock` with owner pid,
   host and nonce). Contention fails with `run_locked`; dead same-host owners
   are taken over; `--force-unlock` takes over a lock from another host.
+- Dashboard **Resume run** panel with the per-agent preview, backed by
+  `GET /api/runs/:id/resume-preview` and `POST /api/runs/:id/resume`
+  (409 with the refusal code before anything starts).
 - Superseded attempts are kept in `step.attempts` with lineage and usage;
   costs count every attempt exactly once.
 

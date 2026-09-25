@@ -1,4 +1,4 @@
-import type { AgentRunRequest, AgentRunResponse, DashboardRun, DryRunOptions, DryRunResponse, FindingsArtifact, HealthResponse, RunAgentCancelResponse, RunAgentTarget, RunDetailsResponse, RunFollowupRequest, RunFollowupResponse, RunGraphResponse, RunRetryRequest, RunRetryResponse, RunsResponse, StartRunResponse, WorkflowGraphResponse, WorkflowListResponse } from './types'
+import type { AgentRunRequest, AgentRunResponse, DashboardRun, DryRunOptions, DryRunResponse, FindingsArtifact, HealthResponse, RunAgentCancelResponse, RunAgentTarget, RunDetailsResponse, RunFollowupRequest, RunFollowupResponse, ResumePreviewResponse, RunGraphResponse, RunResumeResponse, RunRetryRequest, RunRetryResponse, RunsResponse, StartRunResponse, WorkflowGraphResponse, WorkflowListResponse } from './types'
 
 type DashboardWindow = Window & {
   NAX_DASHBOARD_API_BASE?: string
@@ -248,6 +248,23 @@ export async function retryAgentRun(id: string, target: RunRetryRequest): Promis
         'content-type': 'application/json',
       },
       body: JSON.stringify(target),
+    },
+  )
+}
+
+export function getResumePreview(id: string, { includeCancelled = false }: { includeCancelled?: boolean } = {}): Promise<ResumePreviewResponse> {
+  return requestJson<ResumePreviewResponse>(`/api/runs/${encodeURIComponent(id)}/resume-preview${includeCancelled ? '?includeCancelled=1' : ''}`)
+}
+
+export async function resumeRun(id: string, { includeCancelled = false }: { includeCancelled?: boolean } = {}): Promise<RunResumeResponse> {
+  return fetchJson<RunResumeResponse>(
+    `/api/runs/${encodeURIComponent(id)}/resume`,
+    {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify({ includeCancelled }),
     },
   )
 }

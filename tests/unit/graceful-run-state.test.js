@@ -180,3 +180,16 @@ test('in-process runs each hold their own lock until each is cleared', () => {
   clearTrackedRunState(second)
   assert.equal(fs.existsSync(runLockDir(second.dir)), false)
 })
+
+test('a second in-process execution of the same run fails with run_locked', () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'nax-graceful-lock-test-'))
+  const first = runState(tmp)
+  const second = runState(tmp)
+  trackRunState(first)
+  assert.throws(() => trackRunState(second), (error) => /** @type {{ code?: string }} */ (error).code === 'run_locked')
+  clearTrackedRunState(second)
+  const { runLockDir } = require('../../src/storage/local/run-lock')
+  assert.equal(fs.existsSync(runLockDir(first.dir)), true)
+  clearTrackedRunState(first)
+  assert.equal(fs.existsSync(runLockDir(first.dir)), false)
+})

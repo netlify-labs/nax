@@ -202,3 +202,14 @@ test('an ambiguous create during resume is recorded so the next resume stops ins
   await assert.rejects(resumeLocalFlow({ flow, runState, projectRoot, ...io }), (error) => /** @type {{ code?: string }} */ (error).code === 'resume_ambiguous_submission')
   assert.equal(io.submitted.length, 0)
 })
+
+test('a moved branch does not block continuing into later steps when nothing in the resumed step is resubmitted', async () => {
+  const { projectRoot, flow, runState } = fixture([
+    saved('claude', { status: 'completed', runnerId: 'r-claude', resultText: 'claude done' }),
+    saved('gemini', { status: 'failed', runnerId: 'r-gemini' }),
+  ], { steps: 2, stepStatus: 'completed_with_failures' })
+  runState.flowDigest = flowDigest(/** @type {import('../../src/types').WorkflowFlow} */ (flow))
+  const io = { ...boundary(), resolveRemoteSha: () => 'b'.repeat(40) }
+  await resumeLocalFlow({ flow, runState, projectRoot, ...io })
+  assert.deepEqual(io.submitted.map((run) => run.raw?.stepId), ['summarize'])
+})

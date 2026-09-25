@@ -5,7 +5,7 @@ const { acquireRunLock } = require('./run-lock')
 let activeRunState = null
 let activeInterruptHandler = null
 /** Run locks this process holds, by run directory. Dashboard and MCP execute runs in-process. */
-/** @type {Map<string, import('./run-lock').RunLock>} */
+/** @type {Map<string, { lock: import('./run-lock').RunLock, runState: Record<string, unknown> }>} */
 const heldRunLocks = new Map()
 let installed = false
 const SETTLED_RUN_STATUSES = new Set(['completed', 'failed', 'awaiting_review'])
@@ -68,20 +68,29 @@ function installGracefulRunStateHandlers() {
 
 /** @param {string} dir */
 function releaseRunLock(dir) {
-  const lock = heldRunLocks.get(dir)
+  const held = heldRunLocks.get(dir)
   heldRunLocks.delete(dir)
-  lock?.release()
+  held?.lock.release()
 }
 
 /**
- * Holds the run lock for a tracked run so only one process executes it at a time. Tracking a run
- * this process already holds keeps its lock.
+ * Holds the run lock for a tracked run so only one execution of a run exists at a time, across
+ * processes and within one (dashboard and MCP execute runs in-process). Re-tracking the same run
+ * state object keeps its lock; a second execution of the run fails with `run_locked`.
  * @param {Record<string, unknown>} runState @param {{ forceUnlock?: boolean }} options
  */
 function holdRunLock(runState, { forceUnlock = false }) {
   const dir = runState?.dir ? String(runState.dir) : ''
-  if (!dir || heldRunLocks.has(dir)) return
-  heldRunLocks.set(dir, acquireRunLock(dir, { runId: String(runState.runId || ''), command: `nax ${process.argv.slice(2).join(' ')}`.trim(), forceUnlock }))
+  if (!dir) return
+  const held = heldRunLocks.get(dir)
+  if (held?.runState === runState) return
+  if (held) {
+    const error = /** @type {Error & { code: string }} */ (new Error(`Run ${runState.runId || dir} is already being executed by this process.`))
+    error.code = 'run_locked'
+    throw error
+  }
+  const lock = acquireRunLock(dir, { runId: String(runState.runId || ''), command: `nax ${process.argv.slice(2).join(' ')}`.trim(), forceUnlock })
+  heldRunLocks.set(dir, { lock, runState })
 }
 
 /**
@@ -116,7 +125,8 @@ function markRunCompleted(runState, { now = new Date() } = {}) {
 
 /** @param {Record<string, unknown> | null | undefined} runState */
 function clearTrackedRunState(runState) {
-  if (runState?.dir) releaseRunLock(String(runState.dir))
+  const dir = runState?.dir ? String(runState.dir) : ''
+  if (dir && heldRunLocks.get(dir)?.runState === runState) releaseRunLock(dir)
   if (runState && activeRunState !== runState) return
   activeRunState = null
   activeInterruptHandler = null

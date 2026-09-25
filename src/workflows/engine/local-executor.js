@@ -64,7 +64,7 @@ const {
   startSubmissionHeartbeat,
 } = require('./progress')
 const { MAX_PARALLEL_RUNS, mapInWaves } = require('./wave-scheduler')
-const { planResume } = require('./resume')
+const { planResume, resumeSubmitsIntoStep } = require('./resume')
 const { resubmissionRun, supersedeRun } = require('./attempts')
 const { flowDigest } = require('../catalog/flow-manifest')
 const { resolveRemoteBranchSha } = require('../../integrations/git/review-context')
@@ -1382,7 +1382,7 @@ async function resumeLocalFlow({ flow, runState, projectRoot, currentFlowDigest,
   const step = /** @type {import('../../types').WorkflowStep} */ (plan.step)
   if (reconciled.stop) throw resumeError(reconciled.stop.code, reconciled.stop.message)
   const branch = targetBranch(runState, { required: true })
-  assertBranchUnmoved({ runState, projectRoot, branch, force, resolveRemoteSha })
+  if (resumeSubmitsIntoStep(plan)) assertBranchUnmoved({ runState, projectRoot, branch, force, resolveRemoteSha })
 
   trackRunState(runState, { forceUnlock })
   try {

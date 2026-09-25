@@ -2,7 +2,7 @@
 // resume the run in place, resubmitting only the agent instances that did not finish.
 const { loadFlow } = require('../../workflows/catalog/flows')
 const { flowDigest } = require('../../workflows/catalog/flow-manifest')
-const { flowFromRunState, flowLoadOptions, formatResumePreview, planResume } = require('../../workflows/engine/resume')
+const { flowFromRunState, flowLoadOptions, formatResumePreview, planResume, resumeSubmitsIntoStep } = require('../../workflows/engine/resume')
 const { resumeLocalFlow } = require('../../workflows/engine/local-executor')
 const { isExplicitlyResumableRun, isNetlifyApiTransport } = require('../../core/runs/resumable')
 const { listRunStates } = require('../../storage/local/run-state')
@@ -122,7 +122,7 @@ async function handleResumeCommand(runId, options, {
   const stop = plan.reconciled.stop
   if (stop) return fail(`Cannot resume (${stop.code}): ${stop.message}`)
   const runSha = String(runState.target?.sha || '')
-  if (!force && currentSha && runSha && currentSha !== runSha) {
+  if (!force && currentSha && runSha && currentSha !== runSha && resumeSubmitsIntoStep(plan)) {
     return fail(`Cannot resume (branch_moved_since_run): the branch moved since run ${runId} started. Re-run with --force to resume anyway, or start a new run.`)
   }
   if (options.dry) return 0

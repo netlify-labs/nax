@@ -496,6 +496,15 @@ function planResume({ flow, runState, currentFlowDigest = '', includeCancelled =
   return { complete: false, startIndex, step, stepState, completedStepStates, reconciled }
 }
 
+/**
+ * True when resume sends new agents into the resumed step alongside its kept results, which is
+ * when a moved branch head would mix results from different code.
+ * @param {ResumePlan} plan
+ */
+function resumeSubmitsIntoStep(plan) {
+  return plan.reconciled.actions.some((action) => action.action === 'resubmit' || action.action === 'submit')
+}
+
 /** @param {ReconcileAction} action @param {import('../../types').WorkflowStep | null} stepState */
 function resumeActionDetail(action, stepState) {
   if (action.action === 'keep') return 'completed'
@@ -531,7 +540,8 @@ function formatResumePreview({ runState, flow, plan, branch, currentSha = '' }) 
   if (runSha) {
     let headState = 'remote head unknown'
     if (currentSha === runSha) headState = 'unchanged'
-    else if (currentSha) headState = `moved to ${currentSha.slice(0, 12)}; --force to resume anyway`
+    else if (currentSha && resumeSubmitsIntoStep(plan)) headState = `moved to ${currentSha.slice(0, 12)}; --force to resume anyway`
+    else if (currentSha) headState = `moved to ${currentSha.slice(0, 12)}; remaining steps use the new head`
     lines.push(`  Branch: ${branch} @ ${runSha.slice(0, 12)} (${headState})`)
   } else if (branch) {
     lines.push(`  Branch: ${branch}`)
@@ -558,6 +568,7 @@ module.exports = {
   formatResumePreview,
   formatResumeRunDetails,
   planResume,
+  resumeSubmitsIntoStep,
   isAutomaticResumeCandidate,
   printResumeRunDetails,
   reconcileStepInstances,

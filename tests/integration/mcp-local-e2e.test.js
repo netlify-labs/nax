@@ -304,7 +304,7 @@ test('real dashboard and stdio MCP compose, rediscover after restart, and shut d
     assert.equal(objectValue(objectValue(waited.data).run).status, 'completed')
 
     const templates = await client.request('resources/templates/list', {})
-    assert.equal(/** @type {unknown[]} */ (objectValue(templates.result).resourceTemplates).length, 6)
+    assert.equal(/** @type {unknown[]} */ (objectValue(templates.result).resourceTemplates).length, 7)
     const artifactResource = await client.request('resources/read', { uri: artifact.resourceUri })
     assert.match(JSON.stringify(artifactResource.result), /Verified process-level result/)
     const prompts = await client.request('prompts/list', {})

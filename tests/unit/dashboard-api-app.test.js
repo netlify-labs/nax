@@ -308,3 +308,13 @@ test('Hono dashboard API forwards invalid_flow diagnostics with 422', async () =
   assert.equal(payload.error.code, 'invalid_flow')
   assert.deepEqual(payload.error.details.diagnostics, diagnostics)
 })
+
+test('Hono dashboard API serves run findings and 404s unknown runs', async () => {
+  const artifact = { schemaVersion: 1, runId: 'run-1', findings: [], diagnostics: [] }
+  const app = fakeApi({ runStore: { getRunFindings: async (id) => (id === 'run-1' ? { findings: artifact } : null) } })
+  const ok = await app.request('/api/runs/run-1/findings', { headers: { 'x-nax-token': 'token-1' } })
+  assert.equal(ok.status, 200)
+  assert.deepEqual((await json(ok)).findings, artifact)
+  const missing = await app.request('/api/runs/nope/findings', { headers: { 'x-nax-token': 'token-1' } })
+  assert.equal(missing.status, 404)
+})

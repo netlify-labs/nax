@@ -148,6 +148,7 @@
  *   getRun?: (id: string) => DashboardRunPayload | null | Promise<DashboardRunPayload | null>,
  *   getRunGraph?: (id: string) => Promise<RunGraphPayload | null>,
  *   getRunDetails?: (id: string) => Promise<RunDetailsPayloadResponse | null>,
+ *   getRunFindings?: (id: string) => Promise<{ findings: JsonObject | null } | null>,
  *   getRunArtifact?: (id: string, artifactId: string) => Promise<JsonObject | null>,
  *   getRunState?: (id: string) => JsonObject | null,
  * }} RunStore

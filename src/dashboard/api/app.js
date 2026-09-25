@@ -438,6 +438,15 @@ function createDashboardApi({
     return json(c, details, 200, sessionHeaders(c))
   })
 
+  app.get('/api/runs/:id/findings', async (c) => {
+    assertHonoToken(c, token)
+    requireCapability(capabilities, 'canReadRunDetails')
+    if (typeof runStore.getRunFindings !== 'function') throw requestError(501, 'hosted_storage_unavailable', 'Run findings are not available in this runtime.')
+    const result = await runStore.getRunFindings(c.req.param('id'))
+    if (!result) throw requestError(404, 'not_found', 'Unknown dashboard run.')
+    return json(c, result, 200, sessionHeaders(c))
+  })
+
   app.get('/api/runs/:id/artifacts/:artifactId', async (c) => {
     assertHonoToken(c, token)
     requireCapability(capabilities, 'canReadRunArtifacts')

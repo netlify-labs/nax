@@ -327,7 +327,7 @@ for (const runtime of /** @type {const} */ (['local-dashboard', 'desktop', 'host
 
     const templateResponse = await harness.request('resources/templates/list', {})
     const templates = /** @type {Array<Record<string, unknown>>} */ (objectValue(templateResponse.result).resourceTemplates)
-    assert.deepEqual(templates.map((template) => template.name), ['nax-context', 'nax-workflow', 'nax-run', 'nax-run-details', 'nax-run-events', 'nax-run-artifact'])
+    assert.deepEqual(templates.map((template) => template.name), ['nax-context', 'nax-workflow', 'nax-run', 'nax-run-details', 'nax-run-findings', 'nax-run-events', 'nax-run-artifact'])
     const scopeId = `scope_${runtime.replaceAll('-', '_')}`
     const resource = await harness.request('resources/read', { uri: `nax://scopes/${scopeId}/runs/run_test/artifacts/artifact_summary` })
     assert.match(String(/** @type {Array<Record<string, unknown>>} */ (objectValue(resource.result).contents)[0].text), /Verified fixture result/)

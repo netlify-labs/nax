@@ -4,6 +4,7 @@ const path = require('node:path')
 const { listRunStates, listWorkflowStatePage } = require('../../storage/local/run-state')
 const { flowToGraph } = require('../shared/graph')
 const { buildRunDetails } = require('../shared/run-details')
+const { readFindings } = require('../../workflows/findings')
 const { isActiveProjectedStatus, projectRunSnapshot, publicFlow, publicRunOptions, publicRunState } = require('../api/serializers')
 const { requestError } = require('../api/errors')
 const { isActiveFollowupStatus, syncSubmittedFollowupRunsToWorkflow } = require('../../workflows/followups/persistence')
@@ -302,6 +303,11 @@ function createLocalRunStore({
         workflow: publicFlow(flow),
         graph: flowToGraph({ flow, runState: durable }),
       }
+    },
+    async getRunFindings(id) {
+      const durable = getRunState(id)
+      if (!durable) return null
+      return { findings: readFindings(/** @type {import('../../types').WorkflowRunState} */ (durable)) }
     },
     async getRunDetails(id) {
       const durable = await refreshRunStateIfNeeded(getRunState(id), { view: 'details' })

@@ -493,3 +493,23 @@ test('local run store omits usage totals when no run reported usage', () => {
   const listed = store.listRunsPage().runs.find((run) => run.runId === 'run-no-usage')
   assert.equal(listed?.usageTotals, undefined)
 })
+
+test('local run store returns findings computed from the run without writing them', async () => {
+  const projectRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'nax-local-findings-'))
+  const runId = '2026-09-25T12-00-00-000Z-review'
+  const dir = path.join(projectRoot, '.nax', 'workflows', runId)
+  fs.mkdirSync(dir, { recursive: true })
+  const synthesizeText = fs.readFileSync(path.join(__dirname, '..', 'fixtures', 'findings', 'synthesize-3-findings.md'), 'utf8')
+  fs.writeFileSync(path.join(dir, 'workflow.json'), JSON.stringify({
+    runId,
+    flowId: 'review',
+    status: 'completed',
+    flow: { id: 'review', findings: { step: 'synthesize', adapter: 'review-consensus' }, steps: [{ id: 'synthesize', agents: ['codex'] }] },
+    steps: [{ id: 'synthesize', status: 'completed', runs: [{ agent: 'codex', status: 'completed', resultText: synthesizeText }] }],
+  }))
+  const store = createLocalRunStore({ projectRoot })
+  const result = await store.getRunFindings(runId)
+  assert.equal(result?.findings?.findings.filter((finding) => finding.bucket === 'consensus').length, 3)
+  assert.equal(fs.existsSync(path.join(dir, 'artifacts', 'findings.json')), false)
+  assert.equal(await store.getRunFindings('missing-run'), null)
+})

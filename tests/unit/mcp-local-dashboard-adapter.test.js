@@ -198,6 +198,22 @@ function advertise(input) {
  * @param {{ requests: Array<{ method: string, path: string, token: string, body: Record<string, unknown> }> }} observed
  * @param {{ canPlanRuns?: boolean, canReadRunArtifacts?: boolean }} [options]
  */
+const FINDINGS_FIXTURE = {
+  schemaVersion: 1,
+  runId: 'run_test',
+  flowId: 'review-flow',
+  adapter: 'review-consensus',
+  generatedAt: '2026-09-25T12:00:00.000Z',
+  source: { stepId: 'synthesize', instanceId: 'codex:auto:auto', runnerId: 'runner_1', sessionId: 'session_1', resultUrl: null },
+  target: { branch: 'main', sha: null },
+  findings: Array.from({ length: 12 }, (_value, index) => ({
+    key: `run_test/synthesize/S${index + 1}`, localId: `S${index + 1}`, rank: index + 1, bucket: 'consensus',
+    title: `Finding ${index + 1}`, category: 'defect', severity: index < 2 ? 'high' : 'low', status: 'open',
+    file: 'src/a.js', line: index + 1, lineEnd: null, claim: 'c', evidence: 'e', suggestedFix: 'f', confidence: 'high', agents: ['codex'],
+  })),
+  diagnostics: [],
+}
+
 function dashboardHandler(projectRoot, projectId, observed, options = {}) {
   let currentRun = runFixture()
   return async (request, response) => {
@@ -269,6 +285,9 @@ function dashboardHandler(projectRoot, projectId, observed, options = {}) {
     if (url.pathname === '/api/runs/run_test') return json(response, 200, { run: currentRun })
     if (url.pathname === '/api/runs/run_test/graph') {
       return json(response, 200, { run: currentRun, graph: { nodes: [], edges: [], metadata: { path: '/private/graph.json', status: currentRun.status } } })
+    }
+    if (url.pathname === '/api/runs/run_test/findings') {
+      return json(response, 200, { findings: FINDINGS_FIXTURE })
     }
     if (url.pathname === '/api/runs/run_test/details') {
       return json(response, 200, {
@@ -379,6 +398,11 @@ test('local dashboard client authenticates reads and strips secrets and local pa
 
   const details = await fixture.client.getRun('run_test', { view: 'details' })
   assert.equal(details.details?.summary, '# Summary')
+  assert.equal(details.findings?.count, 12)
+  assert.deepEqual(details.findings?.bySeverity, { high: 2, low: 10 })
+  assert.equal(details.findings?.top.length, 10)
+  const findingsView = await fixture.client.getRun('run_test', { view: 'findings' })
+  assert.equal(findingsView.findings?.artifact?.findings.length, 12)
   assert.match(details.details?.artifacts[0]?.resourceUri || '', /^nax:\/\/scopes\//)
   assert.equal(JSON.stringify(details).includes('/private/'), false)
   const artifact = await fixture.client.getArtifact('run_test', 'artifact_summary')

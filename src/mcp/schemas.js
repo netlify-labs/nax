@@ -152,7 +152,7 @@ const runListInputSchema = z.object({
 const runGetInputSchema = z.object({
   ...scopeSelectionShape,
   run_id: entityId('run_id'),
-  view: z.enum(['summary', 'details', 'graph', 'events']),
+  view: z.enum(['summary', 'details', 'graph', 'events', 'findings']),
   section_id: entityId('section_id').optional(),
   since: cursorSchema.optional(),
   limit: z.number().int().min(1).max(MAX_EVENT_LIMIT).optional(),

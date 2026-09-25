@@ -250,10 +250,12 @@ test('nax mcp negotiates stdio and lists tools without contaminating stdout', as
     'nax-workflow',
     'nax-run',
     'nax-run-details',
+    'nax-run-findings',
     'nax-run-events',
     'nax-run-artifact',
   ])
-  assert.equal(resourceTemplates[4].uriTemplate, 'nax://scopes/{scope_id}/runs/{run_id}/events{?since}')
+  assert.equal(resourceTemplates[4].uriTemplate, 'nax://scopes/{scope_id}/runs/{run_id}/findings')
+  assert.equal(resourceTemplates[5].uriTemplate, 'nax://scopes/{scope_id}/runs/{run_id}/events{?since}')
 
   child.stdin.write(`${JSON.stringify({ jsonrpc: '2.0', id: 4, method: 'prompts/list', params: {} })}\n`)
   const promptList = await waitForResponse(child, 4, state)

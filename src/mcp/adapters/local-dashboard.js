@@ -659,6 +659,40 @@ function createLocalDashboardPorts(config, identity) {
     return objectValue(payload.run)
   }
 
+  /**
+   * Findings summary (count, severity histogram, top ranked items) for one run; the full artifact on request.
+   * Details reads tolerate runtimes without a findings endpoint.
+   * @param {import('./local-dashboard-http').LocalDashboardSession} current
+   * @param {string} runId
+   * @param {boolean} includeArtifact
+   * @returns {Promise<import('../../contracts').ControlPlaneRunFindings | null>}
+   */
+  async function runFindings(current, runId, includeArtifact) {
+    let payload
+    try {
+      payload = await request(current, `/api/runs/${encodeURIComponent(runId)}/findings`)
+    } catch (error) {
+      if (includeArtifact) throw error
+      return null
+    }
+    const artifact = objectValue(payload.findings)
+    const findings = objectList(artifact.findings)
+    if (!payload.findings) return null
+    /** @type {Record<string, number>} */
+    const bySeverity = {}
+    for (const finding of findings) {
+      const severity = stringValue(finding.severity) || 'info'
+      bySeverity[severity] = (bySeverity[severity] || 0) + 1
+    }
+    const ranked = [...findings].sort((a, b) => (Number(a.rank) || Number.MAX_SAFE_INTEGER) - (Number(b.rank) || Number.MAX_SAFE_INTEGER))
+    return {
+      count: findings.length,
+      bySeverity,
+      top: /** @type {import('../../contracts').ControlPlaneJsonObject[]} */ (ranked.slice(0, 10)),
+      ...(includeArtifact ? { artifact: /** @type {import('../../contracts').ControlPlaneJsonObject & { findings: import('../../contracts').ControlPlaneJsonObject[] }} */ ({ ...artifact, findings }) } : {}),
+    }
+  }
+
   return {
     audit,
     auditContext: { runtime: 'local-dashboard', clientName: 'mcp-stdio', ...config.auditContext },
@@ -802,7 +836,12 @@ function createLocalDashboardPorts(config, identity) {
         requireDashboardCapability(capabilities, 'canReadRunDetails')
         const response = await request(current, `/api/runs/${encodeURIComponent(runId)}/details`)
         const run = mapRun(response.run, current.health)
-        return { run, view, details: mapRunDetails(response, run, identity.scope.scopeId, options.sectionId) }
+        return { run, view, details: mapRunDetails(response, run, identity.scope.scopeId, options.sectionId), findings: await runFindings(current, runId, false) }
+      }
+      if (view === 'findings') {
+        requireDashboardCapability(capabilities, 'canReadRunDetails')
+        const raw = await rawRun(current, runId)
+        return { run: mapRun(raw, current.health), view, findings: await runFindings(current, runId, true) }
       }
       if (view === 'graph') {
         const response = await request(current, `/api/runs/${encodeURIComponent(runId)}/graph`)

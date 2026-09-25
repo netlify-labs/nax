@@ -312,7 +312,7 @@ export type ControlPlaneRunList = {
   total?: number
 }
 
-export type ControlPlaneRunView = 'summary' | 'details' | 'graph' | 'events'
+export type ControlPlaneRunView = 'summary' | 'details' | 'graph' | 'events' | 'findings'
 
 export type ControlPlaneRunReadOptions = {
   view: ControlPlaneRunView
@@ -362,12 +362,20 @@ export type ControlPlaneEventPage = {
   truncated: boolean
 }
 
+export type ControlPlaneRunFindings = {
+  count: number
+  bySeverity: Record<string, number>
+  top: ControlPlaneJsonObject[]
+  artifact?: ControlPlaneJsonObject & { findings: ControlPlaneJsonObject[] }
+}
+
 export type ControlPlaneRunRead = {
   run: ControlPlaneRunSummary
   view: ControlPlaneRunView
   details?: ControlPlaneRunDetails
   graph?: ControlPlaneGraph
   events?: ControlPlaneEventPage
+  findings?: ControlPlaneRunFindings | null
 }
 
 export type ControlPlaneWaitReason = 'events' | 'terminal' | 'review' | 'stalled' | 'timeout'

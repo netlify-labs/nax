@@ -16,6 +16,7 @@ export default {
       'run-workflows': 'Run Workflows',
       'write-custom-workflows': 'Write Custom Workflows',
       'hand-off-findings': 'Hand Off Findings',
+      'resume-runs': 'Resume Runs',
       'use-the-dashboard': 'Use the Dashboard',
       'use-nax-with-claude': 'Use NAX With Claude',
       'run-nax-in-ci': 'Run NAX in CI',

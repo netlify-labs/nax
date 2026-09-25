@@ -24,6 +24,21 @@
   changed fails with recoverable `flow_changed_since_plan` and leaves the plan
   re-plannable. Runs record `flowDigest`.
 - Plan-time prompt-size warnings for oversized static prompts.
+- `nax run --resume <run-id> [--dry] [--force] [--include-cancelled]`
+  resumes a Netlify API run in place: finished agents are kept, running
+  agents are polled, and only failed or never-sent agents are resubmitted
+  with their saved prompt. A per-instance preview shows what will happen.
+  Resume refuses before submitting on `flow_changed_since_run`,
+  `resume_ambiguous_submission`, `resume_plan_unavailable`,
+  `resume_auth_failure`, or `branch_moved_since_run`.
+- Runs that failed only because agents failed (`NAX_ALL_INSTANCES_FAILED`,
+  `NAX_PARTIAL_FINAL_STEP`) record `failureCode` and can be resumed
+  explicitly.
+- Run lock: one process executes a run at a time (`run.lock` with owner pid,
+  host and nonce). Contention fails with `run_locked`; dead same-host owners
+  are taken over; `--force-unlock` takes over a lock from another host.
+- Superseded attempts are kept in `step.attempts` with lineage and usage;
+  costs count every attempt exactly once.
 
 ### Fixed
 

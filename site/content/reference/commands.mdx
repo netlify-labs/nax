@@ -44,6 +44,9 @@ nax run agent <claude|codex|gemini|opencode> [prompt...] [OPTIONS]
 | `--dry` | Preview without creating issues, jobs, or artifacts. |
 | `--force` | Skip confirmation prompts. |
 | `--retry [run-id]` | Retry one failed Netlify API agent run and continue. |
+| `--resume <run-id>` | Resume a saved Netlify API run in place: keep finished agents, resubmit only unfinished ones. With `--dry`, only preview; with `--force`, skip confirmation and allow a moved branch or ambiguous resubmission. See [Resume runs](/guides/resume-runs). |
+| `--include-cancelled` | With `--resume`, also resubmit cancelled agents. |
+| `--force-unlock` | With `--resume`, take over a run lock whose owner process is gone. |
 
 Advanced workflow overrides use `--step-agents <step=agents>`,
 `--step-models <step:agent=model>`, and

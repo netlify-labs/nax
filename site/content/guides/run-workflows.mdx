@@ -139,13 +139,15 @@ Extra context is appended to each step prompt after the workflow prompt and befo
 ## Resume and retry
 
 ```sh
+nax run --resume <run-id> --dry
+nax run --resume <run-id>
 nax run --retry <run-id>
 nax run review --retry <run-id> --step cross-review
 nax run review --retry <run-id> --step cross-review \
   --instance claude:claude-opus-5:high
 ```
 
-Interrupted `netlify-api` runs write state under `.nax/workflows/<run-id>/workflow.json`. Starting `nax run` again offers to resume unfinished work.
+Interrupted `netlify-api` runs write state under `.nax/workflows/<run-id>/workflow.json`. Starting `nax run` again offers to resume unfinished work. `--resume` keeps finished agents and resubmits only unfinished ones; see [Resume runs](/guides/resume-runs).
 
 <Callout type="warning">
   Use `--step` carefully when the step expects prior inputs. If you need earlier results, prefer `--from-step` or run the full flow.

@@ -106,7 +106,14 @@ Netlify API runs persist state under:
 .nax/workflows/<workflow-run-id>/workflow.json
 ```
 
-If a Netlify API process was interrupted, starting `nax <flow>` can offer to resume unfinished in-flight runs.
+If a Netlify API run was interrupted or some agents failed, resume it in place. Finished agents are kept, running agents are polled, and only unfinished agents are resubmitted with their saved prompt:
+
+```bash
+nax run --resume <workflow-run-id> --dry    # preview keep/poll/resubmit/skip per agent
+nax run --resume <workflow-run-id> --force  # non-TTY: resume without a prompt
+```
+
+Resume refuses before submitting anything on `flow_changed_since_run` (start a new run), `resume_ambiguous_submission` (check the Netlify agent runs page, then `--force`), `resume_plan_unavailable` (use `--from-step`), `resume_auth_failure` (fix `netlify status`), `branch_moved_since_run` (`--force` or a new run), and `run_locked` (another process owns the run; `--force-unlock` only if it is gone). Add `--include-cancelled` to resubmit cancelled agents. GitHub transport runs resume at step level only. Interactive `nax <flow>` still offers to resume unfinished runs with the same preview.
 
 Completed results also persist as artifacts:
 

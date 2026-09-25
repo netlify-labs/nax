@@ -79,6 +79,7 @@ const {
  *   detectWorkspace?: WorkspaceDetector,
  *   loadClack?: () => Promise<ClackSelectApi>,
  *   listSites?: (projectRoot: string) => Array<{ siteId: string, dir: string, source: string }>,
+ *   env?: NodeJS.ProcessEnv,
  * }} ChooseNetlifyFilterInput
  */
 
@@ -385,9 +386,15 @@ async function chooseNetlifyFilterOption({
   detectWorkspace = detectJavascriptWorkspace,
   loadClack = defaultLoadClack,
   listSites = listLinkedNetlifySites,
+  env = process.env,
 } = {}) {
   if (options.filter) return options
-  if (!options.netlifySiteId) {
+  // An explicit site (--site-id or NETLIFY_SITE_ID) already names the Agent Runner target.
+  const explicitSiteId = String(options.netlifySiteId || env.NETLIFY_SITE_ID || '').trim()
+  if (explicitSiteId) {
+    const matched = listSites(projectRoot).find((site) => site.siteId === explicitSiteId)
+    if (matched) return targetOptionsForLinkedSite(options, projectRoot, matched)
+  } else {
     const linked = await chooseLinkedNetlifySite({ projectRoot, options, loadClack, listSites })
     if (linked) return linked
   }
@@ -414,7 +421,7 @@ async function chooseNetlifyFilterOption({
         ...(selected?.siteId ? { netlifySiteId: selected.siteId, netlifySiteSource: selected.stateSource } : {}),
       }
     }
-    if (!workspaceDetection.isWorkspace) return options
+    if (!workspaceDetection.isWorkspace || explicitSiteId) return options
     // Typed so the dashboard can show a concise message instead of the full
     // CLI list; the message stays the same for CLI callers.
     const ambiguity = /** @type {Error & { code: string, candidates: NetlifyConfigCandidate[] }} */ (

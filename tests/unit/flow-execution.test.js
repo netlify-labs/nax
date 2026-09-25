@@ -1822,6 +1822,74 @@ test('chooseNetlifyFilterOption rejects ambiguous configs in non-TTY mode', asyn
   }
 })
 
+/**
+ * Runs fn with process.stdin.isTTY forced to false.
+ * @param {() => Promise<void>} fn
+ */
+async function withoutTTY(fn) {
+  const originalIsTTY = Object.getOwnPropertyDescriptor(process.stdin, 'isTTY')
+  Object.defineProperty(process.stdin, 'isTTY', { configurable: true, value: false })
+  try {
+    await fn()
+  } finally {
+    if (originalIsTTY) Object.defineProperty(process.stdin, 'isTTY', originalIsTTY)
+    else delete process.stdin.isTTY
+  }
+}
+
+/** Writes two filtered workspace configs that are ambiguous without a site id. */
+function writeAmbiguousWorkspaceConfigs(projectRoot) {
+  for (const [dir, filter] of [['frontend', 'web'], ['docs', 'docs']]) {
+    const appDir = path.join(projectRoot, 'sites', dir)
+    fs.mkdirSync(appDir, { recursive: true })
+    fs.writeFileSync(path.join(appDir, 'netlify.toml'), `[build]\n  command = "pnpm --filter ${filter} build"\n`)
+  }
+}
+
+const workspaceDetected = async () => ({ isWorkspace: true, workspace: { packages: [] }, packageManager: { name: 'pnpm' }, error: '' })
+
+test('chooseNetlifyFilterOption targets the repo root when NETLIFY_SITE_ID matches no config', async () => {
+  const projectRoot = tmpRoot()
+  writeAmbiguousWorkspaceConfigs(projectRoot)
+  await withoutTTY(async () => {
+    const options = { branch: 'master' }
+    const resolved = await chooseNetlifyFilterOption({
+      projectRoot,
+      options,
+      env: { NETLIFY_SITE_ID: 'ci-site' },
+      detectWorkspace: workspaceDetected,
+    })
+    assert.equal(resolved, options)
+  })
+})
+
+test('chooseNetlifyFilterOption targets the repo root when --site-id matches no config', async () => {
+  const projectRoot = tmpRoot()
+  writeAmbiguousWorkspaceConfigs(projectRoot)
+  await withoutTTY(async () => {
+    const options = { netlifySiteId: 'explicit' }
+    const resolved = await chooseNetlifyFilterOption({ projectRoot, options, env: {}, detectWorkspace: workspaceDetected })
+    assert.equal(resolved, options)
+  })
+})
+
+test('chooseNetlifyFilterOption uses the linked site matching NETLIFY_SITE_ID', async () => {
+  const projectRoot = tmpRoot()
+  writeAmbiguousWorkspaceConfigs(projectRoot)
+  writeLinkedSite(path.join(projectRoot, 'sites', 'frontend'), 'site-frontend')
+  writeLinkedSite(path.join(projectRoot, 'sites', 'docs'), 'site-docs')
+  await withoutTTY(async () => {
+    const resolved = await chooseNetlifyFilterOption({
+      projectRoot,
+      options: {},
+      env: { NETLIFY_SITE_ID: 'site-docs' },
+      detectWorkspace: workspaceDetected,
+    })
+    assert.equal(resolved.netlifySiteId, 'site-docs')
+    assert.equal(resolved.netlifyConfig, path.join('sites', 'docs', 'netlify.toml'))
+  })
+})
+
 test('sortNetlifyConfigChoices puts configs with inferred filters first', () => {
   assert.deepEqual(sortNetlifyConfigChoices([
     { source: '_misc/netlify.toml', filter: '' },

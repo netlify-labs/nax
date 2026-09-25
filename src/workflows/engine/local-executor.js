@@ -23,7 +23,8 @@ const {
 } = require('../../integrations/netlify/project-selection')
 const { titleCase, getLocalDate } = require('../catalog/prompts')
 const { readRunState, saveRunState, workflowStatePath } = require('../../storage/local/run-state')
-const { clearTrackedRunState, markRunCompleted, trackRunState } = require('../../storage/local/graceful-run-state')
+const { clearTrackedRunState, trackRunState } = require('../../storage/local/graceful-run-state')
+const { completeRun } = require('../run-completion')
 const { targetBranch } = require('../../integrations/git/target')
 const { NETLIFY_API_TRANSPORT } = require('../../integrations/transports')
 const {
@@ -1166,7 +1167,7 @@ async function resumeLocalFlow({ flow, runState, projectRoot }) {
   const startIndex = firstRunnableStepIndex(flow, runState)
   if (startIndex >= flow.steps.length) {
     console.log(`Run ${runState.runId} is already complete.`)
-    markRunCompleted(runState)
+    completeRun(runState)
     clearTrackedRunState(runState)
     return
   }
@@ -1198,7 +1199,7 @@ async function resumeLocalFlow({ flow, runState, projectRoot }) {
       projectRoot,
       completedStepStates,
     })
-    markRunCompleted(runState)
+    completeRun(runState)
     clearTrackedRunState(runState)
     return
   }
@@ -1211,7 +1212,7 @@ async function resumeLocalFlow({ flow, runState, projectRoot }) {
     projectRoot,
     completedStepStates,
   })
-  markRunCompleted(runState)
+  completeRun(runState)
   clearTrackedRunState(runState)
 }
 

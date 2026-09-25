@@ -4,7 +4,8 @@ const { WAIT_FOR_AGENT_RESULTS, isHumanReviewStep, loadStepPrompt } = require('.
 const { buildGithubFullPromptWrapper, applyContextFetchClassification, blobOffloadDisabled, cleanupWorkflowBlobsForRun, ensureGithubIssueFullPromptBlobOffload, ensureGithubPlanBlobOffload, githubIssueDeliveryKey, localSafePromptBytes, optionalNetlifyForBlobOffload } = require('./prompt-delivery')
 const { getLocalDate, resolveRepo } = require('../catalog/prompts')
 const { saveRunState, workflowStatePath } = require('../../storage/local/run-state')
-const { clearTrackedRunState, markRunCompleted, trackRunState } = require('../../storage/local/graceful-run-state')
+const { clearTrackedRunState, trackRunState } = require('../../storage/local/graceful-run-state')
+const { completeRun } = require('../run-completion')
 const { persistRunArtifact, persistStepArtifacts } = require('../artifacts/workflow-artifacts')
 const { formatRoundResults } = require('../round-results')
 const { parseIssueNumberFromUrl, shouldPollGithubRun } = require('./progress')
@@ -520,7 +521,7 @@ async function resumeGithubFlow({ flow, runState, projectRoot }) {
   const startIndex = firstRunnableStepIndex(flow, runState)
   if (startIndex >= flow.steps.length) {
     console.log(`Run ${runState.runId} is already complete.`)
-    markRunCompleted(runState)
+    completeRun(runState)
     clearTrackedRunState(runState)
     return
   }
@@ -542,7 +543,7 @@ async function resumeGithubFlow({ flow, runState, projectRoot }) {
       runState,
       completedStepStates,
     })
-    markRunCompleted(runState)
+    completeRun(runState)
     clearTrackedRunState(runState)
     return
   }
@@ -564,7 +565,7 @@ async function resumeGithubFlow({ flow, runState, projectRoot }) {
       runState,
       completedStepStates,
     })
-    markRunCompleted(runState)
+    completeRun(runState)
     clearTrackedRunState(runState)
     return
   }
@@ -576,7 +577,7 @@ async function resumeGithubFlow({ flow, runState, projectRoot }) {
     runState,
     completedStepStates,
   })
-  markRunCompleted(runState)
+  completeRun(runState)
   clearTrackedRunState(runState)
 }
 

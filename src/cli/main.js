@@ -65,7 +65,8 @@ const {
   stepArtifactsDir,
   writeGithubStepSummary,
 } = require('../workflows/artifacts/workflow-artifacts')
-const { clearTrackedRunState, markRunCompleted, trackRunState } = require('../storage/local/graceful-run-state')
+const { clearTrackedRunState, trackRunState } = require('../storage/local/graceful-run-state')
+const { completeRun, writeFindingsAtTerminal } = require('../workflows/run-completion')
 const { persistAgentRunnerArtifact } = require('../workflows/artifacts/agent-runner-artifacts')
 const { persistAgentSessionArtifact } = require('../workflows/artifacts/agent-session-artifacts')
 const { listHandoffSources, readHandoffSource, relativeDisplayPath } = require('../workflows/followups/handoff-sources')
@@ -2639,7 +2640,7 @@ async function handleRetry(runId, options) {
       runState.status = 'completed_with_failures'
       saveRunState(runState)
     } else {
-      markRunCompleted(runState)
+      completeRun(runState)
     }
     clearTrackedRunState(runState)
     printSuccessBox({ flow, runState, transport: NETLIFY_API_TRANSPORT, projectRoot })
@@ -2656,7 +2657,7 @@ async function handleRetry(runId, options) {
     projectRoot,
     completedStepStates,
   })
-  markRunCompleted(runState)
+  completeRun(runState)
   clearTrackedRunState(runState)
   printSuccessBox({ flow, runState, transport: NETLIFY_API_TRANSPORT, projectRoot })
 }
@@ -2998,7 +2999,7 @@ async function handleRunEngine(flowId, options) {
       reason: 'completed workflow',
     })
 
-    markRunCompleted(runState)
+    completeRun(runState)
     clearTrackedRunState(runState)
     persistWorkflowArtifacts(runState, { summaryOnly: true })
     emitWorkflowArtifacts(runtimeEvents, runState)
@@ -3028,6 +3029,7 @@ async function handleRunEngine(flowId, options) {
       runState.blobCleanupWarning = cleanupError?.message || String(cleanupError)
     }
     saveRunState(runState)
+    writeFindingsAtTerminal(runState)
     persistWorkflowArtifacts(runState, { summaryOnly: true })
     emitWorkflowArtifacts(runtimeEvents, runState)
     writeGithubStepSummary(runState)

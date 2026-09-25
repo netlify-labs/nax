@@ -698,38 +698,163 @@ function normalizeFlow(raw, { id, dir, file, source = {} }) {
   return flow
 }
 
+/**
+ * A shadowed lower-priority flow candidate.
+ * @typedef {{ dir: string, file: string, source: FlowSource, status: FlowEntryStatus }} ShadowedFlowCandidate
+ * @typedef {'valid' | 'invalid' | 'load-failed'} FlowEntryStatus
+ * @typedef {{ code: 'flow_load_failed', message: string }} FlowLoadError
+ * @typedef {{
+ *   status: FlowEntryStatus,
+ *   id: string,
+ *   dir: string,
+ *   file: string,
+ *   source: FlowSource,
+ *   flow?: WorkflowFlow,
+ *   validation: FlowValidation,
+ *   loadError?: FlowLoadError,
+ *   shadowed: ShadowedFlowCandidate[],
+ * }} FlowEntry
+ */
+
+/**
+ * Loads one flow directory into a discovery candidate, isolating load and validation failures.
+ * Returns null for directories without a flow file and for disabled flows, which never shadow.
+ * @param {FlowSource} source
+ * @param {string} dirName
+ * @returns {Promise<FlowEntry | null>}
+ */
+async function loadFlowCandidate(source, dirName) {
+  const dir = path.join(source.dir, dirName)
+  const file = findFlowFile(dir)
+  if (!file) return null
+  /** @type {WorkflowFlow} */
+  let raw
+  try {
+    raw = await loadConfigFile(file)
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    return {
+      status: 'load-failed',
+      id: dirName,
+      dir,
+      file,
+      source,
+      validation: { errors: [], warnings: [] },
+      loadError: { code: 'flow_load_failed', message },
+      shadowed: [],
+    }
+  }
+  if (isFlowDisabled(raw)) return null
+  const id = String(raw.id || dirName)
+  try {
+    const flow = normalizeFlow(raw, { id: dirName, dir, file, source })
+    if (raw.id && String(raw.id) !== dirName) {
+      flow.warnings = [...(flow.warnings || []), flowDiagnostic({
+        code: 'flow_id_mismatch',
+        message: `Flow id "${raw.id}" differs from its directory name "${dirName}".`,
+        hint: `Rename the directory to "${raw.id}" or remove the id field so the directory name is used.`,
+      })]
+    }
+    return {
+      status: 'valid',
+      id: flow.id,
+      dir,
+      file,
+      source,
+      flow,
+      validation: { errors: [], warnings: flow.warnings || [] },
+      shadowed: [],
+    }
+  } catch (error) {
+    const coded = /** @type {Error & { code?: string, validation?: FlowValidation }} */ (error)
+    const validation = coded.validation || {
+      errors: [flowDiagnostic({ code: coded.code || 'invalid_flow', message: coded.message || String(error) })],
+      warnings: [],
+    }
+    return { status: 'invalid', id, dir, file, source, validation, shadowed: [] }
+  }
+}
+
+/**
+ * Discovers every flow candidate across sources and resolves one winning entry per id.
+ * Sources are visited in priority order; the first candidate for an id wins even when invalid,
+ * and lower-priority candidates are recorded as shadowed rather than activated.
+ * @param {FlowLoadOptions} [options]
+ * @returns {Promise<FlowEntry[]>}
+ */
+async function discoverFlowEntries(options = {}) {
+  const sources = await flowSources(options)
+  /** @type {Map<string, FlowEntry>} */
+  const winners = new Map()
+  for (const source of sources) {
+    if (!fs.existsSync(source.dir)) continue
+    const dirNames = fs.readdirSync(source.dir, { withFileTypes: true })
+      .filter((entry) => entry.isDirectory())
+      .map((entry) => entry.name)
+      .sort()
+    for (const dirName of dirNames) {
+      const candidate = await loadFlowCandidate(source, dirName)
+      if (!candidate) continue
+      const winner = winners.get(candidate.id)
+      if (winner) {
+        winner.shadowed.push({ dir: candidate.dir, file: candidate.file, source: candidate.source, status: candidate.status })
+        continue
+      }
+      winners.set(candidate.id, candidate)
+    }
+  }
+  return [...winners.values()]
+}
+
+/**
+ * Builds the error thrown when a flow entry cannot be loaded.
+ * @param {FlowEntry} entry
+ * @returns {Error & { code: string, statusCode: number, validation?: FlowValidation, details: Record<string, unknown> }}
+ */
+function flowEntryError(entry) {
+  if (entry.status === 'load-failed') {
+    const message = `Flow "${entry.id}" could not be loaded from ${entry.file}: ${entry.loadError?.message || 'unknown error'}`
+    return Object.assign(new Error(message), {
+      code: 'flow_load_failed',
+      statusCode: 422,
+      details: { flowId: entry.id, file: entry.file, message: entry.loadError?.message || '' },
+    })
+  }
+  const message = formatFlowValidation({ flow: { id: entry.id }, ...entry.validation })
+  return Object.assign(new Error(message), {
+    code: 'invalid_flow',
+    statusCode: 422,
+    validation: entry.validation,
+    details: {
+      flowId: entry.id,
+      file: entry.file,
+      diagnostics: entry.validation.errors,
+      warnings: entry.validation.warnings,
+    },
+  })
+}
+
 /** @param {string} id @param {FlowLoadOptions} [options] */
 async function loadFlow(id, options = {}) {
-  const flows = await listFlows(options)
-  const flow = flows.find((candidate) => candidate.id === id)
-  if (!flow) {
-    const available = flows.map((candidate) => candidate.id).join(', ') || 'none'
-    throw new Error(`Unknown flow "${id}". Available flows: ${available}`)
+  const entries = await discoverFlowEntries(options)
+  const entry = entries.find((candidate) => candidate.id === id)
+  if (!entry) {
+    const valid = entries.filter((candidate) => candidate.status === 'valid').map((candidate) => candidate.id)
+    const invalid = entries.filter((candidate) => candidate.status !== 'valid').map((candidate) => candidate.id)
+    const available = valid.join(', ') || 'none'
+    const invalidText = invalid.length > 0 ? `. Invalid flows: ${invalid.join(', ')}` : ''
+    throw new Error(`Unknown flow "${id}". Available flows: ${available}${invalidText}`)
   }
-  return flow
+  if (entry.status !== 'valid' || !entry.flow) throw flowEntryError(entry)
+  return entry.flow
 }
 
 /** @param {FlowLoadOptions} [options] */
 async function listFlows(options = {}) {
-  const sources = await flowSources(options)
-  const flows = []
-  const seenIds = new Set()
-  for (const source of sources) {
-    if (!fs.existsSync(source.dir)) continue
-    const entries = fs.readdirSync(source.dir, { withFileTypes: true })
-    for (const entry of entries) {
-      if (!entry.isDirectory()) continue
-      const dir = path.join(source.dir, entry.name)
-      const file = findFlowFile(dir)
-      if (!file) continue
-      const raw = await loadConfigFile(file)
-      if (isFlowDisabled(raw)) continue
-      const flow = normalizeFlow(raw, { id: entry.name, dir, file, source })
-      if (seenIds.has(flow.id)) continue
-      seenIds.add(flow.id)
-      flows.push(flow)
-    }
-  }
+  const entries = await discoverFlowEntries(options)
+  const flows = entries
+    .filter((entry) => entry.status === 'valid' && entry.flow)
+    .map((entry) => /** @type {WorkflowFlow} */ (entry.flow))
   return flows.sort((a, b) => {
     if (a.sourcePriority !== b.sourcePriority) return a.sourcePriority - b.sourcePriority
     const aIndex = FLOW_PICKER_ORDER.indexOf(a.id)
@@ -763,6 +888,8 @@ module.exports = {
   NAX_CONFIG_FILE_NAMES,
   WAIT_FOR_AGENT_RESULTS,
   assertValidFlowStructure,
+  discoverFlowEntries,
+  flowEntryError,
   findFlowFile,
   flowSources,
   formatFlowValidation,

@@ -623,6 +623,25 @@ test('dashboard server serves built static assets when dist exists', async () =>
   }
 })
 
+test('legacy dashboard dry-run of a broken flow returns 422 invalid_flow with diagnostics', async () => {
+  const projectRoot = tmpRoot()
+  writeProjectFlow(projectRoot, 'broken-flow')
+  fs.rmSync(path.join(projectRoot, '.github', 'nax-flows', 'broken-flow', 'prompts', 'one.md'))
+  const server = await startDashboardServer({ projectRoot })
+  try {
+    const base = `http://127.0.0.1:${server.port}`
+    const response = await postJson(`${base}/api/workflows/broken-flow/dry-run`, server.token, {})
+    assert.equal(response.statusCode, 422)
+    assert.equal(response.payload.error.code, 'invalid_flow')
+    assert.equal(response.payload.error.details.flowId, 'broken-flow')
+    const codes = response.payload.error.details.diagnostics.map((diagnostic) => diagnostic.code)
+    assert.deepEqual(codes, ['missing_prompt_file'])
+    assert.ok(response.payload.error.details.diagnostics[0].hint)
+  } finally {
+    await server.close()
+  }
+})
+
 test('dashboard dry-run requires token and validates options', async () => {
   const server = await startDashboardServer({ projectRoot: process.cwd() })
   try {

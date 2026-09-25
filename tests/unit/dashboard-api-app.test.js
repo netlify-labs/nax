@@ -283,3 +283,28 @@ test('Hono dashboard API reports unsupported hosted capabilities explicitly', as
   assert.equal(response.status, 501)
   assert.equal((await json(response)).error.code, 'unsupported_capability')
 })
+
+test('Hono dashboard API forwards invalid_flow diagnostics with 422', async () => {
+  const diagnostics = [{ stepId: 'one', code: 'missing_prompt_file', message: 'Prompt file is missing.', hint: 'Create it.' }]
+  const app = fakeApi({
+    runtime: { capabilities: { ...localDashboardCapabilities(), canPlanRuns: true } },
+    runPlans: {
+      createWorkflowPlan: async () => {
+        throw Object.assign(new Error('Flow "broken-flow" is invalid'), {
+          code: 'invalid_flow',
+          statusCode: 422,
+          details: { flowId: 'broken-flow', file: '/repo/flow.yml', diagnostics },
+        })
+      },
+    },
+  })
+  const response = await app.request('/api/run-plans/workflows/broken-flow', {
+    method: 'POST',
+    headers: { 'x-nax-token': 'token-1', 'content-type': 'application/json' },
+    body: '{}',
+  })
+  assert.equal(response.status, 422)
+  const payload = await json(response)
+  assert.equal(payload.error.code, 'invalid_flow')
+  assert.deepEqual(payload.error.details.diagnostics, diagnostics)
+})

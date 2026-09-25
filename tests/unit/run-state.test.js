@@ -406,3 +406,24 @@ test('saveRunState preserves dashboard retry replacement over stale agent snapsh
   assert.equal(saved.steps[0].runs[0].status, 'submitted')
   assert.equal(saved.steps[0].runs[0].raw.dashboardRetry.previous.runnerId, 'runner-old')
 })
+
+test('an interrupted run whose saved step did not allow continuation is unfinished', () => {
+  const state = runState('/tmp/x', {
+    status: 'interrupted',
+    flow: { id: 'review', steps: [{ id: 'review' }, { id: 'summarize' }] },
+    steps: [{ id: 'review', status: 'failed', runs: [{ runnerId: 'r1', status: 'failed' }] }],
+  })
+  assert.equal(isUnfinishedRun(state), true)
+})
+
+test('failed runs that stopped on failed instances are resumable only when asked explicitly', () => {
+  const { isExplicitlyResumableRun } = require('../../src/core/runs/resumable')
+  const steps = [{ id: 'review', status: 'failed', runs: [{ runnerId: 'r1', status: 'failed' }] }]
+  for (const failureCode of ['NAX_ALL_INSTANCES_FAILED', 'NAX_PARTIAL_FINAL_STEP']) {
+    const state = { ...runState('/tmp/x', { status: 'failed', steps }), failureCode }
+    assert.equal(isUnfinishedRun(state), false)
+    assert.equal(isExplicitlyResumableRun(state), true)
+  }
+  assert.equal(isExplicitlyResumableRun({ ...runState('/tmp/x', { status: 'failed', steps }), failureCode: 'wrong_account' }), false)
+  assert.equal(isExplicitlyResumableRun({ ...runState('/tmp/x', { status: 'failed', steps }), failureCode: 'NAX_ALL_INSTANCES_FAILED', dismissedAt: '2026-09-25T00:00:00.000Z' }), false)
+})

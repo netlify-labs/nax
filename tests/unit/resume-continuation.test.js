@@ -74,6 +74,7 @@ test('resume after a completed_with_failures step starts at the next step and ne
       onTerminalRun(completed)
       return [completed]
     },
+    resolveRemoteSha: () => 'a'.repeat(40),
   })
   assert.deepEqual(submittedSteps, ['summarize'])
   assert.match(prompts[0], /Claude review result\./)

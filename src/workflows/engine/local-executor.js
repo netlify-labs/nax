@@ -65,6 +65,10 @@ const {
   startSubmissionHeartbeat,
 } = require('./progress')
 const { MAX_PARALLEL_RUNS, mapInWaves } = require('./wave-scheduler')
+const { reconcileStepInstances } = require('./resume')
+const { resubmissionRun, supersedeRun } = require('./attempts')
+const { flowDigest } = require('../catalog/flow-manifest')
+const { resolveRemoteBranchSha } = require('../../integrations/git/review-context')
 
 /** @type {Map<string, (import('../../types').JsonMap & { siteId?: string, adminUrl?: string, siteName?: string }) | null>} */
 const localNetlifyProjectCache = new Map()
@@ -1217,31 +1221,178 @@ async function executeLocalFlow({ flow, steps, options, runState, projectRoot, c
 }
 
 /**
+ * Resume errors carry a stable code so the CLI, dashboard and MCP can explain them.
+ * @param {string} code @param {string} message
+ * @returns {Error & { code: string }}
+ */
+function resumeError(code, message) {
+  const error = /** @type {Error & { code: string }} */ (new Error(message))
+  error.code = code
+  return error
+}
+
+/**
+ * Refuses to resubmit against a branch whose remote head moved since the run started, because
+ * new submissions would review different code than the kept results. --force overrides.
+ * @param {{ runState: import('../../types').WorkflowRunState, projectRoot: string, branch: string, force: boolean, resolveRemoteSha: (input: { projectRoot: string, branch: string }) => string }} input
+ * @returns {void}
+ */
+function assertBranchUnmoved({ runState, projectRoot, branch, force, resolveRemoteSha }) {
+  const runSha = String(runState.target?.sha || '')
+  if (!runSha || force) return
+  const currentSha = resolveRemoteSha({ projectRoot, branch })
+  if (currentSha && currentSha !== runSha) {
+    throw resumeError('branch_moved_since_run', `Branch "${branch}" moved since run ${runState.runId} started (${runSha.slice(0, 12)} -> ${currentSha.slice(0, 12)}). Resubmitted agents would review different code than the kept results. Rerun with --force to resume anyway, or start a new run.`)
+  }
+}
+
+/** @param {{ projectRoot: string, branch: string }} input @returns {string} */
+function remoteBranchSha({ projectRoot, branch }) {
+  return resolveRemoteBranchSha({ repoRoot: projectRoot, branch }).sha
+}
+
+/**
+ * Runs the reconciled actions for one saved step: kept runs stay untouched, in-flight runs are
+ * polled, and failed or never-sent runs are (re)submitted through the shared instance runner.
+ * Kept runs use no scheduler slots.
  * @param {{
- *   flow?: import('../../types').WorkflowFlow,
- *   runState?: import('../../types').WorkflowRunState,
- *   projectRoot?: string,
- * }} param0
+ *   flow: import('../../types').WorkflowFlow,
+ *   step: import('../../types').WorkflowStep,
+ *   stepState: import('../../types').WorkflowStep,
+ *   actions: import('./resume').ReconcileAction[],
+ *   runState: import('../../types').WorkflowRunState,
+ *   projectRoot: string,
+ *   branch: string,
+ *   netlify: ReturnType<typeof resolveNetlifyProjectTarget>,
+ *   submitAgentRun: typeof submitLocalAgentRun,
+ *   waitForAgentRuns: typeof waitForLocalAgentRuns,
+ * }} input
  * @returns {Promise<void>}
  */
+async function resumeStepInstances({ flow, step, stepState, actions, runState, projectRoot, branch, netlify, submitAgentRun, waitForAgentRuns }) {
+  const options = runState.options || {}
+  const prompt = loadStepPrompt(flow, step)
+  const work = []
+  for (const action of actions) {
+    console.log(`- ${action.instanceId}: ${action.action} (${action.reason})`)
+    if (action.action === 'resubmit') {
+      const replacement = resubmissionRun(action.run, { useCompactPrompt: action.useCompactPrompt, existingRunnerId: action.existingRunnerId })
+      supersedeRun(runState, stepState, action.index, replacement)
+      work.push({ kind: 'run', run: replacement, index: action.index })
+    } else if (action.action === 'submit') {
+      const run = { ...action.run, ...(action.existingRunnerId ? { existingRunnerId: action.existingRunnerId } : {}) }
+      stepState.runs[action.index] = run
+      work.push({ kind: 'run', run, index: action.index })
+    } else if (action.action === 'poll' && step.waitFor === WAIT_FOR_AGENT_RESULTS) {
+      work.push({ kind: 'poll', run: action.run, index: action.index })
+    }
+  }
+  stepState.status = 'running'
+  saveRunState(runState)
+  if (work.length === 0) return
+  const startedAt = Date.now()
+  const reporter = step.waitFor === WAIT_FOR_AGENT_RESULTS
+    ? makeStepProgressReporter({
+        stepTitle: step.title,
+        total: work.length,
+        agents: work.map(({ run }) => run.instanceLabel || run.instanceId || run.agent),
+      })
+    : null
+  const pendingSubmissionLabels = new Set()
+  const stopSubmissionHeartbeat = startSubmissionHeartbeat({ pendingLabels: pendingSubmissionLabels, startedAt })
+  const instanceContext = {
+    runState,
+    stepState,
+    step,
+    prompt,
+    projectRoot,
+    branch,
+    netlify,
+    netlifyFilter: netlify.netlifyFilter,
+    options,
+    submitAgentRun,
+    waitForAgentRuns,
+    reporter,
+    startedAt,
+    pendingSubmissionLabels,
+  }
+  try {
+    await mapInWaves(work, MAX_PARALLEL_RUNS, async (item) => {
+      if (item.kind === 'run') return runStepInstance(instanceContext, item.run, item.index)
+      const [terminalRun] = await waitForLocalRunSubset({
+        runState,
+        stepState,
+        step,
+        runs: [item.run],
+        reporter: /** @type {ReturnType<typeof makeStepProgressReporter>} */ (reporter),
+        options,
+        projectRoot,
+        netlify,
+        netlifyFilter: netlify.netlifyFilter.filter,
+        initialDelayMs: 0,
+        waitForAgentRuns,
+      })
+      return terminalRun
+    })
+  } finally {
+    stopSubmissionHeartbeat()
+  }
+  if (reporter) {
+    const settledRuns = work.map(({ index }) => stepState.runs[index])
+    const failedCount = settledRuns.filter((run) => run.status === 'failed' || run.status === 'timeout').length
+    const completionSummary = agentStepCompletionSummary({ stepTitle: step.title, runs: settledRuns, failedCount })
+    if (failedCount > 0) reporter.fail(completionSummary)
+    else reporter.done(completionSummary)
+  }
+}
+
 /**
- * Resumes an unfinished local run from its first step that does not allow continuation.
- * The Agent Runner boundary is injectable so resume behavior can be tested without network calls.
+ * Resumes an unfinished local run: reconciles the first step that does not allow continuation
+ * (or a partial final step) instance by instance, keeps completed results, polls in-flight runs,
+ * resubmits only failed or never-sent instances, then continues with the remaining steps.
+ * Nothing is submitted when reconcile stops, the flow changed, or the branch head moved.
+ * The Agent Runner boundary and remote SHA lookup are injectable for tests.
  * @param {{
  *   flow: import('../../types').WorkflowFlow,
  *   runState: import('../../types').WorkflowRunState,
  *   projectRoot: string,
+ *   currentFlowDigest?: string,
+ *   includeCancelled?: boolean,
+ *   force?: boolean,
  *   submitAgentRun?: typeof submitLocalAgentRun,
  *   waitForAgentRuns?: typeof waitForLocalAgentRuns,
+ *   resolveRemoteSha?: (input: { projectRoot: string, branch: string }) => string,
  * }} input
  */
-async function resumeLocalFlow({ flow, runState, projectRoot, submitAgentRun = submitLocalAgentRun, waitForAgentRuns = waitForLocalAgentRuns }) {
+async function resumeLocalFlow({ flow, runState, projectRoot, currentFlowDigest, includeCancelled = false, force = false, submitAgentRun = submitLocalAgentRun, waitForAgentRuns = waitForLocalAgentRuns, resolveRemoteSha = remoteBranchSha }) {
+  const completedStepStates = completedStepMapFromRunState(runState)
+  const startIndex = firstRunnableStepIndex(flow, runState)
+  if (startIndex >= flow.steps.length) {
+    console.log(`Run ${runState.runId} is already complete.`)
+    completeRun(runState)
+    return
+  }
+  const step = flow.steps[startIndex]
+  const stepState = (runState.steps || []).find((candidate) => candidate.id === step.id)
+  const reconciled = reconcileStepInstances({
+    stepState: isHumanReviewStep(step) ? null : stepState,
+    flowStep: step,
+    completedStepStates,
+    runState,
+    currentFlowDigest: currentFlowDigest ?? (runState.flowDigest ? flowDigest(flow) : ''),
+    includeCancelled,
+    force,
+  })
+  if (reconciled.stop) throw resumeError(reconciled.stop.code, reconciled.stop.message)
+  const branch = targetBranch(runState, { required: true })
+  assertBranchUnmoved({ runState, projectRoot, branch, force, resolveRemoteSha })
+
   trackRunState(runState)
   const options = await chooseNetlifyFilterOption({
     projectRoot,
     options: runState.options || {},
   })
-  const branch = targetBranch(runState, { required: true })
+  runState.status = 'running'
   runState.options = {
     ...(runState.options || {}),
     ...options,
@@ -1259,23 +1410,15 @@ async function resumeLocalFlow({ flow, runState, projectRoot, submitAgentRun = s
     ...netlifyOptionsFromTarget(options, netlify),
   }
   saveRunState(runState)
-  const completedStepStates = completedStepMapFromRunState(runState)
-  const startIndex = firstRunnableStepIndex(flow, runState)
-  if (startIndex >= flow.steps.length) {
-    console.log(`Run ${runState.runId} is already complete.`)
-    completeRun(runState)
-    clearTrackedRunState(runState)
-    return
-  }
+  for (const note of reconciled.notes) console.log(`Note: ${note}`)
 
-  const step = flow.steps[startIndex]
-  const stepState = (runState.steps || []).find((candidate) => candidate.id === step.id)
-  if (stepState && stepState.runs?.some(shouldPollLocalRun)) {
+  if (stepState && reconciled.actions.length > 0) {
     console.log(`Resuming ${runState.runId}`)
     console.log(`Flow: ${flow.title}`)
     console.log(`State: ${workflowStatePath(runState.dir)}`)
     console.log(`Repair and continue: ${step.title}`)
-    await completeLocalStep({ runState, stepState, step, options: runState.options, projectRoot, netlify, netlifyFilter: netlify.filter, initialDelayMs: 0, waitForAgentRuns })
+    await resumeStepInstances({ flow, step, stepState, actions: reconciled.actions, runState, projectRoot, branch, netlify, submitAgentRun, waitForAgentRuns })
+    await completeLocalStep({ runState, stepState, step, options: runState.options, projectRoot, netlify, netlifyFilter: netlify.netlifyFilter.filter, initialDelayMs: 0, waitForAgentRuns })
     await archiveEligibleCompletedLocalRuns({
       runState,
       flowSteps: flow.steps,

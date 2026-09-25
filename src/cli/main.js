@@ -3054,6 +3054,7 @@ async function handleRunEngine(flowId, options) {
       return AWAITING_REVIEW
     }
     runState.status = 'failed'
+    runState.failureCode = String(error?.code || '')
     clearTrackedRunState(runState)
     try {
       cleanupWorkflowBlobsForRun({

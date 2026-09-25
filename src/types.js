@@ -142,6 +142,7 @@
  *   projectRoot?: string,
  *   dir?: string,
  *   status?: string,
+ *   failureCode?: string,
  *   branch?: string,
  *   branchSource?: string,
  *   target?: TargetLike | null,

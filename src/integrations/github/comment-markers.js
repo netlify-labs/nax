@@ -89,6 +89,21 @@ function bodyHasRunnerHistoryMarker(body) {
   return String(body || '').includes(RUNNER_HISTORY_MARKER)
 }
 
+const FINDING_MARKER_PATTERN = /<!-- nax-finding:([^\s>]+) -->/g
+
+/**
+ * Hidden issue-body marker that makes finding handoff idempotent.
+ * @param {string} key findings key, e.g. <runId>/<stepId>/<localId>
+ */
+function findingMarker(key) {
+  return `<!-- nax-finding:${key} -->`
+}
+
+/** @param {string} body @returns {string[]} finding keys marked in the body */
+function parseFindingMarkers(body) {
+  return [...String(body || '').matchAll(FINDING_MARKER_PATTERN)].map((match) => match[1])
+}
+
 module.exports = {
   ID_FORMAT,
   MARKER_PREFIX,
@@ -100,6 +115,8 @@ module.exports = {
   bodyHasRunnerHistoryMarker,
   bodyHasRunnerResultMarker,
   bodyHasRunnerStatusMarker,
+  findingMarker,
+  parseFindingMarkers,
   parseRunnerResultMarker,
   parsePromptMarker,
   renderPromptMarker,

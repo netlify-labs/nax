@@ -72,7 +72,7 @@ const { persistAgentSessionArtifact } = require('../workflows/artifacts/agent-se
 const { listHandoffSources, readHandoffSource, relativeDisplayPath } = require('../workflows/followups/handoff-sources')
 const { handleCi } = require('./commands/ci')
 const { handleLint } = require('./commands/lint')
-const { handleFindingsHandoff } = require('./commands/findings')
+const { handleFindingsHandoff, handleFindingsTarget } = require('./commands/findings')
 const { flowDigest } = require('../workflows/catalog/flow-manifest')
 const {
   AD_HOC_RUN_CHOICE,
@@ -1203,6 +1203,24 @@ async function runSingleGithubAgent({ projectRoot, agent, promptText, source, op
 }
 
 async function handleHandoff(runId, options) {
+  if (options.to) {
+    await handleFindingsTarget({
+      projectRoot: resolveProjectRoot(String(options.projectRoot || ''), { cwd: process.cwd() }),
+      runId: String(runId || options.runId || ''),
+      to: String(options.to),
+      select: String(options.select || '').split(',').map((id) => id.trim()).filter(Boolean),
+      limit: Number(options.limit || 0),
+      minSeverity: String(options.minSeverity || 'low'),
+      includeContested: options.includeContested === true,
+      includeRejected: options.includeRejected === true,
+      labels: Array.isArray(options.label) ? options.label.map(String) : [],
+      repo: options.repo ? String(options.repo) : '',
+      dry: options.dry === true,
+      force: options.force === true,
+      json: options.json === true,
+    })
+    return
+  }
   if (options.findings) {
     handleFindingsHandoff({
       projectRoot: resolveProjectRoot(String(options.projectRoot || ''), { cwd: process.cwd() }),

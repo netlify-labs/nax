@@ -4,6 +4,7 @@ const { artifactMeta } = require('../../core/artifact-metadata')
 const { attemptRecord } = require('../../core/runs/attempts')
 const { isTerminalRunStatus } = require('../../core/status')
 const { ensureNaxGitignore } = require('./nax-gitignore')
+const { createLockDir } = require('./run-lock')
 const {
   hasInFlightRuns,
   hasRepairableRuns,
@@ -151,31 +152,20 @@ function acquireStateFileLock(filePath, {
   let delayMs = 5
 
   while (true) {
-    try {
-      fs.mkdirSync(lockDir)
-      try {
-        fs.writeFileSync(path.join(lockDir, 'owner.json'), JSON.stringify({
-          pid: process.pid,
-          createdAt: new Date().toISOString(),
-        }, null, 2) + '\n')
-      } catch {
-        // The directory itself is the lock; owner metadata is only diagnostic.
-      }
+    if (createLockDir(lockDir, { pid: process.pid, createdAt: new Date().toISOString() })) {
       let released = false
       return () => {
         if (released) return
         released = true
         fs.rmSync(lockDir, { recursive: true, force: true })
       }
-    } catch (error) {
-      if (error?.code !== 'EEXIST') throw error
-      if (removeStaleLock(lockDir, staleMs)) continue
-      if (Date.now() - startedAt > timeoutMs) {
-        throw new Error(`Timed out waiting for workflow state lock: ${lockDir}`)
-      }
-      sleepSync(delayMs)
-      delayMs = Math.min(delayMs * 2, 100)
     }
+    if (removeStaleLock(lockDir, staleMs)) continue
+    if (Date.now() - startedAt > timeoutMs) {
+      throw new Error(`Timed out waiting for workflow state lock: ${lockDir}`)
+    }
+    sleepSync(delayMs)
+    delayMs = Math.min(delayMs * 2, 100)
   }
 }
 

@@ -151,3 +151,37 @@ test('a flow edited since the run started refuses', async () => {
   )
   assert.equal(io.submitted.length, 0)
 })
+
+test('a run another live process owns refuses with run_locked and submits nothing', async () => {
+  const { runLockDir } = require('../../src/storage/local/run-lock')
+  const { projectRoot, flow, runState } = fixture([saved('claude', { status: 'failed', runnerId: 'r-claude' })])
+  fs.mkdirSync(runLockDir(runState.dir), { recursive: true })
+  fs.writeFileSync(path.join(runLockDir(runState.dir), 'owner.json'), JSON.stringify({ pid: process.ppid, hostname: os.hostname(), nonce: 'dashboard', command: 'nax dashboard' }))
+  const io = boundary()
+  await assert.rejects(resumeLocalFlow({ flow, runState, projectRoot, ...io }), (error) => /** @type {{ code?: string }} */ (error).code === 'run_locked')
+  assert.equal(io.submitted.length, 0)
+  await resumeLocalFlow({ flow, runState, projectRoot, ...io, forceUnlock: true })
+  assert.deepEqual(io.submitted.map((run) => run.agent), ['claude'])
+  assert.equal(fs.existsSync(runLockDir(runState.dir)), false)
+})
+
+test('a resume that ends on failed instances records the failure code and releases its lock', async () => {
+  const { runLockDir } = require('../../src/storage/local/run-lock')
+  const { isExplicitlyResumableRun } = require('../../src/core/runs/resumable')
+  const { projectRoot, flow, runState } = fixture([
+    saved('claude', { status: 'completed', runnerId: 'r-claude', resultText: 'claude done' }),
+    saved('codex', { status: 'failed', runnerId: 'r-codex' }),
+  ])
+  const io = boundary()
+  /** @type {WaitForAgentRuns} */
+  const failingWait = async ({ runs = [], onTerminalRun = () => {} } = {}) => {
+    const failed = { ...runs[0], status: 'failed', resultText: 'still at capacity' }
+    onTerminalRun(failed)
+    return [failed]
+  }
+  await assert.rejects(resumeLocalFlow({ flow, runState, projectRoot, ...io, waitForAgentRuns: failingWait }), (error) => /** @type {{ code?: string }} */ (error).code === 'NAX_PARTIAL_FINAL_STEP')
+  assert.equal(runState.status, 'failed')
+  assert.equal(runState.failureCode, 'NAX_PARTIAL_FINAL_STEP')
+  assert.equal(isExplicitlyResumableRun(runState), true)
+  assert.equal(fs.existsSync(runLockDir(runState.dir)), false)
+})

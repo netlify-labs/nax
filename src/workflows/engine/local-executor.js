@@ -25,7 +25,7 @@ const { titleCase, getLocalDate } = require('../catalog/prompts')
 const { readRunState, saveRunState, workflowStatePath } = require('../../storage/local/run-state')
 const { clearTrackedRunState, trackRunState } = require('../../storage/local/graceful-run-state')
 const { randomUUID } = require('crypto')
-const { completeRun } = require('../run-completion')
+const { completeRun, writeFindingsAtTerminal } = require('../run-completion')
 const { stepAllowsContinuation } = require('../../core/status')
 const { targetBranch } = require('../../integrations/git/target')
 const { NETLIFY_API_TRANSPORT } = require('../../integrations/transports')
@@ -1358,12 +1358,13 @@ async function resumeStepInstances({ flow, step, stepState, actions, runState, p
  *   currentFlowDigest?: string,
  *   includeCancelled?: boolean,
  *   force?: boolean,
+ *   forceUnlock?: boolean,
  *   submitAgentRun?: typeof submitLocalAgentRun,
  *   waitForAgentRuns?: typeof waitForLocalAgentRuns,
  *   resolveRemoteSha?: (input: { projectRoot: string, branch: string }) => string,
  * }} input
  */
-async function resumeLocalFlow({ flow, runState, projectRoot, currentFlowDigest, includeCancelled = false, force = false, submitAgentRun = submitLocalAgentRun, waitForAgentRuns = waitForLocalAgentRuns, resolveRemoteSha = remoteBranchSha }) {
+async function resumeLocalFlow({ flow, runState, projectRoot, currentFlowDigest, includeCancelled = false, force = false, forceUnlock = false, submitAgentRun = submitLocalAgentRun, waitForAgentRuns = waitForLocalAgentRuns, resolveRemoteSha = remoteBranchSha }) {
   const plan = planResume({
     flow,
     runState,
@@ -1382,76 +1383,84 @@ async function resumeLocalFlow({ flow, runState, projectRoot, currentFlowDigest,
   const branch = targetBranch(runState, { required: true })
   assertBranchUnmoved({ runState, projectRoot, branch, force, resolveRemoteSha })
 
-  trackRunState(runState)
-  const options = await chooseNetlifyFilterOption({
-    projectRoot,
-    options: runState.options || {},
-  })
-  runState.status = 'running'
-  runState.options = {
-    ...(runState.options || {}),
-    ...options,
-    branch,
-  }
-  saveRunState(runState)
-  const netlify = resolveNetlifyProjectTarget({
-    projectRoot,
-    siteId: options.netlifySiteId,
-    filter: options.filter,
-    netlifyConfig: options.netlifyConfig,
-  })
-  runState.options = {
-    ...runState.options,
-    ...netlifyOptionsFromTarget(options, netlify),
-  }
-  saveRunState(runState)
-  for (const note of reconciled.notes) console.log(`Note: ${note}`)
-
-  if (stepState && reconciled.actions.length > 0) {
-    console.log(`Resuming ${runState.runId}`)
-    console.log(`Flow: ${flow.title}`)
-    console.log(`State: ${workflowStatePath(runState.dir)}`)
-    console.log(`Repair and continue: ${step.title}`)
-    await resumeStepInstances({ flow, step, stepState, actions: reconciled.actions, runState, projectRoot, branch, netlify, submitAgentRun, waitForAgentRuns })
-    await completeLocalStep({ runState, stepState, step, options: runState.options, projectRoot, netlify, netlifyFilter: netlify.netlifyFilter.filter, initialDelayMs: 0, waitForAgentRuns })
-    await archiveEligibleCompletedLocalRuns({
-      runState,
-      flowSteps: flow.steps,
-      currentStepIndex: startIndex,
-      options,
+  trackRunState(runState, { forceUnlock })
+  try {
+    const options = await chooseNetlifyFilterOption({
       projectRoot,
-      netlify,
+      options: runState.options || {},
     })
-    completedStepStates.set(step.id, stepState)
+    runState.status = 'running'
+    runState.options = {
+      ...(runState.options || {}),
+      ...options,
+      branch,
+    }
     saveRunState(runState)
-    assertLocalStepOutcome(stepState, { final: startIndex === flow.steps.length - 1 })
-    await executeLocalFlow({
-      flow,
-      steps: flow.steps.slice(startIndex + 1),
-      options: runState.options,
-      runState,
+    const netlify = resolveNetlifyProjectTarget({
       projectRoot,
-      completedStepStates,
-      submitAgentRun,
-      waitForAgentRuns,
+      siteId: options.netlifySiteId,
+      filter: options.filter,
+      netlifyConfig: options.netlifyConfig,
     })
-    completeRun(runState)
-    clearTrackedRunState(runState)
-    return
-  }
+    runState.options = {
+      ...runState.options,
+      ...netlifyOptionsFromTarget(options, netlify),
+    }
+    saveRunState(runState)
+    for (const note of reconciled.notes) console.log(`Note: ${note}`)
 
-  await executeLocalFlow({
-    flow,
-    steps: flow.steps.slice(startIndex),
-    options: runState.options,
-    runState,
-    projectRoot,
-    completedStepStates,
-    submitAgentRun,
-    waitForAgentRuns,
-  })
-  completeRun(runState)
-  clearTrackedRunState(runState)
+    if (stepState && reconciled.actions.length > 0) {
+      console.log(`Resuming ${runState.runId}`)
+      console.log(`Flow: ${flow.title}`)
+      console.log(`State: ${workflowStatePath(runState.dir)}`)
+      console.log(`Repair and continue: ${step.title}`)
+      await resumeStepInstances({ flow, step, stepState, actions: reconciled.actions, runState, projectRoot, branch, netlify, submitAgentRun, waitForAgentRuns })
+      await completeLocalStep({ runState, stepState, step, options: runState.options, projectRoot, netlify, netlifyFilter: netlify.netlifyFilter.filter, initialDelayMs: 0, waitForAgentRuns })
+      await archiveEligibleCompletedLocalRuns({
+        runState,
+        flowSteps: flow.steps,
+        currentStepIndex: startIndex,
+        options,
+        projectRoot,
+        netlify,
+      })
+      completedStepStates.set(step.id, stepState)
+      saveRunState(runState)
+      assertLocalStepOutcome(stepState, { final: startIndex === flow.steps.length - 1 })
+      await executeLocalFlow({
+        flow,
+        steps: flow.steps.slice(startIndex + 1),
+        options: runState.options,
+        runState,
+        projectRoot,
+        completedStepStates,
+        submitAgentRun,
+        waitForAgentRuns,
+      })
+    } else {
+      await executeLocalFlow({
+        flow,
+        steps: flow.steps.slice(startIndex),
+        options: runState.options,
+        runState,
+        projectRoot,
+        completedStepStates,
+        submitAgentRun,
+        waitForAgentRuns,
+      })
+    }
+    completeRun(runState)
+  } catch (error) {
+    if (error?.code !== AWAITING_REVIEW) {
+      runState.status = 'failed'
+      runState.failureCode = String(error?.code || '')
+      saveRunState(runState)
+      writeFindingsAtTerminal(runState)
+    }
+    throw error
+  } finally {
+    clearTrackedRunState(runState)
+  }
 }
 
 module.exports = {

@@ -15,6 +15,7 @@ const { resolveRemoteBranchSha } = require('../../integrations/git/review-contex
  *   dry?: boolean,
  *   force?: boolean,
  *   includeCancelled?: boolean,
+ *   forceUnlock?: boolean,
  *   flowsDir?: string,
  *   flowsDirs?: string[] | string,
  * }} ResumeCommandOptions
@@ -136,6 +137,7 @@ async function handleResumeCommand(runId, options, {
     currentFlowDigest,
     includeCancelled,
     force,
+    forceUnlock: options.forceUnlock === true,
     ...(currentSha ? { resolveRemoteSha: () => currentSha } : {}),
   })
   return 0

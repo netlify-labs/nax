@@ -1,8 +1,12 @@
 const { onAnyExit, onShutdown } = require('@davidwells/graceful-exit')
 const { saveRunState } = require('./run-state')
+const { acquireRunLock } = require('./run-lock')
 
 let activeRunState = null
 let activeInterruptHandler = null
+/** Run locks this process holds, by run directory. Dashboard and MCP execute runs in-process. */
+/** @type {Map<string, import('./run-lock').RunLock>} */
+const heldRunLocks = new Map()
 let installed = false
 const SETTLED_RUN_STATUSES = new Set(['completed', 'failed', 'awaiting_review'])
 
@@ -58,7 +62,26 @@ function installGracefulRunStateHandlers() {
   onShutdown('nax-run-state', () => persistActiveRunStateAsync('shutdown'))
   onAnyExit(() => {
     persistActiveRunState('process-exit')
+    for (const dir of [...heldRunLocks.keys()]) releaseRunLock(dir)
   })
+}
+
+/** @param {string} dir */
+function releaseRunLock(dir) {
+  const lock = heldRunLocks.get(dir)
+  heldRunLocks.delete(dir)
+  lock?.release()
+}
+
+/**
+ * Holds the run lock for a tracked run so only one process executes it at a time. Tracking a run
+ * this process already holds keeps its lock.
+ * @param {Record<string, unknown>} runState @param {{ forceUnlock?: boolean }} options
+ */
+function holdRunLock(runState, { forceUnlock = false }) {
+  const dir = runState?.dir ? String(runState.dir) : ''
+  if (!dir || heldRunLocks.has(dir)) return
+  heldRunLocks.set(dir, acquireRunLock(dir, { runId: String(runState.runId || ''), command: `nax ${process.argv.slice(2).join(' ')}`.trim(), forceUnlock }))
 }
 
 /**
@@ -71,12 +94,14 @@ function installGracefulRunStateHandlers() {
  * Graceful run-state tracking options.
  * @typedef {{
  *   onInterrupt?: (event: RunStateInterruptEvent) => void | Promise<void>,
+ *   forceUnlock?: boolean,
  * }} TrackRunStateOptions
  */
 
 /** @param {Record<string, unknown>} runState @param {TrackRunStateOptions} [options] */
-function trackRunState(runState, { onInterrupt } = {}) {
+function trackRunState(runState, { onInterrupt, forceUnlock = false } = {}) {
   installGracefulRunStateHandlers()
+  holdRunLock(runState, { forceUnlock })
   activeRunState = runState
   activeInterruptHandler = typeof onInterrupt === 'function' ? onInterrupt : null
   return runState
@@ -91,6 +116,7 @@ function markRunCompleted(runState, { now = new Date() } = {}) {
 
 /** @param {Record<string, unknown> | null | undefined} runState */
 function clearTrackedRunState(runState) {
+  if (runState?.dir) releaseRunLock(String(runState.dir))
   if (runState && activeRunState !== runState) return
   activeRunState = null
   activeInterruptHandler = null

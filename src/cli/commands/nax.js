@@ -250,6 +250,7 @@ function addResumeOptions(command) {
   return command
     .option('--resume <run-id>', 'Resume a saved Netlify API run in place, resubmitting only unfinished agents (--dry previews; --force also allows a moved branch or ambiguous resubmission)')
     .option('--include-cancelled', 'With --resume, also resubmit agents that were cancelled')
+    .option('--force-unlock', 'With --resume, take over a run lock whose owner process is gone')
 }
 
 /**

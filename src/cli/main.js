@@ -2858,10 +2858,15 @@ async function resumeRunById(runId, options = {}) {
     })
   }
   const refreshed = listRunStates(projectRoot).find((state) => state.runId === runId) || runState
-  if (refreshed.transport === 'github') {
-    await resumeGithubFlow({ flow, runState: refreshed, projectRoot })
-  } else {
-    await resumeLocalFlow({ flow, runState: refreshed, projectRoot })
+  try {
+    if (refreshed.transport === 'github') {
+      await resumeGithubFlow({ flow, runState: refreshed, projectRoot })
+    } else {
+      await resumeLocalFlow({ flow, runState: refreshed, projectRoot })
+    }
+  } finally {
+    // Dashboard resumes run in-process, so the run lock must be released even when resume fails.
+    clearTrackedRunState(refreshed)
   }
   return refreshed
 }

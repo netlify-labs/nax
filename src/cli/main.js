@@ -72,6 +72,7 @@ const { persistAgentSessionArtifact } = require('../workflows/artifacts/agent-se
 const { listHandoffSources, readHandoffSource, relativeDisplayPath } = require('../workflows/followups/handoff-sources')
 const { handleCi } = require('./commands/ci')
 const { handleLint } = require('./commands/lint')
+const { handleResumeCommand, resumePreview } = require('./commands/resume')
 const { handleFindingsHandoff, handleFindingsTarget } = require('./commands/findings')
 const { readFindings } = require('../workflows/findings')
 const { flowDigest } = require('../workflows/catalog/flow-manifest')
@@ -2522,6 +2523,12 @@ function findRunStateForRetry(projectRoot, { runId, flowId, stepId, agent, insta
   return matched
 }
 
+/** @param {string} runId @param {import('../types').JsonMap} options */
+async function handleResume(runId, options) {
+  const projectRoot = resolveProjectRoot(String(options.projectRoot || ''), { cwd: process.cwd() })
+  return handleResumeCommand(runId, { ...options, projectRoot })
+}
+
 async function handleRetry(runId, options) {
   const projectRoot = path.resolve(options.projectRoot || process.cwd())
   const runState = findRunStateForRetry(projectRoot, {
@@ -2810,16 +2817,20 @@ async function maybeResumeUnfinishedRun({ projectRoot, options = {}, flow = null
     return false
   }
 
-  const resumableSteps = runnableSteps(resumableFlow, resumable.options || {})
-  printFlowPlan({
-    flow: resumableFlow,
-    steps: resumableSteps.length > 0 ? resumableSteps : resumableFlow.steps,
-    transport: resumable.transport || 'github',
-    branch: targetBranch(resumable) || currentGitBranch(projectRoot),
-    context: String(resumable.options?.context || ''),
-    runState: resumable,
-    options: resumable.options || {},
-  })
+  if (resumable.transport === 'github') {
+    const resumableSteps = runnableSteps(resumableFlow, resumable.options || {})
+    printFlowPlan({
+      flow: resumableFlow,
+      steps: resumableSteps.length > 0 ? resumableSteps : resumableFlow.steps,
+      transport: resumable.transport,
+      branch: targetBranch(resumable) || currentGitBranch(projectRoot),
+      context: String(resumable.options?.context || ''),
+      runState: resumable,
+      options: resumable.options || {},
+    })
+  } else {
+    console.log(resumePreview({ runState: resumable, flow: resumableFlow, projectRoot }).text)
+  }
   const resumeAfterPreview = await clack.confirm({
     message: `Resume ${resumableFlow.title} from saved run ${resumable.runId}?`,
     initialValue: true,
@@ -3201,6 +3212,7 @@ function buildProgram() {
       mcpSetupClaude: handleMcpSetupClaude,
       previewBoxes: handlePreviewBoxes,
       previewSpinner: handlePreviewSpinner,
+      resume: handleResume,
       retry: handleRetry,
       run: handleRun,
       skills: handleSkills,

@@ -1,11 +1,12 @@
 const fs = require('fs')
 const path = require('path')
 const { makeBox } = require('@davidwells/box-logger')
-const { loadFlow } = require('../catalog/flows')
 const { relativeDisplayPath } = require('../followups/handoff-sources')
 const { dismissRunState, isUnfinishedRun, listRunStates, workflowStatePath } = require('../../storage/local/run-state')
 const { artifactsRootForRunState, stepArtifactsDir } = require('../artifacts/workflow-artifacts')
 const { explainFailure } = require('../../integrations/netlify/failure-guidance')
+const { isHumanReviewStep, loadFlow } = require('../catalog/flows')
+const { completedStepMapFromRunState, firstRunnableStepIndex } = require('./execution-context')
 
 const DEFAULT_RESUME_WINDOW_MS = 24 * 60 * 60 * 1000
 const OUTER_TERMINAL_RATIO = 0.8
@@ -448,6 +449,96 @@ function reconcileStepInstances({ stepState, flowStep, completedStepStates, runS
   return { actions, stop: null, notes }
 }
 
+/**
+ * @typedef {{
+ *   complete: boolean,
+ *   startIndex: number,
+ *   step: import('../../types').WorkflowStep | null,
+ *   stepState: import('../../types').WorkflowStep | null,
+ *   completedStepStates: Map<string, import('../../types').WorkflowStep>,
+ *   reconciled: ReconcileResult,
+ * }} ResumePlan
+ */
+
+/**
+ * Finds where a run resumes (its first step that does not allow continuation, or a partial final
+ * step) and reconciles that step's saved instances. Pure: shared by the preview and the executor.
+ * @param {{
+ *   flow: import('../../types').WorkflowFlow,
+ *   runState: import('../../types').WorkflowRunState,
+ *   currentFlowDigest?: string,
+ *   includeCancelled?: boolean,
+ *   force?: boolean,
+ * }} input
+ * @returns {ResumePlan}
+ */
+function planResume({ flow, runState, currentFlowDigest = '', includeCancelled = false, force = false }) {
+  const completedStepStates = completedStepMapFromRunState(runState)
+  const startIndex = firstRunnableStepIndex(flow, runState)
+  if (startIndex >= flow.steps.length) {
+    return { complete: true, startIndex, step: null, stepState: null, completedStepStates, reconciled: { actions: [], stop: null, notes: [] } }
+  }
+  const step = flow.steps[startIndex]
+  const stepState = (runState.steps || []).find((candidate) => candidate.id === step.id) || null
+  const reconciled = reconcileStepInstances({
+    stepState: isHumanReviewStep(step) ? null : stepState,
+    flowStep: step,
+    completedStepStates,
+    runState,
+    currentFlowDigest,
+    includeCancelled,
+    force,
+  })
+  return { complete: false, startIndex, step, stepState, completedStepStates, reconciled }
+}
+
+/** @param {ReconcileAction} action @param {import('../../types').WorkflowStep | null} stepState */
+function resumeActionDetail(action, stepState) {
+  if (action.action === 'keep') return 'completed'
+  if (action.action === 'poll') return `${action.run.status} (runner ${action.run.runnerId})`
+  if (action.action !== 'resubmit') return action.reason
+  const attempts = /** @type {Array<{ instanceId?: string }>} */ (/** @type {Record<string, unknown>} */ (stepState || {}).attempts || [])
+  const attempt = attempts.filter((entry) => entry.instanceId === action.instanceId).length + 2
+  return `${action.reason} (attempt ${attempt})`
+}
+
+/**
+ * Formats the resume preview shown by `nax run --resume`, its --dry mode and the TTY auto-offer.
+ * @param {{
+ *   runState: import('../../types').WorkflowRunState,
+ *   flow: import('../../types').WorkflowFlow,
+ *   plan: ResumePlan,
+ *   branch: string,
+ *   currentSha?: string,
+ * }} input
+ * @returns {string}
+ */
+function formatResumePreview({ runState, flow, plan, branch, currentSha = '' }) {
+  if (plan.complete) return `Resume ${runState.runId}: every step already finished.`
+  const step = /** @type {import('../../types').WorkflowStep} */ (plan.step)
+  const lines = [`Resume ${runState.runId}  (step ${plan.startIndex + 1}/${flow.steps.length}: ${step.title || step.id})`]
+  const { actions, stop, notes } = plan.reconciled
+  const width = Math.max(0, ...actions.map((action) => action.instanceId.length))
+  for (const action of actions) {
+    lines.push(`  ${action.instanceId.padEnd(width)}   ${action.action.padEnd(8)}   ${resumeActionDetail(action, plan.stepState)}`)
+  }
+  if (!plan.stepState) lines.push('  (step not started; every instance runs fresh)')
+  const runSha = String(runState.target?.sha || '')
+  if (runSha) {
+    let headState = 'remote head unknown'
+    if (currentSha === runSha) headState = 'unchanged'
+    else if (currentSha) headState = `moved to ${currentSha.slice(0, 12)}; --force to resume anyway`
+    lines.push(`  Branch: ${branch} @ ${runSha.slice(0, 12)} (${headState})`)
+  } else if (branch) {
+    lines.push(`  Branch: ${branch}`)
+  }
+  const count = (/** @type {string[]} */ ...kinds) => actions.filter((action) => kinds.includes(action.action)).length
+  lines.push(`  New agent runs: ${count('resubmit', 'submit')}   Kept: ${count('keep')}   Polling: ${count('poll')}   Skipped: ${count('skip')}`)
+  for (const note of notes) lines.push(`  Note: ${note}`)
+  if (stop) lines.push(`  Stopped (${stop.code}): ${stop.message}`)
+  return lines.join('\n')
+}
+
 module.exports = {
   DEFAULT_RESUME_WINDOW_MS,
   ERROR_COLOR,
@@ -460,7 +551,9 @@ module.exports = {
   flowLoadOptions,
   formatDetailedRelativeTime,
   formatHumanRunDate,
+  formatResumePreview,
   formatResumeRunDetails,
+  planResume,
   isAutomaticResumeCandidate,
   printResumeRunDetails,
   reconcileStepInstances,

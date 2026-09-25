@@ -25,6 +25,8 @@ const targets = [
       'Usage: nax run [workflow]',
       '--agents <provider[:model[:effort]]>',
       'Agent instance for workflow steps',
+      '--resume <run-id>',
+      '--include-cancelled',
     ],
   },
   {

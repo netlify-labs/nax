@@ -53,6 +53,7 @@ function makeProgram() {
       mcpSetupClaude: (options) => record('mcpSetupClaude', options),
       previewBoxes: (flow, options) => record('previewBoxes', flow, options),
       previewSpinner: (options) => record('previewSpinner', options),
+      resume: (runId, options) => record('resume', runId, options),
       retry: (runId, options) => record('retry', runId, options),
       run: (workflow, options) => record('run', workflow, options),
       skills: (subcommand, options) => record('skills', subcommand, options),
@@ -147,6 +148,15 @@ test('nax run routes workflow execution and retry execution', async () => {
     ['retry', 'run-1', ''],
     ['retry', 'run-2', 'review'],
   ])
+})
+
+test('nax run --resume routes to resume with its flags', async () => {
+  const { calls, program } = makeProgram()
+  await parse(program, ['run', '--resume', 'run-9', '--dry', '--include-cancelled', '--force'])
+  assert.equal(calls[0].name, 'resume')
+  assert.equal(calls[0].args[0], 'run-9')
+  const options = /** @type {{ dry?: boolean, includeCancelled?: boolean, force?: boolean }} */ (calls[0].args[1])
+  assert.deepEqual([options.dry, options.includeCancelled, options.force], [true, true, true])
 })
 
 test('nax run agent routes positional and flagged prompts', async () => {

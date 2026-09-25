@@ -50,6 +50,7 @@ const TEAL_COLOR = '#0d9488'
  *   mcpSetupClaude: (options: JsonMap) => CommandActionResult,
  *   previewBoxes: (flow: string | undefined, options: JsonMap) => CommandActionResult,
  *   previewSpinner: (options: JsonMap) => CommandActionResult,
+ *   resume: (runId: string, options: JsonMap) => CommandActionResult,
  *   retry: (runId: string, options: JsonMap) => CommandActionResult,
  *   run: (workflow: string | null | undefined, options: JsonMap) => CommandActionResult,
  *   skills: (subcommand: string, options: JsonMap) => CommandActionResult,
@@ -238,6 +239,17 @@ function addRetryOptions(command) {
     .option('--retry [run-id]', 'Retry one failed Netlify API agent run and continue the workflow')
     .addOption(hiddenOption('--agent <name>', 'Failed agent to retry, e.g. claude'))
     .addOption(hiddenOption('--instance <id>', 'Exact failed instance to retry, e.g. claude:claude-opus-5:high'))
+}
+
+/**
+ * Adds explicit resume flags.
+ * @param {CommanderCommand} command
+ * @returns {CommanderCommand}
+ */
+function addResumeOptions(command) {
+  return command
+    .option('--resume <run-id>', 'Resume a saved Netlify API run in place, resubmitting only unfinished agents (--dry previews; --force also allows a moved branch or ambiguous resubmission)')
+    .option('--include-cancelled', 'With --resume, also resubmit agents that were cancelled')
 }
 
 /**
@@ -460,12 +472,13 @@ function buildNaxProgram({
     .option('--skip-secrets', 'Create/link project and workflow without setting GitHub secrets')
     .action((options, command) => settleAction(handlers.init(actionOptions(options, command))))
 
-  const runCommand = addRetryOptions(addAdvancedRunOptions(addPublicRunOptions(program
+  const runCommand = addResumeOptions(addRetryOptions(addAdvancedRunOptions(addPublicRunOptions(program
     .command('run [flow]')
     .description('Start a workflow or single-agent run')
-    .usage('[workflow]'), collectOption), collectOption, defaultOutputBudgetBytes))
+    .usage('[workflow]'), collectOption), collectOption, defaultOutputBudgetBytes)))
     .action((flow, options, command) => {
       const resolvedOptions = actionOptions(options, command)
+      if (resolvedOptions.resume) return settleAction(handlers.resume(String(resolvedOptions.resume), resolvedOptions))
       const retry = resolveRetryValue(resolvedOptions.retry)
       if (retry.requested) {
         if (!retry.runId && !process.stdin.isTTY) {

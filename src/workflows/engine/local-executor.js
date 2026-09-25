@@ -51,7 +51,6 @@ const {
   completedStepMapFromRunState,
   contextForRunState,
   contextWithOutputBudget,
-  firstRunnableStepIndex,
   sourceRunInstanceId,
   sourceRunsForStep,
 } = require('./execution-context')
@@ -65,7 +64,7 @@ const {
   startSubmissionHeartbeat,
 } = require('./progress')
 const { MAX_PARALLEL_RUNS, mapInWaves } = require('./wave-scheduler')
-const { reconcileStepInstances } = require('./resume')
+const { planResume } = require('./resume')
 const { resubmissionRun, supersedeRun } = require('./attempts')
 const { flowDigest } = require('../catalog/flow-manifest')
 const { resolveRemoteBranchSha } = require('../../integrations/git/review-context')
@@ -1365,24 +1364,20 @@ async function resumeStepInstances({ flow, step, stepState, actions, runState, p
  * }} input
  */
 async function resumeLocalFlow({ flow, runState, projectRoot, currentFlowDigest, includeCancelled = false, force = false, submitAgentRun = submitLocalAgentRun, waitForAgentRuns = waitForLocalAgentRuns, resolveRemoteSha = remoteBranchSha }) {
-  const completedStepStates = completedStepMapFromRunState(runState)
-  const startIndex = firstRunnableStepIndex(flow, runState)
-  if (startIndex >= flow.steps.length) {
-    console.log(`Run ${runState.runId} is already complete.`)
-    completeRun(runState)
-    return
-  }
-  const step = flow.steps[startIndex]
-  const stepState = (runState.steps || []).find((candidate) => candidate.id === step.id)
-  const reconciled = reconcileStepInstances({
-    stepState: isHumanReviewStep(step) ? null : stepState,
-    flowStep: step,
-    completedStepStates,
+  const plan = planResume({
+    flow,
     runState,
     currentFlowDigest: currentFlowDigest ?? (runState.flowDigest ? flowDigest(flow) : ''),
     includeCancelled,
     force,
   })
+  if (plan.complete) {
+    console.log(`Run ${runState.runId} is already complete.`)
+    completeRun(runState)
+    return
+  }
+  const { startIndex, stepState, completedStepStates, reconciled } = plan
+  const step = /** @type {import('../../types').WorkflowStep} */ (plan.step)
   if (reconciled.stop) throw resumeError(reconciled.stop.code, reconciled.stop.message)
   const branch = targetBranch(runState, { required: true })
   assertBranchUnmoved({ runState, projectRoot, branch, force, resolveRemoteSha })

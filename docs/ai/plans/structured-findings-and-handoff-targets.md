@@ -2,98 +2,132 @@
 id: 01M3CN9TWN39AFPTE94BKAFNFG
 status: draft
 createdAt: 2026-09-25T09:10:16-07:00
-updatedAt: 2026-09-25T09:10:16-07:00
+updatedAt: 2026-09-25T11:05:00-07:00
 origin: manual
 type: plan
 ---
 
 # Structured Findings (`findings.json`) + Handoff Targets
 
-> Status: DRAFT v1 for review (planning-workflow round 1). Supersedes the design sketches in beads `nax-i9j`, `nax-i9j.1-.4`, `nax-u76` (written 2026-06-10 against pre-restructure paths such as `src/round-results.js`, `src/comment-markers.js`, `src/flows/*`).
+> Status: DRAFT v2. Codex review round 1 (Netlify runner `6ab6ae5ca90f294f6575eb87`) has been integrated, and each claim was re-verified against the code; see §9. Supersedes the design sketches in beads `nax-i9j`, `nax-i9j.1-.4`, `nax-u76` (2026-06-10, pre-restructure paths).
 
 ## 1. Why
 
-The product of a nax workflow is the consensus: the ranked, cross-checked list of findings that comes out of the last step. Today that output reaches the user only as markdown, and the only way to act on it is to copy and paste:
+The product of a nax workflow is the consensus: the ranked, cross-checked list of findings from the last agent step. Today it reaches the user only as markdown:
 
-- `nax handoff` copies, opens, or re-prompts from `summary.md` (`src/cli/main.js:1159-1260`, `src/workflows/followups/handoff-sources.js`). Every source is `summaryText` markdown.
-- MCP run details return markdown sections (`src/mcp/adapters/local-dashboard.js:560-597`). An MCP client that wants "the top 3 high-severity findings" has to scrape markdown itself.
-- The dashboard renders findings JSON as a highlighted code block (`MarkdownRenderer.tsx`). It has no notion of a finding.
+- `nax handoff` copies, opens or re-prompts from `summary.md` (`src/cli/main.js:1159-1260`, `src/workflows/followups/handoff-sources.js`). Every source is `summaryText` markdown.
+- MCP run details return markdown sections (`src/mcp/adapters/local-dashboard.js:560-597`).
+- The dashboard has no findings model. Fenced JSON renders as a markdown code block (`src/dashboard/web/src/components/RunDetailsModal.tsx:1284` → `MarkdownRenderer.tsx`).
 
-The data is already there, in a structured and reliable form:
+The data is already structured and reliable:
 
-- The bundled `review` prompts require a `## 2. Structured Findings` / `## 2. Structured Consensus` heading followed by a fenced JSON block (`workflows/review/prompts/1_review.md:41-75`, `2_cross-review.md:58`, `3_summarize-consensus.md:44-72`).
-- **Measured on this repo's own `.nax/` (2026-09-25):** 11/11 real synthesize outputs contain a block that `JSON.parse` accepts, with `consensus_findings|contested_findings|merge_dependent_findings` and the documented fields. 30/32 round-1 review outputs parse. The 2 misses are codex outputs with no heading at all, not malformed JSON.
-- Today nax extracts those blocks with a regex (`src/workflows/round-results.js:11-13, 195-211`) only to shrink follow-up prompts, and never parses them.
+- The bundled `review` prompts require a `## 2. Structured Findings` / `## 2. Structured Consensus` heading followed by fenced JSON (`workflows/review/prompts/1_review.md:41-75`, `2_cross-review.md:56-98`, `3_summarize-consensus.md:44-89`).
+- **Measured on this repo's `.nax/` (2026-09-25):** 11/11 real synthesize outputs `JSON.parse` cleanly. 30/32 round-1 outputs parse; the 2 misses are codex outputs with no heading, not malformed JSON.
+- nax extracts these blocks with a regex (`src/workflows/round-results.js:10-13, 195-210`) only to shrink follow-up prompts. It never parses them.
 
-So we would be parsing data we already collect, not creating a new data source. The work is: parse it once, persist it as a first-class artifact, and route it to where work happens (GitHub issues, PR reviews, beads).
+The work is to parse once, expose the result as typed data, and route it to where work happens.
 
 ### Who benefits
 
-| User | Today | After |
-|---|---|---|
-| Human after `nax run review` | Reads a long markdown consensus, then hand-creates issues | `nax handoff --to github-issues` shows a picker with S1..Sn preselected by rank, then creates labeled issues. Rerunning creates no duplicates. |
-| PR-centric team | Consensus lands in a side-channel issue | `nax handoff --to pr-review` posts one advisory review with inline comments on diff lines |
-| David / beads workflow | Manually transcribes findings into `br create` | `nax handoff --to beads` creates beads with severity-mapped priority and a stable `external-ref` |
-| MCP client (Claude Code) | Scrapes markdown | Reads `findings` from the run details/resource as typed data |
-| Future features | n/a | `when: findingsAtLeast`, model scorecard, cost-per-finding: all read `findings.json` |
+| User | Today | After v1 | After v1.1 |
+|---|---|---|---|
+| Human after `nax run review` | Reads long markdown, hand-creates issues | `nax handoff --findings` table; `--to github-issues` creates labeled issues; rerun creates no duplicates | + PR review, beads |
+| MCP client | Scrapes markdown | Reads typed `findings` from run details or a resource | same |
+| David / beads workflow | Transcribes into `br create` | via github-issues | `--to beads` direct |
+| Future features | n/a | `when: findingsAtLeast`, model scorecard, cost-per-finding all read one contract | |
 
-## 2. Grounded current state
+## 2. Scope
 
-### 2.1 Where the text lives
-- Per-agent result JSON: `.nax/workflows/<runId>/artifacts/steps/NN-<stepId>/agent-runners/<agent>.json`, `resultText` field (`buildAgentJson`, `src/workflows/artifacts/workflow-artifacts.js:177-207`).
-- `workflow.json` `steps[].runs[].resultText` also holds the full text for both transports:
-  - netlify-api: `session.result || runner.result` (`src/workflows/results/agent-run-results.js:634`)
-  - github-actions: the reply comment body (`normalizeGithubRunResult`, `agent-run-results.js:657-671`).
-- Workflow artifact writers: `workflow-artifacts.js:609-684` (`summary.md`, `usage.json`, per-step files). This is where `findings.json` gets written.
+- **v1:**
+  - pure findings builder + review-consensus adapter;
+  - terminal-time `findings.json` write;
+  - read-only CLI (`--findings`) and MCP (summary + resource);
+  - `--to github-issues`.
+- **v1.1 (separate plan update once v1 ships):**
+  - `--to pr-review`;
+  - `--to beads`;
+  - the dashboard Findings tab.
+- **Later, one at a time:** named adapters for audit flows, each proven by fixture tests of its exact shape.
 
-### 2.2 Structured block shapes in the wild
-- **Review round 1/2** (`1_review.md:47-75`): array of `{id:"R1"|"CR1", category: defect|polish|rejected, severity, status: confirmed|likely|already_fixed|rejected, file, line, claim, evidence, suggested_fix, confidence}`.
-- **Synthesize** (`3_summarize-consensus.md:44-72`): `{consensus_findings:[{id:"S1", category, severity, status: open|already_fixed|merge_dependent|dropped, file, line, claim, evidence, suggested_fix, confidence}], contested_findings:[], merge_dependent_findings:[]}`.
-- **Audit flows use different headings and shapes.** Their unnumbered headings (`## Structured Findings`, `## Structured Tracking Plan`, `Structured Opportunities`, ...) do NOT match `STRUCTURED_HEADING_PATTERN`. Their fields also differ, e.g. security `SEC-1 {domain,title,kernel_axiom,attack_vector,impact,recommended_fix,verification}` and error-handling `ERR-1 {priority:P0, failure_scenario, ...}`.
-- **Attribution gap:** consensus findings do not record which round-1 findings or agents they came from. `reportedBy` cannot be derived reliably today; see §3.4.
+Why this split: v1 proves the artifact contract end to end, including one outbound target, so the feature is useful on day one. The next two targets add diff parsing and a second CLI integration, which are separate risk surfaces.
 
-### 2.3 Integration seams that exist
+## 3. Grounded current state
+
+### 3.1 Where the text lives
+- `workflow.json` `steps[].runs[].resultText` holds the full text for both transports:
+  - Netlify: supplied/run/session/runner result (`src/workflows/results/agent-run-results.js:627-645`).
+  - GitHub: the reply comment body (`:657-681`).
+- Per-agent copy: `.nax/workflows/<runId>/artifacts/steps/NN-<stepId>/agent-runners/<agent>.json` (`buildAgentJson`, `src/workflows/artifacts/workflow-artifacts.js:177-207`).
+- **Artifact persistence runs on every state save, not only at the end.** `saveRunState` calls `persistWorkflowArtifacts(next, { summaryOnly: true })` after every write (`src/storage/local/run-state.js:469-476`), and step persistence cascades into it (`workflow-artifacts.js:654-688`). Terminal status is set separately in `src/cli/main.js:2923-2953`. Findings generation therefore must NOT hook into `persistWorkflowArtifacts`.
+
+### 3.2 Structured block shapes
+- **Review round 1/2:** array of `{id:"R1"|"CR1", category, severity, status, file, line, claim, evidence, suggested_fix, confidence}`.
+- **Review synthesize:** `{consensus_findings:[{id:"S1", category, severity, status: open|already_fixed|merge_dependent|dropped, file, line, claim, evidence, suggested_fix, confidence}], contested_findings:[], merge_dependent_findings:[]}`.
+- **Other flows vary a lot:** security `SEC-1 {domain,title,kernel_axiom,attack_vector,impact,recommended_fix,verification}`, SEO `{issue, search_impact, recommended_fix}`, analytics `{event, trigger, decision_enabled, ...}`, ideas synthesize `{consensus_winners:[{rank, idea_id_or_title, verdict, ...}]}` (ranked ideas, not findings). A generic heuristic would misread them. They are out of v1.
+- **Attribution precedent:** the security synthesize prompt already asks for `"agents": ["claude", "codex"]` per consensus item (`workflows/security-audit/prompts/2_synthesize-security.md:52`). The review consensus schema has no attribution.
+
+### 3.3 Target provenance
+- `resolvePullRequestTarget` returns only `{branch, sha, fork}` (`src/integrations/git/target.js:151-180`).
+- `normalizeTarget` keeps six fields and strips the rest (`:126-135`).
+- `verifiedRemoteTarget` and `advisoryGithubTarget` rebuild the target without PR identity (`:183-209`).
+- `legacyTargetFromRunState` re-normalizes (`:299-310`).
+- The strict TS mirror is `Target` in `src/contracts/dashboard.ts:73-80`.
+- The dashboard serializer passes `runState.target` through whole (`src/dashboard/api/serializers.js:67, :94`), so no serializer change is needed.
+- JSDoc `TargetLike` is a loose record (`src/types.js:40-59`).
+
+### 3.4 Handoff source resolution
+`workflowSources` only offers status exactly `completed` (`handoff-sources.js:56-74`). It excludes `completed_with_failures` and `failed` runs, which can still carry a valid consensus.
+
+### 3.5 Integration seams
 - `createIssue({repo,title,body,labels})` runs `gh issue create --label ...` (`src/integrations/github/issue-plan.js:214-229`).
-- `createPullRequestComment` (`issue-plan.js:246-258`).
-- `runGh` with retries and auth formatting (`src/integrations/github/gh-cli.js:71`); `assertGhAuthenticated` (`:109`).
-- Marker conventions (`src/integrations/github/comment-markers.js`), e.g. `<!-- netlify-agent-run-result:... -->`. Nothing upserts or dedupes on them yet.
-- PR selector: `isPullRequestSelector` / `resolvePullRequestTarget` (`src/integrations/git/target.js:121, 151-180`) resolve `#123` to `headRefName`, but **`normalizeTarget` (`:126`) drops the PR number**. `pr-review` needs it (see §3.7).
-- **No PR review API use, no `br` integration** anywhere in `src`.
-- `br create` supports `-t/--type`, `-p/--priority`, `-d/--description`, `-l/--labels`, `--external-ref` (verified with `br create --help`).
+- `runGh` with retries (`src/integrations/github/gh-cli.js:71`); `assertGhAuthenticated` (`:109`).
+- Marker conventions: `src/integrations/github/comment-markers.js`. Nothing dedupes on markers yet.
+- No PR review API use and no `br` integration anywhere in `src`.
 
-## 3. Design
+## 4. Design
 
-### 3.1 Core invariants
-1. **Derived, never authoritative.** `findings.json` is always rebuildable from `resultText` in `workflow.json`. There is no migration: old runs get findings the first time they are requested (lazy backfill).
-2. **Parsing never breaks a run.** Every parse failure becomes a `diagnostics[]` entry. Findings generation runs after the run has reached a terminal state and is wrapped so it cannot change the run's status or exit code.
-3. **Stable identity.** A finding's key is `<runId>/<stepId>/<localId>` (e.g. `2026-09-25T...-review/synthesize/S3`). Every handoff target's idempotency rests on this key.
-4. **Targets plan before they act.** Every target first computes a list of actions and then applies it. `--dry` prints the list and does nothing, which gives dry-run and tests the same code path.
-5. **Advisory posture.** PR reviews are always `event: COMMENT`, never `REQUEST_CHANGES`. nax does not gate merges.
+### 4.1 Invariants
+1. **Derived and pure.** `buildFindings(runState, flow)` is a pure function of `workflow.json` + flow declaration. It does no I/O.
+2. **Writes only at terminal transitions.** Reads never write. An old run that lacks `findings.json` gets a computed artifact in memory. There is no lazy backfill to disk, no lock on reads and no migration.
+3. **Never affects run outcome.** The terminal-time write is wrapped; failure logs a warning and leaves run status and exit code unchanged.
+4. **Stable identity.** Key = `<runId>/<stepId>/<localId>`. All idempotency rests on it.
+5. **Plan, then apply.** Every target computes `actions[]` first; `--dry` prints them. Tests and dry-run share the path.
+6. **Advisory posture** (v1.1 PR reviews): always `event: COMMENT`.
 
-### 3.2 Module layout
+### 4.2 Flow declaration (explicit only)
+New optional top-level flow key, validated by the flow validator (see `flow-lint-and-fail-fast.md`, code `invalid_findings_source`):
+```yaml
+findings:
+  step: synthesize          # must reference an existing agent step
+  adapter: review-consensus # must be a registered adapter name
+```
+- There is **no** "last parseable step" fallback: it would pick the `ideas` flow's ranked-ideas block, or an implementation plan. A flow without `findings:` has no findings, and the CLI says so.
+- v1 registers one adapter, `review-consensus`, and adds the declaration to `workflows/review/flow.yml`.
+
+### 4.3 Module layout
 ```text
 src/workflows/findings/
-  extract.js     # locate + JSON.parse structured blocks in a resultText (moves the regex out of round-results.js; round-results imports it)
-  normalize.js   # map known shapes (review, synthesize, generic audit) -> Finding
-  artifact.js    # build/read/write findings.json for a run state (lazy backfill)
+  extract.js      # locate + JSON.parse structured blocks (regex moves here; round-results.js imports it with numberedOnly)
+  adapters/
+    review-consensus.js
+  index.js        # buildFindings(runState, flow), adapter registry, readFindings (pure read), writeFindings (terminal only)
 src/workflows/handoff-targets/
+  index.js        # registry { id, plan(findings, ctx), apply(actions, ctx) }
   github-issues.js
-  pr-review.js
-  beads.js
-  index.js       # target registry: { id, plan(findings, ctx), apply(actions, ctx) }
 ```
-`scripts/check-import-direction.js` is run as part of the check to confirm that `workflows/findings` depends only on `core/*` and `storage/*`. The targets depend on `integrations/github/*` plus a small `br` exec helper.
+Run `npm run check:import-direction` to confirm the layering: `findings` depends only on `core/*`, and the targets on `integrations/github/*`.
 
-### 3.3 `findings.json` schema v1
-Written to `.nax/workflows/<runId>/artifacts/findings.json`, next to `summary.md`.
+### 4.4 `findings.json` schema v1
+Path: `.nax/workflows/<runId>/artifacts/findings.json`.
 ```json
 {
   "schemaVersion": 1,
   "runId": "2026-09-25T16-02-11-000Z-review",
   "flowId": "review",
+  "adapter": "review-consensus",
   "generatedAt": "2026-09-25T16:40:00.000Z",
-  "source": { "stepId": "synthesize", "instanceId": "codex:auto:auto", "runnerId": "...", "sessionId": "...", "resultUrl": "https://github.com/.../issues/88" },
-  "target": { "branch": "fix/auth", "sha": "abc123...", "prNumber": 123 },
+  "source": { "stepId": "synthesize", "instanceId": "codex:auto:auto", "runnerId": "...", "sessionId": "...", "resultUrl": null },
+  "target": { "branch": "fix/auth", "sha": "abc123...", "pullRequest": { "number": 123, "url": "https://github.com/o/r/pull/123" } },
   "findings": [
     {
       "key": "2026-09-25T16-02-11-000Z-review/synthesize/S1",
@@ -106,167 +140,142 @@ Written to `.nax/workflows/<runId>/artifacts/findings.json`, next to `summary.md
       "status": "open",
       "file": "src/auth/session.ts",
       "line": 88,
+      "lineEnd": null,
       "claim": "...",
       "evidence": "...",
       "suggestedFix": "...",
       "confidence": "high",
-      "reportedBy": ["claude:R2", "gemini:R1"]
+      "agents": ["claude", "gemini"]
     }
   ],
-  "diagnostics": [
-    { "stepId": "review", "instanceId": "codex:auto:auto", "code": "no_structured_heading", "message": "..." }
-  ]
+  "diagnostics": [{ "stepId": "synthesize", "instanceId": "codex:auto:auto", "code": "no_structured_heading", "message": "..." }]
 }
 ```
-Field rules:
-- `rank` is the position in `consensus_findings` (1-based). `contested` and `merge_dependent` findings get `rank: null` and their own `bucket`.
-- `title`: the agent-supplied `title` if present, otherwise the first sentence of `claim`, cut to 100 characters on a word boundary.
-- `severity` is normalized to `critical|high|medium|low|info`. `P0..P3` maps to `critical|high|medium|low`. Unknown values keep the raw value in `severityRaw` and set `severity: "info"`, and a diagnostic is added.
-- `line`: an integer or `null`. Ranges such as `"88-94"` become `line: 88, lineEnd: 94`.
-- `reportedBy` is `[]` when attribution is not available. It is never invented.
-- `target.prNumber` is present only when the run was started with a PR selector (§3.7).
-- JSDoc typedef `Finding` / `FindingsArtifact` goes in `src/types.js`. A TS mirror goes in `src/contracts/` so the dashboard and MCP share it.
+Field rules for `review-consensus`:
+- `rank` is the 1-based position in `consensus_findings`. `contested_findings` and `merge_dependent_findings` get `rank: null` and their own `bucket`.
+- `title`: the agent's `title` if present, otherwise the first sentence of `claim`, cut to 100 characters on a word boundary.
+- `severity` is normalized to `critical|high|medium|low|info`. An unknown value keeps `severityRaw`, sets `info`, and adds a diagnostic.
+- `line`: an integer or null. `"88-94"` becomes `line: 88, lineEnd: 94`.
+- `agents`: from the new prompt field (§4.5). It is validated against the provider names or instance labels of the source steps' lineups. Unknown entries are kept and produce a diagnostic. When absent it is `[]`, never invented.
+- `target.pullRequest` is present only for PR-selector runs (§4.6).
+- Typedefs `Finding` and `FindingsArtifact` go in `src/types.js`, with a TS mirror in `src/contracts/`.
 
-### 3.4 Which step is the source
-1. If the flow declares `findings: { step: <id> }` (new, optional top-level key, validated by the flow validator; see the flow-lint plan), use that step.
-2. Otherwise, use the **last step** that has at least one completed run whose `resultText` contains a parseable structured block.
-3. If that step has more than one completed run (a fan-out final step), findings from all runs are merged. Each run's `localId`s are prefixed with its instance label, e.g. `claude:R1`, so keys stay unique, and `rank` is null (no consensus exists).
+If the source step has more than one completed run (fan-out), findings from each run are merged, with `localId` prefixed by the instance label and `rank: null`.
 
-In the bundled `review` flow, rule 2 picks `synthesize`. That is correct without any flow edit, but the plan still adds the explicit `findings: { step: synthesize }` to `workflows/review/flow.yml` as documentation.
+### 4.5 Attribution field (prompt change)
+Add `"agents": ["claude", "gemini"]` (the providers whose findings the consensus item merges) to the schema in `workflows/review/prompts/3_summarize-consensus.md`. It uses the same field name and meaning as the security synthesize prompt. It is one line of prompt, it is verifiable against known lineups, and it enables the model scorecard later. Per-finding source ids (`R2`) are deliberately NOT requested; they would need a verified id grammar across rounds.
 
-**Attribution (`reportedBy`):** add one optional field to the synthesize schema in `3_summarize-consensus.md`: `"sources": ["claude:R2", "gemini:R1"]`, meaning the round-1/2 ids this consensus item merges. The normalizer copies `sources` into `reportedBy` and checks each entry against the ids it actually parsed from earlier steps. Unknown ids produce a diagnostic and are kept. This costs one line of prompt and makes `reportedBy` and the future model scorecard possible. There is no fuzzy matching.
+### 4.6 PR identity persisted at run creation
+- `resolvePullRequestTarget` also returns `number` and `url` (add `number,url` to the `gh pr view --json` fields).
+- `normalizeTarget` carries an optional `pullRequest: { number, url, isCrossRepository }`.
+- `verifiedRemoteTarget` and `advisoryGithubTarget` accept and pass it, and `legacyTargetFromRunState` keeps it.
+- Update the TS `Target` in `src/contracts/dashboard.ts` and the JSDoc.
+- Tests cover both transports' PR-selector paths. The field is additive; old runs simply lack it.
 
-### 3.5 Extraction changes
-- `extract.js` exports `findStructuredBlocks(resultText) -> Array<{heading, kind, json: unknown | null, raw, parseError?}>`.
-- It widens the heading pattern to `^##\s+(?:\d+\.\s+)?Structured\s+([A-Za-z ]+)$`, so the audit flows' unnumbered headings match. `kind` is the captured noun (findings, consensus, tracking plan, ...).
-- **Compatibility guard:** `round-results.js` keeps its current behavior (numbered-heading-only prompt shrinking) by calling the new extractor with `{ numberedOnly: true }`. That prevents a silent change to follow-up prompt contents for audit flows. Widening prompt shrinking is out of scope.
-- The first fenced ```` ```json ```` block after the heading, and before the next `## ` heading, is the payload. If there is no fence, fall back to the first top-level `[`/`{` balanced span. Failure produces a diagnostic.
+### 4.7 Where `findings.json` is written
+Only at terminal transitions in `src/cli/main.js:2923-2953` (completion and failure handling): if the flow declares `findings`, call `writeFindings(runState, flow)` once via `writeJson` (`src/storage/local/artifact-fs.js`), inside try/catch. This covers `completed`, `completed_with_failures` and `failed` runs whose source step produced results.
 
-### 3.6 Normalizer shapes
-| Shape detector | Maps |
-|---|---|
-| object with `consensus_findings` | synthesize; buckets from the three arrays |
-| array of objects with `claim` | review / cross-review |
-| array of objects with `title` or `recommended_fix` or `failure_scenario` | generic audit: `title`, `severity\|priority`, `file`, `line`, `claim := impact\|failure_scenario\|claim`, `suggestedFix := recommended_fix\|suggested_fix` |
-| anything else | diagnostic `unrecognized_shape`, raw kept out of findings |
+### 4.8 Run resolution for findings
+`resolveFindingsRun(projectRoot, runId?)` is independent of `handoff-sources.js`. Its default is the latest run whose status is `completed`, `completed_with_failures` or `failed`, whose flow declares `findings`, and whose source step has at least one completed run. `readFindings` returns the file if present, otherwise `buildFindings` in memory.
 
-Items whose `status` is `rejected` or `dropped` are kept, with that status, and handoff targets exclude them by default. This keeps the artifact faithful to the agent output while keeping handoff useful.
-
-### 3.7 PR number persistence
-Update `resolvePullRequestTarget` / `normalizeTarget` (`src/integrations/git/target.js:126-180`) so the target carries `pullRequest: { number, url, isCrossRepository }` when the source is a PR selector. This field is additive and has no reader changes. `pr-review` resolves the PR in this order:
-1. `findings.target.prNumber`
-2. `--pr <n>`
-3. `gh pr view <branch> --json number` (the open PR for the run's branch)
-4. otherwise, an error that asks for `--pr`.
-
-### 3.8 When `findings.json` is generated
-- **Eagerly:** at workflow terminal state, in the same place that writes the workflow `summary.md` (`workflow-artifacts.js:609-684`), wrapped in try/catch with a warning. It also runs for `completed_with_failures` final states and for runs that ended `failed` but have partial results (useful for handoff).
-- **Lazily:** `readFindings(runState)` rebuilds it from `workflow.json` if the file is missing or the artifact `schemaVersion` is older. It writes atomically through `src/storage/local/artifact-fs.js` (`writeJson`). Old runs get backfilled the first time `nax handoff --to ...` or the MCP resource touches them.
-
-### 3.9 CLI surface
+### 4.9 CLI surface (v1)
 ```bash
+nax handoff [run-id] --findings [--json]
 nax handoff [run-id] --to github-issues [--select S1,S3] [--min-severity high] [--limit 5] [--include-contested] [--label extra] [--dry] [--force] [--json]
-nax handoff [run-id] --to pr-review    [--pr 123] [--min-severity medium] [--dry] [--force] [--json]
-nax handoff [run-id] --to beads        [--select ...] [--min-severity ...] [--limit N] [--dry] [--json]
-nax handoff [run-id] --findings        # print findings table (or JSON with --json); read-only
 ```
-- `--to` without `--select` in a TTY opens a clack multiselect. It preselects consensus findings with `rank <= 5`, `status: open` and severity at or above `--min-severity` (default `low`). Rejected and dropped findings are hidden unless `--include-rejected` is set.
-- Without a TTY, `--to` requires `--select` or `--limit`. It fails fast and names the missing flag, and never prompts.
-- `--json` writes one machine-readable result `{ target, planned:[...], applied:[...], skipped:[{key, reason, existingUrl}] }` to stdout. Decoration goes to stderr.
-- `run-id` defaults to the latest completed workflow run. This reuses the resolution in `handoff-sources.js`.
-- The interactive handoff menu (`handoff.js:294-322`) gets three new entries when the selected source is a workflow that has findings: "Create GitHub issues from findings", "Post findings as PR review", "Create beads from findings".
+- In a TTY with no `--select`: a clack multiselect preselecting `bucket=consensus`, `status=open`, `rank <= 5`, and severity at or above `--min-severity` (default `low`). Rejected and dropped findings are hidden unless `--include-rejected` is set.
+- Without a TTY, `--select` or `--limit` is required. It fails fast and names the flag.
+- `--json` writes `{ target, planned, applied, skipped: [{key, reason, existingUrl}] }` to stdout, with decoration on stderr.
+- The interactive handoff menu (`src/cli/commands/handoff.js:294-322`) gains "Create GitHub issues from findings" when the selected workflow has findings.
 
-### 3.10 Target: `github-issues`
-- Title: `finding.title`. Labels: `nax-finding`, `severity:<level>`, plus `--label` values.
-- Missing labels are created with `gh label create --force`. If label creation fails, a warning is printed and the issue is created without that label.
-- Body template, in markdown: claim, evidence, suggested fix, the `file:line` link (a blob URL at `target.sha` when known), reported-by, a link back to the consensus issue/result, the run id, and a marker footer:
-  ```text
-  <!-- nax-finding:<key> -->
-  ```
-- **Idempotency:** before creating anything, run `gh issue list --label nax-finding --state all --limit 1000 --json number,url,body` and scan the bodies locally for the marker. This does not depend on GitHub search indexing HTML comments. Keys that already exist are skipped and the existing URL is reported. `--force` does not bypass dedupe; it only skips the confirmation prompt. If a user deletes the label, dedupe misses that issue; this is documented.
-- Sequential creation, not parallel, so rate limits and partial failures are easy to reason about. On failure it reports what was created so far, and the next run picks up via dedupe.
-- Adds `findingMarker(key)` / `parseFindingMarker(body)` to `comment-markers.js`.
+### 4.10 Target `github-issues`
+- Title: `finding.title`. Labels: `nax-finding`, `severity:<level>`, plus `--label`. Missing labels are created with `gh label create --force`; if that fails, print a warning and create the issue without the label.
+- Body: claim, evidence, suggested fix, the `file:line` link (a blob URL at `target.sha` when known), agents, a link to the consensus result, the run id, and the footer `<!-- nax-finding:<key> -->`. Add `findingMarker(key)` and `parseFindingMarker(body)` to `comment-markers.js`.
+- **Idempotency:** `gh issue list --label nax-finding --state all --limit 1000 --json number,url,body`, then scan locally for the marker. This does not depend on search indexing. Existing keys are skipped and their URL reported. `--force` only skips the confirmation prompt, never dedupe.
+- Creation is sequential. On partial failure, report what was created; a rerun resumes via dedupe.
 
-### 3.11 Target: `pr-review`
-- One review per run: `POST repos/{o}/{r}/pulls/{n}/reviews` via `gh api`, with `event: COMMENT`, `body` = consensus overview + an "Outside this diff" section + marker `<!-- nax-review:<runId> -->`, and `comments[] = {path, line, side: "RIGHT", body}`.
-- **Line mapping:** fetch `gh api repos/{o}/{r}/pulls/{n}/files --paginate` and parse each file's `patch` hunk headers into right-side line sets.
-  - A finding is inline-able only if `file` is in the PR and `line` falls on an added or context line of a hunk.
-  - Otherwise it goes in the summary's "Outside this diff" list with a file link.
-  - This avoids GitHub's 422 errors on out-of-diff lines.
-- **Staleness guard:** if `findings.target.sha` differs from the PR's current `headRefOid`, add a warning line to the review body and set `commit_id` to the run's SHA (GitHub then shows the comments as outdated, not misplaced). If that SHA is not in the PR's history, fall back to summary-only (no inline comments) and print a warning.
-- **Idempotency:** list existing reviews and look for the marker. If found, refuse with the link unless `--force`. `--force` posts a new review; it never edits an old one.
+### 4.11 MCP (v1, read-only)
+- Run details gain `findings: { count, bySeverity, top: Finding[<=10] }`.
+- New resource `nax://scopes/{scope}/runs/{id}/findings` returns the full artifact, within the existing bounds and redaction (`src/mcp/results.js`).
+- There are no mutation tools; outbound side effects stay human-initiated.
 
-### 3.12 Target: `beads`
-- Preconditions: `br` is on `PATH` and a `.beads/` directory exists at the project root. If either is missing, fail with guidance. There is no silent file fallback in v1 (YAGNI; the beads sketch's markdown-export fallback is dropped, see D3).
-- Per finding:
-  ```bash
-  br create "<title>" -t <bug|task> -p <P> -d "<body>" -l nax-finding,severity:<s> --external-ref nax:<key>
-  ```
-  - Type is `bug` when `category=defect`, otherwise `task`.
-  - Priority: `critical → 0`, `high → 1`, `medium → 2`, `low → 3`, `info → 4`.
-- **Idempotency:** `br list --json --limit 0` (all), scanning `external_ref` for `nax:<key>`. Before implementing, confirm the exact JSON field name and the `--limit` semantics with the real `br` output: the list output here is paginated (`{issues, has_more, ...}`).
-- Execution is argv-only (`execFile`); no shell interpolation of finding text.
+### 4.12 v1.1 preview (designed now, built after v1)
+- **`pr-review`:**
+  - PR resolution chain: `target.pullRequest` → `--pr` → `gh pr view <branch>`.
+  - Hunk parser over `pulls/{n}/files` patches; only lines proven to be in the diff are inlined, and the rest go to an "Outside this diff" section.
+  - Staleness guard: if `target.sha` is not the PR head, set `commit_id` to the run SHA, or fall back to summary-only if that SHA isn't in the PR history.
+  - Marker `<!-- nax-review:<runId> -->`; refuse if found, unless `--force` (which posts new, never edits).
+- **`beads`:**
+  - `br` on PATH plus `.beads/` are required, otherwise fail with guidance.
+  - `br create "<title>" -t bug|task -p 0..4 -d ... -l nax-finding,severity:<s> --external-ref nax:<key>`.
+  - Dedupe by scanning `br list --json` for the external ref. Confirm the field name and pagination (`{issues, has_more}`) at build time.
+  - argv-only exec.
+- **Dashboard Findings tab:** `GET /api/runs/:id/findings` plus a table in the run details modal; `npm run dashboard:build`.
 
-### 3.13 MCP and dashboard surfaces
-- **MCP:** run details (`local-dashboard.js:560-597`) gain `findings: { count, bySeverity, top: Finding[<=10] }`. A new resource `nax://scopes/{scope}/runs/{id}/findings` returns the full artifact, within the existing 256KB/64KB bounds and redaction (`src/mcp/results.js`). Handoff targets are NOT exposed as MCP mutation tools in v1: creating issues or reviews is outward-facing and deserves a human in the loop. Revisit later with the existing idempotent-mutation machinery (`src/control-plane/idempotent-mutations.js`).
-- **Dashboard (phase 4, optional in v1, see D4):** a "Findings" tab in the run details modal with a table (rank, severity, title, file:line, reported-by) and copy buttons, fed by `GET /api/runs/:id/findings`. Run `npm run dashboard:build` after the UI change (AGENTS.md).
+## 5. Decisions (resolved 2026-09-25)
+| # | Decision |
+|---|---|
+| D1 | Explicit `findings: { step, adapter }` only; no heuristic fallback |
+| D2 | Audit flows deferred; add named adapters one at a time with fixture proof |
+| D3 | `beads` target (v1.1) fails with guidance when `br` is unavailable; no markdown export |
+| D4 | Dashboard tab is v1.1 |
+| D5 | Add the `agents` attribution field (security-prompt precedent), not per-finding source ids. David approved this against Codex's "defer" |
+| D6 | No MCP mutation tools |
+| D7 | `github-issues` ships in v1 (David approved this against Codex's "defer all targets"); `pr-review` and `beads` in v1.1 |
 
-## 4. Decisions needed (David)
-- **D1. Source-step rule.** Explicit `findings.step` with a last-parseable-step fallback (recommended), or explicit-only?
-- **D2. Audit flows in v1?** The generic normalizer is cheap, but audit shapes vary more. Recommended: include it; unrecognized shapes produce a diagnostic, not a crash.
-- **D3. Beads without `br`:** fail with guidance (recommended, YAGNI), or write a `findings-beads.md` export as the beads sketch proposed?
-- **D4. Dashboard Findings tab** in this plan (phase 4) or as a separate follow-up?
-- **D5. Synthesize prompt `sources` field.** This is a prompt change to a bundled flow. It changes every future consensus output slightly (one more field). OK?
-- **D6. MCP mutation tools for handoff targets:** deferred (recommended) or in scope?
+## 6. Task breakdown (v1)
 
-## 5. Task breakdown
+### Phase 0: extraction
+- T0.1 Move block location into `findings/extract.js`; `round-results.js` uses it with `{ numberedOnly: true }`, so follow-up prompt contents are unchanged. Existing round-results tests stay green unmodified.
+- T0.2 Golden fixtures in `tests/fixtures/findings/` copied (redacted) from real `.nax/` results: synthesize with 3/7/10 findings, the no-heading codex output, a malformed-JSON sample (hand-edited from a real one), and a security synthesize sample (to prove it is ignored without a declaration).
 
-### Phase 0: Extraction foundation (no user-visible change)
-- T0.1 Move the regex and block location into `src/workflows/findings/extract.js`; `round-results.js` consumes it with `numberedOnly: true`. Existing round-results tests must stay green unchanged. **Test first:** golden tests using real `resultText` samples copied from `.nax/` into `tests/fixtures/findings/` (redacted), covering synthesize, review, cross-review, the no-heading codex case, and an audit sample.
-- T0.2 `normalize.js` shape detectors + field rules (§3.3, §3.6). Table-driven unit tests: every severity mapping, the line-range split, title derivation, and unknown shapes producing diagnostics.
+### Phase 1: artifact
+- T1.1 `review-consensus` adapter + field rules; table tests for every rule.
+- T1.2 `buildFindings` / `readFindings` / `writeFindings`, with typedefs and the TS contract.
+- T1.3 Terminal-time write in `main.js:2923-2953`. The test asserts that a throwing adapter leaves the run status unchanged, and that `saveRunState` never writes `findings.json`.
+- T1.4 PR identity in the target (§4.6), with tests for both transports.
+- T1.5 `findings:` declaration in `workflows/review/flow.yml` + the `agents` field in the synthesize prompt.
+- T1.6 `resolveFindingsRun` with the status eligibility matrix.
+- T1.7 `nax handoff --findings [--json]`.
 
-### Phase 1: `findings.json` artifact
-- T1.1 `artifact.js` build/read/write with lazy backfill; typedefs in `src/types.js` + `src/contracts/`.
-- T1.2 Eager write at terminal state (workflow-artifacts writer). The test asserts that a thrown normalizer error does not change run status.
-- T1.3 Persist `pullRequest` in the target (`target.js`), with tests on the `#123` path.
-- T1.4 Add `findings: { step }` to `review/flow.yml` (validated by the flow-lint plan's validator), plus the `sources` field in the synthesize prompt (D5).
-- T1.5 `nax handoff --findings [--json]` read-only table.
-
-### Phase 2: Handoff targets
-- T2.1 Target registry + plan/apply contract + `--dry`/`--json` rendering; CLI flag wiring in `src/cli/commands/nax.js:502-528`; non-TTY guard.
-- T2.2 `github-issues`: markers, label ensure, dedupe scan, sequential create.
-- T2.3 `beads`: preflight, mapping, dedupe via external-ref, argv-safe exec.
-- T2.4 `pr-review`: PR resolution chain, hunk parser, inline vs outside-diff split, staleness guard, marker refusal.
-- T2.5 Interactive handoff menu entries.
+### Phase 2: github-issues
+- T2.1 Target registry, plan/apply, `--dry`/`--json`, non-TTY guard, flag wiring in `src/cli/commands/nax.js:502-528`, CLI help guard (`npm run check:cli-help`).
+- T2.2 Markers, label ensure, dedupe scan, sequential create, partial-failure report.
+- T2.3 Handoff menu entry.
 
 ### Phase 3: MCP
-- T3.1 Findings summary in run details + the findings resource; schema in `src/mcp/schemas.js`; MCP integration test (`tests/integration/mcp-local-e2e.test.js`) asserts the resource round-trip.
+- T3.1 Findings summary + resource + schema (`src/mcp/schemas.js`); round-trip in `tests/integration/mcp-local-e2e.test.js`.
 
-### Phase 4: Dashboard (per D4)
-- T4.1 `GET /api/runs/:id/findings` + Findings tab; Playwright assertion in `tests/e2e/dashboard.spec.js` with a fixture run; `npm run dashboard:build`.
+### Phase 4: docs
+- T4.1 `site/content` guide page (schema, the `findings:` declaration, github-issues idempotency); README blurb; CHANGELOG.
 
-### Phase 5: Docs
-- T5.1 `site/content` guide page: the findings schema, each target, idempotency guarantees, the advisory posture. README gets a short blurb that links to it. CHANGELOG entry.
-
-## 6. Testing strategy
-- **Unit (uvu/node test, matching existing `tests/unit` style):** extract, normalize, artifact build/backfill, marker helpers, hunk parser, and the target `plan()` functions. These are pure, with real fixture text.
-- **Real-service checks (no mocks, per repo rules):** the `apply()` paths are verified against a sandbox GitHub repo and a scratch `.beads` workspace in an opt-in integration test gated by env (`NAX_E2E_GITHUB_REPO`), following the canary pattern in `scripts/run-mcp-agent-canary.mjs`: fail closed without explicit repo bounds, and assert the second run skips everything (idempotency).
-- **Seams:** the `gh` and `br` exec functions are injected parameters, so `plan()` tests don't need them. `apply()` is only tested for real.
+## 7. Testing strategy
+- **Pure units:** extract, adapter, build/read, markers, and target `plan()`, all over real fixture text.
+- **Process-boundary tests (no function mocks):**
+  - Subprocess tests run the real CLI against temp `.nax/` fixtures.
+  - `PATH` is prefixed with a fake `gh` executable (a small node script) that records its argv to a file and returns protocol-real JSON captured from actual `gh` output.
+  - They cover label ensure, the dedupe scan (existing marker → skip), sequential create, partial failure mid-list and rerun idempotency.
+  - Only the process/network boundary is replaced, as the repo rules require.
+- **Live canary (opt-in, in addition):** against a sandbox repo gated by `NAX_E2E_GITHUB_REPO`, following the fail-closed pattern of `scripts/run-mcp-agent-canary.mjs`: a second run must create 0.
 - **Acceptance:**
   1. After `nax run review`, `nax handoff --to github-issues --limit 5` creates 5 labeled issues, and rerunning creates 0.
-  2. `--to pr-review` on a `#123` run posts 1 review with inline comments for in-diff findings, and rerunning refuses with a link.
-  3. `--to beads --limit 3` creates 3 beads with mapped priorities, and rerunning creates 0.
-  4. A run with a malformed agent block yields a `findings.json` whose diagnostics name the step and instance, and the run status is unchanged.
+  2. A `completed_with_failures` review run still yields findings.
+  3. A malformed block yields diagnostics naming step and instance, with the run status unchanged.
+  4. MCP returns typed findings for the run.
 
-## 7. Risks
+## 8. Risks
 | Risk | Mitigation |
 |---|---|
-| Agents drift from the schema | Tolerant normalizer + diagnostics; measured parse rate is high (30/32, 11/11) |
-| `gh issue list` limit of 1000 misses old markers on huge repos | Documented; dedupe also scoped by label; revisit with search API if it happens |
-| Line mapping wrong → 422 from GitHub | Only inline lines proven to be in the diff; everything else goes to the summary |
-| Stale findings posted on a moved PR | SHA staleness guard (§3.11) |
-| Widening the heading regex changes follow-up prompts | `numberedOnly` guard keeps prompt shrinking unchanged |
-| `br` JSON shape changes | Verify at implementation; the `br` exec helper isolates parsing |
+| Agents drift from the schema | Tolerant adapter + diagnostics; measured parse rate is high |
+| 1000-issue list cap on huge repos | Documented; scoped by label |
+| Agents omit or misname `agents` | Validated against lineups; diagnostic only |
+| PR identity missing on older runs | v1 doesn't need it; the v1.1 PR chain falls back to `--pr` / `gh pr view` |
 
-## 8. Out of scope
-Fuzzy dedupe across agents; editing or closing previously created issues; Linear/Jira targets; MCP mutation tools (D6); a model scorecard (consumes this later); widening follow-up prompt shrinking to audit flows.
+## 9. Review round 1 (Codex) — integration record
+Every Codex claim was re-verified in code (2026-09-25).
+- **Accepted:** terminal-only writes because persistence runs on every save; pure reads with no disk backfill; PR identity across all target builders + TS contract; findings run resolution independent of handoff sources; explicit source, no fallback (the `ideas` final step proves the risk); audit adapters deferred; fake-executable boundary tests.
+- **Corrected from Codex:** the `serializers.js` citation was `publicFlow`. The target is passed through whole, so there is no serializer change.
+- **Kept against Codex:** the `agents` field (security precedent) and `github-issues` in v1 (D5, D7).
+
+## 10. Out of scope
+Fuzzy cross-agent dedupe; editing or closing created issues; Linear/Jira; MCP mutations; model scorecard; widening follow-up prompt shrinking to audit flows.

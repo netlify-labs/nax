@@ -13,6 +13,21 @@ const CANCELLED_RUN_STATUS_VALUES = ['cancelled', 'canceled']
 /** @type {string[]} */
 const FAILED_RUN_STATUS_VALUES = ['failed', 'timeout']
 
+/**
+ * Accepted transport request values mapped to their canonical transport.
+ * @type {Record<'auto' | 'github' | 'github-actions' | 'actions' | 'netlify-api' | 'local' | 'local-machine' | 'machine', 'auto' | 'github' | 'netlify-api'>}
+ */
+const TRANSPORT_ALIASES = {
+  auto: 'auto',
+  github: 'github',
+  'github-actions': 'github',
+  actions: 'github',
+  'netlify-api': 'netlify-api',
+  local: 'netlify-api',
+  'local-machine': 'netlify-api',
+  machine: 'netlify-api',
+}
+
 module.exports = {
   CANCELLED_RUN_STATUS_VALUES,
   DEFAULT_AGENT_CSV,
@@ -21,4 +36,5 @@ module.exports = {
   FAILED_RUN_STATUS_VALUES,
   MAX_STEP_AGENT_INSTANCES,
   TERMINAL_RUN_STATUS_VALUES,
+  TRANSPORT_ALIASES,
 }

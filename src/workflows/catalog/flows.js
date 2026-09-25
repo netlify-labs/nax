@@ -10,6 +10,7 @@ const {
   resolveAgentRunConfig,
 } = require('../../core/agents/configuration')
 const { resolveLineup } = require('../../core/agents/instances')
+const { TRANSPORT_ALIASES } = require('../../core/constants')
 
 const FLOWS_DIR = path.join(__dirname, '..', '..', '..', 'workflows')
 const DEFAULT_PROJECT_FLOWS_DIRS = ['.github/nax-flows']
@@ -380,6 +381,17 @@ function validateFlowStructure(flow, { existsSync = fs.existsSync } = {}) {
     }))
   }
 
+  const declaredTransport = String(defaults.transport || 'auto')
+  const knownTransport = Object.prototype.hasOwnProperty.call(TRANSPORT_ALIASES, declaredTransport)
+  if (!knownTransport) {
+    errors.push(flowDiagnostic({
+      code: 'invalid_default_transport',
+      message: `defaults.transport "${declaredTransport}" is not a supported transport.`,
+      hint: `Use one of: ${formatAllowed(Object.keys(TRANSPORT_ALIASES))}.`,
+    }))
+  }
+  const lineupTransport = knownTransport ? TRANSPORT_ALIASES[/** @type {keyof typeof TRANSPORT_ALIASES} */ (declaredTransport)] : 'auto'
+
   for (let index = 0; index < steps.length; index += 1) {
     const step = steps[index]
     const stepId = String(step.id || `step-${index + 1}`)
@@ -431,6 +443,13 @@ function validateFlowStructure(flow, { existsSync = fs.existsSync } = {}) {
           message: `Step "${stepId}" prompt file does not exist: ${resolvedPrompt}`,
           hint: 'Create the prompt file or update step.prompt.',
         }))
+      } else if (readTextIfPossible(resolvedPrompt).trim() === '') {
+        warnings.push(flowDiagnostic({
+          stepId,
+          code: 'empty_prompt_file',
+          message: `Step "${stepId}" prompt file is empty: ${resolvedPrompt}`,
+          hint: 'Write the step instructions into the prompt file; an agent run with no instructions does nothing useful.',
+        }))
       }
     }
 
@@ -470,6 +489,30 @@ function validateFlowStructure(flow, { existsSync = fs.existsSync } = {}) {
         hint: 'Use input entries like { step: "previous-step", results: "all" }.',
       }))
       continue
+    }
+
+    if (step.submit === 'follow-up') {
+      const firstSource = (step.input || []).find((entry) => entry && entry.step)
+      if (!firstSource) {
+        errors.push(flowDiagnostic({
+          stepId,
+          code: 'followup_without_input',
+          message: `Follow-up step "${stepId}" has no input step to continue from.`,
+          hint: 'Add `input: [{ step: <earlier-step-id>, results: all }]` or change `submit` to `new-run`.',
+        }))
+      } else {
+        const sourceIndex = stepIds.get(String(firstSource.step).trim())
+        const sourceStep = sourceIndex === undefined ? null : steps[sourceIndex]
+        const sourceHasAgents = sourceStep && (sourceStep.submit === 'follow-up' || (sourceStep.agents || []).length > 0)
+        if (sourceStep && (isHumanReviewStep(sourceStep) || !sourceHasAgents)) {
+          errors.push(flowDiagnostic({
+            stepId,
+            code: 'followup_source_not_agent_step',
+            message: `Follow-up step "${stepId}" continues from "${firstSource.step}", which runs no agents.`,
+            hint: 'Point the first input at an earlier step that runs agents, or change `submit` to `new-run`.',
+          }))
+        }
+      }
     }
 
     for (const input of step.input || []) {
@@ -549,19 +592,32 @@ function validateFlowStructure(flow, { existsSync = fs.existsSync } = {}) {
     }
     if (!humanReview) {
       try {
-        resolveLineup(Array.isArray(step.lineup) ? step.lineup : step.agents || [], {
-          requestedTransport: 'auto',
+        const resolved = resolveLineup(Array.isArray(step.lineup) ? step.lineup : step.agents || [], {
+          requestedTransport: lineupTransport,
           models: { ...(defaults.models || {}), ...(step.models || {}) },
           efforts: { ...(defaults.efforts || {}), ...(step.efforts || {}) },
         })
+        for (const warning of resolved.warnings || []) {
+          const typedWarning = /** @type {{ code?: string, message?: string }} */ (warning)
+          warnings.push(flowDiagnostic({
+            stepId,
+            code: typedWarning.code || 'lineup_warning',
+            message: typedWarning.message || String(warning),
+            hint: typedWarning.code === 'catalog_passthrough'
+              ? 'Check the model id spelling; unknown ids are passed to the Agent Runner, which rejects unsupported models at submit.'
+              : 'Review this step\'s model and effort configuration.',
+          }))
+        }
       } catch (error) {
         const typed = /** @type {{ code?: string, message?: string }} */ (error)
-        const code = typed.code || 'invalid_lineup'
+        const code = typed.code === 'github_transport_unsupported' && lineupTransport === 'github'
+          ? 'transport_lineup_conflict'
+          : typed.code || 'invalid_lineup'
         const hint = code === 'step_instance_limit'
           ? 'Reduce the models/efforts fan-out or split the work into another step.'
           : code === 'duplicate_instance'
             ? 'Vary the model or effort for repeated providers, or remove the duplicate entry.'
-            : code === 'github_transport_unsupported'
+            : code === 'github_transport_unsupported' || code === 'transport_lineup_conflict'
               ? 'Use the Netlify API transport for pinned models, efforts, or multiple instances from one provider.'
               : 'Review this step\'s agent lineup, model, and effort configuration.'
         errors.push(flowDiagnostic({
@@ -574,7 +630,37 @@ function validateFlowStructure(flow, { existsSync = fs.existsSync } = {}) {
     }
   }
 
+  warnings.push(...unusedPromptFileWarnings(flow, steps))
   return { errors, warnings }
+}
+
+/** @param {string} filePath @returns {string} */
+function readTextIfPossible(filePath) {
+  try {
+    return fs.readFileSync(filePath, 'utf8')
+  } catch (_error) {
+    return ' '
+  }
+}
+
+/**
+ * Warns about files in the flow's prompts/ directory that no step references.
+ * @param {WorkflowFlow} flow
+ * @param {import('../../types').WorkflowStep[]} steps
+ * @returns {FlowDiagnostic[]}
+ */
+function unusedPromptFileWarnings(flow, steps) {
+  if (!flow.dir) return []
+  const promptsDir = path.join(flow.dir, 'prompts')
+  if (!fs.existsSync(promptsDir)) return []
+  const referenced = new Set(steps.filter((step) => step.prompt).map((step) => promptPathForStep(flow, step)))
+  return fs.readdirSync(promptsDir, { withFileTypes: true })
+    .filter((entry) => entry.isFile() && !referenced.has(path.join(promptsDir, entry.name)))
+    .map((entry) => flowDiagnostic({
+      code: 'unused_prompt_file',
+      message: `Prompt file prompts/${entry.name} is not referenced by any step.`,
+      hint: `Reference prompts/${entry.name} from a step's prompt field, or delete it if it is left over.`,
+    }))
 }
 
 /** @param {{ flow?: { id?: string }, errors?: FlowDiagnostic[], warnings?: FlowDiagnostic[] }} [param0] */

@@ -1796,15 +1796,18 @@ function printFlowPlan({ flow, steps, transport, branch, context, runState = nul
       ? { instances: [], warnings: [] }
       : resolvedLineupForStep(flow, step, options, transport),
   ]))
+  const flowWarningLines = (flow.warnings || []).map((warning) => `Warning: ${warning.stepId ? `${warning.stepId}: ` : ''}${warning.message || warning.code || 'workflow warning'}`)
+  // Flow validation already carries lineup warnings, so only print lineup warnings it did not include.
   const lineupWarningLines = steps.flatMap((step) =>
     (lineupsByStep.get(step.id)?.warnings || []).map((warning) => `Warning: ${step.id}: ${warning.message}`))
+    .filter((line) => !flowWarningLines.includes(line))
   const metaLines = [
     ...flowDescriptionLines,
     ...(flowDescriptionLines.length > 0 ? [''] : []),
     `Orchestrated via: ${isNetlifyApiTransport(transport) ? 'Netlify API' : 'GitHub Actions'}`,
     `Branch: ${branch}`,
     ...(hasContext ? ['Additional context: yes'] : []),
-    ...((flow.warnings || []).map((warning) => `Warning: ${warning.stepId ? `${warning.stepId}: ` : ''}${warning.message || warning.code || 'workflow warning'}`)),
+    ...flowWarningLines,
     ...lineupWarningLines,
   ]
   const headings = steps.map((step, i) => `${i + 1}. ${step.title}`)

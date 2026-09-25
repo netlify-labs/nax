@@ -4,6 +4,7 @@ const { spawnSync } = require('child_process')
 const { readLinkedSiteId } = require('./netlify/init')
 const { readNetlifyCliToken } = require('./netlify/auth')
 const { listLinkedNetlifySites } = require('./netlify/local-runner')
+const { TRANSPORT_ALIASES } = require('../core/constants')
 
 const NETLIFY_API_TRANSPORT = 'netlify-api'
 /** @typedef {'github' | typeof NETLIFY_API_TRANSPORT} TransportId */
@@ -27,17 +28,6 @@ const NETLIFY_API_TRANSPORT = 'netlify-api'
 
 /** @type {TransportId[]} */
 const TRANSPORTS = ['github', NETLIFY_API_TRANSPORT]
-/** @type {Record<TransportRequest, 'auto' | TransportId>} */
-const TRANSPORT_ALIASES = {
-  auto: 'auto',
-  github: 'github',
-  'github-actions': 'github',
-  actions: 'github',
-  [NETLIFY_API_TRANSPORT]: NETLIFY_API_TRANSPORT,
-  local: NETLIFY_API_TRANSPORT,
-  'local-machine': NETLIFY_API_TRANSPORT,
-  machine: NETLIFY_API_TRANSPORT,
-}
 
 /**
  * @param {string} transport

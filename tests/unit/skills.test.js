@@ -23,6 +23,12 @@ test('listBundledSkills includes nax-workflows', () => {
   assert.ok(listBundledSkills().includes('nax-workflows'))
 })
 
+test('listBundledSkills includes nax-remote-agents with matching frontmatter name', () => {
+  assert.ok(listBundledSkills().includes('nax-remote-agents'))
+  const skillPath = path.join(__dirname, '..', '..', 'src', 'templates', 'skills', 'nax-remote-agents', 'SKILL.md')
+  assert.match(fs.readFileSync(skillPath, 'utf8'), /^---\nname: nax-remote-agents\n/)
+})
+
 test('resolveProviders detects existing AI harness directories', () => {
   const tmp = makeProject()
   fs.mkdirSync(path.join(tmp, '.codex'))

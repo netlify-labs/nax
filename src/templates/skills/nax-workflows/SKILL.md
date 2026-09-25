@@ -89,6 +89,7 @@ Use to pick the next best task. Steps:
 - Repeated providers are independent instances. Use exact tuples for model bake-offs and effort sweeps.
 - Each step admits at most four agent instances, which may run concurrently.
 - Warn that local uncommitted/unpushed changes are invisible to remote Netlify agent runners.
+- For delegating one prompt to one remote agent (`nax run agent`), including the commit-and-push preflight and reading results back, use the `nax-remote-agents` skill.
 - Use `--branch '#123'` for PR-specific runs when the user references a PR number.
 - Use `--step` only for deliberate partial reruns; otherwise resume/retry saved Netlify API state.
 - Use `nax dashboard` when the user wants to browse workflow state, inspect graph status, compare Results vs Prompt in run details, or send selected artifacts to a follow-up agent from the browser.

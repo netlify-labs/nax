@@ -32,6 +32,7 @@ const guardedPaths = [
     'site/content/guides/run-workflows.mdx',
     'site/content/reference/commands.mdx',
     'src/templates/skills/nax-workflows/SKILL.md',
+    'src/templates/skills/nax-remote-agents/SKILL.md',
 ]
 
 test('hard-cut surfaces contain no provider-as-model vocabulary', () => {

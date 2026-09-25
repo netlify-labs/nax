@@ -139,3 +139,43 @@ export type WorkflowGraphResponse = {
   workflow: Workflow
   graph: WorkflowGraph
 }
+
+export type Finding = {
+  key: string
+  localId: string
+  sourceLocalId?: string
+  rank: number | null
+  bucket: 'consensus' | 'contested' | 'merge_dependent' | string
+  title: string
+  category: string
+  severity: 'critical' | 'high' | 'medium' | 'low' | 'info'
+  severityRaw?: string
+  status: string
+  file: string
+  line: number | null
+  lineEnd: number | null
+  claim: string
+  evidence: string
+  suggestedFix: string
+  confidence: string
+  agents: string[]
+}
+
+export type FindingsDiagnostic = {
+  stepId: string
+  instanceId: string
+  code: string
+  message: string
+}
+
+export type FindingsArtifact = {
+  schemaVersion: number
+  runId: string
+  flowId: string
+  adapter: string
+  generatedAt: string
+  source: { stepId: string, instanceId: string, runnerId: string, sessionId: string, resultUrl: string | null }
+  target: { branch: string, sha: string | null, pullRequest?: { number: number, url: string, isCrossRepository: boolean } }
+  findings: Finding[]
+  diagnostics: FindingsDiagnostic[]
+}

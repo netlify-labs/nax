@@ -1,0 +1,123 @@
+---
+title: Hand Off Findings
+description: Turn a workflow's consensus into structured findings.json and send it to GitHub issues, a PR review, or beads, idempotently.
+---
+
+import { Callout } from 'nextra/components'
+
+# Hand off findings
+
+A review workflow's real output is its consensus: a ranked, cross-checked list of findings. `nax` parses that consensus into a structured `findings.json` artifact and can route selected findings to where work happens: GitHub issues, one advisory pull request review, or beads.
+
+## Declare where findings come from
+
+A workflow opts in with a top-level `findings` key naming the step whose result holds the consensus, and the adapter that understands its shape:
+
+```yaml
+id: review
+findings:
+  step: synthesize
+  adapter: review-consensus
+steps:
+  # ...
+```
+
+- The bundled `review` workflow declares this already.
+- `step` must be an agent step (not a human-review gate), and `adapter` must be a registered adapter. `nax lint` reports `invalid_findings_source` otherwise.
+- There is no guessing: a workflow without `findings` produces no findings.
+- Available adapters: `review-consensus` (the `## 2. Structured Consensus` JSON from the review synthesize prompt).
+
+## `findings.json`
+
+When a run reaches a terminal state (completed, completed with failures, or failed with results), `nax` writes `.nax/workflows/<run-id>/artifacts/findings.json`. It is derived purely from the saved run, so older runs get the same data computed on demand; reads never write.
+
+```json
+{
+  "schemaVersion": 1,
+  "runId": "2026-09-25T16-02-11-000Z-review",
+  "flowId": "review",
+  "adapter": "review-consensus",
+  "source": { "stepId": "synthesize", "instanceId": "codex:auto:auto" },
+  "target": { "branch": "fix/auth", "sha": "abc123…", "pullRequest": { "number": 123 } },
+  "findings": [
+    {
+      "key": "2026-09-25T16-02-11-000Z-review/synthesize/S1",
+      "localId": "S1",
+      "rank": 1,
+      "bucket": "consensus",
+      "title": "Token refresh races with logout",
+      "severity": "high",
+      "status": "open",
+      "file": "src/auth/session.ts",
+      "line": 88,
+      "claim": "…",
+      "suggestedFix": "…",
+      "agents": ["claude", "gemini"]
+    }
+  ],
+  "diagnostics": []
+}
+```
+
+- `rank` follows the consensus order; contested and merge-dependent items have their own `bucket` and no rank.
+- `severity` is one of `critical`, `high`, `medium`, `low`, `info` (`P0`–`P3` map to the first four; unknown values become `info` with `severityRaw`).
+- `agents` lists which agents' findings the consensus item merges.
+- Agent output that deviates from the schema becomes a `diagnostics` entry naming the step and instance; it never fails the run.
+- `key` is stable per run, step and finding, and is what every handoff target uses to avoid duplicates.
+
+## Print findings
+
+```sh
+nax handoff --findings                 # latest run that has findings
+nax handoff <run-id> --findings
+nax handoff --findings --json          # the findings.json artifact
+```
+
+## Send findings to a target
+
+```sh
+nax handoff --to github-issues                       # interactive picker
+nax handoff --to github-issues --limit 5 --force     # top five, no prompts
+nax handoff --to github-issues --select S1,S3 --dry  # preview only
+nax handoff --to pr-review --force
+nax handoff --to beads --min-severity high --limit 10 --force
+```
+
+Selecting findings:
+
+- In a terminal without `--select` or `--limit`, a picker preselects the top five ranked consensus findings.
+- `--select S1,S3` picks exact ids; `--limit N` takes the top N ranked candidates.
+- Candidates are consensus findings at or above `--min-severity` (default `low`), excluding `rejected` and `dropped` ones. Add `--include-contested` or `--include-rejected` to widen.
+- Without a terminal, `--select` or `--limit` is required, and applying requires `--force`. `--dry` always previews without creating anything.
+- `--json` prints `{ target, planned, applied, skipped }`.
+
+<Callout type="info">
+Every target plans first and is idempotent: rerunning the same command after a success creates nothing new and reports what was skipped.
+</Callout>
+
+### GitHub issues
+
+- One issue per finding, titled with the finding title, labeled `nax-finding` and `severity:<level>` plus any `--label` values. Missing labels are created; if a label cannot be created, the issue is created without it and a warning is printed.
+- The body links the file at the run's commit and ends with a hidden `<!-- nax-finding:<key> -->` marker.
+- Before creating, `nax` scans up to 1000 `nax-finding` issues for markers. Removing the `nax-finding` label from an issue defeats this check.
+- Issues are created one at a time; a failure stops the batch and reports what was created, and a rerun finishes the rest.
+- `--repo owner/name` targets another repository (default: the current `gh` repository).
+
+### PR review
+
+- Posts one review with event `COMMENT`, never `REQUEST_CHANGES`: nax stays advisory.
+- The pull request comes from the run (when started with `--branch '#123'`), then `--pr <number>`, then the open PR for the run's branch.
+- Findings become inline comments only on lines that are in the PR diff; everything else is listed under "Outside this diff".
+- If the PR head moved since the run, the review is pinned to the run's commit when that commit is in the PR history, otherwise it is posted as a summary without inline comments.
+- A hidden `<!-- nax-review:<run-id> -->` marker refuses posting the same run twice; `--force` posts another review (it never edits the old one).
+
+### Beads
+
+- Requires `br` on your `PATH` and a `.beads` workspace in the project; otherwise the command stops with guidance.
+- One bead per finding: `bug` for defects, otherwise `task`; priority from severity (`critical` 0 … `info` 4); labels `nax-finding` and `severity:<level>`.
+- Each bead carries external ref `nax:<key>`; existing refs are skipped.
+
+## From the dashboard and MCP
+
+- The dashboard's run details show a collapsible **Findings** table with a copy button per finding.
+- MCP `run_get` includes a findings summary (count, severity histogram, top ten) in the `details` view, and `view: "findings"` returns the full artifact. The resource `nax://scopes/{scope_id}/runs/{run_id}/findings` exposes the same data. MCP has no mutation tools for handoff targets.

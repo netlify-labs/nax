@@ -42,6 +42,7 @@ functions are rejected.
 | `description` | recommended | One-sentence summary. |
 | `disabled` | no | Set to `true` to hide a workflow from `nax list`, `nax run`, and the dashboard without deleting its files. |
 | `defaults` | no | Default transport, notification, agents, models, and efforts. |
+| `findings` | no | `{ step, adapter }` naming the agent step whose result holds structured findings and the adapter that parses it (for example `review-consensus`). See [Hand off findings](/guides/hand-off-findings). |
 | `steps` | yes | Ordered workflow steps. |
 
 ## Step keys

@@ -63,6 +63,7 @@ You want the best possible coding outcome from the world's leading agentic codin
 | **Agent-only CI hooks** | `nax ci '<command>'` runs commands inside Netlify Agent Runner and no-ops elsewhere. |
 | **Auto-injected review context** | Pinned SHA + open-PR ledger appended to every prompt unless you opt out. |
 | **Hand-off in one flag** | `nax handoff -c` copies the latest consensus summary to your clipboard. |
+| **Structured findings** | `nax handoff --to github-issues`, `pr-review`, or `beads` turns the consensus into issues, a PR review, or beads, idempotently. See [Hand off findings](https://netlify-agent-executor.netlify.app/guides/hand-off-findings). |
 
 ---
 

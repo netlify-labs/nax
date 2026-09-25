@@ -130,7 +130,10 @@ Accepts optional exact `status`, `workflow_id`, `limit` from 1 to 100, and opaqu
 
 ### `run_get`
 
-Requires `run_id` and one `view`: `summary`, `details`, `graph`, or `events`.
+Requires `run_id` and one `view`: `summary`, `details`, `graph`, `events`, or `findings`.
+
+- `details` also returns a `findings` summary (count, severity histogram, top ten ranked findings) when the run's workflow declares findings.
+- `findings` returns the full `findings.json` artifact, also available as the resource `nax://scopes/{scope_id}/runs/{run_id}/findings`.
 
 - `section_id` is valid only with `details`.
 - `since` and `limit` are valid only with `events`.
@@ -211,6 +214,7 @@ Resources are scoped by the opaque `scope_id` returned from `context_get`.
 | `nax://scopes/{scope_id}/workflows/{workflow_id}` | Workflow definition and graph. |
 | `nax://scopes/{scope_id}/runs/{run_id}` | Durable run summary. |
 | `nax://scopes/{scope_id}/runs/{run_id}/details` | Details index and artifact links. |
+| `nax://scopes/{scope_id}/runs/{run_id}/findings` | Structured findings (`findings.json`) when the run's workflow declares findings. |
 | `nax://scopes/{scope_id}/runs/{run_id}/events{?since}` | Bounded event page from an opaque cursor. |
 | `nax://scopes/{scope_id}/runs/{run_id}/artifacts/{artifact_id}` | One exact text or binary artifact owned by the run. |
 

@@ -1,5 +1,42 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- Structured findings: workflows declare `findings: { step, adapter }`, and
+  terminal runs write `artifacts/findings.json` (schema v1) parsed from the
+  consensus. The bundled `review` flow declares it and its consensus schema
+  now records which `agents` each finding merges.
+- `nax handoff --findings [--json]` prints a run's findings, and
+  `nax handoff --to github-issues|pr-review|beads` sends selected findings to
+  labeled GitHub issues, one advisory PR review, or beads. Every target plans
+  first, supports `--dry`, and is idempotent through markers or external refs.
+- Findings in the dashboard run details and in MCP (`run_get` details
+  summary, `view: "findings"`, and a `.../runs/{run_id}/findings` resource).
+- `nax lint [flows...] [--json] [--strict]` reports every flow diagnostic
+  with a fix hint.
+- New flow checks: `followup_without_input`, `followup_source_not_agent_step`,
+  `invalid_default_transport`, `transport_lineup_conflict`,
+  `invalid_findings_source`, plus warnings for empty or unused prompt files
+  and model/effort lineup issues that were previously dropped.
+- Workflow plans pin a versioned flow digest; starting a plan whose flow
+  changed fails with recoverable `flow_changed_since_plan` and leaves the plan
+  re-plannable. Runs record `flowDigest`.
+- Plan-time prompt-size warnings for oversized static prompts.
+
+### Fixed
+
+- One invalid flow no longer breaks every flow: broken flows are skipped with
+  a one-line warning, shown as invalid in the picker, dashboard and MCP, and
+  an invalid override never silently activates the flow it shadows.
+- `--json` on any command (for example `nax list --json`) no longer crashes
+  CLI startup.
+- Scripted and `--force` runs, and `nax run agent`, now warn on stderr about
+  uncommitted or unpushed changes that remote runners cannot see.
+- Dashboard dry-run shows flow diagnostics line by line instead of a generic
+  error.
+
 ## 3.0.0
 
 ### Breaking changes

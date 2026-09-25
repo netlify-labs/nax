@@ -25,6 +25,7 @@ const { titleCase, getLocalDate } = require('../catalog/prompts')
 const { readRunState, saveRunState, workflowStatePath } = require('../../storage/local/run-state')
 const { clearTrackedRunState, trackRunState } = require('../../storage/local/graceful-run-state')
 const { completeRun } = require('../run-completion')
+const { stepAllowsContinuation } = require('../../core/status')
 const { targetBranch } = require('../../integrations/git/target')
 const { NETLIFY_API_TRANSPORT } = require('../../integrations/transports')
 const {
@@ -309,7 +310,7 @@ function localStepStatus(stepState) {
 
 /** A step status that lets the workflow proceed to the next step. */
 function localStepProceeds(status) {
-  return status === 'completed' || status === 'dry-run' || status === 'completed_with_failures'
+  return stepAllowsContinuation(status)
 }
 
 /**
@@ -1139,7 +1140,18 @@ async function executeLocalFlow({ flow, steps, options, runState, projectRoot, c
  * }} param0
  * @returns {Promise<void>}
  */
-async function resumeLocalFlow({ flow, runState, projectRoot }) {
+/**
+ * Resumes an unfinished local run from its first step that does not allow continuation.
+ * The Agent Runner boundary is injectable so resume behavior can be tested without network calls.
+ * @param {{
+ *   flow: import('../../types').WorkflowFlow,
+ *   runState: import('../../types').WorkflowRunState,
+ *   projectRoot: string,
+ *   submitAgentRun?: typeof submitLocalAgentRun,
+ *   waitForAgentRuns?: typeof waitForLocalAgentRuns,
+ * }} input
+ */
+async function resumeLocalFlow({ flow, runState, projectRoot, submitAgentRun = submitLocalAgentRun, waitForAgentRuns = waitForLocalAgentRuns }) {
   trackRunState(runState)
   const options = await chooseNetlifyFilterOption({
     projectRoot,
@@ -1179,7 +1191,7 @@ async function resumeLocalFlow({ flow, runState, projectRoot }) {
     console.log(`Flow: ${flow.title}`)
     console.log(`State: ${workflowStatePath(runState.dir)}`)
     console.log(`Repair and continue: ${step.title}`)
-    await completeLocalStep({ runState, stepState, step, options: runState.options, projectRoot, netlify, netlifyFilter: netlify.filter, initialDelayMs: 0 })
+    await completeLocalStep({ runState, stepState, step, options: runState.options, projectRoot, netlify, netlifyFilter: netlify.filter, initialDelayMs: 0, waitForAgentRuns })
     await archiveEligibleCompletedLocalRuns({
       runState,
       flowSteps: flow.steps,
@@ -1198,6 +1210,8 @@ async function resumeLocalFlow({ flow, runState, projectRoot }) {
       runState,
       projectRoot,
       completedStepStates,
+      submitAgentRun,
+      waitForAgentRuns,
     })
     completeRun(runState)
     clearTrackedRunState(runState)
@@ -1211,6 +1225,8 @@ async function resumeLocalFlow({ flow, runState, projectRoot }) {
     runState,
     projectRoot,
     completedStepStates,
+    submitAgentRun,
+    waitForAgentRuns,
   })
   completeRun(runState)
   clearTrackedRunState(runState)

@@ -1,4 +1,4 @@
-const { isTerminalRunStatus } = require('../status')
+const { isTerminalRunStatus, stepAllowsContinuation } = require('../status')
 
 /**
  * @param {{ runs?: Array<{ runnerId?: unknown, issueNumber?: unknown, status?: unknown }> } | null | undefined} step
@@ -49,10 +49,13 @@ function hasRemainingInterruptedSteps(state) {
   if (flowSteps.length === 0 || savedSteps.length === 0) return false
 
   const savedById = new Map(savedSteps.map((step) => [step.id, step]))
-  for (const flowStep of flowSteps) {
+  const finalIndex = flowSteps.length - 1
+  for (const [index, flowStep] of flowSteps.entries()) {
     const saved = savedById.get(flowStep.id)
     if (!saved) return true
-    if (!isCompletedStep(saved)) return false
+    // Earlier partial steps let the run continue; the final step must be fully complete.
+    const satisfied = index < finalIndex ? stepAllowsContinuation(saved.status) || isCompletedStep(saved) : isCompletedStep(saved)
+    if (!satisfied) return false
   }
   return false
 }

@@ -28,6 +28,19 @@ function isFailedRunStatus(status = '') {
   return FAILED_RUN_STATUSES.has(normalizeStatus(status))
 }
 
+/** Step statuses after which a workflow moves on to its next step; survivors of a partial step are valid prior results. */
+const CONTINUATION_STEP_STATUSES = new Set(['completed', 'dry-run', 'completed_with_failures'])
+
+/**
+ * Whether a settled step lets the workflow continue to the next step. A partial final step is
+ * rejected separately where the run is settled, because a workflow must not finish on one.
+ * @param {unknown} status
+ * @returns {boolean}
+ */
+function stepAllowsContinuation(status = '') {
+  return CONTINUATION_STEP_STATUSES.has(normalizeStatus(status))
+}
+
 module.exports = {
   CANCELLED_RUN_STATUSES,
   FAILED_RUN_STATUSES,
@@ -36,4 +49,5 @@ module.exports = {
   isFailedRunStatus,
   isTerminalRunStatus,
   normalizeStatus,
+  stepAllowsContinuation,
 }

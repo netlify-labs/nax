@@ -27,9 +27,9 @@ Target selection:
 | `--branch <name>` | `origin/<name>` head |
 | `--branch '#123'` | the head branch of PR #123 (`gh pr view`) |
 
-If the branch doesn't exist on the remote, the Netlify API transport fails before submission with `Could not resolve remote SHA ... Push the branch`.
+`nax run agent` sends only the branch **name**; it does not check that the branch exists on the remote. (Multi-step flows do check: they fail with `Could not resolve remote SHA ... Push the branch`.)
 
-**nax only warns about local-only changes in an interactive terminal.** When you run it from a script or tool call (no TTY), or with `--yes`, it doesn't check at all. The run silently works against the remote state, so you must do the preflight yourself.
+When local changes exist, nax prints a stderr warning (`Warning: local git state not visible to remote Netlify agent runners ...`) and **continues**, or asks for confirmation in an interactive terminal without `--force`. The warning doesn't stop the run, so do the preflight yourself and treat that warning as a sign you skipped it.
 
 ## Preflight (every time)
 

@@ -849,12 +849,40 @@ async function loadFlow(id, options = {}) {
   return entry.flow
 }
 
+/**
+ * Summary of a winning flow entry that cannot run, for list surfaces.
+ * @typedef {{ id: string, file: string, status: FlowEntryStatus, invalid: true, errorCount: number, diagnostics: FlowDiagnostic[] }} InvalidFlowSummary
+ */
+
+/** @param {FlowEntry} entry @returns {InvalidFlowSummary} */
+function invalidFlowSummary(entry) {
+  const diagnostics = entry.status === 'load-failed'
+    ? [flowDiagnostic({ code: 'flow_load_failed', message: entry.loadError?.message || 'Flow file could not be loaded.' })]
+    : entry.validation.errors
+  return { id: entry.id, file: entry.file, status: entry.status, invalid: true, errorCount: diagnostics.length, diagnostics }
+}
+
+/**
+ * Discovers flows once and splits winners into runnable flows and invalid summaries.
+ * @param {FlowLoadOptions} [options]
+ * @returns {Promise<{ flows: WorkflowFlow[], invalid: InvalidFlowSummary[], entries: FlowEntry[] }>}
+ */
+async function listFlowCatalog(options = {}) {
+  const entries = await discoverFlowEntries(options)
+  const flows = sortFlows(entries
+    .filter((entry) => entry.status === 'valid' && entry.flow)
+    .map((entry) => /** @type {WorkflowFlow} */ (entry.flow)))
+  const invalid = entries.filter((entry) => entry.status !== 'valid').map(invalidFlowSummary)
+  return { flows, invalid, entries }
+}
+
 /** @param {FlowLoadOptions} [options] */
 async function listFlows(options = {}) {
-  const entries = await discoverFlowEntries(options)
-  const flows = entries
-    .filter((entry) => entry.status === 'valid' && entry.flow)
-    .map((entry) => /** @type {WorkflowFlow} */ (entry.flow))
+  return (await listFlowCatalog(options)).flows
+}
+
+/** @param {WorkflowFlow[]} flows */
+function sortFlows(flows) {
   return flows.sort((a, b) => {
     if (a.sourcePriority !== b.sourcePriority) return a.sourcePriority - b.sourcePriority
     const aIndex = FLOW_PICKER_ORDER.indexOf(a.id)
@@ -890,6 +918,8 @@ module.exports = {
   assertValidFlowStructure,
   discoverFlowEntries,
   flowEntryError,
+  invalidFlowSummary,
+  listFlowCatalog,
   findFlowFile,
   flowSources,
   formatFlowValidation,

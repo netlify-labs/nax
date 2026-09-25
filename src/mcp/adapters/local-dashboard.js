@@ -706,9 +706,17 @@ function createLocalDashboardPorts(config, identity) {
       const offset = workflowOffset(query.cursor)
       const limit = positiveLimit(query.limit, 50, MAX_WORKFLOW_PAGE)
       const page = workflows.slice(offset, offset + limit).map(mapWorkflowSummary)
+      const invalid = objectList(payload.invalid).map((entry) => ({
+        workflowId: stringValue(entry.id),
+        file: stringValue(entry.file),
+        status: stringValue(entry.status),
+        invalid: /** @type {const} */ (true),
+        errorCount: Number(entry.errorCount) || 0,
+      }))
       return {
         workflows: page,
         nextCursor: offset + page.length < workflows.length ? workflowCursor(offset + page.length) : null,
+        ...(invalid.length > 0 ? { invalid } : {}),
       }
     },
     async getWorkflow(_scope, _actor, workflowId, options = {}) {

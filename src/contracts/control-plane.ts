@@ -191,9 +191,18 @@ export type ControlPlaneWorkflowQuery = {
   cursor?: string
 }
 
+export type ControlPlaneInvalidWorkflowSummary = {
+  workflowId: string
+  file: string
+  status: string
+  invalid: true
+  errorCount: number
+}
+
 export type ControlPlaneWorkflowList = {
   workflows: ControlPlaneWorkflowSummary[]
   nextCursor: string | null
+  invalid?: ControlPlaneInvalidWorkflowSummary[]
 }
 
 export type ControlPlaneWorkflowReadOptions = {

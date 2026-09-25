@@ -53,7 +53,7 @@ const {
 } = require('../workflows/results/agent-run-results')
 const { runGh } = require('../integrations/github/gh-cli')
 const { multiline } = require('../utils/multiline')
-const { WAIT_FOR_AGENT_RESULTS, isHumanReviewStep, listFlows, loadFlow, loadStepPrompt } = requireWithoutArgvFlag('--verbose', () => require('../workflows/catalog/flows'))
+const { WAIT_FOR_AGENT_RESULTS, formatFlowValidation, isHumanReviewStep, listFlowCatalog, listFlows, loadFlow, loadStepPrompt } = requireWithoutArgvFlag('--verbose', () => require('../workflows/catalog/flows'))
 const { createRunState, dismissRunState, isUnfinishedRun, listRunStates, saveRunState, workflowStatePath } = require('../storage/local/run-state')
 const { AWAITING_REVIEW, approveHumanReviewGate, createHumanReviewStepState } = require('../workflows/human-review')
 const {
@@ -75,10 +75,13 @@ const {
   formatFlowList,
   formatFlowListBox,
   formatFlowListJson,
+  formatInvalidFlowWarnings,
   wordWrap,
   workflowPickerHint,
   workflowPickerLabel,
 } = require('./display/flow-list')
+
+const INVALID_FLOW_CHOICE_PREFIX = '__invalid_flow__:'
 const { buildCostsReport, formatCostsTable } = require('./display/costs-report')
 const { terminalTrafficLights } = require('./display/terminal')
 const { formatMcpDoctor, runMcpDoctor } = require('../mcp/doctor')
@@ -578,7 +581,8 @@ async function loadClack() {
 async function handleList(options = {}) {
   const invocationDir = process.cwd()
   const projectRoot = resolveProjectRoot(options.projectRoot, { cwd: invocationDir })
-  const flows = await listFlows(flowLoadOptions(options, projectRoot))
+  const { flows, invalid } = await listFlowCatalog(flowLoadOptions(options, projectRoot))
+  for (const line of formatInvalidFlowWarnings(invalid)) console.error(line)
   if (options.json) {
     console.log(formatFlowListJson(flows))
     return
@@ -1339,7 +1343,7 @@ async function handlePreviewBoxes(flowId, options) {
 
 async function pickFlowInteractively({ includeAdHoc = true, projectRoot = process.cwd(), options = {} } = {}) {
   const clack = await loadClack()
-  const flows = await listFlows(flowLoadOptions(options, projectRoot))
+  const { flows, invalid } = await listFlowCatalog(flowLoadOptions(options, projectRoot))
   if (includeAdHoc) {
     printInteractiveIntroBox()
   }
@@ -1350,6 +1354,11 @@ async function pickFlowInteractively({ includeAdHoc = true, projectRoot = proces
       label: workflowPickerLabel(flow, { includeAdHoc }),
       hint: workflowPickerHint(flow),
     })),
+    ...invalid.map((entry) => ({
+      value: `${INVALID_FLOW_CHOICE_PREFIX}${entry.id}`,
+      label: `${entry.id} (invalid: ${entry.errorCount} ${entry.errorCount === 1 ? 'error' : 'errors'})`,
+      hint: `Run: nax lint ${entry.id}`,
+    })),
     ...(includeAdHoc ? [{ value: 'cancel', label: 'Cancel' }] : []),
   ]
   const selected = await selectSearchableOption({
@@ -1359,6 +1368,11 @@ async function pickFlowInteractively({ includeAdHoc = true, projectRoot = proces
     placeholder: 'Type to filter workflows...',
   })
   if (clack.isCancel(selected) || selected === 'cancel') process.exit(0)
+  if (String(selected).startsWith(INVALID_FLOW_CHOICE_PREFIX)) {
+    const entry = invalid.find((candidate) => `${INVALID_FLOW_CHOICE_PREFIX}${candidate.id}` === selected)
+    console.error(formatFlowValidation({ flow: { id: entry?.id }, errors: entry?.diagnostics || [], warnings: [] }))
+    process.exit(1)
+  }
   return selected
 }
 

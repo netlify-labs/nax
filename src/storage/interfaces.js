@@ -25,6 +25,7 @@
  * @typedef {{
  *   count?: number,
  *   items?: WorkflowPayload[],
+ *   invalid?: Array<{ id: string, file: string, status: string, invalid: true, errorCount: number, diagnostics: Array<{ stepId: string, code: string, message: string, hint: string }> }>,
  * }} WorkflowListPayload
  *
  * @typedef {{

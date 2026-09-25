@@ -112,9 +112,26 @@ export type WorkflowGraph = {
   }
 }
 
+export type WorkflowDiagnostic = {
+  stepId: string
+  code: string
+  message: string
+  hint: string
+}
+
+export type InvalidWorkflowSummary = {
+  id: string
+  file: string
+  status: 'invalid' | 'load-failed'
+  invalid: true
+  errorCount: number
+  diagnostics: WorkflowDiagnostic[]
+}
+
 export type WorkflowListResponse = {
   count: number
   items: Workflow[]
+  invalid?: InvalidWorkflowSummary[]
 }
 
 export type WorkflowGraphResponse = {

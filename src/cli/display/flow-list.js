@@ -145,6 +145,18 @@ function formatFlowListJson(flows = []) {
 }
 
 /**
+ * Formats one stderr line per invalid flow so broken flows are visible without polluting stdout.
+ * @param {Array<{ id: string, errorCount: number }>} [invalid]
+ * @returns {string[]}
+ */
+function formatInvalidFlowWarnings(invalid = []) {
+  return invalid.map((entry) => {
+    const noun = entry.errorCount === 1 ? 'error' : 'errors'
+    return `Skipping flow "${entry.id}": ${entry.errorCount} ${noun}. Run: nax lint ${entry.id}`
+  })
+}
+
+/**
  * Returns title-cased unique agent providers used by a flow.
  * @param {FlowListFlow} [flow]
  * @returns {string[]}
@@ -290,6 +302,7 @@ module.exports = {
   formatFlowList,
   formatFlowListBox,
   formatFlowListJson,
+  formatInvalidFlowWarnings,
   trimWorkflowHint,
   wordWrap,
   workflowPickerHint,

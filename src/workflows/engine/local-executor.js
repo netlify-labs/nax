@@ -24,6 +24,7 @@ const {
 const { titleCase, getLocalDate } = require('../catalog/prompts')
 const { readRunState, saveRunState, workflowStatePath } = require('../../storage/local/run-state')
 const { clearTrackedRunState, trackRunState } = require('../../storage/local/graceful-run-state')
+const { randomUUID } = require('crypto')
 const { completeRun } = require('../run-completion')
 const { stepAllowsContinuation } = require('../../core/status')
 const { targetBranch } = require('../../integrations/git/target')
@@ -939,6 +940,8 @@ async function executeLocalFlow({ flow, steps, options, runState, projectRoot, c
         transport: NETLIFY_API_TRANSPORT,
         agent,
         instanceId: instance.id,
+        attemptId: randomUUID(),
+        supersedesAttemptId: null,
         ...(instance.model ? { model: instance.model } : {}),
         ...(instance.effort ? { effort: instance.effort } : {}),
         ...(instance.resolvedFrom ? { resolvedFrom: instance.resolvedFrom } : {}),
@@ -1019,6 +1022,10 @@ async function executeLocalFlow({ flow, steps, options, runState, projectRoot, c
           existingRunnerId: run.existingRunnerId || '',
         })
         try {
+          // Record the send time before the remote call so a crash mid-submit is detectable on resume.
+          run.sentAt = new Date().toISOString()
+          stepState.runs[index] = run
+          saveRunState(runState)
           const submitted = await submitAgentRun({
             run,
             projectRoot,

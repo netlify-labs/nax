@@ -71,6 +71,7 @@ const { persistAgentSessionArtifact } = require('../workflows/artifacts/agent-se
 const { listHandoffSources, readHandoffSource, relativeDisplayPath } = require('../workflows/followups/handoff-sources')
 const { handleCi } = require('./commands/ci')
 const { handleLint } = require('./commands/lint')
+const { flowDigest } = require('../workflows/catalog/flow-manifest')
 const {
   AD_HOC_RUN_CHOICE,
   formatFlowList,
@@ -2838,6 +2839,15 @@ async function handleRunEngine(flowId, options) {
     return
   }
   const flow = await loadFlow(resolvedFlowId, flowLoadOptions(options, projectRoot))
+  const loadedFlowDigest = flowDigest(flow)
+  if (options.controlPlaneFlowDigest && options.controlPlaneFlowDigest !== loadedFlowDigest) {
+    throw Object.assign(new Error(`Workflow "${flow.id}" changed after it was planned. Create a new plan before starting.`), {
+      code: 'flow_changed_since_plan',
+      statusCode: 409,
+      recoverable: true,
+      details: { workflowId: flow.id, mutationTransmitted: false },
+    })
+  }
 
   if (await maybeResumeUnfinishedRun({ projectRoot, options, flow })) return
 
@@ -2931,6 +2941,7 @@ async function handleRunEngine(flowId, options) {
   const runState = createRunState({
     projectRoot,
     flow: configuredFlow,
+    flowDigest: loadedFlowDigest,
     transport,
     target: runTarget,
     options: {

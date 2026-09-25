@@ -70,6 +70,21 @@ test('local workflow backend starts the shared in-process engine and binds its d
   assert.equal(calls[0].options.controlPlaneTarget.siteId, 'site_test')
   assert.deepEqual(calls[0].options.controlPlaneLineups.audit, [{ agent: 'claude', model: 'claude-opus-4-1', effort: 'high', label: 'deep' }])
   assert.deepEqual(calls[0].options.controlPlaneSelectedSteps, ['audit'])
+  assert.equal(calls[0].options.controlPlaneFlowDigest, undefined)
+})
+
+test('local workflow backend passes the plan flow digest to the engine', async () => {
+  const calls = []
+  const backend = createLocalWorkflowExecutionBackend({
+    projectRoot: '/repo',
+    runWorkflowEngine: async (flowId, options) => {
+      calls.push({ flowId, options })
+      const sink = typeof options.runnerEventSink === 'function' ? options.runnerEventSink : () => {}
+      sink({ type: 'workflow_started', runId: 'run_digest', flowId, status: 'running', createdAt: '2026-08-08T12:00:00.000Z' })
+    },
+  })
+  await backend.startPlan(/** @type {import('../../src/contracts').StoredControlPlanePlan} */ ({ ...basePlan, flowDigest: 'd'.repeat(64) }))
+  assert.equal(calls[0].options.controlPlaneFlowDigest, 'd'.repeat(64))
 })
 
 test('local workflow backend submits an exact single-agent plan through the shared dashboard service', async () => {

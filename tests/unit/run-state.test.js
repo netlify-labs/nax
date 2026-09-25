@@ -84,6 +84,14 @@ test('createRunState persists immutable target and branch aliases', () => {
   assert.equal(state.branchSource, 'current-branch')
 })
 
+test('createRunState records the flow digest when provided', () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'nax-run-state-digest-test-'))
+  const withDigest = createRunState({ projectRoot: tmp, flow: { id: 'review', title: 'Review' }, flowDigest: 'f'.repeat(64) })
+  const withoutDigest = createRunState({ projectRoot: tmp, flow: { id: 'review', title: 'Review' } })
+  assert.equal(withDigest.flowDigest, 'f'.repeat(64))
+  assert.equal(Object.prototype.hasOwnProperty.call(withoutDigest, 'flowDigest'), false)
+})
+
 test('saveRunState adds .nax to gitignore once when writing artifacts', () => {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'nax-run-state-gitignore-test-'))
   const gitignorePath = path.join(tmp, '.gitignore')

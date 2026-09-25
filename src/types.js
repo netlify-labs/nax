@@ -134,6 +134,7 @@
  *   flowId?: string,
  *   flowTitle?: string,
  *   flow?: WorkflowFlow,
+ *   flowDigest?: string,
  *   transport?: string,
  *   projectRoot?: string,
  *   dir?: string,

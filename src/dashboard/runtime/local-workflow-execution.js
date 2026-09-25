@@ -187,6 +187,7 @@ function createLocalWorkflowExecutionBackend({
       controlPlaneTarget: { ...plan.target, caveats: [...(plan.target.caveats || [])] },
       controlPlaneLineups: plannedLineups(plan),
       controlPlaneSelectedSteps: plan.steps.map((step) => step.stepId),
+      ...(plan.flowDigest ? { controlPlaneFlowDigest: plan.flowDigest } : {}),
       runnerEventSink: (event) => {
         if (started || stringValue(event.type) !== 'workflow_started' || !stringValue(event.runId)) return
         started = true

@@ -1,6 +1,8 @@
 const fs = require('fs')
 const path = require('path')
 const { artifactMeta } = require('../../core/artifact-metadata')
+const { attemptRecord } = require('../../core/runs/attempts')
+const { isTerminalRunStatus } = require('../../core/status')
 const { ensureNaxGitignore } = require('./nax-gitignore')
 const {
   hasInFlightRuns,
@@ -277,6 +279,48 @@ function isDashboardRetryReplacement(existingRun = {}, incomingRun = {}) {
   return Boolean(existingRaw?.dashboardRetry && !incomingRaw?.dashboardRetry)
 }
 
+/**
+ * Archives an attempt record into a step's attempt history once (by attemptId). When both sides
+ * carry the same attempt, the terminal record wins.
+ * @param {Map<string, Record<string, unknown>>} archive
+ * @param {Record<string, unknown>} record
+ */
+function archiveAttempt(archive, record) {
+  const attemptId = String(record.attemptId || '')
+  if (!attemptId) return
+  const known = archive.get(attemptId)
+  if (known && isTerminalRunStatus(known.status) && !isTerminalRunStatus(record.status)) return
+  archive.set(attemptId, record)
+}
+
+/**
+ * Merges one incoming run that carries an attemptId against the disk runs of the same step.
+ * Returns the record that should be current in the slot.
+ * @param {Array<Record<string, unknown>>} existingRuns
+ * @param {Record<string, unknown>} incomingRun
+ * @param {Map<string, Record<string, unknown>>} archive
+ * @returns {Record<string, unknown>}
+ */
+function mergeAttemptRun(existingRuns, incomingRun, archive) {
+  const sameAttempt = existingRuns.find((run) => run?.attemptId === incomingRun.attemptId)
+  if (sameAttempt) {
+    // Monotonic: a stale non-terminal snapshot never regresses a terminal record.
+    if (isTerminalRunStatus(sameAttempt.status) && !isTerminalRunStatus(incomingRun.status)) return sameAttempt
+    mergeRunDurableFields(sameAttempt, incomingRun)
+    return incomingRun
+  }
+  const slot = existingRuns.find((run) => run?.attemptId && run.instanceId && run.instanceId === incomingRun.instanceId)
+  if (!slot) return incomingRun
+  if (incomingRun.supersedesAttemptId === slot.attemptId) {
+    // Compare-and-swap: the incoming attempt replaces exactly the attempt it supersedes.
+    archiveAttempt(archive, attemptRecord(slot))
+    return incomingRun
+  }
+  // The disk attempt is newer (or unrelated): keep it current and archive the stale incoming one.
+  archiveAttempt(archive, attemptRecord(incomingRun))
+  return slot
+}
+
 function mergeExistingStateForWrite(existingState, incomingState) {
   if (!existingState || existingState.runId !== incomingState?.runId) return incomingState
   const existingSteps = Array.isArray(existingState.steps) ? existingState.steps : []
@@ -287,14 +331,25 @@ function mergeExistingStateForWrite(existingState, incomingState) {
     const existingStep = existingByStepId.get(incomingStep?.id) || existingSteps[stepIndex]
     if (!existingStep || !Array.isArray(incomingStep?.runs)) continue
     const existingRuns = Array.isArray(existingStep.runs) ? existingStep.runs : []
+    /** @type {Map<string, Record<string, unknown>>} */
+    const archive = new Map()
+    for (const record of [...(existingStep.attempts || []), ...(incomingStep.attempts || [])]) archiveAttempt(archive, record)
     for (const [runIndex, incomingRun] of incomingStep.runs.entries()) {
-      const existingRun = matchingExistingRun(existingRuns, incomingRun, runIndex)
+      if (incomingRun?.attemptId) {
+        incomingStep.runs[runIndex] = mergeAttemptRun(existingRuns, incomingRun, archive)
+        continue
+      }
+      // Legacy records without attempt ids keep positional matching and the dashboard-retry guard.
+      const existingRun = matchingExistingRun(existingRuns.filter((run) => !run?.attemptId), incomingRun, runIndex)
       if (isDashboardRetryReplacement(existingRun, incomingRun)) {
         incomingStep.runs[runIndex] = existingRun
         continue
       }
       if (existingRun) mergeRunDurableFields(existingRun, incomingRun)
     }
+    const currentAttemptIds = new Set(incomingStep.runs.map((run) => run?.attemptId).filter(Boolean))
+    const attempts = [...archive.values()].filter((record) => !currentAttemptIds.has(record.attemptId))
+    if (attempts.length > 0) incomingStep.attempts = attempts
   }
   return incomingState
 }

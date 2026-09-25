@@ -5,6 +5,7 @@ const os = require('os')
 const path = require('path')
 const { runGh } = require('../../integrations/github/gh-cli')
 const { findingMarker, parseFindingMarkers } = require('../../integrations/github/comment-markers')
+const { findingMarkdown, plainLocation } = require('./finding-body')
 
 const FINDING_LABEL = 'nax-finding'
 const ISSUE_SCAN_LIMIT = 1000
@@ -32,10 +33,9 @@ function ghRunner(context) {
 
 /** @param {Finding} finding @param {GithubIssuesContext} context */
 function locationMarkdown(finding, context) {
-  if (!finding.file) return ''
-  const label = `${finding.file}${finding.line ? `:${finding.line}${finding.lineEnd ? `-${finding.lineEnd}` : ''}` : ''}`
   const sha = context.artifact.target.sha
-  if (!sha) return `\`${label}\``
+  if (!finding.file || !sha) return plainLocation(finding)
+  const label = plainLocation(finding).slice(1, -1)
   const anchor = finding.line ? `#L${finding.line}${finding.lineEnd ? `-L${finding.lineEnd}` : ''}` : ''
   return `[${label}](https://github.com/${context.repo}/blob/${sha}/${finding.file}${anchor})`
 }
@@ -46,29 +46,10 @@ function locationMarkdown(finding, context) {
  * @param {GithubIssuesContext} context
  */
 function findingIssueBody(finding, context) {
-  const { artifact } = context
-  const facts = [
-    `**Severity:** ${finding.severity}`,
-    finding.category ? `**Category:** ${finding.category}` : '',
-    finding.status ? `**Status:** ${finding.status}` : '',
-    finding.confidence ? `**Confidence:** ${finding.confidence}` : '',
-  ].filter(Boolean).join(' · ')
-  const location = locationMarkdown(finding, context)
-  const sections = [
-    facts,
-    location ? `**Location:** ${location}` : '',
-    finding.agents.length > 0 ? `**Reported by:** ${finding.agents.join(', ')}` : '',
-    finding.claim ? `### Claim\n\n${finding.claim}` : '',
-    finding.evidence ? `### Evidence\n\n${finding.evidence}` : '',
-    finding.suggestedFix ? `### Suggested fix\n\n${finding.suggestedFix}` : '',
-    '---',
-    [
-      `From nax ${artifact.flowId} run \`${artifact.runId}\`${finding.rank !== null ? ` (consensus rank ${finding.rank})` : ` (${finding.bucket})`}.`,
-      artifact.source.resultUrl ? `Consensus result: ${artifact.source.resultUrl}` : '',
-    ].filter(Boolean).join(' '),
-    findingMarker(finding.key),
-  ]
-  return sections.filter(Boolean).join('\n\n')
+  return findingMarkdown(finding, context.artifact, {
+    location: locationMarkdown(finding, context),
+    trailer: [findingMarker(finding.key)],
+  })
 }
 
 /**
@@ -156,7 +137,13 @@ function apply(actions, rawContext) {
 }
 
 /** @type {import('./index').HandoffTarget} */
-const githubIssuesTarget = { id: 'github-issues', plan, apply }
+const githubIssuesTarget = {
+  id: 'github-issues',
+  needsRepo: true,
+  describe: (count, context) => `Create ${count} GitHub issue${count === 1 ? '' : 's'} in ${githubContext(context).repo}?`,
+  plan,
+  apply,
+}
 
 module.exports = {
   FINDING_LABEL,

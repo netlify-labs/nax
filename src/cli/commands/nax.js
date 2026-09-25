@@ -515,7 +515,7 @@ function buildNaxProgram({
     .option('--path', 'Print the selected summary path')
     .option('--findings', 'Print the structured findings for a workflow run')
     .option('--json', 'With --findings or --to, print machine-readable JSON')
-    .option('--to <target>', 'Send selected findings to a target: github-issues')
+    .option('--to <target>', 'Send selected findings to a target: github-issues, beads')
     .option('--select <ids>', 'With --to, comma-separated finding ids to send (e.g. S1,S3)')
     .option('--limit <count>', 'With --to, send the top N ranked findings')
     .option('--min-severity <level>', 'With --to, lowest severity to include: info, low, medium, high, critical', 'low')

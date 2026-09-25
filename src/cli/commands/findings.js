@@ -133,7 +133,13 @@ async function handleFindingsTarget(options, {
     return 0
   }
 
-  const context = { repo: options.repo || resolveRepo(), artifact, labels: options.labels || [], ...(gh ? { gh } : {}) }
+  const context = {
+    projectRoot: options.projectRoot,
+    artifact,
+    labels: options.labels || [],
+    ...(target.needsRepo ? { repo: options.repo || resolveRepo() } : {}),
+    ...(gh ? { gh } : {}),
+  }
   const planned = target.plan(selected, context)
   const summary = { target: target.id, runId: artifact.runId, planned: planned.actions.map(({ key, title, labels }) => ({ key, title, labels })), skipped: planned.skipped }
   if (options.dry) {
@@ -141,8 +147,8 @@ async function handleFindingsTarget(options, {
     return 0
   }
   if (planned.actions.length > 0 && !options.force) {
-    if (!isTTY) return fail(`${formatPlan(summary)}\n\nRe-run with --force to create these in ${context.repo}, or --dry to only preview.`)
-    if (!await confirm(`Create ${planned.actions.length} GitHub issue${planned.actions.length === 1 ? '' : 's'} in ${context.repo}?`)) return fail('Cancelled.')
+    if (!isTTY) return fail(`${formatPlan(summary)}\n\nRe-run with --force to apply this plan, or --dry to only preview.`)
+    if (!await confirm(target.describe(planned.actions.length, context))) return fail('Cancelled.')
   }
   const result = planned.actions.length > 0 ? target.apply(planned.actions, context) : { applied: [], failed: [], warnings: [] }
   for (const warning of result.warnings) stderr(`Warning: ${warning}`)

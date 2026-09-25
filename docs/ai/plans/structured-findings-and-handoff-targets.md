@@ -2,14 +2,14 @@
 id: 01M3CN9TWN39AFPTE94BKAFNFG
 status: draft
 createdAt: 2026-09-25T09:10:16-07:00
-updatedAt: 2026-09-25T11:05:00-07:00
+updatedAt: 2026-09-25T12:10:00-07:00
 origin: manual
 type: plan
 ---
 
 # Structured Findings (`findings.json`) + Handoff Targets
 
-> Status: DRAFT v2. Codex review round 1 (Netlify runner `6ab6ae5ca90f294f6575eb87`) has been integrated, and each claim was re-verified against the code; see §9. Supersedes the design sketches in beads `nax-i9j`, `nax-i9j.1-.4`, `nax-u76` (2026-06-10, pre-restructure paths).
+> Status: DRAFT v3. Codex review rounds 1 (runner `6ab6ae5ca90f294f6575eb87`) and 2 (runner `6ab6b79908b0baa3420c73b6`) have been integrated, and each claim was re-verified against the code; see §9. Implementation order across plans: flow lint → findings → mid-step resume. Supersedes the design sketches in beads `nax-i9j`, `nax-i9j.1-.4`, `nax-u76` (2026-06-10, pre-restructure paths).
 
 ## 1. Why
 
@@ -90,7 +90,7 @@ Why this split: v1 proves the artifact contract end to end, including one outbou
 1. **Derived and pure.** `buildFindings(runState, flow)` is a pure function of `workflow.json` + flow declaration. It does no I/O.
 2. **Writes only at terminal transitions.** Reads never write. An old run that lacks `findings.json` gets a computed artifact in memory. There is no lazy backfill to disk, no lock on reads and no migration.
 3. **Never affects run outcome.** The terminal-time write is wrapped; failure logs a warning and leaves run status and exit code unchanged.
-4. **Stable identity.** Key = `<runId>/<stepId>/<localId>`. All idempotency rests on it.
+4. **Stable identity.** Key = `<runId>/<stepId>/<localId>`. All idempotency rests on it. `localId` is the model-emitted id (`S1`) for a single source run. For fan-out it is `<instanceId>:<sourceLocalId>`, with `/` and `:` inside `instanceId` percent-encoded so keys stay unambiguous; the model-emitted id is kept as `sourceLocalId`.
 5. **Plan, then apply.** Every target computes `actions[]` first; `--dry` prints them. Tests and dry-run share the path.
 6. **Advisory posture** (v1.1 PR reviews): always `event: COMMENT`.
 
@@ -103,6 +103,8 @@ findings:
 ```
 - There is **no** "last parseable step" fallback: it would pick the `ideas` flow's ranked-ideas block, or an implementation plan. A flow without `findings:` has no findings, and the CLI says so.
 - v1 registers one adapter, `review-consensus`, and adds the declaration to `workflows/review/flow.yml`.
+- **`normalizeFlow` must carry the key.** It builds a fixed object and drops unknown top-level keys (`src/workflows/catalog/flows.js:643-699`). Without that, `buildFindings` would never see the declaration at runtime. Add `findings: { step, adapter } | null` to the normalized flow, the JSDoc flow typedef (`src/types.js`), the TS workflow contract (`src/contracts/workflow.ts`), and the versioned flow manifest (`flow-lint-and-fail-fast.md` §3.4).
+- **No import cycle:** adapter ids live in a dependency-free constant `FINDINGS_ADAPTER_IDS` in `src/core/constants.js`. The validator in `flows.js` checks against that list; `src/workflows/findings/` registers implementations under the same ids, and a unit test asserts the two sets are equal.
 
 ### 4.3 Module layout
 ```text
@@ -160,7 +162,7 @@ Field rules for `review-consensus`:
 - `target.pullRequest` is present only for PR-selector runs (§4.6).
 - Typedefs `Finding` and `FindingsArtifact` go in `src/types.js`, with a TS mirror in `src/contracts/`.
 
-If the source step has more than one completed run (fan-out), findings from each run are merged, with `localId` prefixed by the instance label and `rank: null`.
+If the source step has more than one completed run (fan-out), findings from each run are merged, with the fan-out `localId` rule from §4.1 and `rank: null`. Only current attempts (`step.runs`) are read, never superseded attempts (see `mid-step-resume.md` §3.3).
 
 ### 4.5 Attribution field (prompt change)
 Add `"agents": ["claude", "gemini"]` (the providers whose findings the consensus item merges) to the schema in `workflows/review/prompts/3_summarize-consensus.md`. It uses the same field name and meaning as the security synthesize prompt. It is one line of prompt, it is verifiable against known lineups, and it enables the model scorecard later. Per-finding source ids (`R2`) are deliberately NOT requested; they would need a verified id grammar across rounds.
@@ -168,7 +170,11 @@ Add `"agents": ["claude", "gemini"]` (the providers whose findings the consensus
 ### 4.6 PR identity persisted at run creation
 - `resolvePullRequestTarget` also returns `number` and `url` (add `number,url` to the `gh pr view --json` fields).
 - `normalizeTarget` carries an optional `pullRequest: { number, url, isCrossRepository }`.
-- `verifiedRemoteTarget` and `advisoryGithubTarget` accept and pass it, and `legacyTargetFromRunState` keeps it.
+- **Thread it through all three PR-selector return paths in `resolveTarget`** (`src/integrations/git/target.js:215-292`):
+  1. `advisoryGithubTarget` (GitHub transport);
+  2. the generic non-Netlify `normalizeTarget` branch;
+  3. `verifiedRemoteTarget` (Netlify transport). The PR object is passed alongside the verified branch result, because the remote resolver only knows the branch.
+- `legacyTargetFromRunState` preserves it on re-normalization.
 - Update the TS `Target` in `src/contracts/dashboard.ts` and the JSDoc.
 - Tests cover both transports' PR-selector paths. The field is additive; old runs simply lack it.
 
@@ -230,10 +236,11 @@ nax handoff [run-id] --to github-issues [--select S1,S3] [--min-severity high] [
 - T0.2 Golden fixtures in `tests/fixtures/findings/` copied (redacted) from real `.nax/` results: synthesize with 3/7/10 findings, the no-heading codex output, a malformed-JSON sample (hand-edited from a real one), and a security synthesize sample (to prove it is ignored without a declaration).
 
 ### Phase 1: artifact
+- T1.0 Normalize and type the `findings` declaration (`normalizeFlow`, JSDoc, TS contract, manifest), with `FINDINGS_ADAPTER_IDS` in `src/core/constants.js`. Failing test first: a flow with `findings:` loads and keeps the key; an unknown adapter gives `invalid_findings_source`. This lands together with the lint plan's validator work.
 - T1.1 `review-consensus` adapter + field rules; table tests for every rule.
 - T1.2 `buildFindings` / `readFindings` / `writeFindings`, with typedefs and the TS contract.
 - T1.3 Terminal-time write in `main.js:2923-2953`. The test asserts that a throwing adapter leaves the run status unchanged, and that `saveRunState` never writes `findings.json`.
-- T1.4 PR identity in the target (§4.6), with tests for both transports.
+- T1.4 PR identity in the target (§4.6), covering all three return paths plus legacy re-normalization, with PR-selector tests for GitHub, Netlify and the generic branch.
 - T1.5 `findings:` declaration in `workflows/review/flow.yml` + the `agents` field in the synthesize prompt.
 - T1.6 `resolveFindingsRun` with the status eligibility matrix.
 - T1.7 `nax handoff --findings [--json]`.
@@ -276,6 +283,11 @@ Every Codex claim was re-verified in code (2026-09-25).
 - **Accepted:** terminal-only writes because persistence runs on every save; pure reads with no disk backfill; PR identity across all target builders + TS contract; findings run resolution independent of handoff sources; explicit source, no fallback (the `ideas` final step proves the risk); audit adapters deferred; fake-executable boundary tests.
 - **Corrected from Codex:** the `serializers.js` citation was `publicFlow`. The target is passed through whole, so there is no serializer change.
 - **Kept against Codex:** the `agents` field (security precedent) and `github-issues` in v1 (D5, D7).
+
+### Review round 2 (Codex) — integration record
+Re-verified in code (2026-09-25).
+- **Accepted (blocking):** `normalizeFlow` drops unknown keys (`flows.js:643`), so the `findings` declaration must be normalized, typed and in the manifest (T1.0); the adapter-id constant avoids a validator ↔ findings cycle. PR identity must go through the third, generic `normalizeTarget` path in `resolveTarget`, not just the two named builders.
+- **Accepted (nice-to-have):** a canonical fan-out `localId` with encoding; findings read only current attempts.
 
 ## 10. Out of scope
 Fuzzy cross-agent dedupe; editing or closing created issues; Linear/Jira; MCP mutations; model scorecard; widening follow-up prompt shrinking to audit flows.

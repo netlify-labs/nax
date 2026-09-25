@@ -2,14 +2,14 @@
 id: 01M3CN9TY0YPY9MP9CXQSTD2HS
 status: draft
 createdAt: 2026-09-25T09:10:16-07:00
-updatedAt: 2026-09-25T11:05:00-07:00
+updatedAt: 2026-09-25T12:10:00-07:00
 origin: manual
 type: plan
 ---
 
 # Flow Lint + Fail-Fast Across CLI, Dashboard, MCP
 
-> Status: DRAFT v2. Codex review round 1 (Netlify runner `6ab6ae5ca90f294f6575eb87`) has been integrated, and each claim was re-verified; see §8. Supersedes beads `nax-pup.1` / `nax-pup.2` and finishes Workstream B of `docs/ai/plans/nax-tier1-tier2-plan.md`, most of which already shipped.
+> Status: DRAFT v3. Codex review rounds 1 (runner `6ab6ae5ca90f294f6575eb87`) and 2 (runner `6ab6b79908b0baa3420c73b6`) have been integrated, and each claim was re-verified; see §8. Implementation order across plans: **this plan first** → findings → mid-step resume. Supersedes beads `nax-pup.1` / `nax-pup.2` and finishes Workstream B of `docs/ai/plans/nax-tier1-tier2-plan.md`, most of which already shipped.
 
 ## 1. Why
 
@@ -20,7 +20,7 @@ The problems are how validation is surfaced, what it misses, and drift between p
 | # | Gap | Evidence | Impact |
 |---|---|---|---|
 | G1 | One invalid flow breaks every flow | `loadFlow` → `listFlows` (`flows.js:701-709`), which lets load/normalize throw (`:713-743`) | A typo in a custom flow breaks `nax run review`, the picker, the dashboard list and MCP `workflow_list` |
-| G2 | Both dashboard servers drop diagnostics | Legacy `src/dashboard/server.js:2418-2428` sends `statusCode`/`code`/`message` but no `details`, and untyped errors become 500 `internal_error`. The newer API derives only status and code (`src/dashboard/api/app.js:237-260`) | DryRunPanel shows a generic error |
+| G2 | The legacy dashboard server drops diagnostics | Legacy `src/dashboard/server.js:2418-2428` sends `statusCode`/`code`/`message` but no `details`, and untyped errors become 500 `internal_error`. The newer Hono API already forwards object-valued `error.details` (`src/dashboard/api/app.js:298-308`) | DryRunPanel shows a generic error |
 | G3 | MCP can't surface validation | `normalizeMcpError` copies `error.details` (`src/mcp/errors.js:261`), but validation lives on `error.validation`; `recoveryGuidance` has no `invalid_flow` branch (`:181-232`) | The agent can't self-correct |
 | G4 | A plan doesn't pin the flow | `requestHash` covers scope, target and input only (`src/control-plane/planner.js:459-460`); start reloads the flow (`src/dashboard/runtime/local-workflow-execution.js:171-194`); `startStoredPlan` claims before executing (`src/control-plane/run-plans.js:218-232`) | An edited flow runs different steps than were approved, and drift would be recorded as a failed start |
 | G5 | Lineup warnings are dropped | `resolveLineup` result ignored in validation (`flows.js:550-574`); warnings produced at `src/core/agents/instances.js:221-289` | A typo'd model id passes silently |
@@ -45,8 +45,13 @@ The problems are how validation is surfaced, what it misses, and drift between p
    *   | { status: 'invalid', id, dir, file, source, validation: { errors, warnings }, shadowed }
    *   | { status: 'load-failed', id, dir, file, source, loadError: { code: 'flow_load_failed', message }, shadowed }} FlowEntry */
   ```
-- **Source priority and duplicate-id shadowing are resolved BEFORE validation.** The highest-priority candidate for an id wins even when it is invalid. Lower candidates are listed in `shadowed`, not activated.
-- Each candidate's load + `normalizeFlow` runs in its own try/catch. Throws from `normalizeFlow` before validation (malformed agent config, etc.) become `invalid` entries carrying a single diagnostic built from the thrown code and message.
+- **Candidate identity:** a flow's id today is `raw.id || <directory name>` (`normalizeFlow`, `flows.js:627`), so the id is only known after the file loads.
+  - Every candidate is loaded and normalized, each in its own try/catch.
+  - A candidate that loaded (valid or invalid) uses `raw.id || <directory name>`.
+  - A `load-failed` candidate (syntax/configorama error, so no readable `raw.id`) uses its directory name.
+  - When `raw.id` differs from the directory name, emit warning `flow_id_mismatch`, so the non-obvious case shows up in lint. It keeps working as it does today.
+- **Shadowing, then selection:** candidates are grouped by identity in `flowSources()` priority order (project directories in configured order, then bundled, `flows.js:302-338`). The highest-priority candidate wins even when it is invalid or failed to load. Lower candidates are listed in `shadowed` and never activated.
+- Throws from `normalizeFlow` before validation (malformed agent config, etc.) become `invalid` entries carrying a single diagnostic built from the thrown code and message.
 - `listFlows(options)` becomes a pure wrapper that returns `entries.filter(valid).map(e => e.flow)`. It does no printing and keeps its current return type.
 - `loadFlow(id)` resolves the winning entry directly:
   - `valid`: returns the flow;
@@ -60,9 +65,8 @@ The problems are how validation is surfaced, what it misses, and drift between p
 
 ### 3.2 Structured diagnostics everywhere (G2, G3)
 - Validation throws put diagnostics in `error.details` (§3.1) and set `statusCode: 422`.
-- **Both** dashboard serializers send `details`:
-  - legacy `server.js:2418-2428` (`errorPayload(..., { details })`, the helper already supports it, `src/dashboard/api/errors.js:8-19`);
-  - the newer `api/app.js` error path (add `detailsForError`).
+- **Legacy server:** `server.js:2418-2428` passes `{ details: error.details }` (and `recoverable` when set) to `errorPayload`; the helper already supports it (`src/dashboard/api/errors.js:8-19`).
+- **Hono API:** it already forwards details (`api/app.js:298-308`). No code change; add a regression test proving `invalid_flow` details arrive intact. There is no shared-helper refactor across the two servers.
 - `invalid_flow` → 422 on both. This covers dry-run (`server.js:2308-2324`), run start, and run-plan (`run-plans.js:159`, where the `withHttpStatus` mapping keeps 422 rather than downgrading to 400).
 - **DryRunPanel** (`src/dashboard/web/src/components/DryRunPanel.tsx`): on 422 `invalid_flow`, render a diagnostics list (step, code, message, hint). On success, render flow warnings. Run `npm run dashboard:build`.
 - **MCP:** `details` already passes through. Add an `invalid_flow` branch to `recoveryGuidance`: "Fix the listed diagnostics in `<file>`, then call `workflow_plan` again; `nax lint <id> --json` shows the same list."
@@ -88,9 +92,15 @@ All live in `validateFlowStructure`.
 ### 3.4 Plan pins an execution manifest (G4)
 - **`flowManifest(flow)`:** a versioned object `{ manifestVersion: 1, flowId, steps: [ordered normalized steps], prompts: [{ stepId, sha256 }] }`. `flowDigest` = sha256 of its canonical JSON (ordered arrays, sorted object keys).
 - `prepareWorkflowPlan` (`planner.js:319`) stores `flowDigest` on the plan and includes it in the `requestHash` inputs.
-- **Execution-backend hook:** `validatePlan(plan)` is called by `startStoredPlan` **before** `claimStart` (`run-plans.js:218`). It reloads the winning flow entry and recomputes the digest.
+- **Execution-backend hook placement:** `startStoredPlan` (`run-plans.js:181-228`) first handles its existing `started` replay, `starting` wait, and ambiguous-`failed` reconciliation branches **unchanged**. Only then, immediately before `claimStart`, for a `prepared` plan or a `failed` plan proven not to have mutated, it calls `executionBackend.validatePlan(plan)`, which reloads the winning flow entry and recomputes the digest.
+  - Idempotent replay of an already-started plan is never revalidated. A later prompt edit must not break returning the existing run binding.
+  - If a lost claim recurses into a newly claimable state, validation runs again there.
   - On mismatch: throw recoverable `flow_changed_since_plan` (409) without touching plan state. The plan stays `prepared`, so re-planning is clean and nothing is recorded as a failed start.
   - An invalid entry at start: `invalid_flow` 422, same rule.
+- **Runs record the digest too (producer for `mid-step-resume.md` §3.4):**
+  - Every CLI and control-plane run computes `flowDigest` from the loaded winning flow and stores it as top-level `runState.flowDigest` in `createRunState` (`src/storage/local/run-state.js:423-448`) before the first save.
+  - A plan-started run passes the plan's digest through the dashboard execution options (`src/dashboard/runtime/local-workflow-execution.js:171-194` → `handleRunEngine`). The engine asserts it equals the digest of the flow it just loaded before creating the run, which closes the window between `validatePlan` and load.
+  - Runs created before this change have no `flowDigest`; consumers must handle its absence (see the resume plan).
 
 ### 3.5 Planner prompt size (G7)
 Pass `promptBytesByStep` = exact static prompt-file bytes + explicitly supplied context bytes (plan input `context` / `--context-file`). Documented as a **lower bound**: auto-context depends on checkout state and is not run at plan time, and prior-round results are unknown.
@@ -116,20 +126,22 @@ No new wiring: `handleRunEngine` validates via `loadFlow` before submission (`sr
 | D2 | Reject `flow_changed_since_plan`, checked before the start is claimed |
 | D3 | The digest includes exact prompt bytes, via a versioned manifest |
 | D4 | `catalog_passthrough` is a warning |
-| D5 | HTTP 422 for `invalid_flow`, through one consistent serializer path on both servers |
+| D5 | HTTP 422 for `invalid_flow` with `details` on both servers (legacy needs the fix; Hono already forwards) |
 
 ## 5. Task breakdown
 ### Phase 0: isolation (G1)
 - T0.1 Failing tests first, using temp flow dirs across two sources:
   - valid + invalid siblings: `listFlows` returns the valid one only, and `loadFlow('valid')` works;
   - an invalid high-priority override of a valid lower-priority flow: `loadFlow(id)` throws `invalid_flow` and does NOT return the lower flow;
+  - a load-failed high-priority directory named like a lower-priority flow shadows it by directory name;
+  - `raw.id` different from the directory name: grouped by `raw.id`, with a `flow_id_mismatch` warning;
   - `normalizeFlow` pre-validation throw → `invalid` entry;
   - configorama syntax error → `load-failed`.
 - T0.2 `discoverFlowEntries` + `listFlows` wrapper + `loadFlow` resolution.
 - T0.3 Picker, dashboard list and MCP list consume entries; CLI stderr skip line.
 
 ### Phase 1: structured surfacing (G2, G3)
-- T1.1 `details` + 422 on both dashboard servers (route tests for each).
+- T1.1 Legacy `server.js` forwards `details` + 422 (failing route test first); Hono regression test only.
 - T1.2 DryRunPanel diagnostics + Playwright case with an invalid fixture flow; `npm run dashboard:build`.
 - T1.3 MCP `recoveryGuidance` branch; stdio integration test asserts the diagnostics array.
 
@@ -139,7 +151,10 @@ No new wiring: `handleRunEngine` validates via `loadFlow` before submission (`sr
 - T2.3 Run all bundled `workflows/*` through lint. Any new error on a bundled flow goes to David before changing the flow.
 
 ### Phase 3: manifest pinning + prompt size (G4, G7)
-- T3.1 `flowManifest` / `flowDigest` + `requestHash`; `validatePlan` hook before `claimStart`. Tests in `control-plane-planner.test.js` + `mcp-plan-tools.test.js`: plan → edit prompt → start → 409, and the plan status is still `prepared`.
+- T3.1 `flowManifest` / `flowDigest` + `requestHash`; `validatePlan` hook placed after the replay/wait/reconcile branches. Tests in `control-plane-planner.test.js` + `mcp-plan-tools.test.js`:
+  - plan → edit prompt → start → 409, and the plan status is still `prepared`;
+  - start → edit prompt → replay the same request → the existing run binding is returned (no 409).
+- T3.1b `runState.flowDigest` written in `createRunState`; the plan digest is passed through dashboard execution and asserted by the engine. Test: a mismatch between the plan digest and the loaded flow creates no run.
 - T3.2 `promptBytesByStep` lower bound; an oversized static prompt produces a plan warning.
 
 ### Phase 4: `nax lint` + CI + docs
@@ -167,12 +182,18 @@ No new wiring: `handleRunEngine` validates via `loadFlow` before submission (`sr
 | New errors break a working flow | Errors only for guaranteed failures; T2.3 gates bundled flows |
 | Hidden flows surprise users | stderr skip line, `Unknown flow` lists invalid ids, picker shows them, `nax lint` shows shadowing |
 | The digest is sensitive to prompt whitespace | Intentional: prompts are behavior. Recovery is one re-plan |
-| Two dashboard servers drift | Shared `detailsForError` helper used by both |
+| Two dashboard servers drift | A route test per server asserts `invalid_flow` → 422 + diagnostics |
 
 ## 8. Review round 1 (Codex) — integration record
 Every Codex claim was re-verified in code (2026-09-25).
 - **Accepted:** discovery/validation/presentation split with shadowing preserved (`seenIds` is set only after a successful normalize, `flows.js:726-729`); digest verification before `claimStart`; versioned manifest; empty prompt downgraded to a warning; human-review checks dropped (`defaultAction` defaults to `pause` and is never acted on); prompt-size claim bounded to static + explicit context.
-- **Found in verification, missed by Codex:** the legacy `server.js` serializer also drops `details`; both servers need the fix.
+- **Found in verification, missed by Codex:** the legacy `server.js` serializer also drops `details`. (Round 2 corrected the v2 overstatement: the Hono API already forwards details, so only the legacy server needs code.)
+
+### Review round 2 (Codex) — integration record
+Re-verified in code (2026-09-25).
+- **Accepted (blocking):** discovery identity is defined up front (id = `raw.id || dir`, load failures by directory name, `flow_id_mismatch` warning), because `normalizeFlow` prefers `raw.id` (`flows.js:627`). `validatePlan` runs after the replay/`starting`/ambiguous branches, not at entry.
+- **Accepted (nice-to-have):** Hono needs a test, not a refactor.
+- **Added for the resume plan:** runs now record `flowDigest` (producer side), which round 2 found missing.
 
 ## 9. Out of scope
 `nax flow new` scaffolder (`nax-pup.3`); control-flow keys (`when:`, `onFailure`); prompt template validation (no templating engine exists); JSON Schema export.

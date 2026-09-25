@@ -73,6 +73,7 @@ const { listHandoffSources, readHandoffSource, relativeDisplayPath } = require('
 const { handleCi } = require('./commands/ci')
 const { handleLint } = require('./commands/lint')
 const { handleFindingsHandoff, handleFindingsTarget } = require('./commands/findings')
+const { readFindings } = require('../workflows/findings')
 const { flowDigest } = require('../workflows/catalog/flow-manifest')
 const {
   AD_HOC_RUN_CHOICE,
@@ -1293,6 +1294,10 @@ async function handleHandoff(runId, options) {
   handoff = selectedSource.source || handoff
   const action = selectedSource.action || await chooseHandoffActionInteractively(handoff)
   if (action === 'cancel') return
+  if (action === 'github-issues') {
+    await handleFindingsTarget({ projectRoot, runId: String(handoff.id || ''), to: 'github-issues' })
+    return
+  }
   if (action === 'copy') {
     const command = copyToClipboard(handoff.summaryText)
     console.log(`\nCopied ${handoff.displayPath} to clipboard with ${command}.`)
@@ -2199,7 +2204,10 @@ async function chooseHandoffSourceInteractively({ projectRoot, latestSource }) {
     ...source,
     displayPath: relativeDisplayPath(projectRoot, source.summaryPath),
   }))
-  const options = handoffSourceMenuOptions({ sources, latestSource, projectRoot })
+  const findingsCount = latestSource.kind === 'workflow' && latestSource.source
+    ? (readFindings(latestSource.source)?.findings || []).filter((finding) => finding.bucket === 'consensus').length
+    : 0
+  const options = handoffSourceMenuOptions({ sources, latestSource, projectRoot, findingsCount })
   console.log(formatHandoffSourceDetailBox(latestSource, projectRoot))
   console.log('')
 
@@ -2212,6 +2220,7 @@ async function chooseHandoffSourceInteractively({ projectRoot, latestSource }) {
   if (selected === 'copy-latest-path') return { source: latestSource, action: 'copy-path' }
   if (selected === 'open-latest') return { source: latestSource, action: 'open' }
   if (selected === 'workflow-latest') return { source: latestSource, action: 'workflow' }
+  if (selected === 'issues-latest') return { source: latestSource, action: 'github-issues' }
 
   const [, kind] = String(selected).split(':')
   const choices = sources.filter((source) => source.kind === kind)

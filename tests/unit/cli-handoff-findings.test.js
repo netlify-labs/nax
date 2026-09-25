@@ -55,3 +55,17 @@ test('--findings explains when no saved run declares findings', () => {
   assert.equal(result.status, 1)
   assert.match(result.stderr, /No saved workflow run has findings/)
 })
+
+test('the handoff menu offers GitHub issues only for a workflow source with findings', () => {
+  const { handoffSourceMenuOptions } = require('../../src/cli/commands/handoff')
+  const latestSource = { kind: 'workflow', id: RUN_ID, displayPath: '.nax/workflows/x/artifacts/summary.md' }
+  const withFindings = handoffSourceMenuOptions({ latestSource, sources: [], findingsCount: 3 })
+  const issues = withFindings.find((option) => option.value === 'issues-latest')
+  assert.equal(issues?.label, 'Create GitHub issues from findings')
+  assert.equal(issues?.hint, '3 consensus findings')
+  assert.ok(withFindings.indexOf(issues) < withFindings.findIndex((option) => option.value === 'cancel'))
+  const without = handoffSourceMenuOptions({ latestSource, sources: [], findingsCount: 0 })
+  assert.equal(without.some((option) => option.value === 'issues-latest'), false)
+  const runner = handoffSourceMenuOptions({ latestSource: { ...latestSource, kind: 'agent-runner' }, sources: [], findingsCount: 3 })
+  assert.equal(runner.some((option) => option.value === 'issues-latest'), false)
+})

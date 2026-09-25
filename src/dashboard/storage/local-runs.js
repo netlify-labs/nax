@@ -5,6 +5,8 @@ const { listRunStates, listWorkflowStatePage } = require('../../storage/local/ru
 const { flowToGraph } = require('../shared/graph')
 const { buildRunDetails } = require('../shared/run-details')
 const { readFindings } = require('../../workflows/findings')
+const { isResumeRefusal, prepareResume } = require('../../workflows/engine/resume-preparation')
+const { describeRunLockOwner, runLockHolder } = require('../../storage/local/run-lock')
 const { isActiveProjectedStatus, projectRunSnapshot, publicFlow, publicRunOptions, publicRunState } = require('../api/serializers')
 const { requestError } = require('../api/errors')
 const { isActiveFollowupStatus, syncSubmittedFollowupRunsToWorkflow } = require('../../workflows/followups/persistence')
@@ -308,6 +310,23 @@ function createLocalRunStore({
       const durable = getRunState(id)
       if (!durable) return null
       return { findings: readFindings(/** @type {import('../../types').WorkflowRunState} */ (durable)) }
+    },
+    async getResumePreview(id, { includeCancelled = false } = {}) {
+      const durable = getRunState(id)
+      if (!durable) return null
+      const runState = /** @type {import('../../types').WorkflowRunState} */ (durable)
+      try {
+        const prepared = await prepareResume({ runState, projectRoot, includeCancelled })
+        const holder = runLockHolder(String(runState.dir || ''))
+        const blocked = holder
+          ? { code: 'run_locked', message: `Run ${runState.runId} is already being executed by ${describeRunLockOwner(holder)}.` }
+          : prepared.blocked
+        return { resumable: !blocked, preview: prepared.preview, blocked }
+      } catch (error) {
+        if (!isResumeRefusal(error)) throw error
+        const { code, message } = /** @type {Error & { code: string }} */ (error)
+        return { resumable: false, preview: null, blocked: { code, message } }
+      }
     },
     async getRunDetails(id) {
       const durable = await refreshRunStateIfNeeded(getRunState(id), { view: 'details' })

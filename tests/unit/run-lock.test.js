@@ -90,3 +90,15 @@ test('release leaves a lock another owner took over, and warns', () => {
   assert.match(String(warnings[0]?.[0]), /run lock/)
   assert.equal(lock.release(), false)
 })
+
+test('runLockHolder reports a live owner and ignores a stale or missing lock', () => {
+  const { runLockHolder } = require('../../src/storage/local/run-lock')
+  const dir = runDir()
+  assert.equal(runLockHolder(dir), null)
+  const lock = acquireRunLock(dir, { runId: 'run-1', command: 'nax run --resume run-1' })
+  assert.equal(runLockHolder(dir)?.pid, process.pid)
+  lock.release()
+  fs.mkdirSync(runLockDir(dir), { recursive: true })
+  fs.writeFileSync(path.join(runLockDir(dir), 'owner.json'), JSON.stringify({ pid: deadPid(), hostname: os.hostname(), nonce: 'old' }))
+  assert.equal(runLockHolder(dir), null)
+})

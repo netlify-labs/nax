@@ -58,6 +58,8 @@ const {
   submitFollowup: submitFollowupService,
 } = require('./services/mutations')
 const { dryRunWorkflow, resumeWorkflowRun } = require('./transports/local-in-process')
+const { isResumeRefusal, prepareResume } = require('../workflows/engine/resume-preparation')
+const { describeRunLockOwner, runLockHolder } = require('../storage/local/run-lock')
 const { createRunnerEventParser, runWorkflowChild } = require('./transports/local-process')
 const { openLocalFile } = require('./runtime/local-files')
 const { listKnownGitBranches } = require('./runtime/git-branches')
@@ -373,7 +375,7 @@ function isReadOnlyDashboardApiPath(pathname) {
   if (/^\/api\/run-plans\/[^/]+$/.test(pathname)) return true
   if (/^\/api\/workflows\/[^/]+(?:\/graph)?$/.test(pathname)) return true
   if (/^\/api\/runs\/[^/]+\/artifacts\/[^/]+$/.test(pathname)) return true
-  return /^\/api\/runs\/[^/]+(?:\/graph|\/details|\/findings|\/events\.json)?$/.test(pathname)
+  return /^\/api\/runs\/[^/]+(?:\/graph|\/details|\/findings|\/resume-preview|\/events\.json)?$/.test(pathname)
 }
 
 /** @param {string} pathname */
@@ -383,7 +385,7 @@ function isMutationDashboardApiPath(pathname) {
   if (/^\/api\/run-plans\/workflows\/[^/]+$/.test(pathname)) return true
   if (/^\/api\/run-plans\/[^/]+\/start$/.test(pathname)) return true
   if (/^\/api\/workflows\/[^/]+\/(?:dry-run|runs)$/.test(pathname)) return true
-  return /^\/api\/runs\/[^/]+\/(?:cancel|agents\/cancel|review\/approve|review\/cancel|retry|followups|followups\/cancel)$/.test(pathname)
+  return /^\/api\/runs\/[^/]+\/(?:cancel|agents\/cancel|review\/approve|review\/cancel|retry|resume|followups|followups\/cancel)$/.test(pathname)
 }
 
 /**
@@ -1365,6 +1367,25 @@ function createRequestHandler(options = {}) {
           },
         }
       },
+      resumeRun: async (id, body) => {
+        const durable = durableRunStateForId(safeDecode(id))
+        if (!durable) return null
+        const runState = /** @type {import('../types').WorkflowRunState} */ (durable)
+        const includeCancelled = body.includeCancelled === true
+        /** @type {import('../workflows/engine/resume-preparation').PreparedResume} */
+        let prepared
+        try {
+          prepared = await prepareResume({ runState, projectRoot, includeCancelled })
+        } catch (error) {
+          if (!isResumeRefusal(error)) throw error
+          throw requestError(409, /** @type {Error & { code: string }} */ (error).code, /** @type {Error} */ (error).message)
+        }
+        if (prepared.blocked) throw requestError(409, prepared.blocked.code, prepared.blocked.message)
+        const holder = runLockHolder(String(runState.dir || ''))
+        if (holder) throw requestError(409, 'run_locked', `Run ${runState.runId} is already being executed by ${describeRunLockOwner(holder)}.`)
+        const run = startResumeRun({ durable, approveReview: false, includeCancelled })
+        return { statusCode: 202, body: { run: publicRun(run), preview: prepared.preview } }
+      },
       cancelReview: async (id, body) => {
         const durable = durableRunStateForId(id)
         return durable ? { body: cancelReviewGateService({ runState: durable, body }) } : null
@@ -1742,7 +1763,7 @@ function createRequestHandler(options = {}) {
     return run
   }
 
-  function startResumeRun({ durable, stepId = '' }) {
+  function startResumeRun({ durable, stepId = '', approveReview = true, includeCancelled = false }) {
     const flowId = durable.flowId || ''
     const existing = liveRunRegistry.activeWorkflowRun(flowId)
     const activity = projectedWorkflowActivity({
@@ -1790,6 +1811,8 @@ function createRequestHandler(options = {}) {
       runId: durable.runId,
       projectRoot,
       stepId,
+      approveReview,
+      includeCancelled,
       tailOutput,
       eventSink: (event) => {
         if (event.type === 'stdout') {

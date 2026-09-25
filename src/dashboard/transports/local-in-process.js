@@ -20,6 +20,8 @@ const { resumeWorkflow, runWorkflow } = require('../../workflows/engine/runner')
  *   runId: string,
  *   projectRoot: string,
  *   stepId?: string,
+ *   approveReview?: boolean,
+ *   includeCancelled?: boolean,
  *   tailOutput?: boolean,
  *   eventSink?: DashboardEventSink,
  *   deps?: LocalInProcessDeps,
@@ -39,12 +41,12 @@ function dryRunWorkflow({ flowId, projectRoot, options = {}, tailOutput = false,
 }
 
 /** @param {ResumeWorkflowRunInput} input */
-function resumeWorkflowRun({ runId, projectRoot, stepId = '', tailOutput = false, eventSink = () => {}, deps = {} }) {
+function resumeWorkflowRun({ runId, projectRoot, stepId = '', approveReview = true, includeCancelled = false, tailOutput = false, eventSink = () => {}, deps = {} }) {
   const resumeWorkflowCommand = deps.resumeWorkflow || resumeWorkflow
   return resumeWorkflowCommand({
     runId,
     projectRoot,
-    options: { projectRoot, stepId, reviewer: 'dashboard', yes: true, force: true },
+    options: { projectRoot, stepId, reviewer: 'dashboard', yes: true, force: true, approveReview, includeCancelled },
     passthrough: tailOutput,
     eventSink,
   })

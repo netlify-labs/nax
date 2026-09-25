@@ -447,6 +447,16 @@ function createDashboardApi({
     return json(c, result, 200, sessionHeaders(c))
   })
 
+  app.get('/api/runs/:id/resume-preview', async (c) => {
+    assertHonoToken(c, token)
+    requireCapability(capabilities, 'canReadRunDetails')
+    if (typeof runStore.getResumePreview !== 'function') throw requestError(501, 'unsupported_capability', 'Resume previews are not available in this runtime.')
+    const includeCancelled = ['1', 'true'].includes(String(c.req.query('includeCancelled') || ''))
+    const result = await runStore.getResumePreview(c.req.param('id'), { includeCancelled })
+    if (!result) throw requestError(404, 'not_found', 'Unknown dashboard run.')
+    return json(c, result, 200, sessionHeaders(c))
+  })
+
   app.get('/api/runs/:id/artifacts/:artifactId', async (c) => {
     assertHonoToken(c, token)
     requireCapability(capabilities, 'canReadRunArtifacts')
@@ -588,6 +598,15 @@ function createDashboardApi({
     requireCapability(capabilities, 'canStartRuns')
     if (typeof mutations.retryAgentRun !== 'function') throw requestError(501, 'unsupported_capability', 'Agent retry is not available in this runtime.')
     const result = mutationResult(await mutations.retryAgentRun(c.req.param('id'), await honoJsonBody(c)))
+    if (!result) throw requestError(404, 'not_found', 'Unknown dashboard run.')
+    return json(c, result.body, result.statusCode)
+  })
+
+  app.post('/api/runs/:id/resume', async (c) => {
+    assertHonoToken(c, token)
+    requireCapability(capabilities, 'canStartRuns')
+    if (typeof mutations.resumeRun !== 'function') throw requestError(501, 'unsupported_capability', 'Run resume is not available in this runtime.')
+    const result = mutationResult(await mutations.resumeRun(c.req.param('id'), await honoJsonBody(c)))
     if (!result) throw requestError(404, 'not_found', 'Unknown dashboard run.')
     return json(c, result.body, result.statusCode)
   })

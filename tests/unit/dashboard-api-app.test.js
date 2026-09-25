@@ -44,6 +44,7 @@ function fakeApi(overrides = {}) {
       getActiveRun: (id) => (id === 'active-1' ? { id, status: 'running' } : null),
       ...overrides.liveRuns,
     },
+    mutations: overrides.mutations,
     runPlans: overrides.runPlans,
   })
 }
@@ -317,4 +318,27 @@ test('Hono dashboard API serves run findings and 404s unknown runs', async () =>
   assert.deepEqual((await json(ok)).findings, artifact)
   const missing = await app.request('/api/runs/nope/findings', { headers: { 'x-nax-token': 'token-1' } })
   assert.equal(missing.status, 404)
+})
+
+test('Hono dashboard API serves resume previews and starts resumes', async () => {
+  /** @type {Array<{ id: string, body: unknown }>} */
+  const resumed = []
+  const preview = { runId: 'run-1', actions: [] }
+  const app = fakeApi({
+    runStore: { getResumePreview: async (id, options) => (id === 'run-1' ? { resumable: true, preview, blocked: null, includeCancelled: options?.includeCancelled === true } : null) },
+    mutations: { resumeRun: async (id, body) => { resumed.push({ id, body }); return { statusCode: 202, body: { run: { id: 'live-1' }, preview } } } },
+  })
+  const ok = await app.request('/api/runs/run-1/resume-preview?includeCancelled=1', { headers: { 'x-nax-token': 'token-1' } })
+  assert.equal(ok.status, 200)
+  const payload = await json(ok)
+  assert.deepEqual(payload.preview, preview)
+  assert.equal(payload.includeCancelled, true)
+  assert.equal((await app.request('/api/runs/nope/resume-preview', { headers: { 'x-nax-token': 'token-1' } })).status, 404)
+  const started = await app.request('/api/runs/run-1/resume', {
+    method: 'POST',
+    headers: { 'x-nax-token': 'token-1', 'content-type': 'application/json' },
+    body: JSON.stringify({ includeCancelled: true }),
+  })
+  assert.equal(started.status, 202)
+  assert.deepEqual(resumed, [{ id: 'run-1', body: { includeCancelled: true } }])
 })

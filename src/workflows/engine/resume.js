@@ -516,7 +516,23 @@ function resumeActionDetail(action, stepState) {
 }
 
 /**
- * Formats the resume preview shown by `nax run --resume`, its --dry mode and the TTY auto-offer.
+ * @typedef {{
+ *   runId: string,
+ *   complete: boolean,
+ *   step: { id: string, title: string, index: number, total: number, started: boolean } | null,
+ *   actions: Array<{ instanceId: string, action: ReconcileActionKind, detail: string }>,
+ *   branch: string,
+ *   runSha: string,
+ *   currentSha: string,
+ *   headState: 'unchanged' | 'moved' | 'moved-later-steps' | 'unknown' | '',
+ *   counts: { newRuns: number, kept: number, polling: number, skipped: number },
+ *   notes: string[],
+ *   stop: ReconcileStop | null,
+ * }} ResumePreview
+ */
+
+/**
+ * Structured resume preview shared by the CLI text preview and the dashboard.
  * @param {{
  *   runState: import('../../types').WorkflowRunState,
  *   flow: import('../../types').WorkflowFlow,
@@ -524,32 +540,61 @@ function resumeActionDetail(action, stepState) {
  *   branch: string,
  *   currentSha?: string,
  * }} input
- * @returns {string}
+ * @returns {ResumePreview}
  */
-function formatResumePreview({ runState, flow, plan, branch, currentSha = '' }) {
-  if (plan.complete) return `Resume ${runState.runId}: every step already finished.`
-  const step = /** @type {import('../../types').WorkflowStep} */ (plan.step)
-  const lines = [`Resume ${runState.runId}  (step ${plan.startIndex + 1}/${flow.steps.length}: ${step.title || step.id})`]
+function resumePreviewModel({ runState, flow, plan, branch, currentSha = '' }) {
   const { actions, stop, notes } = plan.reconciled
-  const width = Math.max(0, ...actions.map((action) => action.instanceId.length))
-  for (const action of actions) {
-    lines.push(`  ${action.instanceId.padEnd(width)}   ${action.action.padEnd(8)}   ${resumeActionDetail(action, plan.stepState)}`)
-  }
-  if (!plan.stepState) lines.push('  (step not started; every instance runs fresh)')
   const runSha = String(runState.target?.sha || '')
+  /** @type {ResumePreview['headState']} */
+  let headState = ''
   if (runSha) {
-    let headState = 'remote head unknown'
-    if (currentSha === runSha) headState = 'unchanged'
-    else if (currentSha && resumeSubmitsIntoStep(plan)) headState = `moved to ${currentSha.slice(0, 12)}; --force to resume anyway`
-    else if (currentSha) headState = `moved to ${currentSha.slice(0, 12)}; remaining steps use the new head`
-    lines.push(`  Branch: ${branch} @ ${runSha.slice(0, 12)} (${headState})`)
-  } else if (branch) {
-    lines.push(`  Branch: ${branch}`)
+    if (!currentSha) headState = 'unknown'
+    else if (currentSha === runSha) headState = 'unchanged'
+    else headState = resumeSubmitsIntoStep(plan) ? 'moved' : 'moved-later-steps'
   }
   const count = (/** @type {string[]} */ ...kinds) => actions.filter((action) => kinds.includes(action.action)).length
-  lines.push(`  New agent runs: ${count('resubmit', 'submit')}   Kept: ${count('keep')}   Polling: ${count('poll')}   Skipped: ${count('skip')}`)
-  for (const note of notes) lines.push(`  Note: ${note}`)
-  if (stop) lines.push(`  Stopped (${stop.code}): ${stop.message}`)
+  return {
+    runId: String(runState.runId || ''),
+    complete: plan.complete,
+    step: plan.step
+      ? { id: String(plan.step.id), title: String(plan.step.title || plan.step.id), index: plan.startIndex, total: flow.steps.length, started: Boolean(plan.stepState) }
+      : null,
+    actions: actions.map((action) => ({ instanceId: action.instanceId, action: action.action, detail: resumeActionDetail(action, plan.stepState) })),
+    branch,
+    runSha,
+    currentSha,
+    headState,
+    counts: { newRuns: count('resubmit', 'submit'), kept: count('keep'), polling: count('poll'), skipped: count('skip') },
+    notes,
+    stop,
+  }
+}
+
+/**
+ * Formats the resume preview shown by `nax run --resume`, its --dry mode and the TTY auto-offer.
+ * @param {ResumePreview} preview
+ * @returns {string}
+ */
+function formatResumePreview(preview) {
+  if (preview.complete || !preview.step) return `Resume ${preview.runId}: every step already finished.`
+  const { step, actions } = preview
+  const lines = [`Resume ${preview.runId}  (step ${step.index + 1}/${step.total}: ${step.title})`]
+  const width = Math.max(0, ...actions.map((action) => action.instanceId.length))
+  for (const action of actions) lines.push(`  ${action.instanceId.padEnd(width)}   ${action.action.padEnd(8)}   ${action.detail}`)
+  if (!step.started) lines.push('  (step not started; every instance runs fresh)')
+  const moved = preview.currentSha.slice(0, 12)
+  const headLabels = {
+    unchanged: 'unchanged',
+    moved: `moved to ${moved}; --force to resume anyway`,
+    'moved-later-steps': `moved to ${moved}; remaining steps use the new head`,
+    unknown: 'remote head unknown',
+  }
+  if (preview.runSha) lines.push(`  Branch: ${preview.branch} @ ${preview.runSha.slice(0, 12)} (${preview.headState ? headLabels[preview.headState] : ''})`)
+  else if (preview.branch) lines.push(`  Branch: ${preview.branch}`)
+  const { counts } = preview
+  lines.push(`  New agent runs: ${counts.newRuns}   Kept: ${counts.kept}   Polling: ${counts.polling}   Skipped: ${counts.skipped}`)
+  for (const note of preview.notes) lines.push(`  Note: ${note}`)
+  if (preview.stop) lines.push(`  Stopped (${preview.stop.code}): ${preview.stop.message}`)
   return lines.join('\n')
 }
 
@@ -566,6 +611,7 @@ module.exports = {
   formatDetailedRelativeTime,
   formatHumanRunDate,
   formatResumePreview,
+  resumePreviewModel,
   formatResumeRunDetails,
   planResume,
   resumeSubmitsIntoStep,

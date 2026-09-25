@@ -81,9 +81,20 @@ function isStaleOwner(owner, hostname) {
 }
 
 /** @param {Partial<RunLockOwner> | null} owner @returns {string} */
-function describeOwner(owner) {
+function describeRunLockOwner(owner) {
   if (!owner) return 'an unknown owner (owner.json unreadable)'
   return `pid ${owner.pid} on ${owner.hostname}${owner.command ? ` (${owner.command})` : ''}${owner.startedAt ? ` since ${owner.startedAt}` : ''}`
+}
+
+/**
+ * The owner of a run's lock when one is held by a live (or unverifiable remote) process.
+ * @param {string} runDir
+ * @returns {Partial<RunLockOwner> | null}
+ */
+function runLockHolder(runDir) {
+  if (!fs.existsSync(runLockDir(runDir))) return null
+  const owner = readRunLockOwner(runDir)
+  return isStaleOwner(owner, os.hostname()) ? null : (owner || {})
 }
 
 /**
@@ -101,7 +112,7 @@ function acquireRunLock(runDir, { runId = '', command = '', forceUnlock = false 
   if (!createLockDir(lockDir, owner)) {
     const current = readLockOwner(lockDir)
     if (!forceUnlock && !isStaleOwner(current, hostname)) {
-      const error = /** @type {Error & { code: string, owner: Partial<RunLockOwner> | null }} */ (new Error(`Run ${runId || path.basename(runDir)} is already being executed by ${describeOwner(current)}. Wait for it to finish, or rerun with --force-unlock if that process is gone.`))
+      const error = /** @type {Error & { code: string, owner: Partial<RunLockOwner> | null }} */ (new Error(`Run ${runId || path.basename(runDir)} is already being executed by ${describeRunLockOwner(current)}. Wait for it to finish, or rerun with --force-unlock if that process is gone.`))
       error.code = 'run_locked'
       error.owner = current
       throw error
@@ -117,7 +128,7 @@ function acquireRunLock(runDir, { runId = '', command = '', forceUnlock = false 
       released = true
       const current = readLockOwner(lockDir)
       if (!current || current.nonce !== owner.nonce || current.pid !== owner.pid || current.hostname !== owner.hostname) {
-        console.warn('run lock not released', `${lockDir} is now held by ${describeOwner(current)}`)
+        console.warn('run lock not released', `${lockDir} is now held by ${describeRunLockOwner(current)}`)
         return false
       }
       fs.rmSync(lockDir, { recursive: true, force: true })
@@ -129,6 +140,8 @@ function acquireRunLock(runDir, { runId = '', command = '', forceUnlock = false 
 module.exports = {
   acquireRunLock,
   createLockDir,
+  describeRunLockOwner,
   readRunLockOwner,
   runLockDir,
+  runLockHolder,
 }

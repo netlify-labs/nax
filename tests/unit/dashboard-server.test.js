@@ -2057,3 +2057,54 @@ test('dashboard does not duplicate terminal events the child already logged', ()
   const events = fs.readFileSync(logPath, 'utf8').trim().split('\n').map((line) => JSON.parse(line))
   assert.deepEqual(events.map((event) => event.type), ['workflow_started', 'workflow_failed'])
 })
+
+/** @param {string} projectRoot @param {string} runId @param {Record<string, unknown>} [overrides] */
+function writeResumeFixture(projectRoot, runId, overrides = {}) {
+  const dir = path.join(projectRoot, '.nax', 'workflows', runId)
+  fs.mkdirSync(dir, { recursive: true })
+  fs.writeFileSync(path.join(projectRoot, 'review.md'), '---\ntitle: Review\n---\n\nReview it.\n')
+  fs.writeFileSync(path.join(dir, 'workflow.json'), JSON.stringify({
+    runId,
+    flowId: 'resume-flow',
+    transport: 'netlify-api',
+    status: 'interrupted',
+    branch: 'main',
+    flow: { id: 'resume-flow', title: 'Resume flow', dir: projectRoot, steps: [{ id: 'review', title: 'Review', submit: 'new-run', prompt: 'review.md', agents: ['claude', 'codex'] }] },
+    steps: [{ id: 'review', status: 'running', runs: [
+      { agent: 'claude', instanceId: 'claude:auto:auto', status: 'completed', runnerId: 'r1', resultText: 'done', promptText: 'p' },
+      { agent: 'codex', instanceId: 'codex:auto:auto', status: 'failed', runnerId: 'r2', promptText: 'p' },
+    ] }],
+    ...overrides,
+  }))
+  return dir
+}
+
+test('dashboard resume refuses with 409 before starting anything', async () => {
+  const { runLockDir } = require('../../src/storage/local/run-lock')
+  const projectRoot = tmpRoot()
+  writeResumeFixture(projectRoot, 'run-done', { status: 'completed', steps: [{ id: 'review', status: 'completed', runs: [{ agent: 'claude', status: 'completed', resultText: 'ok' }] }] })
+  writeResumeFixture(projectRoot, 'run-ambiguous', { steps: [{ id: 'review', status: 'running', runs: [{ agent: 'claude', instanceId: 'claude:auto:auto', status: 'pending', runnerId: '', sentAt: '2026-09-25T12:00:00.000Z', promptText: 'p' }] }] })
+  const lockedDir = writeResumeFixture(projectRoot, 'run-locked')
+  fs.mkdirSync(runLockDir(lockedDir), { recursive: true })
+  fs.writeFileSync(path.join(runLockDir(lockedDir), 'owner.json'), JSON.stringify({ pid: process.pid, hostname: os.hostname(), nonce: 'n', command: 'nax run --resume run-locked' }))
+  const server = await startDashboardServer({ projectRoot })
+  try {
+    const base = `http://127.0.0.1:${server.port}`
+    const done = await postJson(`${base}/api/runs/run-done/resume`, server.token, {})
+    assert.equal(done.statusCode, 409)
+    assert.equal(done.payload.error.code, 'not_resumable')
+    const ambiguous = await postJson(`${base}/api/runs/run-ambiguous/resume`, server.token, {})
+    assert.equal(ambiguous.statusCode, 409)
+    assert.equal(ambiguous.payload.error.code, 'resume_ambiguous_submission')
+    const locked = await postJson(`${base}/api/runs/run-locked/resume`, server.token, {})
+    assert.equal(locked.statusCode, 409)
+    assert.equal(locked.payload.error.code, 'run_locked')
+    const missing = await postJson(`${base}/api/runs/nope/resume`, server.token, {})
+    assert.equal(missing.statusCode, 404)
+    const preview = await requestJson(`${base}/api/runs/run-locked/resume-preview`, { token: server.token })
+    assert.equal(preview.statusCode, 200)
+    assert.equal(preview.payload.blocked.code, 'run_locked')
+  } finally {
+    await server.close()
+  }
+})

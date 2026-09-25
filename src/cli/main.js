@@ -72,7 +72,8 @@ const { persistAgentSessionArtifact } = require('../workflows/artifacts/agent-se
 const { listHandoffSources, readHandoffSource, relativeDisplayPath } = require('../workflows/followups/handoff-sources')
 const { handleCi } = require('./commands/ci')
 const { handleLint } = require('./commands/lint')
-const { handleResumeCommand, resumePreview } = require('./commands/resume')
+const { handleResumeCommand } = require('./commands/resume')
+const { prepareResume } = require('../workflows/engine/resume-preparation')
 const { handleFindingsHandoff, handleFindingsTarget } = require('./commands/findings')
 const { readFindings } = require('../workflows/findings')
 const { flowDigest } = require('../workflows/catalog/flow-manifest')
@@ -199,6 +200,7 @@ const {
   flowFromRunState,
   flowLoadOptions,
   formatDetailedRelativeTime,
+  formatResumePreview,
   formatResumeRunDetails,
   isAutomaticResumeCandidate,
   printResumeRunDetails,
@@ -2829,7 +2831,8 @@ async function maybeResumeUnfinishedRun({ projectRoot, options = {}, flow = null
       options: resumable.options || {},
     })
   } else {
-    console.log(resumePreview({ runState: resumable, flow: resumableFlow, projectRoot }).text)
+    const prepared = await prepareResume({ runState: resumable, projectRoot, options })
+    console.log(formatResumePreview(prepared.preview))
   }
   const resumeAfterPreview = await clack.confirm({
     message: `Resume ${resumableFlow.title} from saved run ${resumable.runId}?`,
@@ -2862,7 +2865,7 @@ async function resumeRunById(runId, options = {}) {
     if (refreshed.transport === 'github') {
       await resumeGithubFlow({ flow, runState: refreshed, projectRoot })
     } else {
-      await resumeLocalFlow({ flow, runState: refreshed, projectRoot })
+      await resumeLocalFlow({ flow, runState: refreshed, projectRoot, includeCancelled: options.includeCancelled === true })
     }
   } finally {
     // Dashboard resumes run in-process, so the run lock must be released even when resume fails.

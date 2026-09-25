@@ -111,3 +111,11 @@ test('follow-up instances continue their source runner, or skip when the source 
   assert.equal(result.actions[0].existingRunnerId, 'src-claude')
   assert.match(result.actions[1].reason, /source_unavailable/)
 })
+
+test('a submit that failed after the request may have landed stops resume unless forced', () => {
+  for (const code of ['create-ambiguous', 'session-create-ambiguous']) {
+    const run = base({ status: 'failed', runnerId: '', sentAt: '2026-09-25T12:00:00.000Z', raw: { failurePhase: 'submit', submissionErrorCode: code } })
+    assert.equal(reconcile([run]).stop?.code, 'resume_ambiguous_submission')
+    assert.deepEqual(actionsOf(reconcile([run], { force: true })), ['resubmit'])
+  }
+})

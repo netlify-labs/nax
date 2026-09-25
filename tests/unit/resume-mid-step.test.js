@@ -185,3 +185,20 @@ test('a resume that ends on failed instances records the failure code and releas
   assert.equal(isExplicitlyResumableRun(runState), true)
   assert.equal(fs.existsSync(runLockDir(runState.dir)), false)
 })
+
+test('an ambiguous create during resume is recorded so the next resume stops instead of duplicating', async () => {
+  const { projectRoot, flow, runState } = fixture([
+    saved('claude', { status: 'completed', runnerId: 'r-claude', resultText: 'claude done' }),
+    saved('codex', { status: 'failed', runnerId: 'r-codex' }),
+  ])
+  const io = boundary()
+  /** @type {SubmitAgentRun} */
+  const ambiguousSubmit = async () => {
+    throw Object.assign(new Error('Agent Runner create may have succeeded.'), { code: 'create-ambiguous' })
+  }
+  await assert.rejects(resumeLocalFlow({ flow, runState, projectRoot, ...io, submitAgentRun: ambiguousSubmit }))
+  const codex = runState.steps[0].runs[1]
+  assert.equal(/** @type {Record<string, unknown>} */ (codex.raw)?.submissionErrorCode, 'create-ambiguous')
+  await assert.rejects(resumeLocalFlow({ flow, runState, projectRoot, ...io }), (error) => /** @type {{ code?: string }} */ (error).code === 'resume_ambiguous_submission')
+  assert.equal(io.submitted.length, 0)
+})

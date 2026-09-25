@@ -522,6 +522,7 @@ async function runStepInstance(context, run, index) {
       raw: {
         ...activeRun.raw,
         submissionError: error?.message || String(error || 'Submission failed'),
+        ...(error?.code ? { submissionErrorCode: String(error.code) } : {}),
         failurePhase: phase,
       },
     }

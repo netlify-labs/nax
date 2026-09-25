@@ -348,6 +348,8 @@ async function findLatestResumableRun({ projectRoot, options = {}, flow = null, 
 }
 
 const AUTH_FAILURE_CODES = new Set(['wrong_account', 'token_expired'])
+// SDK codes for a create request that failed after it may have reached the Agent Runner API.
+const AMBIGUOUS_SUBMISSION_CODES = new Set(['create-ambiguous', 'session-create-ambiguous'])
 const POLLABLE_STATUSES = new Set(['submitted', 'running', 'retrying'])
 
 /**
@@ -413,7 +415,9 @@ function reconcileStepInstances({ stepState, flowStep, completedStepStates, runS
     }
     if (status === 'completed' && String(run.resultText || '').trim()) { decide('keep', 'completed'); continue }
     if (POLLABLE_STATUSES.has(status) && run.runnerId) { decide('poll', status); continue }
-    if (status === 'pending' && !run.runnerId && run.sentAt) {
+    const submissionErrorCode = String(/** @type {Record<string, unknown>} */ (run.raw || {}).submissionErrorCode || '')
+    const maybeCreated = (status === 'pending' || AMBIGUOUS_SUBMISSION_CODES.has(submissionErrorCode)) && !run.runnerId && run.sentAt
+    if (maybeCreated) {
       ambiguous.push(`${instanceId} (sent ${run.sentAt})`)
       if (force) decide('resubmit', 'sent without a saved runner; resubmitting because --force was given')
       continue
@@ -436,7 +440,7 @@ function reconcileStepInstances({ stepState, flowStep, completedStepStates, runS
     decide('resubmit', failureCode ? `failed: ${failureCode}` : `failed: ${status || 'unknown'}`)
   }
   if (ambiguous.length > 0 && !force) {
-    return stop('resume_ambiguous_submission', `A submission may already exist remotely for ${ambiguous.join(', ')}: nax sent it but crashed before saving the runner. Check the Netlify agent runs page, then rerun with --force to resubmit (a duplicate is possible).`)
+    return stop('resume_ambiguous_submission', `A submission may already exist remotely for ${ambiguous.join(', ')}: nax sent it but never saved a runner id (a crash or a failed response after sending). Check the Netlify agent runs page, then rerun with --force to resubmit (a duplicate is possible).`)
   }
   if (followUp) {
     for (const action of actions) {

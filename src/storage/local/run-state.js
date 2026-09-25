@@ -286,8 +286,8 @@ function isDashboardRetryReplacement(existingRun = {}, incomingRun = {}) {
  * @param {Record<string, unknown>} record
  */
 function archiveAttempt(archive, record) {
-  const attemptId = String(record.attemptId || '')
-  if (!attemptId) return
+  // Records from runs saved before attempt ids existed are keyed by their runner/session/status.
+  const attemptId = String(record.attemptId || '') || `legacy:${record.runnerId || ''}:${record.sessionId || ''}:${record.status || ''}`
   const known = archive.get(attemptId)
   if (known && isTerminalRunStatus(known.status) && !isTerminalRunStatus(record.status)) return
   archive.set(attemptId, record)
@@ -348,7 +348,7 @@ function mergeExistingStateForWrite(existingState, incomingState) {
       if (existingRun) mergeRunDurableFields(existingRun, incomingRun)
     }
     const currentAttemptIds = new Set(incomingStep.runs.map((run) => run?.attemptId).filter(Boolean))
-    const attempts = [...archive.values()].filter((record) => !currentAttemptIds.has(record.attemptId))
+    const attempts = [...archive.values()].filter((record) => !record.attemptId || !currentAttemptIds.has(record.attemptId))
     if (attempts.length > 0) incomingStep.attempts = attempts
   }
   return incomingState

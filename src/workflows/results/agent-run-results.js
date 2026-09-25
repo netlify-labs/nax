@@ -227,11 +227,23 @@ function aggregateRunUsage(runs = []) {
   }, {})
 }
 
+/**
+ * Runs whose cost counts toward a step: current attempts plus archived superseded attempts,
+ * each attempt exactly once.
+ * @param {import('../../types').WorkflowStep} step
+ */
+function billableRunsForStep(step = {}) {
+  const runs = step.runs || []
+  const currentAttemptIds = new Set(runs.map((run) => run.attemptId).filter(Boolean))
+  const superseded = (step.attempts || []).filter((attempt) => !attempt.attemptId || !currentAttemptIds.has(attempt.attemptId))
+  return [...runs, ...superseded]
+}
+
 function usageSummariesForRunState(runState = {}, options = {}) {
   const steps = []
   let total = {}
   for (const step of runState.steps || []) {
-    const usage = aggregateRunUsage(step.runs || [])
+    const usage = aggregateRunUsage(billableRunsForStep(step))
     if (!hasUsage(usage)) continue
     steps.push({
       id: step.id,

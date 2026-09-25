@@ -1,4 +1,6 @@
 const { normalizeAgentList } = require('../../core/agents/selection')
+const { randomUUID } = require('crypto')
+const { supersedeRun } = require('../../workflows/engine/attempts')
 const {
   getAgentProviderLabel,
   normalizeProviderEffortMap,
@@ -254,6 +256,8 @@ function retryTarget(durable, body = {}) {
 function retryReplacementRun(run, retry, extra = {}) {
   return {
     ...run,
+    attemptId: randomUUID(),
+    sentAt: '',
     status: 'pending',
     runnerId: '',
     sessionId: '',
@@ -319,7 +323,7 @@ async function retryAgentRun({ projectRoot, durable, body = {}, env, submitRun =
   })
   replacement.status = 'retrying'
   replacement.runnerId = `pending-retry-${replacement.raw.dashboardRetry.requestedAt.replace(/[^0-9A-Za-z]+/g, '-')}-${target.agent}`
-  target.step.runs[target.runIndex] = replacement
+  supersedeRun(durable, target.step, target.runIndex, replacement)
   target.step.status = 'running'
   durable.status = 'running'
   saveRunState(durable)

@@ -225,3 +225,9 @@ test('the flow digest changes when the findings declaration changes', async () =
   write(['findings:', '  step: one', '  adapter: review-consensus'])
   assert.notEqual(flowDigest(await loadFlow('digest-flow', { flowsDir: tmp })), without)
 })
+
+test('the bundled review flow declares findings from its synthesize step', async () => {
+  const { loadFlow } = require('../../src/workflows/catalog/flows')
+  const flow = await loadFlow('review')
+  assert.deepEqual(/** @type {Record<string, unknown>} */ (flow).findings, { step: 'synthesize', adapter: 'review-consensus' })
+})

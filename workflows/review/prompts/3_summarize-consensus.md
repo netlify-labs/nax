@@ -58,7 +58,8 @@ Start your output with `## 2. Structured Consensus` as a fenced JSON block using
       "claim": "One-sentence consensus finding",
       "evidence": "Why multiple reviewers converged on this",
       "suggested_fix": "Concrete next action",
-      "confidence": "high"
+      "confidence": "high",
+      "agents": ["claude", "gemini"]
     }
   ],
   "contested_findings": [],
@@ -70,6 +71,7 @@ Rules:
 
 - `category` should usually be `defect` or `polish`.
 - `status` should distinguish `open`, `already_fixed`, `merge_dependent`, or `dropped`.
+- `agents` lists the agents whose findings this item merges (use their agent names, e.g. `claude`, `codex`).
 - Keep the JSON concise; use prose sections for reasoning.
 
 ## Output

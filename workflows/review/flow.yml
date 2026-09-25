@@ -2,6 +2,10 @@ id: review
 title: Review
 description: Review, cross-review, and synthesize findings with multiple Netlify agents.
 
+findings:
+  step: synthesize
+  adapter: review-consensus
+
 defaults:
   transport: auto
   notify: false

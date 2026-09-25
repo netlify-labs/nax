@@ -1,4 +1,4 @@
-import type { AgentRunRequest, AgentRunResponse, DashboardRun, DryRunOptions, DryRunResponse, HealthResponse, RunAgentCancelResponse, RunAgentTarget, RunDetailsResponse, RunFollowupRequest, RunFollowupResponse, RunGraphResponse, RunRetryRequest, RunRetryResponse, RunsResponse, StartRunResponse, WorkflowGraphResponse, WorkflowListResponse } from './types'
+import type { AgentRunRequest, AgentRunResponse, DashboardRun, DryRunOptions, DryRunResponse, FindingsArtifact, HealthResponse, RunAgentCancelResponse, RunAgentTarget, RunDetailsResponse, RunFollowupRequest, RunFollowupResponse, RunGraphResponse, RunRetryRequest, RunRetryResponse, RunsResponse, StartRunResponse, WorkflowGraphResponse, WorkflowListResponse } from './types'
 
 type DashboardWindow = Window & {
   NAX_DASHBOARD_API_BASE?: string
@@ -322,6 +322,10 @@ export function listRuns(options: { limit?: number; cursor?: string } = {}): Pro
 
 export function getRunGraph(id: string): Promise<RunGraphResponse> {
   return requestJson<RunGraphResponse>(`/api/runs/${encodeURIComponent(id)}/graph`)
+}
+
+export function getRunFindings(id: string): Promise<{ findings: FindingsArtifact | null }> {
+  return requestJson<{ findings: FindingsArtifact | null }>(`/api/runs/${encodeURIComponent(id)}/findings`)
 }
 
 export function getRunDetails(id: string): Promise<RunDetailsResponse> {

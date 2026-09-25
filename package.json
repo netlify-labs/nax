@@ -41,7 +41,7 @@
     "dashboard:typecheck": "tsc -p src/dashboard/web/tsconfig.json",
     "dashboard:build": "vite build --config src/dashboard/web/vite.config.mjs",
     "dashboard:preview": "vite preview --config src/dashboard/web/vite.config.mjs",
-    "dashboard:smoke": "playwright test tests/e2e/dashboard.spec.js tests/e2e/dashboard-flow-diagnostics.spec.js",
+    "dashboard:smoke": "playwright test tests/e2e/dashboard.spec.js tests/e2e/dashboard-flow-diagnostics.spec.js tests/e2e/dashboard-findings.spec.js",
     "probe:model-effort": "node scripts/probe-agent-runner-model-effort.mjs",
     "canary:multi-instance": "node scripts/run-multi-instance-canary.mjs",
     "canary:mcp-agent": "node scripts/run-mcp-agent-canary.mjs",

@@ -4,7 +4,8 @@ import { Ban, Check, ChevronsDownUp, ChevronsUpDown, ChevronDown, ChevronRight, 
 import { openLocalFile } from '../api'
 import { agentInstanceId, instanceDisplayName, instanceFromRun } from '../agent-instances'
 import { useApproveHumanReviewGateMutation, useCancelFollowupRunMutation, useCancelHumanReviewGateMutation, useCancelWorkflowRunMutation, useRetryAgentRunMutation } from '../queries/dashboard-mutations'
-import { useRunDetailsQuery } from '../queries/dashboard-queries'
+import { useRunDetailsQuery, useRunFindingsQuery } from '../queries/dashboard-queries'
+import { FindingsPanel } from './FindingsPanel'
 import { agentLabel, isDoneStatus, recordList, recordValue, runId, statusColor, statusLabel, usageSummaryLabel, workflowName } from '../run-format'
 import { StatusBadge } from './StatusBadge'
 import { extractMarkdownToc } from '../run-details-toc'
@@ -704,6 +705,7 @@ export function RunDetailsModal({
       return shouldPollRunDetails(response, queryEntries) ? 2500 : false
     },
   })
+  const findingsQuery = useRunFindingsQuery(detailsRunId, { enabled: opened && Boolean(detailsRunId) })
   const detailsResponse = detailsQuery.data || null
   const detailsLoading = detailsQuery.isPending && Boolean(detailsRunId)
   const detailsError = detailsQuery.error instanceof Error ? detailsQuery.error.message : detailsQuery.error ? String(detailsQuery.error) : ''
@@ -927,6 +929,7 @@ export function RunDetailsModal({
             </Alert>
           ) : null}
           {selectionWarning ? <Alert color="yellow" variant="light">{selectionWarning}</Alert> : null}
+          <FindingsPanel artifact={findingsQuery.data?.findings} />
           <Box className="run-details-layout">
             {timelineEntries.length > 0 ? (
               <RunDetailsTimeline

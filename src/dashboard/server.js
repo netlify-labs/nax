@@ -373,7 +373,7 @@ function isReadOnlyDashboardApiPath(pathname) {
   if (/^\/api\/run-plans\/[^/]+$/.test(pathname)) return true
   if (/^\/api\/workflows\/[^/]+(?:\/graph)?$/.test(pathname)) return true
   if (/^\/api\/runs\/[^/]+\/artifacts\/[^/]+$/.test(pathname)) return true
-  return /^\/api\/runs\/[^/]+(?:\/graph|\/details|\/events\.json)?$/.test(pathname)
+  return /^\/api\/runs\/[^/]+(?:\/graph|\/details|\/findings|\/events\.json)?$/.test(pathname)
 }
 
 /** @param {string} pathname */

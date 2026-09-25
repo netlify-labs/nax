@@ -399,6 +399,150 @@ function humanReviewPauseError(runState, stepState) {
 }
 
 /**
+ * Shared context for submitting and settling one step's agent instances.
+ * @typedef {{
+ *   runState: import('../../types').WorkflowRunState,
+ *   stepState: import('../../types').WorkflowStep,
+ *   step: import('../../types').WorkflowStep,
+ *   prompt: { title: string, name: string },
+ *   projectRoot: string,
+ *   branch: string,
+ *   netlify: { siteId: string, env: NodeJS.ProcessEnv },
+ *   netlifyFilter: { filter: string },
+ *   options: import('../../types').JsonMap,
+ *   runtimeEvents?: WorkflowRuntimeEvents,
+ *   submitAgentRun: typeof submitLocalAgentRun,
+ *   waitForAgentRuns: typeof waitForLocalAgentRuns,
+ *   reporter?: ReturnType<typeof makeStepProgressReporter> | null,
+ *   startedAt: number,
+ *   pendingSubmissionLabels?: Set<string>,
+ * }} StepInstanceContext
+ */
+
+/**
+ * Submits one instance: saves its send time first (so a crash mid-submit is detectable on resume),
+ * calls the Agent Runner, then persists the returned handle and links in place of the run.
+ * Shared by forward execution, resume, and dashboard retry.
+ * @param {StepInstanceContext} context
+ * @param {import('../../types').AgentRun} run
+ * @param {number} index
+ * @returns {Promise<import('../../types').AgentRun>}
+ */
+async function submitStepInstance(context, run, index) {
+  const { runState, stepState, step, prompt, projectRoot, branch, netlify, netlifyFilter, options, runtimeEvents, submitAgentRun, startedAt } = context
+  const label = `${titleCase(run.agent)} ${prompt.title}`
+  run.sentAt = new Date().toISOString()
+  stepState.runs[index] = run
+  saveRunState(runState)
+  const submitted = await submitAgentRun({
+    run,
+    projectRoot,
+    branch,
+    siteId: netlify.siteId,
+    netlifyFilter: netlifyFilter.filter,
+    env: netlify.env,
+    timeoutMinutes: Number(options.timeoutMinutes || 25),
+    onRetry: ({ error, nextAttempt, attempts, delayMs }) => {
+      const delaySeconds = Math.round(delayMs / 1000)
+      runtimeEvents?.agentStatus('retrying', run, stepState, step, {
+        attempt: nextAttempt,
+        attempts,
+        retryReason: error?.message || '',
+        delayMs,
+      })
+      console.log(`  ${label}: submission failed, retrying ${nextAttempt}/${attempts} in ${delaySeconds}s — ${error.message}`)
+    },
+  })
+  submitted.submittedAfterSeconds = Math.round((Date.now() - startedAt) / 1000)
+  addLocalRunLinks(submitted, projectRoot, options)
+  stepState.runs[index] = submitted
+  saveRunState(runState)
+  return submitted
+}
+
+/**
+ * Runs one instance end to end: submit, show its box, wait for the result when the step waits,
+ * and record a failed run (with the failing phase) instead of throwing.
+ * @param {StepInstanceContext} context
+ * @param {import('../../types').AgentRun} run
+ * @param {number} index
+ * @returns {Promise<import('../../types').AgentRun>}
+ */
+async function runStepInstance(context, run, index) {
+  const { runState, stepState, step, prompt, projectRoot, netlify, netlifyFilter, options, runtimeEvents, waitForAgentRuns, reporter, pendingSubmissionLabels } = context
+  const label = `${titleCase(run.agent)} ${prompt.title}`
+  /** @type {import('../../types').AgentRun} */
+  let activeRun = run
+  let phase = 'submit'
+  pendingSubmissionLabels?.add(label)
+  console.log(`- ${label}: submitting${run.existingRunnerId ? ' follow-up' : ''}...`)
+  runtimeEvents?.agentStatus('submitting', run, stepState, step, {
+    submit: step.submit || '',
+    existingRunnerId: run.existingRunnerId || '',
+  })
+  try {
+    const submitted = await submitStepInstance(context, run, index)
+    activeRun = submitted
+    runtimeEvents?.agentStatus('submitted', submitted, stepState, step, {
+      submittedAfterSeconds: submitted.submittedAfterSeconds,
+    })
+    console.log(`  ${label}: submitted after ${submitted.submittedAfterSeconds}s`)
+    pendingSubmissionLabels?.delete(label)
+    if (reporter) {
+      // Show the submitted run box before polling begins, so wait-for-results
+      // flows surface the runner/session/URL up front like fire-and-forget flows do.
+      const submittedBox = formatSubmittedLocalRunBoxes({ runs: [submitted], prompt, projectRoot, options })
+      if (submittedBox) console.log(`\n${submittedBox}`)
+      phase = 'wait'
+      const [terminalRun] = await waitForLocalRunSubset({
+        runState,
+        stepState,
+        step,
+        runs: [submitted],
+        reporter,
+        options,
+        projectRoot,
+        netlify,
+        netlifyFilter: netlifyFilter.filter,
+        runtimeEvents,
+        initialDelayMs: 0,
+        waitForAgentRuns,
+      })
+      activeRun = terminalRun || submitted
+    }
+    return activeRun
+  } catch (error) {
+    const failedRun = {
+      ...activeRun,
+      status: 'failed',
+      resultText: error?.message || String(error || 'Submission failed'),
+      raw: {
+        ...activeRun.raw,
+        submissionError: error?.message || String(error || 'Submission failed'),
+        failurePhase: phase,
+      },
+    }
+    stepState.runs[index] = failedRun
+    saveRunState(runState)
+    runtimeEvents?.agentStatus('failed', failedRun, stepState, step, {
+      message: error?.message || String(error || 'Submission failed'),
+      phase,
+    })
+    console.log(`  ${label}: ${phase} failed — ${conciseErrorMessage(error)}`)
+    reporter?.updateRun({
+      run: failedRun,
+      state: 'failed',
+      error: failedRun.resultText,
+      terminal: true,
+      terminalFailure: true,
+    })
+    return failedRun
+  } finally {
+    pendingSubmissionLabels?.delete(label)
+  }
+}
+
+/**
  * Starts (or restarts) a step's durable record. A step that already has a record, for example one
  * being re-executed on resume, is reset in place so each step id appears once and keeps its
  * position and NN- artifact directory.
@@ -1010,105 +1154,24 @@ async function executeLocalFlow({ flow, steps, options, runState, projectRoot, c
     })
     let submissions
     try {
-      submissions = await mapInWaves(runs, MAX_PARALLEL_RUNS, async (run, index) => {
-        const label = `${titleCase(run.agent)} ${prompt.title}`
-        /** @type {import('../../types').AgentRun} */
-        let activeRun = run
-        let phase = 'submit'
-        pendingSubmissionLabels.add(label)
-        console.log(`- ${label}: submitting${run.existingRunnerId ? ' follow-up' : ''}...`)
-        runtimeEvents?.agentStatus('submitting', run, stepState, step, {
-          submit: step.submit || '',
-          existingRunnerId: run.existingRunnerId || '',
-        })
-        try {
-          // Record the send time before the remote call so a crash mid-submit is detectable on resume.
-          run.sentAt = new Date().toISOString()
-          stepState.runs[index] = run
-          saveRunState(runState)
-          const submitted = await submitAgentRun({
-            run,
-            projectRoot,
-            branch,
-            siteId: netlify.siteId,
-            netlifyFilter: netlifyFilter.filter,
-            env: netlify.env,
-            timeoutMinutes: Number(options.timeoutMinutes || 25),
-            onRetry: ({ error, nextAttempt, attempts, delayMs }) => {
-              const delaySeconds = Math.round(delayMs / 1000)
-              runtimeEvents?.agentStatus('retrying', run, stepState, step, {
-                attempt: nextAttempt,
-                attempts,
-                retryReason: error?.message || '',
-                delayMs,
-              })
-              console.log(`  ${label}: submission failed, retrying ${nextAttempt}/${attempts} in ${delaySeconds}s — ${error.message}`)
-            },
-          })
-          const elapsedSeconds = Math.round((Date.now() - startedAt) / 1000)
-          submitted.submittedAfterSeconds = elapsedSeconds
-          activeRun = submitted
-          addLocalRunLinks(submitted, projectRoot, options)
-          stepState.runs[index] = submitted
-          saveRunState(runState)
-          runtimeEvents?.agentStatus('submitted', submitted, stepState, step, {
-            submittedAfterSeconds: elapsedSeconds,
-          })
-          console.log(`  ${label}: submitted after ${elapsedSeconds}s`)
-          pendingSubmissionLabels.delete(label)
-          if (reporter) {
-            // Show the submitted run box before polling begins, so wait-for-results
-            // flows surface the runner/session/URL up front like fire-and-forget flows do.
-            const submittedBox = formatSubmittedLocalRunBoxes({ runs: [submitted], prompt, projectRoot, options })
-            if (submittedBox) console.log(`\n${submittedBox}`)
-            phase = 'wait'
-            const [terminalRun] = await waitForLocalRunSubset({
-              runState,
-              stepState,
-              step,
-              runs: [submitted],
-              reporter,
-              options,
-              projectRoot,
-              netlify,
-              netlifyFilter: netlifyFilter.filter,
-              runtimeEvents,
-              initialDelayMs: 0,
-              waitForAgentRuns,
-            })
-            activeRun = terminalRun || submitted
-          }
-          return activeRun
-        } catch (error) {
-          const failedRun = {
-            ...activeRun,
-            status: 'failed',
-            resultText: error?.message || String(error || 'Submission failed'),
-            raw: {
-              ...activeRun.raw,
-              submissionError: error?.message || String(error || 'Submission failed'),
-              failurePhase: phase,
-            },
-          }
-          stepState.runs[index] = failedRun
-          saveRunState(runState)
-          runtimeEvents?.agentStatus('failed', failedRun, stepState, step, {
-            message: error?.message || String(error || 'Submission failed'),
-            phase,
-          })
-          console.log(`  ${label}: ${phase} failed — ${conciseErrorMessage(error)}`)
-          reporter?.updateRun({
-            run: failedRun,
-            state: 'failed',
-            error: failedRun.resultText,
-            terminal: true,
-            terminalFailure: true,
-          })
-          return failedRun
-        } finally {
-          pendingSubmissionLabels.delete(label)
-        }
-      })
+      const instanceContext = {
+        runState,
+        stepState,
+        step,
+        prompt,
+        projectRoot,
+        branch,
+        netlify,
+        netlifyFilter,
+        options,
+        runtimeEvents,
+        submitAgentRun,
+        waitForAgentRuns,
+        reporter,
+        startedAt,
+        pendingSubmissionLabels,
+      }
+      submissions = await mapInWaves(runs, MAX_PARALLEL_RUNS, (run, index) => runStepInstance(instanceContext, run, index))
     } finally {
       stopSubmissionHeartbeat()
     }
@@ -1254,6 +1317,8 @@ async function resumeLocalFlow({ flow, runState, projectRoot, submitAgentRun = s
 }
 
 module.exports = {
+  runStepInstance,
+  submitStepInstance,
   addLocalRunLinks,
   applyArchiveResultToRunner,
   archiveEligibleCompletedLocalRuns,

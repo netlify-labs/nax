@@ -203,6 +203,14 @@ function recoveryGuidance(code, toolName, details) {
       }],
     }
   }
+  if (code === 'invalid_flow' || code === 'flow_load_failed') {
+    const flowId = typeof details.flowId === 'string' ? details.flowId : ''
+    const lintCommand = `nax lint${flowId ? ` ${flowId}` : ''} --json`
+    const fix = code === 'invalid_flow'
+      ? `Fix the listed diagnostics in the flow file, then call workflow_plan again; \`${lintCommand}\` shows the same list.`
+      : `The flow file could not be parsed. Fix its syntax, then call workflow_plan again; \`${lintCommand}\` shows the load error.`
+    return { fix, actions: [{ kind: 'command', command: lintCommand }] }
+  }
   if (code === 'idempotency_conflict') return { fix: 'Review the differing intent, then generate a new request_id instead of reusing the old key.', actions: [] }
   if (code === 'mutation_in_progress') return {
     fix: 'Do not submit the mutation again; refresh the durable run while the original request is reconciled.',

@@ -77,6 +77,7 @@ export type Target = {
   sourceType: string
   verified: boolean
   caveats: string[]
+  pullRequest?: { number: number, url: string, isCrossRepository: boolean }
 }
 
 export type DryRunOptions = {

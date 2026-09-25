@@ -48,6 +48,7 @@
  *   sourceType?: string,
  *   verified?: boolean,
  *   caveats?: string[],
+ *   pullRequest?: { number: number, url: string, isCrossRepository: boolean },
  *   agent?: string,
  *   mode?: string,
  *   status?: string,

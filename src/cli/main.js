@@ -72,6 +72,7 @@ const { persistAgentSessionArtifact } = require('../workflows/artifacts/agent-se
 const { listHandoffSources, readHandoffSource, relativeDisplayPath } = require('../workflows/followups/handoff-sources')
 const { handleCi } = require('./commands/ci')
 const { handleLint } = require('./commands/lint')
+const { handleFindingsHandoff } = require('./commands/findings')
 const { flowDigest } = require('../workflows/catalog/flow-manifest')
 const {
   AD_HOC_RUN_CHOICE,
@@ -1202,6 +1203,14 @@ async function runSingleGithubAgent({ projectRoot, agent, promptText, source, op
 }
 
 async function handleHandoff(runId, options) {
+  if (options.findings) {
+    handleFindingsHandoff({
+      projectRoot: resolveProjectRoot(String(options.projectRoot || ''), { cwd: process.cwd() }),
+      runId: String(runId || options.runId || ''),
+      json: options.json === true,
+    })
+    return
+  }
   const selected = readSelectedHandoffWithFallback(runId, options, { cwd: process.cwd() })
   const projectRoot = selected.projectRoot
   let handoff = selected.handoff

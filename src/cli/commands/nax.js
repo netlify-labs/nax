@@ -513,6 +513,8 @@ function buildNaxProgram({
     .option('--copy-path', 'Copy the selected summary path to the clipboard and exit')
     .option('--open', 'Open the selected summary file')
     .option('--path', 'Print the selected summary path')
+    .option('--findings', 'Print the structured findings for a workflow run')
+    .option('--json', 'With --findings, print the findings.json artifact')
     .option('--agent <name>', 'Agent for a fresh handoff run, e.g. codex')
     .option('--flow <id>', 'Workflow id to run with the summary as context')
     .option('--transport <transport>', 'Transport for chained workflows: auto, github-actions, netlify-api, local-machine', 'auto')

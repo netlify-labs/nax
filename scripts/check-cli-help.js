@@ -32,6 +32,10 @@ const targets = [
     mustContain: ['Usage: nax run agent [options] <type> [prompt...]'],
   },
   {
+    args: ['lint', '--help'],
+    mustContain: ['Usage: nax lint [options] [flows...]', '--strict'],
+  },
+  {
     args: ['dashboard', '--help'],
     mustContain: [
       'Usage: nax dashboard [options] [workflow]',

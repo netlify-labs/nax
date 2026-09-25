@@ -47,6 +47,7 @@ function makeProgram() {
       init: (options) => record('init', options),
       issue: (prompt, options) => record('issue', prompt, options),
       list: (options) => record('list', options),
+      lint: (flows, options) => record('lint', flows, options),
       mcp: (options) => record('mcp', options),
       mcpDoctor: (options) => record('mcpDoctor', options),
       mcpSetupClaude: (options) => record('mcpSetupClaude', options),

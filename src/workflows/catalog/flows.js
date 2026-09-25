@@ -798,6 +798,7 @@ function normalizeFlow(raw, { id, dir, file, source = {} }) {
  *   flow?: WorkflowFlow,
  *   validation: FlowValidation,
  *   loadError?: FlowLoadError,
+ *   stepIds: string[],
  *   shadowed: ShadowedFlowCandidate[],
  * }} FlowEntry
  */
@@ -827,11 +828,13 @@ async function loadFlowCandidate(source, dirName) {
       source,
       validation: { errors: [], warnings: [] },
       loadError: { code: 'flow_load_failed', message },
+      stepIds: [],
       shadowed: [],
     }
   }
   if (isFlowDisabled(raw)) return null
   const id = String(raw.id || dirName)
+  const stepIds = (Array.isArray(raw.steps) ? raw.steps : []).map((step, index) => String(step?.id || `step-${index + 1}`))
   try {
     const flow = normalizeFlow(raw, { id: dirName, dir, file, source })
     if (raw.id && String(raw.id) !== dirName) {
@@ -849,6 +852,7 @@ async function loadFlowCandidate(source, dirName) {
       source,
       flow,
       validation: { errors: [], warnings: flow.warnings || [] },
+      stepIds,
       shadowed: [],
     }
   } catch (error) {
@@ -857,7 +861,7 @@ async function loadFlowCandidate(source, dirName) {
       errors: [flowDiagnostic({ code: coded.code || 'invalid_flow', message: coded.message || String(error) })],
       warnings: [],
     }
-    return { status: 'invalid', id, dir, file, source, validation, shadowed: [] }
+    return { status: 'invalid', id, dir, file, source, validation, stepIds, shadowed: [] }
   }
 }
 

@@ -44,6 +44,7 @@ const TEAL_COLOR = '#0d9488'
  *   issue: (prompt: string | undefined, options: JsonMap) => CommandActionResult,
  *   costs: (options: JsonMap) => CommandActionResult,
  *   list: (options: JsonMap) => CommandActionResult,
+ *   lint: (flows: string[], options: JsonMap) => CommandActionResult,
  *   mcp: (options: JsonMap) => CommandActionResult,
  *   mcpDoctor: (options: JsonMap) => CommandActionResult,
  *   mcpSetupClaude: (options: JsonMap) => CommandActionResult,
@@ -536,6 +537,15 @@ function buildNaxProgram({
     .option('--json', 'Print available workflows as JSON')
     .option('--verbose', 'Include step count, models, and workflow location')
     .action((options, command) => settleAction(handlers.list(actionOptions(options, command))))
+
+  program
+    .command('lint [flows...]')
+    .description('Validate workflows and report every problem with a fix hint')
+    .option('--project-root <path>', 'Project root containing project workflows')
+    .option('--flows-dir <path>', 'Project workflow directory; repeatable', collectOption, [])
+    .option('--json', 'Print the lint report as JSON')
+    .option('--strict', 'Exit non-zero on warnings as well as errors')
+    .action((flows, options, command) => settleAction(handlers.lint(flows || [], actionOptions(options, command))))
 
   program
     .command('costs')

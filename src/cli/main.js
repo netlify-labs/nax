@@ -70,6 +70,7 @@ const { persistAgentRunnerArtifact } = require('../workflows/artifacts/agent-run
 const { persistAgentSessionArtifact } = require('../workflows/artifacts/agent-session-artifacts')
 const { listHandoffSources, readHandoffSource, relativeDisplayPath } = require('../workflows/followups/handoff-sources')
 const { handleCi } = require('./commands/ci')
+const { handleLint } = require('./commands/lint')
 const {
   AD_HOC_RUN_CHOICE,
   formatFlowList,
@@ -576,6 +577,17 @@ function githubSafePromptBytes(options = {}) {
 async function loadClack() {
   clackModulePromise = clackModulePromise || import('@clack/prompts')
   return clackModulePromise
+}
+
+/** @param {string[]} flows @param {import('../types').JsonMap} [options] */
+async function handleLintCommand(flows = [], options = {}) {
+  const projectRoot = resolveProjectRoot(String(options.projectRoot || ''), { cwd: process.cwd() })
+  await handleLint({
+    ...flowLoadOptions(options, projectRoot),
+    flows,
+    json: options.json === true,
+    strict: options.strict === true,
+  })
 }
 
 async function handleList(options = {}) {
@@ -3132,6 +3144,7 @@ function buildProgram() {
       costs: handleCosts,
       issue: issueHandlers.handleIssue,
       list: handleList,
+      lint: handleLintCommand,
       mcp: handleMcp,
       mcpDoctor: handleMcpDoctor,
       mcpSetupClaude: handleMcpSetupClaude,

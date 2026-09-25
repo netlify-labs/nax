@@ -397,6 +397,28 @@ function humanReviewPauseError(runState, stepState) {
   return error
 }
 
+/**
+ * Starts (or restarts) a step's durable record. A step that already has a record, for example one
+ * being re-executed on resume, is reset in place so each step id appears once and keeps its
+ * position and NN- artifact directory.
+ * @param {import('../../types').WorkflowRunState} runState
+ * @param {import('../../types').WorkflowStep} step
+ * @returns {import('../../types').WorkflowStep}
+ */
+function startStepState(runState, step) {
+  const fields = { id: step.id, title: step.title, action: step.action, agents: step.agents, status: 'running', runs: [] }
+  runState.steps = runState.steps || []
+  const existing = runState.steps.find((candidate) => candidate.id === step.id)
+  if (!existing) {
+    runState.steps.push(fields)
+    return fields
+  }
+  const blobRefs = existing.blobRefs
+  for (const key of Object.keys(existing)) delete existing[key]
+  // Offloaded prompt blobs from earlier attempts still need cleanup, so their refs are kept.
+  return Object.assign(existing, fields, blobRefs ? { blobRefs } : {})
+}
+
 /** @param {RequireHumanReviewInput} param0 @returns {never} */
 function requireHumanReview({ runState, step, runtimeEvents }) {
   const existing = (runState.steps || []).find((candidate) => candidate.id === step.id)
@@ -844,15 +866,7 @@ async function executeLocalFlow({ flow, steps, options, runState, projectRoot, c
     }
     const inheritedRuns = completedContinuationRuns(step, completedStepStates)
     const prompt = loadStepPrompt(flow, step)
-    const stepState = {
-      id: step.id,
-      title: step.title,
-      action: step.action,
-      agents: step.agents,
-      status: 'running',
-      runs: [],
-    }
-    runState.steps.push(stepState)
+    const stepState = startStepState(runState, step)
     saveRunState(runState)
 
     const allSourceRuns = sourceRunsForStep(step, completedStepStates)

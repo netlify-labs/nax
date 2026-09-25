@@ -96,3 +96,31 @@ test('an interrupted run whose earlier step finished with survivors is still unf
   const finished = { ...runState, steps: [...runState.steps, { id: 'summarize', status: 'completed', runs: [{ status: 'completed', resultText: 'done' }] }] }
   assert.equal(isUnfinishedRun(finished), false)
 })
+
+test('re-executing a saved step reuses its record: one entry per id and a stable NN- artifact dir', async () => {
+  const { executeLocalFlow } = require('../../src/workflows/engine/local-executor')
+  const { projectRoot, flow, runState } = fixture()
+  const review = /** @type {Record<string, unknown>} */ (runState.steps[0])
+  review.status = 'failed'
+  review.runs = [{ agent: 'claude', instanceId: 'claude:auto:auto', status: 'failed' }, { agent: 'codex', instanceId: 'codex:auto:auto', status: 'failed' }]
+  runState.steps.push({ id: 'summarize', title: 'Summarize', action: 'issue', agents: ['codex'], status: 'running', runs: [] })
+  await executeLocalFlow({
+    flow,
+    steps: [flow.steps[0]],
+    options: runState.options,
+    runState,
+    projectRoot,
+    submitAgentRun: async ({ run }) => ({ ...run, status: 'submitted', runnerId: `runner-${run.agent}`, sessionId: `session-${run.agent}` }),
+    waitForAgentRuns: async ({ runs, onProgress, onTerminalRun }) => {
+      const completed = { ...runs[0], status: 'completed', resultText: `${runs[0].agent} result` }
+      onProgress({ run: completed, state: 'completed', terminal: true, terminalSuccess: true })
+      onTerminalRun(completed)
+      return [completed]
+    },
+  })
+  assert.deepEqual(runState.steps.map((step) => step.id), ['review', 'summarize'])
+  assert.equal(runState.steps[0].status, 'completed')
+  const stepsDir = path.join(runState.dir, 'artifacts', 'steps')
+  assert.ok(fs.readdirSync(stepsDir).includes('01-review'))
+  assert.ok(!fs.readdirSync(stepsDir).some((name) => /^0[3-9]-review$/.test(name)))
+})

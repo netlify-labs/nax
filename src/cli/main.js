@@ -514,11 +514,38 @@ function readRemoteInvisibleGitState(projectRoot) {
   }
 }
 
-async function confirmRemoteRunnerCanMissLocalChanges({ projectRoot, branch, options }) {
-  if (!process.stdin.isTTY || options.yes || options.dryRun) return
+/**
+ * Surfaces uncommitted or unpushed local changes that remote Netlify agent runners cannot see.
+ * Interactive runs confirm before continuing; non-interactive and `--yes`/`--force` runs warn on stderr and continue.
+ * @param {{
+ *   projectRoot: string,
+ *   branch?: string,
+ *   options?: { yes?: boolean, dryRun?: boolean },
+ *   isTTY?: boolean,
+ *   warn?: (line: string) => void,
+ * }} param0
+ * @returns {Promise<void>}
+ */
+async function checkRemoteInvisibleLocalChanges({
+  projectRoot,
+  branch = '',
+  options = {},
+  isTTY = Boolean(process.stdin.isTTY),
+  warn = (line) => console.error(line),
+}) {
+  if (options.dryRun) return
 
   const state = readRemoteInvisibleGitState(projectRoot)
   if (!state.dirty) return
+
+  if (!isTTY || options.yes) {
+    warn(`Warning: local git state not visible to remote Netlify agent runners on '${branch}' branch:`)
+    for (const line of state.lines) {
+      warn(`  ${line}`)
+    }
+    warn('Remote runners use the pushed branch head. Commit and push first if the run depends on these changes.')
+    return
+  }
 
   const clack = await loadClack()
   console.log('')
@@ -1933,6 +1960,11 @@ async function prepareInteractiveFlowRun({ flow, options, transport, projectRoot
     if (steps.length === 0) {
       throw new Error('No workflow steps have selected agents.')
     }
+    await checkRemoteInvisibleLocalChanges({
+      projectRoot,
+      branch: configuredOptions.branch,
+      options: configuredOptions,
+    })
     return {
       flow: configuredFlow,
       options: configuredOptions,
@@ -2027,7 +2059,7 @@ async function prepareInteractiveFlowRun({ flow, options, transport, projectRoot
   }
   materializedAgentConfigurations(configuredFlow, { ...configuredOptions, transport })
 
-  await confirmRemoteRunnerCanMissLocalChanges({
+  await checkRemoteInvisibleLocalChanges({
     projectRoot,
     branch: configuredOptions.branch,
     options: configuredOptions,
@@ -2643,6 +2675,12 @@ async function handleAdHocAgentRun(options = {}) {
     return
   }
 
+  await checkRemoteInvisibleLocalChanges({
+    projectRoot,
+    branch: configuredOptions.branch || currentGitBranch(projectRoot),
+    options: configuredOptions,
+  })
+
   if (isNetlifyApiTransport(transport)) {
     const netlifyOptions = await chooseNetlifyFilterOption({ projectRoot, invocationDir, options: configuredOptions })
     await runSingleNetlifyAgent({
@@ -3130,6 +3168,7 @@ module.exports = {
   isAdHocRunTarget,
   orderSingleRunTransports,
   parseCsv,
+  checkRemoteInvisibleLocalChanges,
   prepareInteractiveFlowRun,
   printFlowPlan,
   printSuccessBox,

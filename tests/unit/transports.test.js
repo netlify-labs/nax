@@ -38,6 +38,23 @@ test('hasLocalNetlifySite accepts env site id or Netlify state but not build con
   assert.equal(hasLocalNetlifySite(tmp, {}), true)
 })
 
+test('hasLocalNetlifySite detects a linked site in a subdirectory', () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'nax-transport-test-'))
+  const siteDir = path.join(tmp, 'sites', 'app')
+  fs.mkdirSync(path.join(siteDir, '.netlify'), { recursive: true })
+  fs.writeFileSync(path.join(siteDir, 'netlify.toml'), '[build]\n')
+  fs.writeFileSync(path.join(siteDir, '.netlify', 'state.json'), JSON.stringify({ siteId: 'nested-site' }))
+  assert.equal(hasLocalNetlifySite(tmp, {}), true)
+})
+
+test('hasLocalNetlifySite ignores an unlinked netlify.toml in a subdirectory', () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'nax-transport-test-'))
+  const siteDir = path.join(tmp, 'sites', 'app')
+  fs.mkdirSync(siteDir, { recursive: true })
+  fs.writeFileSync(path.join(siteDir, 'netlify.toml'), '[build]\n')
+  assert.equal(hasLocalNetlifySite(tmp, {}), false)
+})
+
 test('hasNetlifyAuthToken accepts env token or Netlify CLI config token', () => {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'nax-transport-home-'))
   assert.equal(hasNetlifyAuthToken({ NETLIFY_AUTH_TOKEN: 'token-from-env' }, home), true)
@@ -113,6 +130,20 @@ test('pinned model or effort forces Netlify API and explicit GitHub fails closed
       configurations: [{ agent: 'codex', model: 'gpt-5.6-sol' }],
     }),
     /Netlify API transport.*unavailable/,
+  )
+})
+
+test('pinned config error threads the netlify-api detection reason', () => {
+  assert.throws(
+    () => resolveTransportForAgentConfigurations({
+      requested: 'auto',
+      detections: [
+        { id: 'github', available: false },
+        { id: 'netlify-api', available: false, reason: 'Netlify CLI is installed, but no local site context was detected.' },
+      ],
+      configurations: [{ agent: 'claude', model: 'claude-fable-5', effort: 'high' }],
+    }),
+    /no local site context was detected/,
   )
 })
 

@@ -11,6 +11,7 @@ const {
   formatCommandForError,
   latestSessionFromList,
   listAgentSessions,
+  listLinkedNetlifySites,
   resolveNetlifyProjectTarget,
   showAgentRun,
   stopAgentRun,
@@ -20,6 +21,53 @@ const {
 
 const REQUEST_ID = '11111111-1111-4111-8111-111111111111'
 const FOLLOWUP_ID = '22222222-2222-4222-8222-222222222222'
+
+function linkedRoot() {
+  return fs.mkdtempSync(path.join(os.tmpdir(), 'nax-linked-sites-'))
+}
+
+function writeStateSite(dir, siteId) {
+  fs.mkdirSync(path.join(dir, '.netlify'), { recursive: true })
+  fs.writeFileSync(path.join(dir, '.netlify', 'state.json'), JSON.stringify({ siteId }))
+}
+
+test('listLinkedNetlifySites resolves siteId from .netlify/state.json in nested dirs', () => {
+  const root = linkedRoot()
+  writeStateSite(path.join(root, 'sites', 'app'), 'state-site')
+  const sites = listLinkedNetlifySites(root)
+  assert.deepEqual(sites.map((s) => [s.dir, s.siteId]), [['sites/app', 'state-site']])
+})
+
+test('listLinkedNetlifySites resolves siteId from package.json netlifySiteId and netlifyProjectId', () => {
+  const root = linkedRoot()
+  const a = path.join(root, 'pkg-a')
+  const b = path.join(root, 'pkg-b')
+  fs.mkdirSync(a, { recursive: true })
+  fs.mkdirSync(b, { recursive: true })
+  fs.writeFileSync(path.join(a, 'package.json'), JSON.stringify({ name: 'a', netlifySiteId: 'pkg-site' }))
+  fs.writeFileSync(path.join(b, 'package.json'), JSON.stringify({ name: 'b', netlifyProjectId: 'proj-site' }))
+  const byDir = Object.fromEntries(listLinkedNetlifySites(root).map((s) => [s.dir, s.siteId]))
+  assert.equal(byDir['pkg-a'], 'pkg-site')
+  assert.equal(byDir['pkg-b'], 'proj-site')
+})
+
+test('listLinkedNetlifySites prefers .netlify/state.json over package.json fields', () => {
+  const root = linkedRoot()
+  const dir = path.join(root, 'both')
+  writeStateSite(dir, 'state-wins')
+  fs.writeFileSync(path.join(dir, 'package.json'), JSON.stringify({ netlifySiteId: 'pkg-loses' }))
+  const sites = listLinkedNetlifySites(root)
+  assert.deepEqual(sites.map((s) => s.siteId), ['state-wins'])
+})
+
+test('listLinkedNetlifySites ignores projects with no resolvable siteId', () => {
+  const root = linkedRoot()
+  const dir = path.join(root, 'unlinked')
+  fs.mkdirSync(dir, { recursive: true })
+  fs.writeFileSync(path.join(dir, 'netlify.toml'), '[build]\n  command = "npm run build"\n')
+  fs.writeFileSync(path.join(dir, 'package.json'), JSON.stringify({ name: 'unlinked' }))
+  assert.deepEqual(listLinkedNetlifySites(root), [])
+})
 
 /** @returns {import('nax-agent-runner-sdk').RunHandle} */
 function handle(overrides = {}) {

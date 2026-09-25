@@ -582,6 +582,50 @@ test('chooseNetlifyFilterOption does not require filters for non-workspace multi
   assert.equal(resolved, options)
 })
 
+function writeLinkedSite(dir, siteId) {
+  fs.mkdirSync(path.join(dir, '.netlify'), { recursive: true })
+  fs.writeFileSync(path.join(dir, '.netlify', 'state.json'), JSON.stringify({ siteId }))
+}
+
+test('chooseNetlifyFilterOption auto-selects a single linked site', async () => {
+  const projectRoot = tmpRoot()
+  writeLinkedSite(path.join(projectRoot, 'sites', 'app'), 'only-site')
+  const resolved = await chooseNetlifyFilterOption({ projectRoot, options: {} })
+  assert.equal(resolved.netlifySiteId, 'only-site')
+})
+
+test('chooseNetlifyFilterOption auto-selects a single linked site without a netlify.toml', async () => {
+  const projectRoot = tmpRoot()
+  writeLinkedSite(path.join(projectRoot, 'packages', 'cli'), 'no-toml-site')
+  const resolved = await chooseNetlifyFilterOption({ projectRoot, options: {} })
+  assert.equal(resolved.netlifySiteId, 'no-toml-site')
+})
+
+test('chooseNetlifyFilterOption rejects multiple linked sites in non-TTY mode', async () => {
+  const projectRoot = tmpRoot()
+  writeLinkedSite(path.join(projectRoot, 'sites', 'a'), 'site-a')
+  writeLinkedSite(path.join(projectRoot, 'sites', 'b'), 'site-b')
+  const originalIsTTY = Object.getOwnPropertyDescriptor(process.stdin, 'isTTY')
+  Object.defineProperty(process.stdin, 'isTTY', { configurable: true, value: false })
+  try {
+    await assert.rejects(
+      chooseNetlifyFilterOption({ projectRoot, options: {} }),
+      /Multiple linked Netlify sites/,
+    )
+  } finally {
+    if (originalIsTTY) Object.defineProperty(process.stdin, 'isTTY', originalIsTTY)
+    else delete process.stdin.isTTY
+  }
+})
+
+test('chooseNetlifyFilterOption respects an explicit --site-id over linked discovery', async () => {
+  const projectRoot = tmpRoot()
+  writeLinkedSite(path.join(projectRoot, 'sites', 'a'), 'site-a')
+  writeLinkedSite(path.join(projectRoot, 'sites', 'b'), 'site-b')
+  const resolved = await chooseNetlifyFilterOption({ projectRoot, options: { netlifySiteId: 'explicit' } })
+  assert.equal(resolved.netlifySiteId, 'explicit')
+})
+
 test('chooseNetlifyFilterOption still requires filters for JavaScript workspaces', async () => {
   const projectRoot = tmpRoot()
   fs.mkdirSync(path.join(projectRoot, 'frontend'), { recursive: true })

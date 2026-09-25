@@ -3,6 +3,7 @@ const fs = require('fs')
 const { spawnSync } = require('child_process')
 const {
   detectJavascriptWorkspace,
+  listLinkedNetlifySites,
   listNetlifyFilterCandidates,
 } = require('./local-runner')
 
@@ -77,6 +78,7 @@ const {
  *   options?: NetlifyCliOptions,
  *   detectWorkspace?: WorkspaceDetector,
  *   loadClack?: () => Promise<ClackSelectApi>,
+ *   listSites?: (projectRoot: string) => Array<{ siteId: string, dir: string, source: string }>,
  * }} ChooseNetlifyFilterInput
  */
 
@@ -301,6 +303,77 @@ function formatNetlifyWorkspaceFilterError(selectedSource, workspaceDetection = 
 }
 
 /**
+ * Merges a chosen linked site into CLI options, pointing at its netlify.toml when present.
+ * @param {NetlifyCliOptions} options
+ * @param {string} projectRoot
+ * @param {{ siteId: string, dir: string, source: string }} site
+ * @returns {NetlifyCliOptions}
+ */
+function targetOptionsForLinkedSite(options, projectRoot, site) {
+  const configRelative = site.dir === '.' ? 'netlify.toml' : path.join(site.dir, 'netlify.toml')
+  const hasConfig = fs.existsSync(path.join(path.resolve(projectRoot), configRelative))
+  return {
+    ...options,
+    netlifySiteId: site.siteId,
+    netlifySiteSource: site.source,
+    ...(hasConfig ? { netlifyConfig: configRelative } : {}),
+  }
+}
+
+/**
+ * Formats the non-interactive ambiguity error for multiple linked Netlify sites.
+ * @param {Array<{ siteId: string, dir: string }>} sites
+ * @returns {string}
+ */
+function formatLinkedSiteAmbiguity(sites) {
+  const lines = sites.map((site) => `- ${site.dir} (${site.siteId})`)
+  return [
+    'Multiple linked Netlify sites were found. Pass --site-id <site-id> or run in a TTY and choose one:',
+    ...lines,
+  ].join('\n')
+}
+
+/**
+ * Resolves which linked Netlify site a run should target. Exactly one linked
+ * site is used automatically; multiple prompt a selector (or require --site-id
+ * when non-interactive). Returns null when no linked site is found.
+ * @param {{
+ *   projectRoot?: string,
+ *   options?: NetlifyCliOptions,
+ *   loadClack?: () => Promise<ClackSelectApi>,
+ *   listSites?: (projectRoot: string) => Array<{ siteId: string, dir: string, source: string }>,
+ * }} input
+ * @returns {Promise<NetlifyCliOptions | null>}
+ */
+async function chooseLinkedNetlifySite({
+  projectRoot,
+  options = {},
+  loadClack = defaultLoadClack,
+  listSites = listLinkedNetlifySites,
+} = {}) {
+  const sites = listSites(projectRoot)
+  if (sites.length === 0) return null
+  if (sites.length === 1) return targetOptionsForLinkedSite(options, projectRoot, sites[0])
+  if (!process.stdin.isTTY || options.yes) {
+    // Typed so the dashboard can render its own site chooser instead of the CLI text.
+    const ambiguity = /** @type {Error & { code: string, sites: typeof sites }} */ (
+      new Error(formatLinkedSiteAmbiguity(sites))
+    )
+    ambiguity.code = 'multiple_linked_sites'
+    ambiguity.sites = sites
+    throw ambiguity
+  }
+  const clack = await loadClack()
+  const selected = await clack.select({
+    message: 'Multiple linked Netlify sites detected. Choose where to run Agent Runner.',
+    options: sites.map((site) => ({ value: site.siteId, label: `${site.dir} (${site.siteId})`, hint: '' })),
+  })
+  if (clack.isCancel(selected)) process.exit(0)
+  const site = sites.find((candidate) => candidate.siteId === selected) || sites[0]
+  return targetOptionsForLinkedSite(options, projectRoot, site)
+}
+
+/**
  * Resolves Netlify filter/config options from discovered project configs.
  * @param {ChooseNetlifyFilterInput} [input]
  * @returns {Promise<NetlifyCliOptions>}
@@ -311,8 +384,13 @@ async function chooseNetlifyFilterOption({
   options = {},
   detectWorkspace = detectJavascriptWorkspace,
   loadClack = defaultLoadClack,
+  listSites = listLinkedNetlifySites,
 } = {}) {
   if (options.filter) return options
+  if (!options.netlifySiteId) {
+    const linked = await chooseLinkedNetlifySite({ projectRoot, options, loadClack, listSites })
+    if (linked) return linked
+  }
   const candidates = listNetlifyFilterCandidates(projectRoot)
   if (candidates.length === 0) return options
   if (candidates.length === 1) {
@@ -378,8 +456,10 @@ async function chooseNetlifyFilterOption({
 }
 
 module.exports = {
+  chooseLinkedNetlifySite,
   chooseNetlifyFilterOption,
   configDirForNetlifyOptions,
+  formatLinkedSiteAmbiguity,
   formatNetlifyConfigAmbiguity,
   formatNetlifyWorkspaceFilterError,
   gitRepositoryRoot,

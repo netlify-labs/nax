@@ -371,10 +371,51 @@ function findNetlifyConfigPaths(projectRoot, { maxDepth = 6 } = {}) {
   return filterOutGitignored(configs, root)
 }
 
-/** @param {string} projectRoot @param {{ maxDepth?: number }} param1 */
-function findNetlifyStatePaths(projectRoot, { maxDepth = 6 } = {}) {
+/** Package.json fields that carry a Netlify site id, in priority order. */
+const NETLIFY_SITE_ID_PACKAGE_FIELDS = ['netlifySiteId', 'netlifyProjectId']
+
+/**
+ * Reads a Netlify site id from a directory's package.json.
+ * @param {string} dir
+ * @returns {string}
+ */
+function readSiteIdFromPackageJson(dir) {
+  try {
+    const pkg = JSON.parse(fs.readFileSync(path.join(dir, 'package.json'), 'utf8'))
+    for (const field of NETLIFY_SITE_ID_PACKAGE_FIELDS) {
+      const value = String(pkg[field] || '').trim()
+      if (value) return value
+    }
+  } catch {
+    return ''
+  }
+  return ''
+}
+
+/**
+ * Resolves a directory's linked Netlify site id, preferring .netlify/state.json,
+ * then package.json netlifySiteId/netlifyProjectId. A netlify.toml on its own
+ * carries no site id, so such directories resolve to an empty (unlinked) id.
+ * @param {string} dir
+ * @returns {{ siteId: string, source: string, statePath: string }}
+ */
+function resolveLinkedSiteForDir(dir) {
+  const state = readNetlifyState(dir)
+  if (state.siteId) return { siteId: state.siteId, source: state.statePath, statePath: state.statePath }
+  const packageSiteId = readSiteIdFromPackageJson(dir)
+  if (packageSiteId) return { siteId: packageSiteId, source: path.join(dir, 'package.json'), statePath: '' }
+  return { siteId: '', source: '', statePath: '' }
+}
+
+/**
+ * Finds directories that look like a Netlify project at or below the root.
+ * @param {string} projectRoot
+ * @param {{ maxDepth?: number }} [options]
+ * @returns {string[]}
+ */
+function findNetlifyProjectDirs(projectRoot, { maxDepth = 6 } = {}) {
   const root = path.resolve(projectRoot || process.cwd())
-  const states = []
+  const dirs = []
   const visit = (dir, depth) => {
     if (depth > maxDepth) return
     let entries = []
@@ -383,21 +424,18 @@ function findNetlifyStatePaths(projectRoot, { maxDepth = 6 } = {}) {
     } catch {
       return
     }
+    const names = new Set(entries.map((entry) => entry.name))
+    const hasState = names.has('.netlify') && fs.existsSync(path.join(dir, '.netlify', 'state.json'))
+    if (hasState || names.has('package.json') || names.has('netlify.toml')) dirs.push(dir)
     entries.sort((a, b) => a.name.localeCompare(b.name))
     for (const entry of entries) {
       if (!entry.isDirectory()) continue
-      const fullPath = path.join(dir, entry.name)
-      if (entry.name === '.netlify') {
-        const statePath = path.join(fullPath, 'state.json')
-        if (fs.existsSync(statePath)) states.push(statePath)
-        continue
-      }
       if (NETLIFY_CONFIG_SCAN_SKIP_DIRS.has(entry.name) || entry.name.startsWith('.')) continue
-      visit(fullPath, depth + 1)
+      visit(path.join(dir, entry.name), depth + 1)
     }
   }
   visit(root, 0)
-  return states
+  return filterOutGitignored(dirs, root)
 }
 
 /**
@@ -409,20 +447,14 @@ function findNetlifyStatePaths(projectRoot, { maxDepth = 6 } = {}) {
  */
 function listLinkedNetlifySites(projectRoot, options = {}) {
   const root = path.resolve(projectRoot || process.cwd())
-  return findNetlifyStatePaths(root, options).flatMap((statePath) => {
-    let siteId = ''
-    try {
-      siteId = String(JSON.parse(fs.readFileSync(statePath, 'utf8')).siteId || '').trim()
-    } catch {
-      siteId = ''
-    }
-    if (!siteId) return []
-    const configDir = path.dirname(path.dirname(statePath))
+  return findNetlifyProjectDirs(root, options).flatMap((dir) => {
+    const resolved = resolveLinkedSiteForDir(dir)
+    if (!resolved.siteId) return []
     return [{
-      siteId,
-      statePath,
-      source: path.relative(root, statePath) || path.join('.netlify', 'state.json'),
-      dir: path.relative(root, configDir) || '.',
+      siteId: resolved.siteId,
+      statePath: resolved.statePath,
+      source: path.relative(root, resolved.source) || resolved.source,
+      dir: path.relative(root, dir) || '.',
     }]
   })
 }
@@ -1431,7 +1463,6 @@ module.exports = {
   detectJavascriptWorkspace,
   formatCommandForError,
   findNetlifyConfigPaths,
-  findNetlifyStatePaths,
   inferNetlifyFilterFromCommand,
   listNetlifyFilterCandidates,
   listLinkedNetlifySites,

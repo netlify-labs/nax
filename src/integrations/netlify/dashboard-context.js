@@ -134,8 +134,8 @@ async function resolveDashboardNetlifyContext({
         configSource: selected.netlifyConfig || target.configSource,
       }
     } catch (error) {
-      if (error?.code === 'multiple_netlify_configs') {
-        const count = error.candidates?.length || candidates.length
+      if (error?.code === 'multiple_netlify_configs' || error?.code === 'multiple_linked_sites') {
+        const count = error.sites?.length || error.candidates?.length || candidates.length
         targetError = `Found ${count} Netlify apps in this repo, so no single Agent Runner target was auto-selected. Choose one from the linked sites below, or start nax with --filter <app>.`
       } else {
         targetError = error?.message || String(error || 'Could not resolve the Agent Runner site.')

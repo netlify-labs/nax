@@ -3,6 +3,7 @@ const path = require('path')
 const { spawnSync } = require('child_process')
 const { readLinkedSiteId } = require('./netlify/init')
 const { readNetlifyCliToken } = require('./netlify/auth')
+const { listLinkedNetlifySites } = require('./netlify/local-runner')
 
 const NETLIFY_API_TRANSPORT = 'netlify-api'
 /** @typedef {'github' | typeof NETLIFY_API_TRANSPORT} TransportId */
@@ -102,7 +103,8 @@ function hasNetlifyAuthToken(env = process.env, home) {
  * @returns {boolean}
  */
 function hasLocalNetlifySite(projectRoot, env = process.env) {
-  return Boolean(readLinkedSiteId(projectRoot, env))
+  if (readLinkedSiteId(projectRoot, env)) return true
+  return listLinkedNetlifySites(projectRoot).length > 0
 }
 
 /**
@@ -166,7 +168,7 @@ function resolveTransport(requested, detections) {
  *
  * @param {{
  *   requested?: string,
- *   detections: Array<Pick<TransportDetection, 'id' | 'available'>>,
+ *   detections: Array<Pick<TransportDetection, 'id' | 'available'> & Partial<Pick<TransportDetection, 'reason'>>>,
  *   configurations?: Array<{ agent?: string, model?: string, effort?: string }>,
  * }} input
  * @returns {TransportId}
@@ -191,8 +193,9 @@ function resolveTransportForAgentConfigurations({
   if (pinned && normalized === 'auto') {
     const netlifyApi = detections.find((transport) => transport.id === NETLIFY_API_TRANSPORT)
     if (!netlifyApi?.available) {
+      const reason = netlifyApi && 'reason' in netlifyApi ? netlifyApi.reason : ''
       throw new Error(
-        'Pinned model or effort configuration requires the Netlify API transport, but that transport is unavailable.',
+        `Pinned model or effort configuration requires the Netlify API transport, but that transport is unavailable.${reason ? ` ${reason}` : ''}`,
       )
     }
     return NETLIFY_API_TRANSPORT

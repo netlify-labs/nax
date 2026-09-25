@@ -38,6 +38,7 @@ export type Workflow = {
   defaults: Record<string, unknown>
   options: Record<string, unknown>
   steps: WorkflowStep[]
+  findings?: { step: string, adapter: string } | null
 }
 
 export type AgentInstanceConfiguration = {

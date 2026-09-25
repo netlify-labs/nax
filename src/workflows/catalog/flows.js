@@ -10,7 +10,7 @@ const {
   resolveAgentRunConfig,
 } = require('../../core/agents/configuration')
 const { resolveLineup } = require('../../core/agents/instances')
-const { TRANSPORT_ALIASES } = require('../../core/constants')
+const { FINDINGS_ADAPTER_IDS, TRANSPORT_ALIASES } = require('../../core/constants')
 
 const FLOWS_DIR = path.join(__dirname, '..', '..', '..', 'workflows')
 const DEFAULT_PROJECT_FLOWS_DIRS = ['.github/nax-flows']
@@ -630,8 +630,44 @@ function validateFlowStructure(flow, { existsSync = fs.existsSync } = {}) {
     }
   }
 
+  const findingsError = findingsDeclarationError(flow.findings, steps)
+  if (findingsError) errors.push(findingsError)
+
   warnings.push(...unusedPromptFileWarnings(flow, steps))
   return { errors, warnings }
+}
+
+/**
+ * Normalizes the optional `findings: { step, adapter }` flow key.
+ * @param {unknown} value
+ * @returns {{ step: string, adapter: string } | null}
+ */
+function normalizeFindingsDeclaration(value) {
+  if (value === undefined || value === null) return null
+  const record = value && typeof value === 'object' && !Array.isArray(value) ? /** @type {Record<string, unknown>} */ (value) : {}
+  return { step: String(record.step || '').trim(), adapter: String(record.adapter || '').trim() }
+}
+
+/**
+ * Validates a normalized findings declaration against the flow's steps and registered adapters.
+ * @param {{ step: string, adapter: string } | null | undefined} findings
+ * @param {import('../../types').WorkflowStep[]} steps
+ * @returns {FlowDiagnostic | null}
+ */
+function findingsDeclarationError(findings, steps) {
+  if (!findings) return null
+  const hint = `Set findings.step to an agent step id and findings.adapter to one of: ${formatAllowed(FINDINGS_ADAPTER_IDS)}.`
+  if (!FINDINGS_ADAPTER_IDS.includes(findings.adapter)) {
+    return flowDiagnostic({ code: 'invalid_findings_source', message: `findings.adapter "${findings.adapter}" is not a registered findings adapter.`, hint })
+  }
+  const step = steps.find((candidate) => String(candidate.id || '') === findings.step)
+  if (!step) {
+    return flowDiagnostic({ code: 'invalid_findings_source', message: `findings.step "${findings.step}" does not match any step.`, hint })
+  }
+  if (isHumanReviewStep(step)) {
+    return flowDiagnostic({ stepId: findings.step, code: 'invalid_findings_source', message: `findings.step "${findings.step}" is a human-review step, which produces no agent results.`, hint })
+  }
+  return null
 }
 
 /** @param {string} filePath @returns {string} */
@@ -730,6 +766,7 @@ function normalizeFlow(raw, { id, dir, file, source = {} }) {
     id: flowId,
     title: raw.title || flowId,
     description: raw.description || '',
+    findings: normalizeFindingsDeclaration(raw.findings),
     dir,
     file,
     source: source.type || 'bundled',

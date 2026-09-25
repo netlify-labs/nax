@@ -106,6 +106,7 @@
  *   id?: string,
  *   title?: string,
  *   description?: string,
+ *   findings?: { step: string, adapter: string } | null,
  *   disabled?: boolean,
  *   dir?: string,
  *   file?: string,

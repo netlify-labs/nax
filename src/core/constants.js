@@ -13,6 +13,9 @@ const CANCELLED_RUN_STATUS_VALUES = ['cancelled', 'canceled']
 /** @type {string[]} */
 const FAILED_RUN_STATUS_VALUES = ['failed', 'timeout']
 
+/** Findings adapter ids a flow may declare in `findings.adapter`; implementations live in src/workflows/findings. */
+const FINDINGS_ADAPTER_IDS = ['review-consensus']
+
 /**
  * Accepted transport request values mapped to their canonical transport.
  * @type {Record<'auto' | 'github' | 'github-actions' | 'actions' | 'netlify-api' | 'local' | 'local-machine' | 'machine', 'auto' | 'github' | 'netlify-api'>}
@@ -34,6 +37,7 @@ module.exports = {
   DEFAULT_AGENT_PROVIDERS,
   DEFAULT_FOLLOWUP_AGENTS,
   FAILED_RUN_STATUS_VALUES,
+  FINDINGS_ADAPTER_IDS,
   MAX_STEP_AGENT_INSTANCES,
   TERMINAL_RUN_STATUS_VALUES,
   TRANSPORT_ALIASES,

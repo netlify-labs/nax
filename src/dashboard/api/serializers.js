@@ -25,6 +25,7 @@ function publicFlow(flow = {}) {
     file: flow.file || '',
     defaults: flow.defaults || {},
     options: flow.options || {},
+    findings: flow.findings || null,
     steps: Array.isArray(flow.steps)
       ? flow.steps.map((step) => ({
         id: step.id || '',

@@ -170,3 +170,58 @@ test('printFlowPlan prints a carried lineup warning once', async () => {
   const occurrences = output.split('made-up-model-x" is not in NAX').length - 1
   assert.equal(occurrences, 1, output)
 })
+
+const FINDINGS_HEAD = [
+  'defaults:',
+  '  agents: [codex]',
+  'steps:',
+  '  - id: gate',
+  '    action: human-review',
+  '    submit: human-review',
+  '    waitFor: human-review',
+  '  - id: one',
+  '    prompt: prompts/one.md',
+]
+
+test('a findings declaration is normalized and kept on the loaded flow', async () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'nax-flow-findings-'))
+  const flowDir = path.join(tmp, 'findings-flow')
+  fs.mkdirSync(path.join(flowDir, 'prompts'), { recursive: true })
+  fs.writeFileSync(path.join(flowDir, 'prompts', 'one.md'), '---\ntitle: One\n---\n\nOne\n')
+  fs.writeFileSync(path.join(flowDir, 'flow.yml'), ['id: findings-flow', 'findings:', '  step: one', '  adapter: review-consensus', ...TWO_STEPS_HEAD, ''].join('\n'))
+  const { loadFlow } = require('../../src/workflows/catalog/flows')
+  const flow = await loadFlow('findings-flow', { flowsDir: tmp })
+  assert.deepEqual(/** @type {Record<string, unknown>} */ (flow).findings, { step: 'one', adapter: 'review-consensus' })
+})
+
+test('flows without a findings declaration normalize findings to null', async () => {
+  const { loadFlow } = require('../../src/workflows/catalog/flows')
+  const flow = await loadFlow('ideas')
+  assert.equal(/** @type {Record<string, unknown>} */ (flow).findings, null)
+})
+
+for (const [label, lines] of [
+  ['an unknown adapter', ['findings:', '  step: one', '  adapter: made-up-adapter']],
+  ['a missing step', ['findings:', '  step: nope', '  adapter: review-consensus']],
+  ['a human-review step', ['findings:', '  step: gate', '  adapter: review-consensus']],
+]) {
+  test(`invalid_findings_source for ${label}`, async () => {
+    const validation = await validationFor([...lines, ...FINDINGS_HEAD], { 'one.md': '---\ntitle: One\n---\n\nOne\n' })
+    const diagnostic = only(validation.errors, 'invalid_findings_source')
+    assert.ok(diagnostic.hint)
+  })
+}
+
+test('the flow digest changes when the findings declaration changes', async () => {
+  const { flowDigest } = require('../../src/workflows/catalog/flow-manifest')
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'nax-flow-findings-digest-'))
+  const flowDir = path.join(tmp, 'digest-flow')
+  fs.mkdirSync(path.join(flowDir, 'prompts'), { recursive: true })
+  fs.writeFileSync(path.join(flowDir, 'prompts', 'one.md'), '---\ntitle: One\n---\n\nOne\n')
+  const write = (findingsLines) => fs.writeFileSync(path.join(flowDir, 'flow.yml'), ['id: digest-flow', ...findingsLines, ...TWO_STEPS_HEAD, ''].join('\n'))
+  const { loadFlow } = require('../../src/workflows/catalog/flows')
+  write([])
+  const without = flowDigest(await loadFlow('digest-flow', { flowsDir: tmp }))
+  write(['findings:', '  step: one', '  adapter: review-consensus'])
+  assert.notEqual(flowDigest(await loadFlow('digest-flow', { flowsDir: tmp })), without)
+})

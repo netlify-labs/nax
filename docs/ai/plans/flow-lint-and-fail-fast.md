@@ -2,14 +2,14 @@
 id: 01M3CN9TY0YPY9MP9CXQSTD2HS
 status: draft
 createdAt: 2026-09-25T09:10:16-07:00
-updatedAt: 2026-09-25T12:10:00-07:00
+updatedAt: 2026-09-25T13:20:00-07:00
 origin: manual
 type: plan
 ---
 
 # Flow Lint + Fail-Fast Across CLI, Dashboard, MCP
 
-> Status: DRAFT v3. Codex review rounds 1 (runner `6ab6ae5ca90f294f6575eb87`) and 2 (runner `6ab6b79908b0baa3420c73b6`) have been integrated, and each claim was re-verified; see §8. Implementation order across plans: **this plan first** → findings → mid-step resume. Supersedes beads `nax-pup.1` / `nax-pup.2` and finishes Workstream B of `docs/ai/plans/nax-tier1-tier2-plan.md`, most of which already shipped.
+> Status: DRAFT v4. **STEADY STATE** per Codex round 3 (runner `6ab6c06b2c4a38051376e4f9`); its nits are integrated. Codex review rounds 1 (runner `6ab6ae5ca90f294f6575eb87`) and 2 (runner `6ab6b79908b0baa3420c73b6`) have been integrated, and each claim was re-verified; see §8. Implementation order across plans: **this plan first** → findings → mid-step resume. Supersedes beads `nax-pup.1` / `nax-pup.2` and finishes Workstream B of `docs/ai/plans/nax-tier1-tier2-plan.md`, most of which already shipped.
 
 ## 1. Why
 
@@ -51,6 +51,7 @@ The problems are how validation is surfaced, what it misses, and drift between p
   - A `load-failed` candidate (syntax/configorama error, so no readable `raw.id`) uses its directory name.
   - When `raw.id` differs from the directory name, emit warning `flow_id_mismatch`, so the non-obvious case shows up in lint. It keeps working as it does today.
 - **Shadowing, then selection:** candidates are grouped by identity in `flowSources()` priority order (project directories in configured order, then bundled, `flows.js:302-338`). The highest-priority candidate wins even when it is invalid or failed to load. Lower candidates are listed in `shadowed` and never activated.
+- **Disabled flows** (`isFlowDisabled(raw)`, checked right after load, `flows.js:725`) stay excluded exactly as today: they are not candidates and never shadow a lower-priority flow.
 - Throws from `normalizeFlow` before validation (malformed agent config, etc.) become `invalid` entries carrying a single diagnostic built from the thrown code and message.
 - `listFlows(options)` becomes a pure wrapper that returns `entries.filter(valid).map(e => e.flow)`. It does no printing and keeps its current return type.
 - `loadFlow(id)` resolves the winning entry directly:
@@ -135,6 +136,7 @@ No new wiring: `handleRunEngine` validates via `loadFlow` before submission (`sr
   - an invalid high-priority override of a valid lower-priority flow: `loadFlow(id)` throws `invalid_flow` and does NOT return the lower flow;
   - a load-failed high-priority directory named like a lower-priority flow shadows it by directory name;
   - `raw.id` different from the directory name: grouped by `raw.id`, with a `flow_id_mismatch` warning;
+  - a disabled high-priority flow does not shadow the lower-priority flow of the same id;
   - `normalizeFlow` pre-validation throw → `invalid` entry;
   - configorama syntax error → `load-failed`.
 - T0.2 `discoverFlowEntries` + `listFlows` wrapper + `loadFlow` resolution.
@@ -153,7 +155,9 @@ No new wiring: `handleRunEngine` validates via `loadFlow` before submission (`sr
 ### Phase 3: manifest pinning + prompt size (G4, G7)
 - T3.1 `flowManifest` / `flowDigest` + `requestHash`; `validatePlan` hook placed after the replay/wait/reconcile branches. Tests in `control-plane-planner.test.js` + `mcp-plan-tools.test.js`:
   - plan → edit prompt → start → 409, and the plan status is still `prepared`;
-  - start → edit prompt → replay the same request → the existing run binding is returned (no 409).
+  - start → edit prompt → replay the same request → the existing run binding is returned (no 409);
+  - a lost `claimStart` that recurses into a newly claimable state runs `validatePlan` against the newly read plan.
+  - Contracts: add `validatePlan(plan)` to the strict `WorkflowExecutionBackend` type (`src/contracts/control-plane.ts:567-570`) and `flowDigest` to the stored plan type, alongside the JS implementation.
 - T3.1b `runState.flowDigest` written in `createRunState`; the plan digest is passed through dashboard execution and asserted by the engine. Test: a mismatch between the plan digest and the loaded flow creates no run.
 - T3.2 `promptBytesByStep` lower bound; an oversized static prompt produces a plan warning.
 
@@ -194,6 +198,9 @@ Re-verified in code (2026-09-25).
 - **Accepted (blocking):** discovery identity is defined up front (id = `raw.id || dir`, load failures by directory name, `flow_id_mismatch` warning), because `normalizeFlow` prefers `raw.id` (`flows.js:627`). `validatePlan` runs after the replay/`starting`/ambiguous branches, not at entry.
 - **Accepted (nice-to-have):** Hono needs a test, not a refactor.
 - **Added for the resume plan:** runs now record `flowDigest` (producer side), which round 2 found missing.
+
+### Review round 3 (Codex) — integration record
+Verdict: STEADY STATE. Nits integrated: disabled flows never shadow (plus a test); `validatePlan` and `flowDigest` added to the strict TS contracts; the lost-claim recursion test.
 
 ## 9. Out of scope
 `nax flow new` scaffolder (`nax-pup.3`); control-flow keys (`when:`, `onFailure`); prompt template validation (no templating engine exists); JSON Schema export.

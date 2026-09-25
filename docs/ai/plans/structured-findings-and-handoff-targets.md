@@ -2,14 +2,14 @@
 id: 01M3CN9TWN39AFPTE94BKAFNFG
 status: draft
 createdAt: 2026-09-25T09:10:16-07:00
-updatedAt: 2026-09-25T12:10:00-07:00
+updatedAt: 2026-09-25T13:20:00-07:00
 origin: manual
 type: plan
 ---
 
 # Structured Findings (`findings.json`) + Handoff Targets
 
-> Status: DRAFT v3. Codex review rounds 1 (runner `6ab6ae5ca90f294f6575eb87`) and 2 (runner `6ab6b79908b0baa3420c73b6`) have been integrated, and each claim was re-verified against the code; see §9. Implementation order across plans: flow lint → findings → mid-step resume. Supersedes the design sketches in beads `nax-i9j`, `nax-i9j.1-.4`, `nax-u76` (2026-06-10, pre-restructure paths).
+> Status: DRAFT v4. **STEADY STATE** per Codex round 3 (runner `6ab6c06b2c4a38051376e4f9`); its nit is integrated. Codex review rounds 1 (runner `6ab6ae5ca90f294f6575eb87`) and 2 (runner `6ab6b79908b0baa3420c73b6`) have been integrated, and each claim was re-verified against the code; see §9. Implementation order across plans: flow lint → findings → mid-step resume. Supersedes the design sketches in beads `nax-i9j`, `nax-i9j.1-.4`, `nax-u76` (2026-06-10, pre-restructure paths).
 
 ## 1. Why
 
@@ -168,7 +168,7 @@ If the source step has more than one completed run (fan-out), findings from each
 Add `"agents": ["claude", "gemini"]` (the providers whose findings the consensus item merges) to the schema in `workflows/review/prompts/3_summarize-consensus.md`. It uses the same field name and meaning as the security synthesize prompt. It is one line of prompt, it is verifiable against known lineups, and it enables the model scorecard later. Per-finding source ids (`R2`) are deliberately NOT requested; they would need a verified id grammar across rounds.
 
 ### 4.6 PR identity persisted at run creation
-- `resolvePullRequestTarget` also returns `number` and `url` (add `number,url` to the `gh pr view --json` fields).
+- `resolvePullRequestTarget` requests `number,url` in addition to the current fields and returns `pullRequest: { number, url, isCrossRepository }` next to `{ branch, sha, fork }`. Each PR-selector branch passes that same object into `normalizeTarget`; non-PR targets omit it. The three-path tests assert this one exact shape.
 - `normalizeTarget` carries an optional `pullRequest: { number, url, isCrossRepository }`.
 - **Thread it through all three PR-selector return paths in `resolveTarget`** (`src/integrations/git/target.js:215-292`):
   1. `advisoryGithubTarget` (GitHub transport);
@@ -288,6 +288,9 @@ Every Codex claim was re-verified in code (2026-09-25).
 Re-verified in code (2026-09-25).
 - **Accepted (blocking):** `normalizeFlow` drops unknown keys (`flows.js:643`), so the `findings` declaration must be normalized, typed and in the manifest (T1.0); the adapter-id constant avoids a validator ↔ findings cycle. PR identity must go through the third, generic `normalizeTarget` path in `resolveTarget`, not just the two named builders.
 - **Accepted (nice-to-have):** a canonical fan-out `localId` with encoding; findings read only current attempts.
+
+### Review round 3 (Codex) — integration record
+Verdict: STEADY STATE. Nit integrated: a single exact `pullRequest` object shape from `resolvePullRequestTarget` through all three paths.
 
 ## 10. Out of scope
 Fuzzy cross-agent dedupe; editing or closing created issues; Linear/Jira; MCP mutations; model scorecard; widening follow-up prompt shrinking to audit flows.

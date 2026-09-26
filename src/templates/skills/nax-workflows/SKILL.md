@@ -148,7 +148,7 @@ The retry command submits a new follow-up session to the existing runner, waits 
 
 Remote agents keep running (and billing) on Netlify after the process that started them stops. Killing a local `nax` process, pressing Ctrl-C, or cancelling a GitHub Actions job does **not** reliably stop the Netlify agent runners it already created. Always stop both sides, then confirm nothing is still running.
 
-1. **Stop whatever launched the runs.** Locally, stop the `nax` process. In GitHub Actions (for example the PR-triggered `run-nax.yml` / `run-local-nax.yml` review workflows):
+1. **Stop whatever launched the runs.** Locally, stop the `nax` process. In GitHub Actions (for example `run-nax.yml` / `run-local-nax.yml`, or a PR-triggered review workflow in a consuming repo):
    ```bash
    gh run list --workflow run-nax.yml --status in_progress
    gh run list --workflow run-local-nax.yml --status in_progress

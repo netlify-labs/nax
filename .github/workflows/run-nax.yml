@@ -1,5 +1,6 @@
 name: Run Agent Workflow
 
+# Starts real Netlify agent runs (credits), so it runs only when triggered manually.
 on:
   workflow_dispatch:
     inputs:
@@ -23,8 +24,6 @@ on:
           - seo-audit - Audit metadata, crawlability, structured data, and page speed
           - unit-tests - Add focused unit tests for untested utility/domain code
           - ux-copy-polish - Improve UX polish, loading/empty states, and copy
-  pull_request:
-    types: [opened, synchronize, reopened]
 
 concurrency:
   group: run-nax-${{ github.event.pull_request.number || github.ref }}
@@ -32,7 +31,6 @@ concurrency:
 
 jobs:
   runAgentWorkflow:
-    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
     timeout-minutes: 180
     permissions:

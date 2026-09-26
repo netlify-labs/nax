@@ -80,6 +80,9 @@ function testPorts(authorizations) {
     async cancelRun(_scope, _actor, target) {
       return { run: runFixture(target.runId), cancelled: true, agentRunId: target.agentRunId, warnings: [] }
     },
+    async resumeRun(_scope, _actor, input) {
+      return { run: runFixture(input.runId), preview: { runId: input.runId }, replayed: false }
+    },
     async retryAgentRun(_scope, _actor, input) {
       return { run: runFixture(input.runId), previousAgentRunId: input.agentRunId, agentRun: agentRunFixture(input.runId, 'agent_retry'), replayed: false }
     },
@@ -143,6 +146,7 @@ test('control plane authorizes every operation before delegation', async () => {
   await controlPlane.getRun(scope, actor, 'run_test', { view: 'summary' })
   await controlPlane.waitForRun(scope, actor, 'run_test', '0', 10)
   await controlPlane.cancelRun(scope, actor, { runId: 'run_test' })
+  await controlPlane.resumeRun(scope, actor, { runId: 'run_test', requestId: 'request_resume' })
   await controlPlane.retryAgentRun(scope, actor, { runId: 'run_test', agentRunId: 'agent_old', requestId: 'request_retry' })
   await controlPlane.submitFollowup(scope, actor, { runId: 'run_test', agentRunId: 'agent_old', requestId: 'request_followup', prompt: 'Continue' })
   await controlPlane.resolveReviewGate(scope, actor, { runId: 'run_test', reviewGateId: 'gate_test', decision: 'approve' })
@@ -159,6 +163,7 @@ test('control plane authorizes every operation before delegation', async () => {
     'getRun',
     'waitForRun',
     'cancelRun',
+    'resumeRun',
     'retryAgentRun',
     'submitFollowup',
     'resolveReviewGate',
@@ -238,7 +243,7 @@ test('control plane emits value-free activity audits for success and failure', a
   const serialized = JSON.stringify(audits)
   assert.doesNotMatch(serialized, /must-not-enter|secret result|sensitive-value|Bearer/)
   assert.deepEqual(Object.keys(ACTIVITY_FOR_OPERATION), [
-    'getContext', 'listWorkflows', 'getWorkflow', 'createWorkflowPlan', 'createAgentRunPlan', 'startPlan', 'listRuns', 'getRun', 'waitForRun', 'cancelRun', 'retryAgentRun', 'submitFollowup', 'resolveReviewGate', 'getArtifact',
+    'getContext', 'listWorkflows', 'getWorkflow', 'createWorkflowPlan', 'createAgentRunPlan', 'startPlan', 'listRuns', 'getRun', 'waitForRun', 'cancelRun', 'resumeRun', 'retryAgentRun', 'submitFollowup', 'resolveReviewGate', 'getArtifact',
   ])
 })
 

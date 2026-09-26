@@ -27,6 +27,7 @@ One `nax mcp` process can route among several local projects. Call `context_get`
 | `run_get` | Read one bounded run view. | No |
 | `run_wait` | Wait for events or a state transition. | No |
 | `run_cancel` | Cancel one run or exact agent run. | Yes; destructive |
+| `run_resume` | Resume a failed or interrupted run in place. | Yes; idempotent |
 | `agent_run_retry` | Retry one exact agent run. | Yes; idempotent |
 | `agent_run_followup` | Continue from one exact agent result. | Yes; idempotent |
 | `review_gate_resolve` | Approve or cancel one exact review gate. | Yes; destructive |
@@ -172,6 +173,19 @@ The wait reason is one of `events`, `terminal`, `review`, `stalled`, or `timeout
 ### `run_cancel`
 
 Requires `run_id`; add `agent_run_id` to stop only one exact active agent run. `reason` is optional and bounded. Omitting `agent_run_id` intentionally targets the whole run. The operation is state-idempotent but destructive, and remote stop confirmation may return warnings.
+
+### `run_resume`
+
+Requires `run_id` and a stable `request_id`; `include_cancelled` also resubmits cancelled agents. It resumes a failed or interrupted Netlify API run in place: completed agents are kept, running agents are polled, and only failed or never-sent agents are resubmitted with their saved prompts. The result includes the per-agent `keep`/`poll`/`resubmit`/`skip` preview. Identical requests replay the first result and never start a second resume.
+
+It refuses before starting anything with a recoverable code: `run_locked` (another process is executing the run; use `run_wait`), `flow_changed_since_run` or `resume_plan_unavailable` (plan a new run), `resume_ambiguous_submission` or `branch_moved_since_run` (a human must decide; the CLI's `nax run --resume <run-id> --force` overrides), `resume_auth_failure`, or `not_resumable`. See [Resume runs](/guides/resume-runs).
+
+```json
+{
+  "run_id": "run_01JEXAMPLE",
+  "request_id": "request_resume_01JEXAMPLE"
+}
+```
 
 ### `agent_run_retry`
 

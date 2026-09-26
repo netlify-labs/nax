@@ -2108,3 +2108,30 @@ test('dashboard resume refuses with 409 before starting anything', async () => {
     await server.close()
   }
 })
+
+test('dashboard resume with a request id executes once and replays the same result', async () => {
+  const projectRoot = tmpRoot()
+  // Nothing needs resubmitting (one kept, one cancelled), so the real in-process resume stays offline.
+  writeResumeFixture(projectRoot, 'run-replay', {
+    options: { branch: 'main', netlifySiteId: 'site_test' },
+    steps: [{ id: 'review', status: 'running', runs: [
+      { agent: 'claude', instanceId: 'claude:auto:auto', status: 'completed', runnerId: 'r1', resultText: 'done', promptText: 'p' },
+      { agent: 'codex', instanceId: 'codex:auto:auto', status: 'cancelled', runnerId: 'r2', promptText: 'p' },
+    ] }],
+  })
+  const server = await startDashboardServer({ projectRoot })
+  try {
+    const base = `http://127.0.0.1:${server.port}`
+    const first = await postJson(`${base}/api/runs/run-replay/resume`, server.token, { requestId: 'request-1' })
+    assert.equal(first.statusCode, 202, JSON.stringify(first.payload))
+    assert.equal(first.payload.replayed, false)
+    const second = await postJson(`${base}/api/runs/run-replay/resume`, server.token, { requestId: 'request-1' })
+    assert.equal(second.statusCode, 202)
+    assert.equal(second.payload.replayed, true)
+    assert.equal(second.payload.run.id, first.payload.run.id)
+    const conflicting = await postJson(`${base}/api/runs/run-replay/resume`, server.token, { requestId: 'request-1', includeCancelled: true })
+    assert.equal(conflicting.statusCode, 409)
+  } finally {
+    await server.close()
+  }
+})

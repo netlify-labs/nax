@@ -199,6 +199,7 @@ Claude must read a run before controlling it. NAX returns exact `agent_run_id` a
 
 - `review_gate_resolve` approves or cancels one exact pending gate.
 - `run_cancel` cancels one exact run or one exact active agent run.
+- `run_resume` resumes a failed or interrupted run in place, resubmitting only unfinished agents, with a stable request ID.
 - `agent_run_retry` retries one exact terminal agent run with a stable request ID.
 - `agent_run_followup` continues from one exact agent result and optional artifacts.
 

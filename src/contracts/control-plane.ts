@@ -50,6 +50,7 @@ export type ControlPlaneToolName =
   | 'run_get'
   | 'run_wait'
   | 'run_cancel'
+  | 'run_resume'
   | 'agent_run_retry'
   | 'agent_run_followup'
   | 'review_gate_resolve'
@@ -65,6 +66,7 @@ export type ControlPlaneOperation =
   | 'getRun'
   | 'waitForRun'
   | 'cancelRun'
+  | 'resumeRun'
   | 'retryAgentRun'
   | 'submitFollowup'
   | 'resolveReviewGate'
@@ -407,6 +409,18 @@ export type ControlPlaneCancelResult = {
   warnings: string[]
 }
 
+export type ControlPlaneRunResumeInput = {
+  runId: string
+  requestId: string
+  includeCancelled?: boolean
+}
+
+export type ControlPlaneRunResumeResult = {
+  run: ControlPlaneRunSummary
+  preview: ControlPlaneJsonObject
+  replayed: boolean
+}
+
 export type ControlPlaneAgentRetryInput = {
   runId: string
   agentRunId: string
@@ -509,6 +523,7 @@ export type NaxControlPlane = {
   getRun(scope: ControlPlaneScope, actor: ControlPlaneActor, runId: string, options: ControlPlaneRunReadOptions): Promise<ControlPlaneRunRead>
   waitForRun(scope: ControlPlaneScope, actor: ControlPlaneActor, runId: string, cursor?: string, timeoutMs?: number, signal?: AbortSignal): Promise<ControlPlaneWaitResult>
   cancelRun(scope: ControlPlaneScope, actor: ControlPlaneActor, target: ControlPlaneCancelTarget): Promise<ControlPlaneCancelResult>
+  resumeRun(scope: ControlPlaneScope, actor: ControlPlaneActor, input: ControlPlaneRunResumeInput): Promise<ControlPlaneRunResumeResult>
   retryAgentRun(scope: ControlPlaneScope, actor: ControlPlaneActor, input: ControlPlaneAgentRetryInput): Promise<ControlPlaneAgentRetryResult>
   submitFollowup(scope: ControlPlaneScope, actor: ControlPlaneActor, input: ControlPlaneFollowupInput): Promise<ControlPlaneFollowupResult>
   resolveReviewGate(scope: ControlPlaneScope, actor: ControlPlaneActor, input: ControlPlaneReviewDecisionInput): Promise<ControlPlaneReviewDecisionResult>
@@ -526,6 +541,7 @@ export type NaxControlPlaneClient = {
   getRun(runId: string, options: ControlPlaneRunReadOptions): Promise<ControlPlaneRunRead>
   waitForRun(runId: string, cursor?: string, timeoutMs?: number, signal?: AbortSignal): Promise<ControlPlaneWaitResult>
   cancelRun(target: ControlPlaneCancelTarget): Promise<ControlPlaneCancelResult>
+  resumeRun(input: ControlPlaneRunResumeInput): Promise<ControlPlaneRunResumeResult>
   retryAgentRun(input: ControlPlaneAgentRetryInput): Promise<ControlPlaneAgentRetryResult>
   submitFollowup(input: ControlPlaneFollowupInput): Promise<ControlPlaneFollowupResult>
   resolveReviewGate(input: ControlPlaneReviewDecisionInput): Promise<ControlPlaneReviewDecisionResult>

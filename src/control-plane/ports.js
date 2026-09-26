@@ -12,6 +12,7 @@ const REQUIRED_PORT_METHODS = Object.freeze([
   'getRun',
   'waitForRun',
   'cancelRun',
+  'resumeRun',
   'retryAgentRun',
   'submitFollowup',
   'resolveReviewGate',

@@ -322,6 +322,9 @@ function dashboardHandler(projectRoot, projectId, observed, options = {}) {
       currentRun = runFixture('cancelled')
       return json(response, 200, { run: currentRun, cancelled: true, warnings: [] })
     }
+    if (url.pathname === '/api/runs/run_test/resume') {
+      return json(response, 202, { run: { id: 'live-resume', runId: 'run_test', status: 'running' }, preview: { runId: 'run_test', counts: { newRuns: 1, kept: 1, polling: 0, skipped: 0 } }, replayed: false })
+    }
     if (url.pathname === '/api/runs/run_test/retry') {
       currentRun = runFixture('running', 'runner_new')
       return json(response, 202, { run: currentRun, retried: true, previousRunnerId: 'runner_old', runnerId: 'runner_new', sessionId: 'session_new' })
@@ -434,6 +437,12 @@ test('local dashboard mutations resolve exact opaque targets before posting', as
   const reviewGateId = read.run.reviewGate?.reviewGateId || ''
   assert.match(agentRunId, /^agent_run_/)
   assert.match(reviewGateId, /^review_gate_/)
+
+  const resumed = await client.resumeRun({ runId: 'run_test', requestId: 'request_resume_test', includeCancelled: true })
+  assert.equal(resumed.run.runId, 'run_test')
+  assert.equal(resumed.replayed, false)
+  assert.deepEqual(resumed.preview.counts, { newRuns: 1, kept: 1, polling: 0, skipped: 0 })
+  assert.deepEqual(observed.requests.find((request) => request.path === '/api/runs/run_test/resume')?.body, { requestId: 'request_resume_test', includeCancelled: true })
 
   const retry = await client.retryAgentRun({ runId: 'run_test', agentRunId, requestId: 'request_retry_test' })
   assert.equal(retry.previousAgentRunId, agentRunId)

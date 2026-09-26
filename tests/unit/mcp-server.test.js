@@ -236,6 +236,7 @@ test('nax mcp negotiates stdio and lists tools without contaminating stdout', as
     'run_get',
     'run_wait',
     'run_cancel',
+    'run_resume',
     'agent_run_retry',
     'agent_run_followup',
     'review_gate_resolve',

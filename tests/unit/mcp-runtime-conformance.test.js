@@ -17,6 +17,7 @@ const TOOL_NAMES = Object.freeze([
   'run_get',
   'run_wait',
   'run_cancel',
+  'run_resume',
   'agent_run_retry',
   'agent_run_followup',
   'review_gate_resolve',
@@ -33,6 +34,7 @@ const TOOL_CALLS = Object.freeze([
   ['run_get', { run_id: 'run_test', view: 'details' }],
   ['run_wait', { run_id: 'run_test', since: '0', timeout_ms: 10 }],
   ['run_cancel', { run_id: 'run_test', agent_run_id: 'agent_run_test' }],
+  ['run_resume', { run_id: 'run_test', request_id: 'request_resume_test' }],
   ['agent_run_retry', { run_id: 'run_test', agent_run_id: 'agent_run_test', request_id: 'request_retry_test' }],
   ['agent_run_followup', { run_id: 'run_test', agent_run_id: 'agent_run_test', request_id: 'request_followup_test', prompt: 'Verify the fix.', artifact_ids: ['artifact_summary'] }],
   ['review_gate_resolve', { run_id: 'run_test', review_gate_id: 'review_gate_test', decision: 'approve' }],
@@ -177,6 +179,9 @@ function runtimeClient(runtime, state) {
     async cancelRun(target) {
       state.runStatus = 'cancelled'
       return { run: runSummary(state), cancelled: true, ...(target.agentRunId ? { agentRunId: target.agentRunId } : {}), warnings: [] }
+    },
+    async resumeRun(input) {
+      return { run: runSummary(state), preview: { runId: input.runId, counts: { newRuns: 1, kept: 0, polling: 0, skipped: 0 } }, replayed: false }
     },
     async retryAgentRun(input) {
       return { run: runSummary(state), previousAgentRunId: input.agentRunId, agentRun: { ...runSummary(state).agentRuns[0], agentRunId: 'agent_run_retry', runnerId: 'runner_retry', status: 'running' }, replayed: false }

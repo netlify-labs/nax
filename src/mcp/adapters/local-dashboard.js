@@ -486,6 +486,7 @@ function mapCapabilities(dashboard) {
     run_get: available(dashboard.canReadRuns === true, noRuns),
     run_wait: available(dashboard.canReadRuns === true && dashboard.canReadEventsJson === true, 'Bounded event reads are unavailable in this dashboard runtime.'),
     run_cancel: available(dashboard.canCancelRuns === true, 'Run cancellation is unavailable in this dashboard runtime.'),
+    run_resume: available(dashboard.canStartRuns === true, 'Run resume is unavailable in this dashboard runtime.'),
     agent_run_retry: available(dashboard.canStartRuns === true, 'Agent retry is unavailable in this dashboard runtime.'),
     agent_run_followup: available(dashboard.canSubmitFollowups === true, 'Agent follow-up is unavailable in this dashboard runtime.'),
     review_gate_resolve: available(dashboard.canReviewGates === true, 'Review gates are unavailable in this dashboard runtime.'),
@@ -920,6 +921,20 @@ function createLocalDashboardPorts(config, identity) {
         cancelled: response.cancelled === true,
         ...(target.agentRunId ? { agentRunId: target.agentRunId } : {}),
         warnings: stringList(response.warnings),
+      }
+    },
+    async resumeRun(_scope, _actor, input) {
+      const current = await session()
+      const capabilities = objectValue(current.health.capabilities)
+      requireDashboardCapability(capabilities, 'canStartRuns')
+      const response = await request(current, `/api/runs/${encodeURIComponent(input.runId)}/resume`, {
+        method: 'POST',
+        body: { requestId: input.requestId, ...(input.includeCancelled ? { includeCancelled: true } : {}) },
+      })
+      return {
+        run: mapRun(await rawRun(current, input.runId), current.health),
+        preview: /** @type {import('../../contracts').ControlPlaneJsonObject} */ (objectValue(response.preview)),
+        replayed: response.replayed === true,
       }
     },
     async retryAgentRun(_scope, _actor, input) {

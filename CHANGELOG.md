@@ -40,6 +40,8 @@
 - Dashboard **Resume run** panel with the per-agent preview, backed by
   `GET /api/runs/:id/resume-preview` and `POST /api/runs/:id/resume`
   (409 with the refusal code before anything starts).
+- MCP `run_resume` tool (idempotent by `request_id`) returning the per-agent
+  preview; resume refusals are recoverable MCP errors with guidance.
 - Superseded attempts are kept in `step.attempts` with lineage and usage;
   costs count every attempt exactly once.
 

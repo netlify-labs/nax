@@ -1368,23 +1368,39 @@ function createRequestHandler(options = {}) {
         }
       },
       resumeRun: async (id, body) => {
-        const durable = durableRunStateForId(safeDecode(id))
-        if (!durable) return null
-        const runState = /** @type {import('../types').WorkflowRunState} */ (durable)
+        const runId = safeDecode(id)
         const includeCancelled = body.includeCancelled === true
-        /** @type {import('../workflows/engine/resume-preparation').PreparedResume} */
-        let prepared
-        try {
-          prepared = await prepareResume({ runState, projectRoot, includeCancelled })
-        } catch (error) {
-          if (!isResumeRefusal(error)) throw error
-          throw requestError(409, /** @type {Error & { code: string }} */ (error).code, /** @type {Error} */ (error).message)
+        const requestId = String(body.requestId || '').trim()
+        const execute = async () => {
+          const durable = durableRunStateForId(runId)
+          if (!durable) throw requestError(404, 'not_found', 'Unknown dashboard run.')
+          const runState = /** @type {import('../types').WorkflowRunState} */ (durable)
+          /** @type {import('../workflows/engine/resume-preparation').PreparedResume} */
+          let prepared
+          try {
+            prepared = await prepareResume({ runState, projectRoot, includeCancelled })
+          } catch (error) {
+            if (!isResumeRefusal(error)) throw error
+            throw requestError(409, /** @type {Error & { code: string }} */ (error).code, /** @type {Error} */ (error).message)
+          }
+          if (prepared.blocked) throw requestError(409, prepared.blocked.code, prepared.blocked.message)
+          const holder = runLockHolder(String(runState.dir || ''))
+          if (holder) throw requestError(409, 'run_locked', `Run ${runState.runId} is already being executed by ${describeRunLockOwner(holder)}.`)
+          const run = startResumeRun({ durable, approveReview: false, includeCancelled })
+          return { run: publicRun(run), preview: prepared.preview }
         }
-        if (prepared.blocked) throw requestError(409, prepared.blocked.code, prepared.blocked.message)
-        const holder = runLockHolder(String(runState.dir || ''))
-        if (holder) throw requestError(409, 'run_locked', `Run ${runState.runId} is already being executed by ${describeRunLockOwner(holder)}.`)
-        const run = startResumeRun({ durable, approveReview: false, includeCancelled })
-        return { statusCode: 202, body: { run: publicRun(run), preview: prepared.preview } }
+        if (requestId) {
+          const result = await runIdempotentMutation({
+            store: localMutationStore(),
+            operation: 'run-resume',
+            requestId,
+            intent: { runId, includeCancelled },
+            execute,
+          })
+          return { statusCode: 202, body: result }
+        }
+        if (!durableRunStateForId(runId)) return null
+        return { statusCode: 202, body: await execute() }
       },
       cancelReview: async (id, body) => {
         const durable = durableRunStateForId(id)

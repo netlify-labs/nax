@@ -144,6 +144,34 @@ nax run --retry 2026-05-15T01-24-10-177Z-ideas --step react \
 
 The retry command submits a new follow-up session to the existing runner, waits for that one agent, updates run state, and continues downstream steps if the failed step becomes complete.
 
+## Stopping Runs
+
+Remote agents keep running (and billing) on Netlify after the process that started them stops. Killing a local `nax` process, pressing Ctrl-C, or cancelling a GitHub Actions job does **not** reliably stop the Netlify agent runners it already created. Always stop both sides, then confirm nothing is still running.
+
+1. **Stop whatever launched the runs.** Locally, stop the `nax` process. In GitHub Actions (for example the PR-triggered `run-nax.yml` / `run-local-nax.yml` review workflows):
+   ```bash
+   gh run list --workflow run-nax.yml --status in_progress
+   gh run list --workflow run-local-nax.yml --status in_progress
+   gh run cancel <run-id>
+   gh run view <run-id> --json status,conclusion   # wait for "completed" / "cancelled"
+   ```
+2. **List agent runners still running on the Netlify site.** Run from the linked project directory (or pass `--project <site-id-or-name>`):
+   ```bash
+   netlify agents:list --status running --json
+   ```
+3. **Cancel each remaining runner** by id (the `id` field above, also shown as `Runner ID:` in nax output). This is the same `DELETE /agent_runners/<id>` call nax and the SDK use:
+   ```bash
+   netlify api deleteAgentRunner --data '{"agent_runner_id":"<runner-id>"}'
+   ```
+   The Netlify CLI prints `TextHTTPError: Accepted` for this call. That is the 202 success response, not a failure.
+4. **Confirm** each runner is `cancelled` and nothing is left running:
+   ```bash
+   netlify api getAgentRunner --data '{"agent_runner_id":"<runner-id>"}'   # "state": "cancelled"
+   netlify agents:list --status running --json                             # []
+   ```
+
+Cancel only runners you (or the user) started for the task at hand; other agent runs on the same site may belong to someone else. Cancelling a runner is irreversible, so confirm the ids with the user when they were not started in this session. A cancelled runner shows as `cancelled` in nax run state; `nax run --resume <run-id> --include-cancelled` resubmits it later if needed.
+
 ## Known Failure Modes
 
 ### Prompt Blob Cleanup

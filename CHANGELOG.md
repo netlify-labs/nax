@@ -43,6 +43,9 @@
 - Dashboard **Resume run** panel with the per-agent preview, backed by
   `GET /api/runs/:id/resume-preview` and `POST /api/runs/:id/resume`
   (409 with the refusal code before anything starts).
+- Resume adopts a runner created by a submission whose response was lost: the
+  exact request is saved before it is sent (SDK `onSubmitCheckpoint`) and
+  reconciled by request marker, so the runner is polled instead of duplicated.
 - MCP `run_resume` tool (idempotent by `request_id`) returning the per-agent
   preview; resume refusals are recoverable MCP errors with guidance.
 - Superseded attempts are kept in `step.attempts` with lineage and usage;

@@ -50,6 +50,8 @@ Resume starts at the first step that did not let the workflow continue, or at a 
 | Cancelled | `skip` | Pass `--include-cancelled` to resubmit cancelled agents. |
 | Follow-up whose source agent did not complete | `skip` | There is no session to continue (`source_unavailable`). |
 
+Before it decides, resume checks every agent whose submission was sent but never got a runner id: `nax` crashed mid-submit, or the API failed after the request may have landed. `nax` saves the exact request before sending it, so resume can ask the Agent Runner API whether that request created a runner. If exactly one runner matches, resume adopts it and polls it, and the preview notes the runner it found. If none matches, a submission that may have landed still stops with `resume_ambiguous_submission`, and one that failed before landing is resubmitted. If several match, resume stops and lists them.
+
 After the step settles, resume continues with the remaining steps as a normal run would. Each resubmitted agent's prompt is rebuilt from the saved text, and prompt delivery is prepared fresh, so an expired prompt blob is never reused.
 
 ## When resume refuses
@@ -59,7 +61,7 @@ Resume checks the whole run before it submits anything. If any of these apply, i
 | Code | Why | What to do |
 | --- | --- | --- |
 | `flow_changed_since_run` | The workflow file or a prompt changed after the run started, so the saved prompts no longer match. | Start a new run. |
-| `resume_ambiguous_submission` | `nax` sent a submission but never saved a runner id: it crashed mid-submit, or the API failed after the request may have landed. A runner may already exist. | Check the Netlify agent runs page. Rerun with `--force` to resubmit anyway (a duplicate is possible). |
+| `resume_ambiguous_submission` | `nax` sent a submission but never saved a runner id (it crashed mid-submit, or the API failed after the request may have landed), and checking the Agent Runner API found no runner, or several. A runner may already exist. | Check the Netlify agent runs page. Rerun with `--force` to resubmit anyway (a duplicate is possible). |
 | `resume_plan_unavailable` | A step started but its runs were never saved, so the original prompts are unknown. | Start a new run with `nax run <flow> --from-step <step>`. |
 | `resume_auth_failure` | An agent failed with an expired token or the wrong Netlify account. | Fix authentication (`netlify status`), then resume again. |
 | `branch_moved_since_run` | The branch's remote head moved since the run started, so new agents would review different code than the kept results. | Rerun with `--force` to resume anyway, or start a new run. |

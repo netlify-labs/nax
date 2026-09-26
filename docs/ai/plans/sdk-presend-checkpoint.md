@@ -1,6 +1,6 @@
 # SDK pre-send checkpoint: reconcile ambiguous submissions on resume
 
-Status: DRAFT for review (bead nax-2hq7.21). No code yet.
+Status: IMPLEMENTED (bead nax-2hq7.21). David's decisions: persist `effectiveInput` as is; keep stopping on `none` for submissions that may have landed; also checkpoint capacity-retry creates. Implementation note: submit-phase failures with a checkpoint are reconciled too; `matched` adopts the runner, `none` resubmits as before.
 
 ## Problem
 

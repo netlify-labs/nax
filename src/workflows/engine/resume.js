@@ -367,6 +367,20 @@ const POLLABLE_STATUSES = new Set(['submitted', 'running', 'retrying'])
  * @typedef {{ actions: ReconcileAction[], stop: ReconcileStop | null, notes: string[] }} ReconcileResult
  */
 
+/**
+ * A submission that may already exist remotely: sent without a saved runner (crash mid-submit),
+ * an SDK ambiguous create, or several candidate runners found by reconciling its checkpoint.
+ * @param {import('../../types').AgentRun} run
+ */
+function maybeCreatedSubmission(run) {
+  if (run.runnerId || !run.sentAt) return false
+  const raw = /** @type {Record<string, unknown>} */ (run.raw || {})
+  const reconciled = /** @type {{ kind?: string }} */ (raw.submitReconcile || {})
+  return String(run.status || '').toLowerCase() === 'pending'
+    || AMBIGUOUS_SUBMISSION_CODES.has(String(raw.submissionErrorCode || ''))
+    || reconciled.kind === 'ambiguous'
+}
+
 /** @param {import('../../types').AgentRun} run */
 function failureDetail(run) {
   const raw = /** @type {Record<string, unknown>} */ (run.raw || {})
@@ -415,10 +429,10 @@ function reconcileStepInstances({ stepState, flowStep, completedStepStates, runS
     }
     if (status === 'completed' && String(run.resultText || '').trim()) { decide('keep', 'completed'); continue }
     if (POLLABLE_STATUSES.has(status) && run.runnerId) { decide('poll', status); continue }
-    const submissionErrorCode = String(/** @type {Record<string, unknown>} */ (run.raw || {}).submissionErrorCode || '')
-    const maybeCreated = (status === 'pending' || AMBIGUOUS_SUBMISSION_CODES.has(submissionErrorCode)) && !run.runnerId && run.sentAt
-    if (maybeCreated) {
-      ambiguous.push(`${instanceId} (sent ${run.sentAt})`)
+    if (maybeCreatedSubmission(run)) {
+      const reconciled = /** @type {{ candidates?: string[] }} */ (/** @type {Record<string, unknown>} */ (run.raw || {}).submitReconcile || {})
+      const candidates = reconciled.candidates?.length ? `; candidate runners: ${reconciled.candidates.join(', ')}` : ''
+      ambiguous.push(`${instanceId} (sent ${run.sentAt}${candidates})`)
       if (force) decide('resubmit', 'sent without a saved runner; resubmitting because --force was given')
       continue
     }
@@ -613,6 +627,7 @@ module.exports = {
   formatResumePreview,
   resumePreviewModel,
   formatResumeRunDetails,
+  maybeCreatedSubmission,
   planResume,
   resumeSubmitsIntoStep,
   isAutomaticResumeCandidate,

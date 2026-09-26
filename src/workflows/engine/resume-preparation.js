@@ -4,6 +4,7 @@ const { loadFlow } = require('../catalog/flows')
 const { flowDigest } = require('../catalog/flow-manifest')
 const { flowFromRunState, flowLoadOptions, planResume, resumePreviewModel, resumeSubmitsIntoStep } = require('./resume')
 const { isExplicitlyResumableRun, isNetlifyApiTransport } = require('../../core/runs/resumable')
+const { recoverSubmissions } = require('./submission-recovery')
 const { targetBranch } = require('../../integrations/git/target')
 const { resolveRemoteBranchSha } = require('../../integrations/git/review-context')
 
@@ -61,10 +62,11 @@ async function catalogFlow(runState, projectRoot, options) {
  *   includeCancelled?: boolean,
  *   force?: boolean,
  *   resolveRemoteSha?: (input: { projectRoot: string, branch: string }) => string,
+ *   reconcileSubmission?: import('./submission-recovery').ReconcileSubmission,
  * }} input
  * @returns {Promise<PreparedResume>}
  */
-async function prepareResume({ runState, projectRoot, options = {}, includeCancelled = false, force = false, resolveRemoteSha = remoteBranchSha }) {
+async function prepareResume({ runState, projectRoot, options = {}, includeCancelled = false, force = false, resolveRemoteSha = remoteBranchSha, reconcileSubmission }) {
   const runId = String(runState.runId || '')
   if (!isNetlifyApiTransport(runState.transport)) {
     throw resumeRefusal('resume_unsupported_transport', `Run ${runId} uses the ${runState.transport || 'unknown'} transport: mid-step resume supports netlify-api runs; GitHub runs resume at step level (run \`nax run\` in a terminal and accept the resume offer).`)
@@ -76,7 +78,10 @@ async function prepareResume({ runState, projectRoot, options = {}, includeCance
   const flow = flowFromRunState(runState) || catalog
   if (!flow) throw resumeRefusal('workflow_unavailable', `Workflow "${runState.flowId}" for run ${runId} is no longer available.`)
   const currentFlowDigest = catalog ? flowDigest(catalog) : (runState.flowDigest ? flowDigest(flow) : '')
-  const plan = planResume({ flow, runState, currentFlowDigest, includeCancelled, force })
+  // Preview on a copy: resume itself recovers again under the run lock and saves the result.
+  const recovered = /** @type {import('../../types').WorkflowRunState} */ (structuredClone(runState))
+  const recovery = await recoverSubmissions({ flow, runState: recovered, ...(reconcileSubmission ? { reconcileSubmission } : {}) })
+  const plan = planResume({ flow, runState: recovered, currentFlowDigest, includeCancelled, force })
   const branch = targetBranch(runState) || ''
   let currentSha = ''
   if (branch && runState.target?.sha) {
@@ -87,6 +92,7 @@ async function prepareResume({ runState, projectRoot, options = {}, includeCance
     }
   }
   const preview = resumePreviewModel({ runState, flow, plan, branch, currentSha })
+  preview.notes = [...recovery.notes, ...preview.notes]
   /** @type {{ code: string, message: string } | null} */
   let blocked = plan.reconciled.stop
   if (!blocked && !force && preview.headState === 'moved' && resumeSubmitsIntoStep(plan)) {

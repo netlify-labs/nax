@@ -65,6 +65,7 @@ const {
 } = require('./progress')
 const { MAX_PARALLEL_RUNS, mapInWaves } = require('./wave-scheduler')
 const { planResume, resumeSubmitsIntoStep } = require('./resume')
+const { recoverSubmissions } = require('./submission-recovery')
 const { resubmissionRun, supersedeRun } = require('./attempts')
 const { flowDigest } = require('../catalog/flow-manifest')
 const { resolveRemoteBranchSha } = require('../../integrations/git/review-context')
@@ -445,6 +446,13 @@ async function submitStepInstance(context, run, index) {
     netlifyFilter: netlifyFilter.filter,
     env: netlify.env,
     timeoutMinutes: Number(options.timeoutMinutes || 25),
+    // The exact request is saved before it is sent, so resume can find a runner created by a
+    // submission whose response (or process) was lost.
+    onSubmitCheckpoint: (checkpoint) => {
+      run.raw = { ...(run.raw || {}), submitCheckpoint: /** @type {import('../../types').JsonMap} */ (/** @type {unknown} */ (checkpoint)) }
+      stepState.runs[index] = run
+      saveRunState(runState)
+    },
     onRetry: ({ error, nextAttempt, attempts, delayMs }) => {
       const delaySeconds = Math.round(delayMs / 1000)
       runtimeEvents?.agentStatus('retrying', run, stepState, step, {
@@ -523,6 +531,7 @@ async function runStepInstance(context, run, index) {
         ...activeRun.raw,
         submissionError: error?.message || String(error || 'Submission failed'),
         ...(error?.code ? { submissionErrorCode: String(error.code) } : {}),
+        ...(error?.window ? { submitWindow: error.window } : {}),
         failurePhase: phase,
       },
     }
@@ -1363,9 +1372,11 @@ async function resumeStepInstances({ flow, step, stepState, actions, runState, p
  *   submitAgentRun?: typeof submitLocalAgentRun,
  *   waitForAgentRuns?: typeof waitForLocalAgentRuns,
  *   resolveRemoteSha?: (input: { projectRoot: string, branch: string }) => string,
+ *   reconcileSubmission?: import('./submission-recovery').ReconcileSubmission,
  * }} input
  */
-async function resumeLocalFlow({ flow, runState, projectRoot, currentFlowDigest, includeCancelled = false, force = false, forceUnlock = false, submitAgentRun = submitLocalAgentRun, waitForAgentRuns = waitForLocalAgentRuns, resolveRemoteSha = remoteBranchSha }) {
+async function resumeLocalFlow({ flow, runState, projectRoot, currentFlowDigest, includeCancelled = false, force = false, forceUnlock = false, submitAgentRun = submitLocalAgentRun, waitForAgentRuns = waitForLocalAgentRuns, resolveRemoteSha = remoteBranchSha, reconcileSubmission }) {
+  const recovery = await recoverSubmissions({ flow, runState, ...(reconcileSubmission ? { reconcileSubmission } : {}) })
   const plan = planResume({
     flow,
     runState,
@@ -1408,7 +1419,7 @@ async function resumeLocalFlow({ flow, runState, projectRoot, currentFlowDigest,
       ...netlifyOptionsFromTarget(options, netlify),
     }
     saveRunState(runState)
-    for (const note of reconciled.notes) console.log(`Note: ${note}`)
+    for (const note of [...recovery.notes, ...reconciled.notes]) console.log(`Note: ${note}`)
 
     if (stepState && reconciled.actions.length > 0) {
       console.log(`Resuming ${runState.runId}`)

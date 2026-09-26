@@ -213,3 +213,15 @@ test('a moved branch does not block continuing into later steps when nothing in 
   await resumeLocalFlow({ flow, runState, projectRoot, ...io })
   assert.deepEqual(io.submitted.map((run) => run.raw?.stepId), ['summarize'])
 })
+
+test('a resume refusal leaves the run status untouched and releases the lock', async () => {
+  const { runLockDir } = require('../../src/storage/local/run-lock')
+  const { projectRoot, flow, runState } = fixture([
+    saved('claude', { status: 'completed', runnerId: 'r-claude', resultText: 'claude done' }),
+    saved('gemini', { status: 'pending', runnerId: '', sentAt: '2026-09-25T12:01:00.000Z' }),
+  ])
+  const io = boundary()
+  await assert.rejects(resumeLocalFlow({ flow, runState, projectRoot, ...io }), (error) => /** @type {{ code?: string }} */ (error).code === 'resume_ambiguous_submission')
+  assert.equal(runState.status, 'interrupted')
+  assert.equal(fs.existsSync(runLockDir(runState.dir)), false)
+})

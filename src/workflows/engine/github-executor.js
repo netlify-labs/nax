@@ -4,7 +4,7 @@ const { WAIT_FOR_AGENT_RESULTS, isHumanReviewStep, loadStepPrompt } = require('.
 const { buildGithubFullPromptWrapper, applyContextFetchClassification, blobOffloadDisabled, cleanupWorkflowBlobsForRun, ensureGithubIssueFullPromptBlobOffload, ensureGithubPlanBlobOffload, githubIssueDeliveryKey, localSafePromptBytes, optionalNetlifyForBlobOffload } = require('./prompt-delivery')
 const { getLocalDate, resolveRepo } = require('../catalog/prompts')
 const { saveRunState, workflowStatePath } = require('../../storage/local/run-state')
-const { clearTrackedRunState, releaseTrackedRunLock, trackRunState } = require('../../storage/local/graceful-run-state')
+const { clearTrackedRunState, settleTrackedRun, trackRunState } = require('../../storage/local/graceful-run-state')
 const { completeRun } = require('../run-completion')
 const { persistRunArtifact, persistStepArtifacts } = require('../artifacts/workflow-artifacts')
 const { formatRoundResults } = require('../round-results')
@@ -581,8 +581,8 @@ async function resumeGithubFlow({ flow, runState, projectRoot }) {
     completeRun(runState)
     clearTrackedRunState(runState)
   } finally {
-    // Long-lived processes (dashboard) must not keep the run locked after a failure.
-    releaseTrackedRunLock(runState)
+    // Long-lived processes (dashboard) must not keep the run locked or tracked after a failure.
+    settleTrackedRun(runState)
   }
 }
 

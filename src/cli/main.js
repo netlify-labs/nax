@@ -65,7 +65,7 @@ const {
   stepArtifactsDir,
   writeGithubStepSummary,
 } = require('../workflows/artifacts/workflow-artifacts')
-const { clearTrackedRunState, releaseTrackedRunLock, trackRunState } = require('../storage/local/graceful-run-state')
+const { clearTrackedRunState, settleTrackedRun, trackRunState } = require('../storage/local/graceful-run-state')
 const { completeRun, writeFindingsAtTerminal } = require('../workflows/run-completion')
 const { persistAgentRunnerArtifact } = require('../workflows/artifacts/agent-runner-artifacts')
 const { persistAgentSessionArtifact } = require('../workflows/artifacts/agent-session-artifacts')
@@ -2708,7 +2708,7 @@ async function handleRetry(runId, options) {
     clearTrackedRunState(runState)
     printSuccessBox({ flow, runState, transport: NETLIFY_API_TRANSPORT, projectRoot })
   } finally {
-    releaseTrackedRunLock(runState)
+    settleTrackedRun(runState)
   }
 }
 
@@ -2857,25 +2857,27 @@ async function resumeRunById(runId, options = {}) {
   const runState = listRunStates(projectRoot).find((state) => state.runId === runId)
   if (!runState) throw new Error(`Could not find workflow run "${runId}".`)
   const flow = flowFromRunState(runState) || await loadFlow(runState.flowId, flowLoadOptions({ ...(runState.options || {}), ...options }, projectRoot))
-  if (options.approveReview !== false) {
-    approveHumanReviewGate({
-      runState,
-      stepId: options.stepId || '',
-      reviewer: options.reviewer || 'dashboard',
-    })
-  }
-  const refreshed = listRunStates(projectRoot).find((state) => state.runId === runId) || runState
+  // Take the run lock before approving the gate, so no write happens while another process runs it.
+  // The same state object is resumed, which keeps holding that lock.
+  trackRunState(runState)
   try {
-    if (refreshed.transport === 'github') {
-      await resumeGithubFlow({ flow, runState: refreshed, projectRoot })
+    if (options.approveReview !== false) {
+      Object.assign(runState, approveHumanReviewGate({
+        runState,
+        stepId: options.stepId || '',
+        reviewer: options.reviewer || 'dashboard',
+      }))
+    }
+    if (runState.transport === 'github') {
+      await resumeGithubFlow({ flow, runState, projectRoot })
     } else {
-      await resumeLocalFlow({ flow, runState: refreshed, projectRoot, includeCancelled: options.includeCancelled === true })
+      await resumeLocalFlow({ flow, runState, projectRoot, includeCancelled: options.includeCancelled === true })
     }
   } finally {
     // Dashboard resumes run in-process, so the run lock must be released even when resume fails.
-    clearTrackedRunState(refreshed)
+    clearTrackedRunState(runState)
   }
-  return refreshed
+  return runState
 }
 
 async function handleRunEngine(flowId, options) {

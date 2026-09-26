@@ -1383,26 +1383,38 @@ async function resumeStepInstances({ flow, step, stepState, actions, runState, p
  * }} input
  */
 async function resumeLocalFlow({ flow, runState, projectRoot, currentFlowDigest, includeCancelled = false, force = false, forceUnlock = false, submitAgentRun = submitLocalAgentRun, waitForAgentRuns = waitForLocalAgentRuns, resolveRemoteSha = remoteBranchSha, reconcileSubmission }) {
-  const recovery = await recoverSubmissions({ flow, runState, ...(reconcileSubmission ? { reconcileSubmission } : {}) })
-  const plan = planResume({
-    flow,
-    runState,
-    currentFlowDigest: currentFlowDigest ?? (runState.flowDigest ? flowDigest(flow) : ''),
-    includeCancelled,
-    force,
-  })
-  if (plan.complete) {
-    console.log(`Run ${runState.runId} is already complete.`)
-    completeRun(runState)
-    return
+  // Lock first: recovery and planning read state another process could be executing.
+  trackRunState(runState, { forceUnlock })
+  /** @type {{ recovery: { notes: string[] }, plan: import('./resume').ResumePlan, branch: string }} */
+  let preflight
+  try {
+    const recovery = await recoverSubmissions({ flow, runState, ...(reconcileSubmission ? { reconcileSubmission } : {}) })
+    const plan = planResume({
+      flow,
+      runState,
+      currentFlowDigest: currentFlowDigest ?? (runState.flowDigest ? flowDigest(flow) : ''),
+      includeCancelled,
+      force,
+    })
+    if (plan.complete) {
+      console.log(`Run ${runState.runId} is already complete.`)
+      completeRun(runState)
+      clearTrackedRunState(runState)
+      return
+    }
+    if (plan.reconciled.stop) throw resumeError(plan.reconciled.stop.code, plan.reconciled.stop.message)
+    const branch = targetBranch(runState, { required: true })
+    if (resumeSubmitsIntoStep(plan)) assertBranchUnmoved({ runState, projectRoot, branch, force, resolveRemoteSha })
+    preflight = { recovery, plan, branch }
+  } catch (error) {
+    // A refusal before anything ran leaves the run as it was, so it can be resumed again.
+    clearTrackedRunState(runState)
+    throw error
   }
+  const { recovery, plan, branch } = preflight
   const { startIndex, stepState, completedStepStates, reconciled } = plan
   const step = /** @type {import('../../types').WorkflowStep} */ (plan.step)
-  if (reconciled.stop) throw resumeError(reconciled.stop.code, reconciled.stop.message)
-  const branch = targetBranch(runState, { required: true })
-  if (resumeSubmitsIntoStep(plan)) assertBranchUnmoved({ runState, projectRoot, branch, force, resolveRemoteSha })
 
-  trackRunState(runState, { forceUnlock })
   try {
     const options = await chooseNetlifyFilterOption({
       projectRoot,

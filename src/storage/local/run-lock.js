@@ -142,7 +142,7 @@ function acquireRunLock(runDir, { runId = '', command = '', forceUnlock = false 
   const owner = { pid: process.pid, hostname, nonce: randomUUID(), startedAt: new Date().toISOString(), command, runId }
   fs.mkdirSync(runDir, { recursive: true })
   const locked = (/** @type {Partial<RunLockOwner> | null} */ current) => {
-    const error = /** @type {Error & { code: string, owner: Partial<RunLockOwner> | null }} */ (new Error(`Run ${runId || path.basename(runDir)} is already being executed by ${describeRunLockOwner(current)}. Wait for it to finish, or rerun with --force-unlock if that process is gone.`))
+    const error = /** @type {Error & { code: string, owner: Partial<RunLockOwner> | null }} */ (new Error(`Run ${runId || path.basename(runDir)} is already being executed by ${describeRunLockOwner(current)}. Wait for it to finish; if that process is gone, take over with: nax run --resume ${runId || path.basename(runDir)} --force-unlock`))
     error.code = 'run_locked'
     error.owner = current
     return error

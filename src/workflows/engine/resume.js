@@ -438,9 +438,12 @@ function reconcileStepInstances({ stepState, flowStep, completedStepStates, runS
     if (status === 'completed' && String(run.resultText || '').trim()) { decide('keep', 'completed'); continue }
     if (POLLABLE_STATUSES.has(status) && run.runnerId && !maybeCreatedSubmission(run)) { decide('poll', status); continue }
     if (maybeCreatedSubmission(run)) {
-      const reconciled = /** @type {{ candidates?: string[] }} */ (/** @type {Record<string, unknown>} */ (run.raw || {}).submitReconcile || {})
+      const raw = /** @type {Record<string, unknown>} */ (run.raw || {})
+      const reconciled = /** @type {{ candidates?: string[] }} */ (raw.submitReconcile || {})
       const candidates = reconciled.candidates?.length ? `; candidate runners: ${reconciled.candidates.join(', ')}` : ''
-      ambiguous.push(`${instanceId} (sent ${run.sentAt}${candidates})`)
+      const retry = /** @type {{ sentAt?: number } | undefined} */ (raw.retrySubmitCheckpoint)
+      const sent = retry ? `automatic retry of runner ${run.runnerId} sent ${Number.isFinite(retry.sentAt) ? new Date(Number(retry.sentAt)).toISOString() : 'at an unknown time'}` : `sent ${run.sentAt || 'at an unknown time'}`
+      ambiguous.push(`${instanceId} (${sent}${candidates})`)
       if (force) decide('resubmit', 'sent without a saved runner; resubmitting because --force was given')
       continue
     }
@@ -462,7 +465,7 @@ function reconcileStepInstances({ stepState, flowStep, completedStepStates, runS
     decide('resubmit', failureCode ? `failed: ${failureCode}` : `failed: ${status || 'unknown'}`)
   }
   if (ambiguous.length > 0 && !force) {
-    return stop('resume_ambiguous_submission', `A submission may already exist remotely for ${ambiguous.join(', ')}: nax sent it but never saved a runner id (a crash or a failed response after sending). Check the Netlify agent runs page, then rerun with --force to resubmit (a duplicate is possible).`)
+    return stop('resume_ambiguous_submission', `A submission may already exist remotely for ${ambiguous.join(', ')}: nax sent it but never recorded the runner it created (a crash or a failed response after sending). Check the Netlify agent runs page, then rerun with --force to resubmit (a duplicate is possible).`)
   }
   if (followUp) {
     for (const action of actions) {

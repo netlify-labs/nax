@@ -110,6 +110,17 @@ nax list --verbose
 nax list --json
 ```
 
+## `nax lint`
+
+```sh
+nax lint
+nax lint review
+nax lint --json
+nax lint --strict
+```
+
+Checks every discovered flow, or only the named ones, and prints each diagnostic with a fix. Exits `1` when any flow is invalid; with `--strict`, warnings also fail. See [Validate your flow](/guides/write-custom-workflows#validate-your-flow).
+
 ## `nax costs`
 
 ```sh

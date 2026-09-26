@@ -274,7 +274,9 @@ test('an automatic retry that created a runner before the crash is adopted; an u
   const unresolved = checkpointedFixture(structuredClone(saved))
   await assert.rejects(
     resumeLocalFlow({ ...unresolved, submitAgentRun, waitForAgentRuns: waitCompleted, resolveRemoteSha: () => RUN_SHA, reconcileSubmission: async () => ({ kind: 'none' }) }),
-    (error) => /** @type {{ code?: string }} */ (error).code === 'resume_ambiguous_submission',
+    (error) => /** @type {{ code?: string }} */ (error).code === 'resume_ambiguous_submission'
+      && /automatic retry of runner r-codex sent 1970-01-01T00:00:02\.000Z/.test(String(/** @type {Error} */ (error).message))
+      && !/undefined/.test(String(/** @type {Error} */ (error).message)),
   )
 
   const found = checkpointedFixture(structuredClone(saved))

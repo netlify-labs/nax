@@ -125,3 +125,17 @@ test('a takeover left by a crashed process is cleared, then the stale lock is ta
   assert.equal(fs.existsSync(`${runLockDir(dir)}.takeover`), false)
   lock.release()
 })
+
+test('a takeover with no owner file (crash mid-create) is reclaimed once it is old', () => {
+  const dir = runDir()
+  fs.mkdirSync(runLockDir(dir), { recursive: true })
+  fs.writeFileSync(path.join(runLockDir(dir), 'owner.json'), JSON.stringify({ pid: deadPid(), hostname: os.hostname(), nonce: 'old' }))
+  const takeover = `${runLockDir(dir)}.takeover`
+  fs.mkdirSync(takeover)
+  assert.equal(thrown(() => acquireRunLock(dir, { runId: 'run-1' })).code, 'run_locked', 'a fresh ownerless takeover may still be in progress')
+  const old = new Date(Date.now() - 5 * 60 * 1000)
+  fs.utimesSync(takeover, old, old)
+  const lock = acquireRunLock(dir, { runId: 'run-1' })
+  assert.equal(readRunLockOwner(dir)?.pid, process.pid)
+  lock.release()
+})

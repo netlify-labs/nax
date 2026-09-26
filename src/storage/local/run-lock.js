@@ -7,6 +7,7 @@ const { randomUUID } = require('crypto')
 
 const RUN_LOCK_DIR = 'run.lock'
 const OWNER_FILE = 'owner.json'
+const ORPHANED_TAKEOVER_MS = 60 * 1000
 
 /**
  * @typedef {{
@@ -86,6 +87,15 @@ function describeRunLockOwner(owner) {
   return `pid ${owner.pid} on ${owner.hostname}${owner.command ? ` (${owner.command})` : ''}${owner.startedAt ? ` since ${owner.startedAt}` : ''}`
 }
 
+/** @param {string} dir @returns {number} */
+function ageMs(dir) {
+  try {
+    return Date.now() - fs.statSync(dir).mtimeMs
+  } catch {
+    return 0
+  }
+}
+
 /**
  * Claims the takeover mutex beside a lock. A takeover left by a process that died on this host is
  * cleared once. Returns the mutex path, or null when another process is taking over.
@@ -94,7 +104,10 @@ function describeRunLockOwner(owner) {
 function acquireTakeover(lockDir, owner) {
   const takeover = `${lockDir}.takeover`
   if (createLockDir(takeover, owner)) return takeover
-  if (!isStaleOwner(readLockOwner(takeover), owner.hostname)) return null
+  const current = readLockOwner(takeover)
+  // A takeover lasts milliseconds; one with no owner file is a crash between mkdir and the write.
+  const orphaned = !current && ageMs(takeover) > ORPHANED_TAKEOVER_MS
+  if (!orphaned && !isStaleOwner(current, owner.hostname)) return null
   fs.rmSync(takeover, { recursive: true, force: true })
   return createLockDir(takeover, owner) ? takeover : null
 }

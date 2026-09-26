@@ -83,3 +83,19 @@ test('a live poller save after a dashboard replacement keeps the replacement cur
   assert.equal(step.runs[0].attemptId, 'a2')
   assert.ok(step.attempts.some((attempt) => attempt.attemptId === 'a1' && attempt.status === 'failed'))
 })
+
+test('a stale snapshot cannot mark a step or run finished while the kept newer attempt is still active', () => {
+  const current = saveRunState(state(
+    [{ agent: 'codex', instanceId: 'codex:auto:auto', attemptId: 'a2', supersedesAttemptId: 'a1', status: 'submitted', runnerId: 'r2' }],
+    { status: 'running' },
+  ))
+  for (const staleStatus of ['failed', 'completed_with_failures']) {
+    const stale = withRuns(current, [{ agent: 'codex', instanceId: 'codex:auto:auto', attemptId: 'a1', status: 'failed', runnerId: 'r1' }])
+    stale.steps[0].status = staleStatus
+    saveRunState({ ...stale, status: 'failed' })
+    const disk = saved(current)
+    assert.equal(disk.steps[0].runs[0].attemptId, 'a2')
+    assert.equal(disk.steps[0].status, 'running', staleStatus)
+    assert.equal(disk.status, 'running')
+  }
+})

@@ -311,22 +311,31 @@ function mergeAttemptRun(existingRuns, incomingRun, archive) {
   return slot
 }
 
+/** A step or workflow status that claims the work finished (successfully or not). @param {unknown} status */
+function isSettledStatus(status) {
+  return isTerminalRunStatus(status) || String(status || '') === 'completed_with_failures'
+}
+
 function mergeExistingStateForWrite(existingState, incomingState) {
   if (!existingState || existingState.runId !== incomingState?.runId) return incomingState
   const existingSteps = Array.isArray(existingState.steps) ? existingState.steps : []
   const incomingSteps = Array.isArray(incomingState.steps) ? incomingState.steps : []
   const existingByStepId = new Map(existingSteps.filter((step) => step?.id).map((step) => [step.id, step]))
+  let keptActiveNewerAttempt = false
 
   for (const [stepIndex, incomingStep] of incomingSteps.entries()) {
     const existingStep = existingByStepId.get(incomingStep?.id) || existingSteps[stepIndex]
     if (!existingStep || !Array.isArray(incomingStep?.runs)) continue
     const existingRuns = Array.isArray(existingStep.runs) ? existingStep.runs : []
+    let stepKeptActiveNewerAttempt = false
     /** @type {Map<string, Record<string, unknown>>} */
     const archive = new Map()
     for (const record of [...(existingStep.attempts || []), ...(incomingStep.attempts || [])]) archiveAttempt(archive, record)
     for (const [runIndex, incomingRun] of incomingStep.runs.entries()) {
       if (incomingRun?.attemptId) {
-        incomingStep.runs[runIndex] = mergeAttemptRun(existingRuns, incomingRun, archive)
+        const merged = mergeAttemptRun(existingRuns, incomingRun, archive)
+        if (merged.attemptId !== incomingRun.attemptId && !isTerminalRunStatus(merged.status)) stepKeptActiveNewerAttempt = true
+        incomingStep.runs[runIndex] = merged
         continue
       }
       // Legacy records without attempt ids keep positional matching and the dashboard-retry guard.
@@ -340,6 +349,12 @@ function mergeExistingStateForWrite(existingState, incomingState) {
     const currentAttemptIds = new Set(incomingStep.runs.map((run) => run?.attemptId).filter(Boolean))
     const attempts = [...archive.values()].filter((record) => !record.attemptId || !currentAttemptIds.has(record.attemptId))
     if (attempts.length > 0) incomingStep.attempts = attempts
+    // A stale writer judged this step from the superseded attempt; the kept attempt is still active.
+    if (stepKeptActiveNewerAttempt && isSettledStatus(incomingStep.status)) incomingStep.status = existingStep.status
+    keptActiveNewerAttempt = keptActiveNewerAttempt || stepKeptActiveNewerAttempt
+  }
+  if (keptActiveNewerAttempt && isSettledStatus(incomingState.status) && !isSettledStatus(existingState.status)) {
+    incomingState.status = existingState.status
   }
   return incomingState
 }

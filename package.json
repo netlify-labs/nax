@@ -25,6 +25,7 @@
     "start": "node src/cli/nax.js",
     "check": "node --check src/cli/nax.js && find src -path src/dashboard/web/dist -prune -o -name '*.js' -print0 | xargs -0 -n 1 node --check && npm run check:import-direction && npm run check:jsdoc-types && npm run typecheck && npm run dashboard:typecheck",
     "check:cli-help": "node scripts/check-cli-help.js",
+    "check:flows": "node src/cli/nax.js lint --strict",
     "check:import-direction": "node scripts/check-import-direction.js",
     "check:jsdoc-types": "node scripts/check-jsdoc-types.js",
     "typecheck": "tsc -p tsconfig.json",
@@ -48,7 +49,7 @@
     "prepare": "npm run sdk:build && npm run dashboard:build",
     "prepack": "npm run dashboard:build",
     "test": "node --import tsx --test tests/unit/*.test.js tests/unit/*.test.ts tests/integration/*.test.js",
-    "release:verify": "npm run sdk:ci && npm run sdk:pack-smoke && npm run check && npm test && npm run check:cli-help && npm run dashboard:build && npm run dashboard:smoke && npm pack --dry-run"
+    "release:verify": "npm run sdk:ci && npm run sdk:pack-smoke && npm run check && npm test && npm run check:cli-help && npm run check:flows && npm run dashboard:build && npm run dashboard:smoke && npm pack --dry-run"
   },
   "keywords": [
     "netlify",

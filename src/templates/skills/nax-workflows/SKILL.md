@@ -199,7 +199,15 @@ Each step declares:
 - optional `input` from earlier steps
 - `waitFor: agent-results`
 
-When adding a flow, keep prompts self-contained and make step outputs easy for later steps to parse. A `follow-up` step inherits surviving instances from its first input and must not declare `agents`. Use `results: peers` to give each inherited instance only the other instances' outputs. Mixed success becomes `completed_with_failures`; an all-failed step halts the workflow.
+When adding a flow, keep prompts self-contained and make step outputs easy for later steps to parse. A `follow-up` step inherits surviving instances from its first input on the netlify-api transport, so do not declare `agents` there unless the flow also runs on the GitHub transport (which uses them). Use `results: peers` to give each inherited instance only the other instances' outputs. Mixed success becomes `completed_with_failures`; an all-failed step halts the workflow.
+
+After authoring or editing a flow, validate it and fix every diagnostic before running it:
+
+```bash
+nax lint <flow-id> --json
+```
+
+Each diagnostic has a `code`, a `message`, and a `hint` with the fix. `--strict` also fails on warnings.
 
 ## References
 

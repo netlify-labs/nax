@@ -117,10 +117,11 @@ test('flow validation rejects unsupported result routing and lineups above four 
   }), { id: 'too-many-instances', file: 'too-many.yml', dir: FIXTURE_DIR, source: { type: 'test' } }), /at most 4 agent instances/)
 })
 
-test('declared follow-up agents produce a structured deprecation notice and are ignored by inheritance', () => {
-  const flow = normalizeFlow(asFlow({
+/** @param {string} transport */
+function followupLineupFlow(transport) {
+  return normalizeFlow(asFlow({
     id: 'deprecated-followup-lineup',
-    defaults: { agents: ['codex'] },
+    defaults: { agents: ['codex'], transport },
     steps: [
       { id: 'first', prompt: 'prompts/task.md', agents: ['claude'] },
       {
@@ -137,14 +138,25 @@ test('declared follow-up agents produce a structured deprecation notice and are 
     dir: FIXTURE_DIR,
     source: { type: 'test' },
   })
+}
 
+test('declared follow-up agents warn only on netlify-api, where inheritance ignores them', () => {
+  const flow = followupLineupFlow('netlify-api')
   assert.equal(flow.steps[1].lineupDeclared, true)
   assert.deepEqual(flow.warnings, [{
     stepId: 'continue',
     code: 'deprecated_followup_lineup',
-    message: 'Step "continue" declares agents even though follow-up steps inherit their lineup from the first input step. The declaration is ignored.',
-    hint: 'Remove agents from this follow-up step.',
+    message: 'Step "continue" declares agents, but on the netlify-api transport follow-up steps inherit their lineup from the first input step, so the declaration is ignored.',
+    hint: 'Remove agents from this follow-up step. Keep them only for flows that also run on the GitHub transport, which uses them.',
   }])
+})
+
+test('declared follow-up agents are not flagged when the flow can run on the GitHub transport', () => {
+  for (const transport of ['auto', 'github']) {
+    const flow = followupLineupFlow(transport)
+    assert.equal(flow.steps[1].lineupDeclared, true)
+    assert.equal((flow.warnings || []).some((warning) => warning.code === 'deprecated_followup_lineup'), false, transport)
+  }
 })
 
 test('bundled follow-up steps omit their own lineup declarations', async () => {

@@ -411,12 +411,14 @@ function validateFlowStructure(flow, { existsSync = fs.existsSync } = {}) {
     const step = steps[index]
     const stepId = String(step.id || `step-${index + 1}`)
     const humanReview = isHumanReviewStep(step)
-    if (step.submit === 'follow-up' && step.lineupDeclared === true) {
+    // The GitHub transport comments with a follow-up step's own agents, so the declaration is only
+    // dead weight on flows pinned to netlify-api, where follow-ups inherit the source lineup.
+    if (step.submit === 'follow-up' && step.lineupDeclared === true && lineupTransport === 'netlify-api') {
       warnings.push(flowDiagnostic({
         stepId,
         code: 'deprecated_followup_lineup',
-        message: `Step "${stepId}" declares agents even though follow-up steps inherit their lineup from the first input step. The declaration is ignored.`,
-        hint: 'Remove agents from this follow-up step.',
+        message: `Step "${stepId}" declares agents, but on the netlify-api transport follow-up steps inherit their lineup from the first input step, so the declaration is ignored.`,
+        hint: 'Remove agents from this follow-up step. Keep them only for flows that also run on the GitHub transport, which uses them.',
       }))
     }
     if (Object.prototype.hasOwnProperty.call(step, 'agentConfig')) {

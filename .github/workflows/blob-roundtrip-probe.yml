@@ -1,9 +1,8 @@
 name: Blob Roundtrip Probe
 
+# Starts a real Netlify agent run (credits), so it runs only when triggered manually.
 on:
   workflow_dispatch:
-  schedule:
-    - cron: '17 9 * * 1'
 
 jobs:
   blob-roundtrip:
@@ -19,6 +18,7 @@ jobs:
         env:
           NETLIFY_SITE_ID: ${{ secrets.NETLIFY_SITE_ID }}
           NETLIFY_AUTH_TOKEN: ${{ secrets.NETLIFY_AUTH_TOKEN }}
+          NAX_BLOB_ROUNDTRIP_BRANCH: ${{ github.ref_name }}
         run: |
           if [ -z "$NETLIFY_SITE_ID" ] || [ -z "$NETLIFY_AUTH_TOKEN" ]; then
             echo "::notice::Skipping blob roundtrip probe; NETLIFY_SITE_ID and NETLIFY_AUTH_TOKEN secrets are required."

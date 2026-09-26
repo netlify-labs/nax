@@ -4,7 +4,7 @@ const assert = require('node:assert/strict')
 const path = require('path')
 
 const { deleteBlob, setBlob } = require('../../src/integrations/netlify/blobs')
-const { buildNetlifyEnv, submitLocalAgentRun, waitForLocalAgentRuns } = require('../../src/integrations/netlify/local-runner')
+const { buildNetlifyEnv, currentGitBranch, submitLocalAgentRun, waitForLocalAgentRuns } = require('../../src/integrations/netlify/local-runner')
 
 const enabled = process.env.NAX_NETLIFY_BLOB_ROUNDTRIP_E2E === '1'
 
@@ -39,7 +39,8 @@ test('opt-in probe proves local blob write is readable from a hosted agent run',
         ].join('\n'),
       },
       projectRoot,
-      branch: process.env.NAX_BLOB_ROUNDTRIP_BRANCH || 'main',
+      // The agent checks out this branch on the remote, so it must exist there.
+      branch: process.env.NAX_BLOB_ROUNDTRIP_BRANCH || currentGitBranch(projectRoot),
       siteId: netlify.siteId,
       env: netlify.env,
     })

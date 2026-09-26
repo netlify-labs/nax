@@ -123,10 +123,19 @@ function markRunCompleted(runState, { now = new Date() } = {}) {
   return saveRunState(runState)
 }
 
-/** @param {Record<string, unknown> | null | undefined} runState */
-function clearTrackedRunState(runState) {
+/**
+ * Releases a tracked run's lock after its orchestration ends, even on error, while leaving the
+ * run tracked so a later process exit can still mark it interrupted.
+ * @param {Record<string, unknown> | null | undefined} runState
+ */
+function releaseTrackedRunLock(runState) {
   const dir = runState?.dir ? String(runState.dir) : ''
   if (dir && heldRunLocks.get(dir)?.runState === runState) releaseRunLock(dir)
+}
+
+/** @param {Record<string, unknown> | null | undefined} runState */
+function clearTrackedRunState(runState) {
+  releaseTrackedRunLock(runState)
   if (runState && activeRunState !== runState) return
   activeRunState = null
   activeInterruptHandler = null
@@ -138,5 +147,6 @@ module.exports = {
   markRunCompleted,
   persistActiveRunState,
   persistActiveRunStateAsync,
+  releaseTrackedRunLock,
   trackRunState,
 }

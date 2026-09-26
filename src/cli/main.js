@@ -65,7 +65,7 @@ const {
   stepArtifactsDir,
   writeGithubStepSummary,
 } = require('../workflows/artifacts/workflow-artifacts')
-const { clearTrackedRunState, trackRunState } = require('../storage/local/graceful-run-state')
+const { clearTrackedRunState, releaseTrackedRunLock, trackRunState } = require('../storage/local/graceful-run-state')
 const { completeRun, writeFindingsAtTerminal } = require('../workflows/run-completion')
 const { persistAgentRunnerArtifact } = require('../workflows/artifacts/agent-runner-artifacts')
 const { persistAgentSessionArtifact } = require('../workflows/artifacts/agent-session-artifacts')
@@ -2562,150 +2562,154 @@ async function handleRetry(runId, options) {
   }
 
   trackRunState(runState)
-  const [{ step, stepIndex, run, runIndex }] = candidates
-  const retryingPartialStep = step.status === 'completed_with_failures'
-  const flowStep = flow.steps.find((candidate) => candidate.id === step.id)
-  if (!flowStep) throw new Error(`Flow ${flow.id} no longer contains step ${step.id}.`)
+  try {
+    const [{ step, stepIndex, run, runIndex }] = candidates
+    const retryingPartialStep = step.status === 'completed_with_failures'
+    const flowStep = flow.steps.find((candidate) => candidate.id === step.id)
+    if (!flowStep) throw new Error(`Flow ${flow.id} no longer contains step ${step.id}.`)
 
-  const branch = targetBranch(runState, { required: true })
-  const retryOptions = await chooseNetlifyFilterOption({
-    projectRoot,
-    options: {
-      ...(runState.options || {}),
-      ...options,
-      filter: options.filter || runState.options?.filter || '',
-    },
-  })
-  const netlify = resolveNetlifyProjectTarget({
-    projectRoot,
-    siteId: retryOptions.netlifySiteId,
-    filter: retryOptions.filter,
-    netlifyConfig: retryOptions.netlifyConfig,
-  })
-  const resolvedRetryOptions = netlifyOptionsFromTarget(retryOptions, netlify)
-  runState.options = {
-    ...(runState.options || {}),
-    ...(resolvedRetryOptions.filter ? { filter: resolvedRetryOptions.filter } : {}),
-    ...(resolvedRetryOptions.netlifyConfig ? { netlifyConfig: resolvedRetryOptions.netlifyConfig } : {}),
-    ...(resolvedRetryOptions.netlifySiteId ? { netlifySiteId: resolvedRetryOptions.netlifySiteId } : {}),
-    ...(resolvedRetryOptions.netlifySiteSource ? { netlifySiteSource: resolvedRetryOptions.netlifySiteSource } : {}),
-  }
-  const netlifyFilter = netlify.netlifyFilter
-  const compactPromptText = buildCompactLocalPromptForRetry({ flow, step: flowStep, runState, run })
-  if (!compactPromptText || compactPromptText.length >= String(run.promptText || '').length) {
-    throw new Error(`Could not build a shorter prompt for ${run.agent} ${step.id}.`)
-  }
-
-  console.log(`Retrying ${run.instanceLabel || run.instanceId || titleCase(run.agent)} ${step.title}`)
-  console.log(`Run: ${runState.runId}`)
-  console.log(`Runner: ${run.runnerId}`)
-  console.log(`Prompt: ${String(run.promptText || '').length} -> ${compactPromptText.length} chars`)
-  maybeReportNetlifySite(resolvedRetryOptions)
-  maybeReportNetlifyConfig(resolvedRetryOptions)
-  maybeReportNetlifyFilter(netlifyFilter)
-
-  const retryRun = {
-    ...run,
-    status: 'pending',
-    promptText: compactPromptText,
-    compactPromptText,
-    resultText: '',
-    existingRunnerId: run.runnerId,
-    promptShrinkRetryCount: Number(run.promptShrinkRetryCount || 0) + 1,
-    raw: {
-      ...run.raw,
-      retry: {
-        reason: 'manual-compact-prompt',
-        previousStatus: run.status,
-        previousResultText: run.resultText || '',
+    const branch = targetBranch(runState, { required: true })
+    const retryOptions = await chooseNetlifyFilterOption({
+      projectRoot,
+      options: {
+        ...(runState.options || {}),
+        ...options,
+        filter: options.filter || runState.options?.filter || '',
       },
-    },
-  }
-  const submitted = await submitLocalAgentRun({
-    run: retryRun,
-    projectRoot,
-    branch,
-    siteId: netlify.siteId,
-    netlifyFilter: netlifyFilter.filter,
-    env: netlify.env,
-    onRetry: ({ error, nextAttempt, attempts, delayMs }) => {
-      const delaySeconds = Math.round(delayMs / 1000)
-      console.log(`Submission failed, retrying ${nextAttempt}/${attempts} in ${delaySeconds}s — ${error.message}`)
-    },
-  })
-  step.runs[runIndex] = submitted
-  step.status = 'running'
-  saveRunState(runState)
-
-  const reporter = makeStepProgressReporter({
-    stepTitle: step.title,
-    total: 1,
-    agents: [run.agent],
-  })
-  const completed = await waitForLocalAgentRuns({
-    projectRoot,
-    runs: [submitted],
-    siteId: netlify.siteId,
-    netlifyFilter: netlifyFilter.filter,
-    env: netlify.env,
-    timeoutMinutes: Number.parseInt(retryOptions.timeoutMinutes || runState.options?.timeoutMinutes || '25', 10),
-    initialDelayMs: 0,
-    onProgress: (event) => reporter.updateRun(event),
-    onTerminalRun: (terminalRun) => {
-      addLocalRunLinks(terminalRun, projectRoot, resolvedRetryOptions)
-      step.runs[runIndex] = terminalRun
-      persistRunArtifact(runState, step, terminalRun)
-      reportTerminalLocalRun(reporter, terminalRun, projectRoot)
-    },
-  })
-  const completedRun = completed[0]
-  addLocalRunLinks(completedRun, projectRoot, resolvedRetryOptions)
-  step.runs[runIndex] = completedRun
-  step.status = localStepStatus(step)
-  persistStepArtifacts(runState, step)
-  reporter.updateRun({
-    run: completedRun,
-    state: completedRun.status,
-    terminal: true,
-    terminalSuccess: completedRun.status === 'completed',
-    terminalFailure: completedRun.status !== 'completed',
-  })
-  if (completedRun.status === 'completed') {
-    reporter.done(`${step.title}: ${titleCase(run.agent)} complete`)
-  } else {
-    reporter.fail(`${step.title}: ${titleCase(run.agent)} ${completedRun.status}`)
-  }
-  saveRunState(runState)
-
-  if (completedRun.status !== 'completed') {
-    throw new Error(`Retried ${run.agent} run did not complete successfully.`)
-  }
-
-  if (retryingPartialStep) {
-    if ((runState.steps || []).some((candidate) => candidate.status === 'completed_with_failures' || candidate.status === 'failed')) {
-      runState.status = 'completed_with_failures'
-      saveRunState(runState)
-    } else {
-      completeRun(runState)
+    })
+    const netlify = resolveNetlifyProjectTarget({
+      projectRoot,
+      siteId: retryOptions.netlifySiteId,
+      filter: retryOptions.filter,
+      netlifyConfig: retryOptions.netlifyConfig,
+    })
+    const resolvedRetryOptions = netlifyOptionsFromTarget(retryOptions, netlify)
+    runState.options = {
+      ...(runState.options || {}),
+      ...(resolvedRetryOptions.filter ? { filter: resolvedRetryOptions.filter } : {}),
+      ...(resolvedRetryOptions.netlifyConfig ? { netlifyConfig: resolvedRetryOptions.netlifyConfig } : {}),
+      ...(resolvedRetryOptions.netlifySiteId ? { netlifySiteId: resolvedRetryOptions.netlifySiteId } : {}),
+      ...(resolvedRetryOptions.netlifySiteSource ? { netlifySiteSource: resolvedRetryOptions.netlifySiteSource } : {}),
     }
+    const netlifyFilter = netlify.netlifyFilter
+    const compactPromptText = buildCompactLocalPromptForRetry({ flow, step: flowStep, runState, run })
+    if (!compactPromptText || compactPromptText.length >= String(run.promptText || '').length) {
+      throw new Error(`Could not build a shorter prompt for ${run.agent} ${step.id}.`)
+    }
+
+    console.log(`Retrying ${run.instanceLabel || run.instanceId || titleCase(run.agent)} ${step.title}`)
+    console.log(`Run: ${runState.runId}`)
+    console.log(`Runner: ${run.runnerId}`)
+    console.log(`Prompt: ${String(run.promptText || '').length} -> ${compactPromptText.length} chars`)
+    maybeReportNetlifySite(resolvedRetryOptions)
+    maybeReportNetlifyConfig(resolvedRetryOptions)
+    maybeReportNetlifyFilter(netlifyFilter)
+
+    const retryRun = {
+      ...run,
+      status: 'pending',
+      promptText: compactPromptText,
+      compactPromptText,
+      resultText: '',
+      existingRunnerId: run.runnerId,
+      promptShrinkRetryCount: Number(run.promptShrinkRetryCount || 0) + 1,
+      raw: {
+        ...run.raw,
+        retry: {
+          reason: 'manual-compact-prompt',
+          previousStatus: run.status,
+          previousResultText: run.resultText || '',
+        },
+      },
+    }
+    const submitted = await submitLocalAgentRun({
+      run: retryRun,
+      projectRoot,
+      branch,
+      siteId: netlify.siteId,
+      netlifyFilter: netlifyFilter.filter,
+      env: netlify.env,
+      onRetry: ({ error, nextAttempt, attempts, delayMs }) => {
+        const delaySeconds = Math.round(delayMs / 1000)
+        console.log(`Submission failed, retrying ${nextAttempt}/${attempts} in ${delaySeconds}s — ${error.message}`)
+      },
+    })
+    step.runs[runIndex] = submitted
+    step.status = 'running'
+    saveRunState(runState)
+
+    const reporter = makeStepProgressReporter({
+      stepTitle: step.title,
+      total: 1,
+      agents: [run.agent],
+    })
+    const completed = await waitForLocalAgentRuns({
+      projectRoot,
+      runs: [submitted],
+      siteId: netlify.siteId,
+      netlifyFilter: netlifyFilter.filter,
+      env: netlify.env,
+      timeoutMinutes: Number.parseInt(retryOptions.timeoutMinutes || runState.options?.timeoutMinutes || '25', 10),
+      initialDelayMs: 0,
+      onProgress: (event) => reporter.updateRun(event),
+      onTerminalRun: (terminalRun) => {
+        addLocalRunLinks(terminalRun, projectRoot, resolvedRetryOptions)
+        step.runs[runIndex] = terminalRun
+        persistRunArtifact(runState, step, terminalRun)
+        reportTerminalLocalRun(reporter, terminalRun, projectRoot)
+      },
+    })
+    const completedRun = completed[0]
+    addLocalRunLinks(completedRun, projectRoot, resolvedRetryOptions)
+    step.runs[runIndex] = completedRun
+    step.status = localStepStatus(step)
+    persistStepArtifacts(runState, step)
+    reporter.updateRun({
+      run: completedRun,
+      state: completedRun.status,
+      terminal: true,
+      terminalSuccess: completedRun.status === 'completed',
+      terminalFailure: completedRun.status !== 'completed',
+    })
+    if (completedRun.status === 'completed') {
+      reporter.done(`${step.title}: ${titleCase(run.agent)} complete`)
+    } else {
+      reporter.fail(`${step.title}: ${titleCase(run.agent)} ${completedRun.status}`)
+    }
+    saveRunState(runState)
+
+    if (completedRun.status !== 'completed') {
+      throw new Error(`Retried ${run.agent} run did not complete successfully.`)
+    }
+
+    if (retryingPartialStep) {
+      if ((runState.steps || []).some((candidate) => candidate.status === 'completed_with_failures' || candidate.status === 'failed')) {
+        runState.status = 'completed_with_failures'
+        saveRunState(runState)
+      } else {
+        completeRun(runState)
+      }
+      clearTrackedRunState(runState)
+      printSuccessBox({ flow, runState, transport: NETLIFY_API_TRANSPORT, projectRoot })
+      return
+    }
+
+    const completedStepStates = completedStepMapFromRunState(runState)
+    completedStepStates.set(step.id, step)
+    await executeLocalFlow({
+      flow,
+      steps: flow.steps.slice(stepIndex + 1),
+      options: runState.options || {},
+      runState,
+      projectRoot,
+      completedStepStates,
+    })
+    completeRun(runState)
     clearTrackedRunState(runState)
     printSuccessBox({ flow, runState, transport: NETLIFY_API_TRANSPORT, projectRoot })
-    return
+  } finally {
+    releaseTrackedRunLock(runState)
   }
-
-  const completedStepStates = completedStepMapFromRunState(runState)
-  completedStepStates.set(step.id, step)
-  await executeLocalFlow({
-    flow,
-    steps: flow.steps.slice(stepIndex + 1),
-    options: runState.options || {},
-    runState,
-    projectRoot,
-    completedStepStates,
-  })
-  completeRun(runState)
-  clearTrackedRunState(runState)
-  printSuccessBox({ flow, runState, transport: NETLIFY_API_TRANSPORT, projectRoot })
 }
 
 async function handleAdHocAgentRun(options = {}) {
@@ -3025,16 +3029,21 @@ async function handleRunEngine(flowId, options) {
       })
     },
   })
-  runState.context = runContext
-  saveRunState(runState)
-  runtimeEvents.setRunState(runState)
-  runtimeEvents.workflowStarted({
-    command: ['nax', 'run', configuredFlow.id],
-    options: {
-      ...configuredOptions,
-      transport,
-    },
-  })
+  try {
+    runState.context = runContext
+    saveRunState(runState)
+    runtimeEvents.setRunState(runState)
+    runtimeEvents.workflowStarted({
+      command: ['nax', 'run', configuredFlow.id],
+      options: {
+        ...configuredOptions,
+        transport,
+      },
+    })
+  } catch (error) {
+    clearTrackedRunState(runState)
+    throw error
+  }
   console.log(`Run ${runState.runId}`)
   console.log(`Flow: ${configuredFlow.title}`)
   console.log(`Target: ${targetSummary(target)}`)

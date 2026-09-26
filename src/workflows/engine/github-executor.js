@@ -4,7 +4,7 @@ const { WAIT_FOR_AGENT_RESULTS, isHumanReviewStep, loadStepPrompt } = require('.
 const { buildGithubFullPromptWrapper, applyContextFetchClassification, blobOffloadDisabled, cleanupWorkflowBlobsForRun, ensureGithubIssueFullPromptBlobOffload, ensureGithubPlanBlobOffload, githubIssueDeliveryKey, localSafePromptBytes, optionalNetlifyForBlobOffload } = require('./prompt-delivery')
 const { getLocalDate, resolveRepo } = require('../catalog/prompts')
 const { saveRunState, workflowStatePath } = require('../../storage/local/run-state')
-const { clearTrackedRunState, trackRunState } = require('../../storage/local/graceful-run-state')
+const { clearTrackedRunState, releaseTrackedRunLock, trackRunState } = require('../../storage/local/graceful-run-state')
 const { completeRun } = require('../run-completion')
 const { persistRunArtifact, persistStepArtifacts } = require('../artifacts/workflow-artifacts')
 const { formatRoundResults } = require('../round-results')
@@ -516,69 +516,74 @@ async function resumeGithubFlow({ flow, runState, projectRoot }) {
       })
     },
   })
-  const repo = resolveRepo(options.repo)
-  const completedStepStates = completedStepMapFromRunState(runState)
-  const startIndex = firstRunnableStepIndex(flow, runState)
-  if (startIndex >= flow.steps.length) {
-    console.log(`Run ${runState.runId} is already complete.`)
-    completeRun(runState)
-    clearTrackedRunState(runState)
-    return
-  }
-
-  const step = flow.steps[startIndex]
-  const stepState = (runState.steps || []).find((candidate) => candidate.id === step.id)
-  if (stepState && githubStepStatus(stepState) === 'completed') {
-    console.log(`Resuming ${runState.runId}`)
-    console.log(`Flow: ${flow.title}`)
-    console.log(`State: ${workflowStatePath(runState.dir)}`)
-    console.log(`Repair and continue: ${step.title} is already complete`)
-    stepState.status = 'completed'
-    completedStepStates.set(step.id, stepState)
-    saveRunState(runState)
-    await executeGithubFlow({
-      flow,
-      steps: flow.steps.slice(startIndex + 1),
-      options,
-      runState,
-      completedStepStates,
-    })
-    completeRun(runState)
-    clearTrackedRunState(runState)
-    return
-  }
-  if (stepState && stepState.runs?.some(shouldPollGithubRun)) {
-    console.log(`Resuming ${runState.runId}`)
-    console.log(`Flow: ${flow.title}`)
-    console.log(`State: ${workflowStatePath(runState.dir)}`)
-    console.log(`Repair and continue: ${step.title}`)
-    await completeGithubStep({ runState, repo, stepState, step, options })
-    completedStepStates.set(step.id, stepState)
-    saveRunState(runState)
-    if (stepState.status !== 'completed' && stepState.status !== 'dry-run') {
-      throw new Error(`GitHub step "${step.id}" did not complete successfully.`)
+  try {
+    const repo = resolveRepo(options.repo)
+    const completedStepStates = completedStepMapFromRunState(runState)
+    const startIndex = firstRunnableStepIndex(flow, runState)
+    if (startIndex >= flow.steps.length) {
+      console.log(`Run ${runState.runId} is already complete.`)
+      completeRun(runState)
+      clearTrackedRunState(runState)
+      return
     }
+
+    const step = flow.steps[startIndex]
+    const stepState = (runState.steps || []).find((candidate) => candidate.id === step.id)
+    if (stepState && githubStepStatus(stepState) === 'completed') {
+      console.log(`Resuming ${runState.runId}`)
+      console.log(`Flow: ${flow.title}`)
+      console.log(`State: ${workflowStatePath(runState.dir)}`)
+      console.log(`Repair and continue: ${step.title} is already complete`)
+      stepState.status = 'completed'
+      completedStepStates.set(step.id, stepState)
+      saveRunState(runState)
+      await executeGithubFlow({
+        flow,
+        steps: flow.steps.slice(startIndex + 1),
+        options,
+        runState,
+        completedStepStates,
+      })
+      completeRun(runState)
+      clearTrackedRunState(runState)
+      return
+    }
+    if (stepState && stepState.runs?.some(shouldPollGithubRun)) {
+      console.log(`Resuming ${runState.runId}`)
+      console.log(`Flow: ${flow.title}`)
+      console.log(`State: ${workflowStatePath(runState.dir)}`)
+      console.log(`Repair and continue: ${step.title}`)
+      await completeGithubStep({ runState, repo, stepState, step, options })
+      completedStepStates.set(step.id, stepState)
+      saveRunState(runState)
+      if (stepState.status !== 'completed' && stepState.status !== 'dry-run') {
+        throw new Error(`GitHub step "${step.id}" did not complete successfully.`)
+      }
+      await executeGithubFlow({
+        flow,
+        steps: flow.steps.slice(startIndex + 1),
+        options,
+        runState,
+        completedStepStates,
+      })
+      completeRun(runState)
+      clearTrackedRunState(runState)
+      return
+    }
+
     await executeGithubFlow({
       flow,
-      steps: flow.steps.slice(startIndex + 1),
+      steps: flow.steps.slice(startIndex),
       options,
       runState,
       completedStepStates,
     })
     completeRun(runState)
     clearTrackedRunState(runState)
-    return
+  } finally {
+    // Long-lived processes (dashboard) must not keep the run locked after a failure.
+    releaseTrackedRunLock(runState)
   }
-
-  await executeGithubFlow({
-    flow,
-    steps: flow.steps.slice(startIndex),
-    options,
-    runState,
-    completedStepStates,
-  })
-  completeRun(runState)
-  clearTrackedRunState(runState)
 }
 
 module.exports = {

@@ -27,7 +27,7 @@ function contextFixture() {
     capabilities: {
       context_get: { available: true }, workflow_list: { available: true }, workflow_get: { available: true }, workflow_plan: { available: true },
       agent_run_plan: { available: true }, run_start: { available: true }, run_list: { available: true }, run_get: { available: true },
-      run_wait: { available: true }, run_cancel: { available: true }, agent_run_retry: { available: true }, agent_run_followup: { available: true },
+      run_wait: { available: true }, run_cancel: { available: true }, run_resume: { available: true }, agent_run_retry: { available: true }, agent_run_followup: { available: true },
       review_gate_resolve: { available: true }, resource_read: { available: true },
     },
     agentCatalog: { provenance: { source: 'test', commit: 'abc123', syncedAt: '2026-08-08T00:00:00.000Z' }, providers: [] },

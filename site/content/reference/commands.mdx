@@ -44,6 +44,9 @@ nax run agent <claude|codex|gemini|opencode> [prompt...] [OPTIONS]
 | `--dry` | Preview without creating issues, jobs, or artifacts. |
 | `--force` | Skip confirmation prompts. |
 | `--retry [run-id]` | Retry one failed Netlify API agent run and continue. |
+| `--resume <run-id>` | Resume a saved Netlify API run in place: keep finished agents, resubmit only unfinished ones. With `--dry`, only preview; with `--force`, skip confirmation and allow a moved branch or ambiguous resubmission. See [Resume runs](/guides/resume-runs). |
+| `--include-cancelled` | With `--resume`, also resubmit cancelled agents. |
+| `--force-unlock` | With `--resume`, take over a run lock whose owner process is gone. |
 
 Advanced workflow overrides use `--step-agents <step=agents>`,
 `--step-models <step:agent=model>`, and
@@ -88,6 +91,17 @@ nax handoff [run-id] [OPTIONS]
 | `--open` | Open the selected summary file. |
 | `--agent <name>` | Start a fresh handoff run with one agent. |
 | `--flow <id>` | Run a workflow using the selected summary as context. |
+| `--findings` | Print the structured findings for the run (add `--json` for the `findings.json` artifact). |
+| `--to <target>` | Send selected findings to `github-issues`, `pr-review`, or `beads`. |
+| `--select <ids>` / `--limit <n>` | With `--to`, choose exact finding ids or the top N ranked findings. |
+| `--min-severity <level>` | With `--to`, lowest severity offered (default `low`). |
+| `--include-contested` / `--include-rejected` | With `--to`, widen the candidate findings. |
+| `--label <name>` | With `--to github-issues`, extra issue label; repeatable. |
+| `--repo <owner/name>` / `--pr <number>` | With `--to github-issues` or `pr-review`, target repository and pull request. |
+| `--dry` | With `--to`, print the plan without creating anything. |
+| `--force` | Skip confirmation; required to apply `--to` without a terminal. With `pr-review`, also posts another review for a run that already has one. |
+
+See [Hand off findings](/guides/hand-off-findings).
 
 ## `nax list`
 
@@ -95,6 +109,17 @@ nax handoff [run-id] [OPTIONS]
 nax list --verbose
 nax list --json
 ```
+
+## `nax lint`
+
+```sh
+nax lint
+nax lint review
+nax lint --json
+nax lint --strict
+```
+
+Checks every discovered flow, or only the named ones, and prints each diagnostic with a fix. Exits `1` when any flow is invalid; with `--strict`, warnings also fail. See [Validate your flow](/guides/write-custom-workflows#validate-your-flow).
 
 ## `nax costs`
 

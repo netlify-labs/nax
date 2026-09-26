@@ -79,6 +79,8 @@ test('local in-process transport maps dashboard review resume options and events
     reviewer: 'dashboard',
     yes: true,
     force: true,
+    approveReview: true,
+    includeCancelled: false,
   })
   assert.equal(calls[0].passthrough, true)
   assert.deepEqual(events, [{ type: 'started' }])

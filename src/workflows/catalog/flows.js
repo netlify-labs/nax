@@ -10,6 +10,7 @@ const {
   resolveAgentRunConfig,
 } = require('../../core/agents/configuration')
 const { resolveLineup } = require('../../core/agents/instances')
+const { FINDINGS_ADAPTER_IDS, TRANSPORT_ALIASES } = require('../../core/constants')
 
 const FLOWS_DIR = path.join(__dirname, '..', '..', '..', 'workflows')
 const DEFAULT_PROJECT_FLOWS_DIRS = ['.github/nax-flows']
@@ -380,6 +381,17 @@ function validateFlowStructure(flow, { existsSync = fs.existsSync } = {}) {
     }))
   }
 
+  const declaredTransport = String(defaults.transport || 'auto')
+  const knownTransport = Object.prototype.hasOwnProperty.call(TRANSPORT_ALIASES, declaredTransport)
+  if (!knownTransport) {
+    errors.push(flowDiagnostic({
+      code: 'invalid_default_transport',
+      message: `defaults.transport "${declaredTransport}" is not a supported transport.`,
+      hint: `Use one of: ${formatAllowed(Object.keys(TRANSPORT_ALIASES))}.`,
+    }))
+  }
+  const lineupTransport = knownTransport ? TRANSPORT_ALIASES[/** @type {keyof typeof TRANSPORT_ALIASES} */ (declaredTransport)] : 'auto'
+
   for (let index = 0; index < steps.length; index += 1) {
     const step = steps[index]
     const stepId = String(step.id || `step-${index + 1}`)
@@ -399,12 +411,14 @@ function validateFlowStructure(flow, { existsSync = fs.existsSync } = {}) {
     const step = steps[index]
     const stepId = String(step.id || `step-${index + 1}`)
     const humanReview = isHumanReviewStep(step)
-    if (step.submit === 'follow-up' && step.lineupDeclared === true) {
+    // The GitHub transport comments with a follow-up step's own agents, so the declaration is only
+    // dead weight on flows pinned to netlify-api, where follow-ups inherit the source lineup.
+    if (step.submit === 'follow-up' && step.lineupDeclared === true && lineupTransport === 'netlify-api') {
       warnings.push(flowDiagnostic({
         stepId,
         code: 'deprecated_followup_lineup',
-        message: `Step "${stepId}" declares agents even though follow-up steps inherit their lineup from the first input step. The declaration is ignored.`,
-        hint: 'Remove agents from this follow-up step.',
+        message: `Step "${stepId}" declares agents, but on the netlify-api transport follow-up steps inherit their lineup from the first input step, so the declaration is ignored.`,
+        hint: 'Remove agents from this follow-up step. Keep them only for flows that also run on the GitHub transport, which uses them.',
       }))
     }
     if (Object.prototype.hasOwnProperty.call(step, 'agentConfig')) {
@@ -430,6 +444,13 @@ function validateFlowStructure(flow, { existsSync = fs.existsSync } = {}) {
           code: 'missing_prompt_file',
           message: `Step "${stepId}" prompt file does not exist: ${resolvedPrompt}`,
           hint: 'Create the prompt file or update step.prompt.',
+        }))
+      } else if (readTextIfPossible(resolvedPrompt).trim() === '') {
+        warnings.push(flowDiagnostic({
+          stepId,
+          code: 'empty_prompt_file',
+          message: `Step "${stepId}" prompt file is empty: ${resolvedPrompt}`,
+          hint: 'Write the step instructions into the prompt file; an agent run with no instructions does nothing useful.',
         }))
       }
     }
@@ -470,6 +491,30 @@ function validateFlowStructure(flow, { existsSync = fs.existsSync } = {}) {
         hint: 'Use input entries like { step: "previous-step", results: "all" }.',
       }))
       continue
+    }
+
+    if (step.submit === 'follow-up') {
+      const firstSource = (step.input || []).find((entry) => entry && entry.step)
+      if (!firstSource) {
+        errors.push(flowDiagnostic({
+          stepId,
+          code: 'followup_without_input',
+          message: `Follow-up step "${stepId}" has no input step to continue from.`,
+          hint: 'Add `input: [{ step: <earlier-step-id>, results: all }]` or change `submit` to `new-run`.',
+        }))
+      } else {
+        const sourceIndex = stepIds.get(String(firstSource.step).trim())
+        const sourceStep = sourceIndex === undefined ? null : steps[sourceIndex]
+        const sourceHasAgents = sourceStep && (sourceStep.submit === 'follow-up' || (sourceStep.agents || []).length > 0)
+        if (sourceStep && (isHumanReviewStep(sourceStep) || !sourceHasAgents)) {
+          errors.push(flowDiagnostic({
+            stepId,
+            code: 'followup_source_not_agent_step',
+            message: `Follow-up step "${stepId}" continues from "${firstSource.step}", which runs no agents.`,
+            hint: 'Point the first input at an earlier step that runs agents, or change `submit` to `new-run`.',
+          }))
+        }
+      }
     }
 
     for (const input of step.input || []) {
@@ -549,19 +594,32 @@ function validateFlowStructure(flow, { existsSync = fs.existsSync } = {}) {
     }
     if (!humanReview) {
       try {
-        resolveLineup(Array.isArray(step.lineup) ? step.lineup : step.agents || [], {
-          requestedTransport: 'auto',
+        const resolved = resolveLineup(Array.isArray(step.lineup) ? step.lineup : step.agents || [], {
+          requestedTransport: lineupTransport,
           models: { ...(defaults.models || {}), ...(step.models || {}) },
           efforts: { ...(defaults.efforts || {}), ...(step.efforts || {}) },
         })
+        for (const warning of resolved.warnings || []) {
+          const typedWarning = /** @type {{ code?: string, message?: string }} */ (warning)
+          warnings.push(flowDiagnostic({
+            stepId,
+            code: typedWarning.code || 'lineup_warning',
+            message: typedWarning.message || String(warning),
+            hint: typedWarning.code === 'catalog_passthrough'
+              ? 'Check the model id spelling; unknown ids are passed to the Agent Runner, which rejects unsupported models at submit.'
+              : 'Review this step\'s model and effort configuration.',
+          }))
+        }
       } catch (error) {
         const typed = /** @type {{ code?: string, message?: string }} */ (error)
-        const code = typed.code || 'invalid_lineup'
+        const code = typed.code === 'github_transport_unsupported' && lineupTransport === 'github'
+          ? 'transport_lineup_conflict'
+          : typed.code || 'invalid_lineup'
         const hint = code === 'step_instance_limit'
           ? 'Reduce the models/efforts fan-out or split the work into another step.'
           : code === 'duplicate_instance'
             ? 'Vary the model or effort for repeated providers, or remove the duplicate entry.'
-            : code === 'github_transport_unsupported'
+            : code === 'github_transport_unsupported' || code === 'transport_lineup_conflict'
               ? 'Use the Netlify API transport for pinned models, efforts, or multiple instances from one provider.'
               : 'Review this step\'s agent lineup, model, and effort configuration.'
         errors.push(flowDiagnostic({
@@ -574,7 +632,73 @@ function validateFlowStructure(flow, { existsSync = fs.existsSync } = {}) {
     }
   }
 
+  const findingsError = findingsDeclarationError(flow.findings, steps)
+  if (findingsError) errors.push(findingsError)
+
+  warnings.push(...unusedPromptFileWarnings(flow, steps))
   return { errors, warnings }
+}
+
+/**
+ * Normalizes the optional `findings: { step, adapter }` flow key.
+ * @param {unknown} value
+ * @returns {{ step: string, adapter: string } | null}
+ */
+function normalizeFindingsDeclaration(value) {
+  if (value === undefined || value === null) return null
+  const record = value && typeof value === 'object' && !Array.isArray(value) ? /** @type {Record<string, unknown>} */ (value) : {}
+  return { step: String(record.step || '').trim(), adapter: String(record.adapter || '').trim() }
+}
+
+/**
+ * Validates a normalized findings declaration against the flow's steps and registered adapters.
+ * @param {{ step: string, adapter: string } | null | undefined} findings
+ * @param {import('../../types').WorkflowStep[]} steps
+ * @returns {FlowDiagnostic | null}
+ */
+function findingsDeclarationError(findings, steps) {
+  if (!findings) return null
+  const hint = `Set findings.step to an agent step id and findings.adapter to one of: ${formatAllowed(FINDINGS_ADAPTER_IDS)}.`
+  if (!FINDINGS_ADAPTER_IDS.includes(findings.adapter)) {
+    return flowDiagnostic({ code: 'invalid_findings_source', message: `findings.adapter "${findings.adapter}" is not a registered findings adapter.`, hint })
+  }
+  const step = steps.find((candidate) => String(candidate.id || '') === findings.step)
+  if (!step) {
+    return flowDiagnostic({ code: 'invalid_findings_source', message: `findings.step "${findings.step}" does not match any step.`, hint })
+  }
+  if (isHumanReviewStep(step)) {
+    return flowDiagnostic({ stepId: findings.step, code: 'invalid_findings_source', message: `findings.step "${findings.step}" is a human-review step, which produces no agent results.`, hint })
+  }
+  return null
+}
+
+/** @param {string} filePath @returns {string} */
+function readTextIfPossible(filePath) {
+  try {
+    return fs.readFileSync(filePath, 'utf8')
+  } catch (_error) {
+    return ' '
+  }
+}
+
+/**
+ * Warns about files in the flow's prompts/ directory that no step references.
+ * @param {WorkflowFlow} flow
+ * @param {import('../../types').WorkflowStep[]} steps
+ * @returns {FlowDiagnostic[]}
+ */
+function unusedPromptFileWarnings(flow, steps) {
+  if (!flow.dir) return []
+  const promptsDir = path.join(flow.dir, 'prompts')
+  if (!fs.existsSync(promptsDir)) return []
+  const referenced = new Set(steps.filter((step) => step.prompt).map((step) => promptPathForStep(flow, step)))
+  return fs.readdirSync(promptsDir, { withFileTypes: true })
+    .filter((entry) => entry.isFile() && !referenced.has(path.join(promptsDir, entry.name)))
+    .map((entry) => flowDiagnostic({
+      code: 'unused_prompt_file',
+      message: `Prompt file prompts/${entry.name} is not referenced by any step.`,
+      hint: `Reference prompts/${entry.name} from a step's prompt field, or delete it if it is left over.`,
+    }))
 }
 
 /** @param {{ flow?: { id?: string }, errors?: FlowDiagnostic[], warnings?: FlowDiagnostic[] }} [param0] */
@@ -644,6 +768,7 @@ function normalizeFlow(raw, { id, dir, file, source = {} }) {
     id: flowId,
     title: raw.title || flowId,
     description: raw.description || '',
+    findings: normalizeFindingsDeclaration(raw.findings),
     dir,
     file,
     source: source.type || 'bundled',
@@ -698,38 +823,195 @@ function normalizeFlow(raw, { id, dir, file, source = {} }) {
   return flow
 }
 
+/**
+ * A shadowed lower-priority flow candidate.
+ * @typedef {{ dir: string, file: string, source: FlowSource, status: FlowEntryStatus }} ShadowedFlowCandidate
+ * @typedef {'valid' | 'invalid' | 'load-failed'} FlowEntryStatus
+ * @typedef {{ code: 'flow_load_failed', message: string }} FlowLoadError
+ * @typedef {{
+ *   status: FlowEntryStatus,
+ *   id: string,
+ *   dir: string,
+ *   file: string,
+ *   source: FlowSource,
+ *   flow?: WorkflowFlow,
+ *   validation: FlowValidation,
+ *   loadError?: FlowLoadError,
+ *   stepIds: string[],
+ *   shadowed: ShadowedFlowCandidate[],
+ * }} FlowEntry
+ */
+
+/**
+ * Loads one flow directory into a discovery candidate, isolating load and validation failures.
+ * Returns null for directories without a flow file and for disabled flows, which never shadow.
+ * @param {FlowSource} source
+ * @param {string} dirName
+ * @returns {Promise<FlowEntry | null>}
+ */
+async function loadFlowCandidate(source, dirName) {
+  const dir = path.join(source.dir, dirName)
+  const file = findFlowFile(dir)
+  if (!file) return null
+  /** @type {WorkflowFlow} */
+  let raw
+  try {
+    raw = await loadConfigFile(file)
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    return {
+      status: 'load-failed',
+      id: dirName,
+      dir,
+      file,
+      source,
+      validation: { errors: [], warnings: [] },
+      loadError: { code: 'flow_load_failed', message },
+      stepIds: [],
+      shadowed: [],
+    }
+  }
+  if (isFlowDisabled(raw)) return null
+  const id = String(raw.id || dirName)
+  const stepIds = (Array.isArray(raw.steps) ? raw.steps : []).map((step, index) => String(step?.id || `step-${index + 1}`))
+  try {
+    const flow = normalizeFlow(raw, { id: dirName, dir, file, source })
+    if (raw.id && String(raw.id) !== dirName) {
+      flow.warnings = [...(flow.warnings || []), flowDiagnostic({
+        code: 'flow_id_mismatch',
+        message: `Flow id "${raw.id}" differs from its directory name "${dirName}".`,
+        hint: `Rename the directory to "${raw.id}" or remove the id field so the directory name is used.`,
+      })]
+    }
+    return {
+      status: 'valid',
+      id: flow.id,
+      dir,
+      file,
+      source,
+      flow,
+      validation: { errors: [], warnings: flow.warnings || [] },
+      stepIds,
+      shadowed: [],
+    }
+  } catch (error) {
+    const coded = /** @type {Error & { code?: string, validation?: FlowValidation }} */ (error)
+    const validation = coded.validation || {
+      errors: [flowDiagnostic({ code: coded.code || 'invalid_flow', message: coded.message || String(error) })],
+      warnings: [],
+    }
+    return { status: 'invalid', id, dir, file, source, validation, stepIds, shadowed: [] }
+  }
+}
+
+/**
+ * Discovers every flow candidate across sources and resolves one winning entry per id.
+ * Sources are visited in priority order; the first candidate for an id wins even when invalid,
+ * and lower-priority candidates are recorded as shadowed rather than activated.
+ * @param {FlowLoadOptions} [options]
+ * @returns {Promise<FlowEntry[]>}
+ */
+async function discoverFlowEntries(options = {}) {
+  const sources = await flowSources(options)
+  /** @type {Map<string, FlowEntry>} */
+  const winners = new Map()
+  for (const source of sources) {
+    if (!fs.existsSync(source.dir)) continue
+    const dirNames = fs.readdirSync(source.dir, { withFileTypes: true })
+      .filter((entry) => entry.isDirectory())
+      .map((entry) => entry.name)
+      .sort()
+    for (const dirName of dirNames) {
+      const candidate = await loadFlowCandidate(source, dirName)
+      if (!candidate) continue
+      const winner = winners.get(candidate.id)
+      if (winner) {
+        winner.shadowed.push({ dir: candidate.dir, file: candidate.file, source: candidate.source, status: candidate.status })
+        continue
+      }
+      winners.set(candidate.id, candidate)
+    }
+  }
+  return [...winners.values()]
+}
+
+/**
+ * Builds the error thrown when a flow entry cannot be loaded.
+ * @param {FlowEntry} entry
+ * @returns {Error & { code: string, statusCode: number, validation?: FlowValidation, details: Record<string, unknown> }}
+ */
+function flowEntryError(entry) {
+  if (entry.status === 'load-failed') {
+    const message = `Flow "${entry.id}" could not be loaded from ${entry.file}: ${entry.loadError?.message || 'unknown error'}`
+    return Object.assign(new Error(message), {
+      code: 'flow_load_failed',
+      statusCode: 422,
+      details: { flowId: entry.id, file: entry.file, message: entry.loadError?.message || '' },
+    })
+  }
+  const message = formatFlowValidation({ flow: { id: entry.id }, ...entry.validation })
+  return Object.assign(new Error(message), {
+    code: 'invalid_flow',
+    statusCode: 422,
+    validation: entry.validation,
+    details: {
+      flowId: entry.id,
+      file: entry.file,
+      diagnostics: entry.validation.errors,
+      warnings: entry.validation.warnings,
+    },
+  })
+}
+
 /** @param {string} id @param {FlowLoadOptions} [options] */
 async function loadFlow(id, options = {}) {
-  const flows = await listFlows(options)
-  const flow = flows.find((candidate) => candidate.id === id)
-  if (!flow) {
-    const available = flows.map((candidate) => candidate.id).join(', ') || 'none'
-    throw new Error(`Unknown flow "${id}". Available flows: ${available}`)
+  const entries = await discoverFlowEntries(options)
+  const entry = entries.find((candidate) => candidate.id === id)
+  if (!entry) {
+    const valid = entries.filter((candidate) => candidate.status === 'valid').map((candidate) => candidate.id)
+    const invalid = entries.filter((candidate) => candidate.status !== 'valid').map((candidate) => candidate.id)
+    const available = valid.join(', ') || 'none'
+    const invalidText = invalid.length > 0 ? `. Invalid flows: ${invalid.join(', ')}` : ''
+    throw new Error(`Unknown flow "${id}". Available flows: ${available}${invalidText}`)
   }
-  return flow
+  if (entry.status !== 'valid' || !entry.flow) throw flowEntryError(entry)
+  return entry.flow
+}
+
+/**
+ * Summary of a winning flow entry that cannot run, for list surfaces.
+ * @typedef {{ id: string, file: string, status: FlowEntryStatus, invalid: true, errorCount: number, diagnostics: FlowDiagnostic[] }} InvalidFlowSummary
+ */
+
+/** @param {FlowEntry} entry @returns {InvalidFlowSummary} */
+function invalidFlowSummary(entry) {
+  const diagnostics = entry.status === 'load-failed'
+    ? [flowDiagnostic({ code: 'flow_load_failed', message: entry.loadError?.message || 'Flow file could not be loaded.' })]
+    : entry.validation.errors
+  return { id: entry.id, file: entry.file, status: entry.status, invalid: true, errorCount: diagnostics.length, diagnostics }
+}
+
+/**
+ * Discovers flows once and splits winners into runnable flows and invalid summaries.
+ * @param {FlowLoadOptions} [options]
+ * @returns {Promise<{ flows: WorkflowFlow[], invalid: InvalidFlowSummary[], entries: FlowEntry[] }>}
+ */
+async function listFlowCatalog(options = {}) {
+  const entries = await discoverFlowEntries(options)
+  const flows = sortFlows(entries
+    .filter((entry) => entry.status === 'valid' && entry.flow)
+    .map((entry) => /** @type {WorkflowFlow} */ (entry.flow)))
+  const invalid = entries.filter((entry) => entry.status !== 'valid').map(invalidFlowSummary)
+  return { flows, invalid, entries }
 }
 
 /** @param {FlowLoadOptions} [options] */
 async function listFlows(options = {}) {
-  const sources = await flowSources(options)
-  const flows = []
-  const seenIds = new Set()
-  for (const source of sources) {
-    if (!fs.existsSync(source.dir)) continue
-    const entries = fs.readdirSync(source.dir, { withFileTypes: true })
-    for (const entry of entries) {
-      if (!entry.isDirectory()) continue
-      const dir = path.join(source.dir, entry.name)
-      const file = findFlowFile(dir)
-      if (!file) continue
-      const raw = await loadConfigFile(file)
-      if (isFlowDisabled(raw)) continue
-      const flow = normalizeFlow(raw, { id: entry.name, dir, file, source })
-      if (seenIds.has(flow.id)) continue
-      seenIds.add(flow.id)
-      flows.push(flow)
-    }
-  }
+  return (await listFlowCatalog(options)).flows
+}
+
+/** @param {WorkflowFlow[]} flows */
+function sortFlows(flows) {
   return flows.sort((a, b) => {
     if (a.sourcePriority !== b.sourcePriority) return a.sourcePriority - b.sourcePriority
     const aIndex = FLOW_PICKER_ORDER.indexOf(a.id)
@@ -763,6 +1045,10 @@ module.exports = {
   NAX_CONFIG_FILE_NAMES,
   WAIT_FOR_AGENT_RESULTS,
   assertValidFlowStructure,
+  discoverFlowEntries,
+  flowEntryError,
+  invalidFlowSummary,
+  listFlowCatalog,
   findFlowFile,
   flowSources,
   formatFlowValidation,

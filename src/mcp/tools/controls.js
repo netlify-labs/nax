@@ -55,6 +55,29 @@ function registerControlTools({ server, client, resolveClient }) {
     }
   })
 
+  server.registerTool('run_resume', TOOL_SPECS.run_resume, async ({ scope_id: scopeId, run_id: runId, request_id: requestId, include_cancelled: includeCancelled }) => {
+    /** @type {ControlPlaneContext | undefined} */
+    let context
+    /** @type {NaxControlPlaneClient | undefined} */
+    let selectedClient
+    try {
+      const resolved = await resolve({ ...(scopeId ? { scopeId } : {}) })
+      context = resolved.context
+      selectedClient = resolved.client
+      const result = await selectedClient.resumeRun({ runId, requestId, ...(includeCancelled ? { includeCancelled: true } : {}) })
+      const counts = /** @type {{ newRuns?: number, kept?: number, polling?: number, skipped?: number }} */ (result.preview.counts || {})
+      return successResult({
+        summary: `${result.replayed ? 'Replayed' : 'Accepted'} resume ${requestId} for ${runId}: ${counts.newRuns || 0} new agent runs, ${counts.kept || 0} kept, ${counts.polling || 0} polling, ${counts.skipped || 0} skipped.`,
+        data: result,
+        context,
+        nextActions: observeRunActions(result.run),
+      })
+    } catch (error) {
+      const candidates = selectedClient ? await controlRunCandidates(selectedClient, error) : []
+      return errorResult(error, { toolName: 'run_resume', context, candidates })
+    }
+  })
+
   server.registerTool('agent_run_retry', TOOL_SPECS.agent_run_retry, async ({ scope_id: scopeId, run_id: runId, agent_run_id: agentRunId, request_id: requestId }) => {
     /** @type {ControlPlaneContext | undefined} */
     let context

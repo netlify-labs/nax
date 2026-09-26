@@ -25,6 +25,7 @@
  * @typedef {{
  *   count?: number,
  *   items?: WorkflowPayload[],
+ *   invalid?: Array<{ id: string, file: string, status: string, invalid: true, errorCount: number, diagnostics: Array<{ stepId: string, code: string, message: string, hint: string }> }>,
  * }} WorkflowListPayload
  *
  * @typedef {{
@@ -147,6 +148,8 @@
  *   getRun?: (id: string) => DashboardRunPayload | null | Promise<DashboardRunPayload | null>,
  *   getRunGraph?: (id: string) => Promise<RunGraphPayload | null>,
  *   getRunDetails?: (id: string) => Promise<RunDetailsPayloadResponse | null>,
+ *   getRunFindings?: (id: string) => Promise<{ findings: JsonObject | null } | null>,
+ *   getResumePreview?: (id: string, options?: { includeCancelled?: boolean }) => Promise<{ resumable: boolean, preview: JsonObject | null, blocked: { code: string, message: string } | null } | null>,
  *   getRunArtifact?: (id: string, artifactId: string) => Promise<JsonObject | null>,
  *   getRunState?: (id: string) => JsonObject | null,
  * }} RunStore
@@ -222,6 +225,7 @@
  *   approveReview?: (id: string, body: JsonObject) => Promise<DashboardMutationResult>,
  *   cancelReview?: (id: string, body: JsonObject) => Promise<DashboardMutationResult>,
  *   retryAgentRun?: (id: string, body: JsonObject) => Promise<DashboardMutationResult>,
+ *   resumeRun?: (id: string, body: JsonObject) => Promise<DashboardMutationResult>,
  *   submitFollowup?: (id: string, body: JsonObject) => Promise<DashboardMutationResult>,
  *   cancelFollowup?: (id: string, body: JsonObject) => Promise<DashboardMutationResult>,
  * }} DashboardMutations

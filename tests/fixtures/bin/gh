@@ -1,0 +1,68 @@
+#!/usr/bin/env node
+// Fake gh CLI for process-boundary tests: records argv and serves issue/label JSON shaped like real gh output.
+// State lives in FAKE_GH_STATE (JSON file); argv lines are appended to FAKE_GH_LOG.
+const fs = require('fs')
+
+const args = process.argv.slice(2)
+const statePath = process.env.FAKE_GH_STATE
+const state = statePath && fs.existsSync(statePath) ? JSON.parse(fs.readFileSync(statePath, 'utf8')) : { issues: [], labels: [] }
+if (process.env.FAKE_GH_LOG) fs.appendFileSync(process.env.FAKE_GH_LOG, `${JSON.stringify(args)}\n`)
+const save = () => { if (statePath) fs.writeFileSync(statePath, JSON.stringify(state)) }
+/** @param {string} name */
+const flag = (name) => { const index = args.indexOf(name); return index === -1 ? '' : args[index + 1] }
+const flags = (name) => args.flatMap((arg, index) => (arg === name ? [args[index + 1]] : []))
+
+if (args[0] === 'auth' && args[1] === 'status') process.exit(0)
+if (args[0] === 'repo' && args[1] === 'view') { process.stdout.write('example-org/example-repo\n'); process.exit(0) }
+if (args[0] === 'label' && args[1] === 'create') {
+  const failing = String(process.env.FAKE_GH_FAIL_LABELS || '').split(',').filter(Boolean)
+  if (failing.includes(args[2])) { process.stderr.write(`HTTP 422: Validation Failed (label ${args[2]})\n`); process.exit(1) }
+  if (!state.labels.includes(args[2])) state.labels.push(args[2])
+  save()
+  process.exit(0)
+}
+if (args[0] === 'issue' && args[1] === 'list') {
+  const label = flag('--label')
+  const issues = state.issues.filter((issue) => !label || issue.labels.includes(label))
+  process.stdout.write(JSON.stringify(issues.map(({ number, url, body }) => ({ number, url, body }))))
+  process.exit(0)
+}
+if (args[0] === 'issue' && args[1] === 'create') {
+  const title = flag('--title')
+  if (process.env.FAKE_GH_FAIL_TITLE && title.includes(process.env.FAKE_GH_FAIL_TITLE)) {
+    process.stderr.write('HTTP 422: Validation Failed (title)\n')
+    process.exit(1)
+  }
+  const number = state.issues.length + 1
+  const url = `https://github.com/${flag('--repo')}/issues/${number}`
+  state.issues.push({ number, url, title, body: fs.readFileSync(flag('--body-file'), 'utf8'), labels: flags('--label') })
+  save()
+  process.stdout.write(`${url}\n`)
+  process.exit(0)
+}
+if (args[0] === 'pr' && args[1] === 'view') {
+  const selector = args[2]
+  const pull = (state.pulls || []).find((candidate) => String(candidate.number) === selector || candidate.headRefName === selector)
+  if (!pull) { process.stderr.write(`no pull requests found for branch "${selector}"\n`); process.exit(1) }
+  process.stdout.write(JSON.stringify({ number: pull.number, url: pull.url, headRefOid: pull.headRefOid, headRefName: pull.headRefName }))
+  process.exit(0)
+}
+if (args[0] === 'api') {
+  const route = args[1].match(/^repos\/[^/]+\/[^/]+\/pulls\/(\d+)\/(files|commits|reviews)$/)
+  const pull = route && (state.pulls || []).find((candidate) => String(candidate.number) === route[1])
+  if (!route || !pull) { process.stderr.write(`HTTP 404: Not Found (${args[1]})\n`); process.exit(1) }
+  if (route[2] === 'reviews' && flag('--method') === 'POST') {
+    const payload = JSON.parse(fs.readFileSync(flag('--input'), 'utf8'))
+    const id = (pull.reviews || []).length + 1
+    const review = { id, html_url: `${pull.url}#pullrequestreview-${id}`, ...payload }
+    pull.reviews = [...(pull.reviews || []), review]
+    save()
+    process.stdout.write(JSON.stringify(review))
+    process.exit(0)
+  }
+  const items = route[2] === 'files' ? pull.files : route[2] === 'commits' ? (pull.commits || []).map((sha) => ({ sha })) : (pull.reviews || [])
+  process.stdout.write(JSON.stringify(args.includes('--slurp') ? [items] : items))
+  process.exit(0)
+}
+process.stderr.write(`fake gh: unsupported command ${args.join(' ')}\n`)
+process.exit(2)

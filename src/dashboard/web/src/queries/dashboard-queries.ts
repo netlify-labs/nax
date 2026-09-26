@@ -1,8 +1,8 @@
 import { useInfiniteQuery, useQuery, type Query } from '@tanstack/react-query'
-import { getHealth, getRunDetails, getRunGraph, getWorkflowGraph, listRuns, listWorkflows } from '../api'
+import { getHealth, getResumePreview, getRunDetails, getRunFindings, getRunGraph, getWorkflowGraph, listRuns, listWorkflows } from '../api'
 import { dashboardQueryKeys } from '../query-keys'
 import { graphHasActiveRemoteRuns, runsFromResponses, upsertRunDetailsInDashboardCache, upsertRunGraphInDashboardCache } from './dashboard-cache'
-import type { HealthResponse, RunDetailsResponse, RunGraphResponse, RunsListData, WorkflowGraphResponse, WorkflowListResponse } from '../types'
+import type { FindingsArtifact, HealthResponse, ResumePreviewResponse, RunDetailsResponse, RunGraphResponse, RunsListData, WorkflowGraphResponse, WorkflowListResponse } from '../types'
 
 type QueryOptions<TData> = {
   enabled?: boolean
@@ -86,6 +86,24 @@ export function useRunDetailsQuery(runId: string, options: QueryOptions<RunDetai
       upsertRunDetailsInDashboardCache(client, response)
       return response
     },
+    ...options,
+    enabled: Boolean(runId) && (options.enabled ?? true),
+  })
+}
+
+export function useResumePreviewQuery(runId: string, includeCancelled: boolean, options: QueryOptions<ResumePreviewResponse> = {}) {
+  return useQuery({
+    queryKey: dashboardQueryKeys.resumePreview(runId, includeCancelled),
+    queryFn: () => getResumePreview(runId, { includeCancelled }),
+    ...options,
+    enabled: Boolean(runId) && (options.enabled ?? true),
+  })
+}
+
+export function useRunFindingsQuery(runId: string, options: QueryOptions<{ findings: FindingsArtifact | null }> = {}) {
+  return useQuery({
+    queryKey: dashboardQueryKeys.runFindings(runId),
+    queryFn: () => getRunFindings(runId),
     ...options,
     enabled: Boolean(runId) && (options.enabled ?? true),
   })

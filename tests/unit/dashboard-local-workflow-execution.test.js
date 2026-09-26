@@ -70,6 +70,21 @@ test('local workflow backend starts the shared in-process engine and binds its d
   assert.equal(calls[0].options.controlPlaneTarget.siteId, 'site_test')
   assert.deepEqual(calls[0].options.controlPlaneLineups.audit, [{ agent: 'claude', model: 'claude-opus-4-1', effort: 'high', label: 'deep' }])
   assert.deepEqual(calls[0].options.controlPlaneSelectedSteps, ['audit'])
+  assert.equal(calls[0].options.controlPlaneFlowDigest, undefined)
+})
+
+test('local workflow backend passes the plan flow digest to the engine', async () => {
+  const calls = []
+  const backend = createLocalWorkflowExecutionBackend({
+    projectRoot: '/repo',
+    runWorkflowEngine: async (flowId, options) => {
+      calls.push({ flowId, options })
+      const sink = typeof options.runnerEventSink === 'function' ? options.runnerEventSink : () => {}
+      sink({ type: 'workflow_started', runId: 'run_digest', flowId, status: 'running', createdAt: '2026-08-08T12:00:00.000Z' })
+    },
+  })
+  await backend.startPlan(/** @type {import('../../src/contracts').StoredControlPlanePlan} */ ({ ...basePlan, flowDigest: 'd'.repeat(64) }))
+  assert.equal(calls[0].options.controlPlaneFlowDigest, 'd'.repeat(64))
 })
 
 test('local workflow backend submits an exact single-agent plan through the shared dashboard service', async () => {
@@ -137,4 +152,29 @@ test('local workflow backend proves no mutation when the engine exits before dur
     () => backend.startPlan(/** @type {import('../../src/contracts').StoredControlPlanePlan} */ (basePlan)),
     /** @param {unknown} error */ (error) => errorHasNoMutation(error, 'run_binding_missing'),
   )
+})
+
+test('local workflow backend validatePlan rejects a flow that changed since planning', async () => {
+  const { flowDigest } = require('../../src/workflows/catalog/flow-manifest')
+  const flow = /** @type {import('../../src/types').WorkflowFlow} */ ({ id: 'review', title: 'Review', steps: [{ id: 'audit', title: 'Audit' }] })
+  const edited = { ...flow, steps: [{ id: 'audit', title: 'Audit (edited)' }] }
+  let current = flow
+  const backend = createLocalWorkflowExecutionBackend({ projectRoot: '/repo', loadWorkflow: async () => current })
+  const plan = /** @type {import('../../src/contracts').StoredControlPlanePlan} */ ({ ...basePlan, flowDigest: flowDigest(flow) })
+  await backend.validatePlan?.(plan)
+  current = edited
+  await assert.rejects(backend.validatePlan?.(plan) ?? Promise.resolve(), (error) => {
+    const coded = /** @type {Error & { code?: string, statusCode?: number, recoverable?: boolean }} */ (error)
+    assert.equal(coded.code, 'flow_changed_since_plan')
+    assert.equal(coded.statusCode, 409)
+    assert.equal(coded.recoverable, true)
+    return true
+  })
+})
+
+test('local workflow backend validatePlan skips plans without a flow digest', async () => {
+  let loads = 0
+  const backend = createLocalWorkflowExecutionBackend({ projectRoot: '/repo', loadWorkflow: async () => { loads += 1; return { id: 'review', steps: [] } } })
+  await backend.validatePlan?.(/** @type {import('../../src/contracts').StoredControlPlanePlan} */ (basePlan))
+  assert.equal(loads, 0)
 })

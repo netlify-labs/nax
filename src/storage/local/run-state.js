@@ -1,7 +1,10 @@
 const fs = require('fs')
 const path = require('path')
 const { artifactMeta } = require('../../core/artifact-metadata')
+const { attemptRecord } = require('../../core/runs/attempts')
+const { isTerminalRunStatus } = require('../../core/status')
 const { ensureNaxGitignore } = require('./nax-gitignore')
+const { createLockDir } = require('./run-lock')
 const {
   hasInFlightRuns,
   hasRepairableRuns,
@@ -149,31 +152,20 @@ function acquireStateFileLock(filePath, {
   let delayMs = 5
 
   while (true) {
-    try {
-      fs.mkdirSync(lockDir)
-      try {
-        fs.writeFileSync(path.join(lockDir, 'owner.json'), JSON.stringify({
-          pid: process.pid,
-          createdAt: new Date().toISOString(),
-        }, null, 2) + '\n')
-      } catch {
-        // The directory itself is the lock; owner metadata is only diagnostic.
-      }
+    if (createLockDir(lockDir, { pid: process.pid, createdAt: new Date().toISOString() })) {
       let released = false
       return () => {
         if (released) return
         released = true
         fs.rmSync(lockDir, { recursive: true, force: true })
       }
-    } catch (error) {
-      if (error?.code !== 'EEXIST') throw error
-      if (removeStaleLock(lockDir, staleMs)) continue
-      if (Date.now() - startedAt > timeoutMs) {
-        throw new Error(`Timed out waiting for workflow state lock: ${lockDir}`)
-      }
-      sleepSync(delayMs)
-      delayMs = Math.min(delayMs * 2, 100)
     }
+    if (removeStaleLock(lockDir, staleMs)) continue
+    if (Date.now() - startedAt > timeoutMs) {
+      throw new Error(`Timed out waiting for workflow state lock: ${lockDir}`)
+    }
+    sleepSync(delayMs)
+    delayMs = Math.min(delayMs * 2, 100)
   }
 }
 
@@ -277,24 +269,92 @@ function isDashboardRetryReplacement(existingRun = {}, incomingRun = {}) {
   return Boolean(existingRaw?.dashboardRetry && !incomingRaw?.dashboardRetry)
 }
 
+/**
+ * Archives an attempt record into a step's attempt history once (by attemptId). When both sides
+ * carry the same attempt, the terminal record wins.
+ * @param {Map<string, Record<string, unknown>>} archive
+ * @param {Record<string, unknown>} record
+ */
+function archiveAttempt(archive, record) {
+  // Records from runs saved before attempt ids existed are keyed by their runner/session/status.
+  const attemptId = String(record.attemptId || '') || `legacy:${record.runnerId || ''}:${record.sessionId || ''}:${record.status || ''}`
+  const known = archive.get(attemptId)
+  if (known && isTerminalRunStatus(known.status) && !isTerminalRunStatus(record.status)) return
+  archive.set(attemptId, record)
+}
+
+/**
+ * Merges one incoming run that carries an attemptId against the disk runs of the same step.
+ * Returns the record that should be current in the slot.
+ * @param {Array<Record<string, unknown>>} existingRuns
+ * @param {Record<string, unknown>} incomingRun
+ * @param {Map<string, Record<string, unknown>>} archive
+ * @returns {Record<string, unknown>}
+ */
+function mergeAttemptRun(existingRuns, incomingRun, archive) {
+  const sameAttempt = existingRuns.find((run) => run?.attemptId === incomingRun.attemptId)
+  if (sameAttempt) {
+    // Monotonic: a stale non-terminal snapshot never regresses a terminal record.
+    if (isTerminalRunStatus(sameAttempt.status) && !isTerminalRunStatus(incomingRun.status)) return sameAttempt
+    mergeRunDurableFields(sameAttempt, incomingRun)
+    return incomingRun
+  }
+  const slot = existingRuns.find((run) => run?.attemptId && run.instanceId && run.instanceId === incomingRun.instanceId)
+  if (!slot) return incomingRun
+  if (incomingRun.supersedesAttemptId === slot.attemptId) {
+    // Compare-and-swap: the incoming attempt replaces exactly the attempt it supersedes.
+    archiveAttempt(archive, attemptRecord(slot))
+    return incomingRun
+  }
+  // The disk attempt is newer (or unrelated): keep it current and archive the stale incoming one.
+  archiveAttempt(archive, attemptRecord(incomingRun))
+  return slot
+}
+
+/** A step or workflow status that claims the work finished (successfully or not). @param {unknown} status */
+function isSettledStatus(status) {
+  return isTerminalRunStatus(status) || String(status || '') === 'completed_with_failures'
+}
+
 function mergeExistingStateForWrite(existingState, incomingState) {
   if (!existingState || existingState.runId !== incomingState?.runId) return incomingState
   const existingSteps = Array.isArray(existingState.steps) ? existingState.steps : []
   const incomingSteps = Array.isArray(incomingState.steps) ? incomingState.steps : []
   const existingByStepId = new Map(existingSteps.filter((step) => step?.id).map((step) => [step.id, step]))
+  let keptActiveNewerAttempt = false
 
   for (const [stepIndex, incomingStep] of incomingSteps.entries()) {
     const existingStep = existingByStepId.get(incomingStep?.id) || existingSteps[stepIndex]
     if (!existingStep || !Array.isArray(incomingStep?.runs)) continue
     const existingRuns = Array.isArray(existingStep.runs) ? existingStep.runs : []
+    let stepKeptActiveNewerAttempt = false
+    /** @type {Map<string, Record<string, unknown>>} */
+    const archive = new Map()
+    for (const record of [...(existingStep.attempts || []), ...(incomingStep.attempts || [])]) archiveAttempt(archive, record)
     for (const [runIndex, incomingRun] of incomingStep.runs.entries()) {
-      const existingRun = matchingExistingRun(existingRuns, incomingRun, runIndex)
+      if (incomingRun?.attemptId) {
+        const merged = mergeAttemptRun(existingRuns, incomingRun, archive)
+        if (merged.attemptId !== incomingRun.attemptId && !isTerminalRunStatus(merged.status)) stepKeptActiveNewerAttempt = true
+        incomingStep.runs[runIndex] = merged
+        continue
+      }
+      // Legacy records without attempt ids keep positional matching and the dashboard-retry guard.
+      const existingRun = matchingExistingRun(existingRuns.filter((run) => !run?.attemptId), incomingRun, runIndex)
       if (isDashboardRetryReplacement(existingRun, incomingRun)) {
         incomingStep.runs[runIndex] = existingRun
         continue
       }
       if (existingRun) mergeRunDurableFields(existingRun, incomingRun)
     }
+    const currentAttemptIds = new Set(incomingStep.runs.map((run) => run?.attemptId).filter(Boolean))
+    const attempts = [...archive.values()].filter((record) => !record.attemptId || !currentAttemptIds.has(record.attemptId))
+    if (attempts.length > 0) incomingStep.attempts = attempts
+    // A stale writer judged this step from the superseded attempt; the kept attempt is still active.
+    if (stepKeptActiveNewerAttempt && isSettledStatus(incomingStep.status)) incomingStep.status = existingStep.status
+    keptActiveNewerAttempt = keptActiveNewerAttempt || stepKeptActiveNewerAttempt
+  }
+  if (keptActiveNewerAttempt && isSettledStatus(incomingState.status) && !isSettledStatus(existingState.status)) {
+    incomingState.status = existingState.status
   }
   return incomingState
 }
@@ -415,12 +475,13 @@ function findLatestUnfinishedLocalRun(projectRoot, { flowId } = {}) {
  *   transport?: string,
  *   options?: import('../../types').JsonMap,
  *   target?: import('../../types').TargetLike | null,
+ *   flowDigest?: string,
  *   now?: Date,
  * }} CreateRunStateInput
  */
 
 /** @param {CreateRunStateInput} param0 @returns {import('../../types').WorkflowRunState} */
-function createRunState({ projectRoot, flow, transport, options = {}, target = null, now = new Date() }) {
+function createRunState({ projectRoot, flow, transport, options = {}, target = null, flowDigest = '', now = new Date() }) {
   const runId = createRunId(flow.id, now)
   cleanupLegacyRunsDir(projectRoot)
   const dir = path.join(getWorkflowsDir(projectRoot), runId)
@@ -430,6 +491,7 @@ function createRunState({ projectRoot, flow, transport, options = {}, target = n
     flowId: flow.id,
     flowTitle: flow.title,
     flow,
+    ...(flowDigest ? { flowDigest } : {}),
     transport,
     projectRoot,
     createdAt: now.toISOString(),

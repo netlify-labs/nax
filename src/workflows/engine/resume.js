@@ -1,10 +1,12 @@
 const fs = require('fs')
 const path = require('path')
 const { makeBox } = require('@davidwells/box-logger')
-const { loadFlow } = require('../catalog/flows')
 const { relativeDisplayPath } = require('../followups/handoff-sources')
 const { dismissRunState, isUnfinishedRun, listRunStates, workflowStatePath } = require('../../storage/local/run-state')
 const { artifactsRootForRunState, stepArtifactsDir } = require('../artifacts/workflow-artifacts')
+const { explainFailure } = require('../../integrations/netlify/failure-guidance')
+const { isHumanReviewStep, loadFlow } = require('../catalog/flows')
+const { completedStepMapFromRunState, firstRunnableStepIndex } = require('./execution-context')
 
 const DEFAULT_RESUME_WINDOW_MS = 24 * 60 * 60 * 1000
 const OUTER_TERMINAL_RATIO = 0.8
@@ -345,6 +347,282 @@ async function findLatestResumableRun({ projectRoot, options = {}, flow = null, 
   return null
 }
 
+const AUTH_FAILURE_CODES = new Set(['wrong_account', 'token_expired'])
+// SDK codes for a create request that failed after it may have reached the Agent Runner API.
+const AMBIGUOUS_SUBMISSION_CODES = new Set(['create-ambiguous', 'session-create-ambiguous'])
+const POLLABLE_STATUSES = new Set(['submitted', 'running', 'retrying'])
+
+/**
+ * @typedef {'keep' | 'poll' | 'resubmit' | 'submit' | 'skip'} ReconcileActionKind
+ * @typedef {{
+ *   index: number,
+ *   instanceId: string,
+ *   action: ReconcileActionKind,
+ *   reason: string,
+ *   run: import('../../types').AgentRun,
+ *   useCompactPrompt: boolean,
+ *   existingRunnerId: string,
+ * }} ReconcileAction
+ * @typedef {{ code: string, message: string }} ReconcileStop
+ * @typedef {{ actions: ReconcileAction[], stop: ReconcileStop | null, notes: string[] }} ReconcileResult
+ */
+
+/**
+ * A submission that may already exist remotely: sent without a saved runner (crash mid-submit),
+ * an SDK ambiguous create, or several candidate runners found by reconciling its checkpoint.
+ * @param {import('../../types').AgentRun} run
+ */
+function maybeCreatedSubmission(run) {
+  const raw = /** @type {Record<string, unknown>} */ (run.raw || {})
+  const reconciled = /** @type {{ kind?: string }} */ (raw.submitReconcile || {})
+  // An automatic retry that was sent but never recorded its replacement runner.
+  if (raw.retrySubmitCheckpoint) return true
+  if (run.runnerId || !run.sentAt) return false
+  return String(run.status || '').toLowerCase() === 'pending'
+    || AMBIGUOUS_SUBMISSION_CODES.has(String(raw.submissionErrorCode || ''))
+    || reconciled.kind === 'ambiguous'
+    // Reconciliation could not rule out that the submission landed.
+    || (Boolean(raw.submitCheckpoint) && reconciled.kind === 'error')
+}
+
+/** @param {import('../../types').AgentRun} run */
+function failureDetail(run) {
+  const raw = /** @type {Record<string, unknown>} */ (run.raw || {})
+  return String(run.error || raw.submissionError || raw.failure || run.resultText || '')
+}
+
+/**
+ * Decides, per saved instance of the step being resumed, whether to keep, poll, resubmit, submit
+ * or skip it, or whether the whole resume must stop first. Pure: reads only the given state.
+ * @param {{
+ *   stepState: import('../../types').WorkflowStep | null | undefined,
+ *   flowStep: import('../../types').WorkflowStep,
+ *   completedStepStates: Map<string, import('../../types').WorkflowStep>,
+ *   runState: { runId?: string, flowDigest?: string },
+ *   currentFlowDigest?: string,
+ *   includeCancelled?: boolean,
+ *   force?: boolean,
+ * }} input
+ * @returns {ReconcileResult}
+ */
+function reconcileStepInstances({ stepState, flowStep, completedStepStates, runState, currentFlowDigest = '', includeCancelled = false, force = false }) {
+  /** @type {string[]} */
+  const notes = []
+  const stop = (/** @type {string} */ code, /** @type {string} */ message) => ({ actions: [], stop: { code, message }, notes })
+  if (runState.flowDigest && currentFlowDigest && runState.flowDigest !== currentFlowDigest) {
+    return stop('flow_changed_since_run', `The workflow changed after run ${runState.runId} started, so its saved prompts no longer match. Start a new run instead.`)
+  }
+  if (!runState.flowDigest) notes.push('flow change detection unavailable (run predates flowDigest)')
+  const runs = stepState?.runs || []
+  if (stepState && runs.length === 0) {
+    return stop('resume_plan_unavailable', `Step "${flowStep.id}" was started but its runs were never saved, so the original prompts are unknown. Start a new run with: nax run <flow> --from-step ${flowStep.id}`)
+  }
+
+  const followUp = flowStep.submit === 'follow-up'
+  const sourceStepId = followUp ? String((flowStep.input || []).find((entry) => entry && entry.step)?.step || '') : ''
+  const sourceRuns = followUp ? (completedStepStates.get(sourceStepId)?.runs || []) : []
+  /** @type {ReconcileAction[]} */
+  const actions = []
+  /** @type {string[]} */
+  const ambiguous = []
+  for (const [index, run] of runs.entries()) {
+    const instanceId = String(run.instanceId || run.agent || '')
+    const status = String(run.status || '').toLowerCase()
+    const decide = (/** @type {ReconcileActionKind} */ action, /** @type {string} */ reason, extra = {}) => {
+      actions.push({ index, instanceId, action, reason, run, useCompactPrompt: false, existingRunnerId: '', ...extra })
+    }
+    const reconcileError = /** @type {{ kind?: string, message?: string }} */ (/** @type {Record<string, unknown>} */ (run.raw || {}).submitReconcile || {})
+    if (reconcileError.kind === 'error' && AUTH_FAILURE_CODES.has(explainFailure(String(reconcileError.message || ''))?.code || '')) {
+      return stop('resume_auth_failure', `Checking whether ${instanceId}'s saved submission created a runner failed: ${reconcileError.message}. Fix Netlify authentication or the selected account (netlify status), then resume again.`)
+    }
+    if (status === 'completed' && String(run.resultText || '').trim()) { decide('keep', 'completed'); continue }
+    if (POLLABLE_STATUSES.has(status) && run.runnerId && !maybeCreatedSubmission(run)) { decide('poll', status); continue }
+    if (maybeCreatedSubmission(run)) {
+      const raw = /** @type {Record<string, unknown>} */ (run.raw || {})
+      const reconciled = /** @type {{ candidates?: string[] }} */ (raw.submitReconcile || {})
+      const candidates = reconciled.candidates?.length ? `; candidate runners: ${reconciled.candidates.join(', ')}` : ''
+      const retry = /** @type {{ sentAt?: number } | undefined} */ (raw.retrySubmitCheckpoint)
+      const sent = retry ? `automatic retry of runner ${run.runnerId} sent ${Number.isFinite(retry.sentAt) ? new Date(Number(retry.sentAt)).toISOString() : 'at an unknown time'}` : `sent ${run.sentAt || 'at an unknown time'}`
+      ambiguous.push(`${instanceId} (${sent}${candidates})`)
+      if (force) decide('resubmit', 'sent without a saved runner; resubmitting because --force was given')
+      continue
+    }
+    if (status === 'pending' && !run.runnerId) { decide('submit', 'never sent'); continue }
+    if (status === 'cancelled' || status === 'canceled') {
+      if (includeCancelled) decide('resubmit', 'cancelled; resubmitting because --include-cancelled was given')
+      else decide('skip', 'cancelled by user')
+      continue
+    }
+    const failureCode = explainFailure(failureDetail(run))?.code || ''
+    if (AUTH_FAILURE_CODES.has(failureCode)) {
+      return stop('resume_auth_failure', `${instanceId} failed with ${failureCode}. Fix Netlify authentication or the selected account (netlify status), then resume again.`)
+    }
+    if (failureCode === 'prompt_too_large') {
+      if (String(run.compactPromptText || '').trim()) decide('resubmit', 'prompt too large; using the compact prompt', { useCompactPrompt: true })
+      else decide('skip', 'prompt too large and no shorter prompt was saved')
+      continue
+    }
+    decide('resubmit', failureCode ? `failed: ${failureCode}` : `failed: ${status || 'unknown'}`)
+  }
+  if (ambiguous.length > 0 && !force) {
+    return stop('resume_ambiguous_submission', `A submission may already exist remotely for ${ambiguous.join(', ')}: nax sent it but never recorded the runner it created (a crash or a failed response after sending). Check the Netlify agent runs page, then rerun with --force to resubmit (a duplicate is possible).`)
+  }
+  if (followUp) {
+    for (const action of actions) {
+      if (action.action !== 'resubmit' && action.action !== 'submit') continue
+      const source = sourceRuns.find((candidate) => String(candidate.instanceId || candidate.agent) === action.instanceId && candidate.status === 'completed' && candidate.runnerId)
+      if (source) action.existingRunnerId = String(source.runnerId)
+      else Object.assign(action, { action: /** @type {ReconcileActionKind} */ ('skip'), reason: `source_unavailable: ${action.instanceId} did not complete in step "${sourceStepId}"` })
+    }
+  }
+  return { actions, stop: null, notes }
+}
+
+/**
+ * @typedef {{
+ *   complete: boolean,
+ *   startIndex: number,
+ *   step: import('../../types').WorkflowStep | null,
+ *   stepState: import('../../types').WorkflowStep | null,
+ *   completedStepStates: Map<string, import('../../types').WorkflowStep>,
+ *   reconciled: ReconcileResult,
+ * }} ResumePlan
+ */
+
+/**
+ * Finds where a run resumes (its first step that does not allow continuation, or a partial final
+ * step) and reconciles that step's saved instances. Pure: shared by the preview and the executor.
+ * @param {{
+ *   flow: import('../../types').WorkflowFlow,
+ *   runState: import('../../types').WorkflowRunState,
+ *   currentFlowDigest?: string,
+ *   includeCancelled?: boolean,
+ *   force?: boolean,
+ * }} input
+ * @returns {ResumePlan}
+ */
+function planResume({ flow, runState, currentFlowDigest = '', includeCancelled = false, force = false }) {
+  const completedStepStates = completedStepMapFromRunState(runState)
+  const startIndex = firstRunnableStepIndex(flow, runState)
+  if (startIndex >= flow.steps.length) {
+    return { complete: true, startIndex, step: null, stepState: null, completedStepStates, reconciled: { actions: [], stop: null, notes: [] } }
+  }
+  const step = flow.steps[startIndex]
+  const stepState = (runState.steps || []).find((candidate) => candidate.id === step.id) || null
+  const reconciled = reconcileStepInstances({
+    stepState: isHumanReviewStep(step) ? null : stepState,
+    flowStep: step,
+    completedStepStates,
+    runState,
+    currentFlowDigest,
+    includeCancelled,
+    force,
+  })
+  return { complete: false, startIndex, step, stepState, completedStepStates, reconciled }
+}
+
+/**
+ * True when resume sends new agents into the resumed step alongside its kept results, which is
+ * when a moved branch head would mix results from different code.
+ * @param {ResumePlan} plan
+ */
+function resumeSubmitsIntoStep(plan) {
+  return plan.reconciled.actions.some((action) => action.action === 'resubmit' || action.action === 'submit')
+}
+
+/** @param {ReconcileAction} action @param {import('../../types').WorkflowStep | null} stepState */
+function resumeActionDetail(action, stepState) {
+  if (action.action === 'keep') return 'completed'
+  if (action.action === 'poll') return `${action.run.status} (runner ${action.run.runnerId})`
+  if (action.action !== 'resubmit') return action.reason
+  const attempts = /** @type {Array<{ instanceId?: string }>} */ (/** @type {Record<string, unknown>} */ (stepState || {}).attempts || [])
+  const attempt = attempts.filter((entry) => entry.instanceId === action.instanceId).length + 2
+  return `${action.reason} (attempt ${attempt})`
+}
+
+/**
+ * @typedef {{
+ *   runId: string,
+ *   complete: boolean,
+ *   step: { id: string, title: string, index: number, total: number, started: boolean } | null,
+ *   actions: Array<{ instanceId: string, action: ReconcileActionKind, detail: string }>,
+ *   branch: string,
+ *   runSha: string,
+ *   currentSha: string,
+ *   headState: 'unchanged' | 'moved' | 'moved-later-steps' | 'unknown' | '',
+ *   counts: { newRuns: number, kept: number, polling: number, skipped: number },
+ *   notes: string[],
+ *   stop: ReconcileStop | null,
+ * }} ResumePreview
+ */
+
+/**
+ * Structured resume preview shared by the CLI text preview and the dashboard.
+ * @param {{
+ *   runState: import('../../types').WorkflowRunState,
+ *   flow: import('../../types').WorkflowFlow,
+ *   plan: ResumePlan,
+ *   branch: string,
+ *   currentSha?: string,
+ * }} input
+ * @returns {ResumePreview}
+ */
+function resumePreviewModel({ runState, flow, plan, branch, currentSha = '' }) {
+  const { actions, stop, notes } = plan.reconciled
+  const runSha = String(runState.target?.sha || '')
+  /** @type {ResumePreview['headState']} */
+  let headState = ''
+  if (runSha) {
+    if (!currentSha) headState = 'unknown'
+    else if (currentSha === runSha) headState = 'unchanged'
+    else headState = resumeSubmitsIntoStep(plan) ? 'moved' : 'moved-later-steps'
+  }
+  const count = (/** @type {string[]} */ ...kinds) => actions.filter((action) => kinds.includes(action.action)).length
+  return {
+    runId: String(runState.runId || ''),
+    complete: plan.complete,
+    step: plan.step
+      ? { id: String(plan.step.id), title: String(plan.step.title || plan.step.id), index: plan.startIndex, total: flow.steps.length, started: Boolean(plan.stepState) }
+      : null,
+    actions: actions.map((action) => ({ instanceId: action.instanceId, action: action.action, detail: resumeActionDetail(action, plan.stepState) })),
+    branch,
+    runSha,
+    currentSha,
+    headState,
+    counts: { newRuns: count('resubmit', 'submit'), kept: count('keep'), polling: count('poll'), skipped: count('skip') },
+    notes,
+    stop,
+  }
+}
+
+/**
+ * Formats the resume preview shown by `nax run --resume`, its --dry mode and the TTY auto-offer.
+ * @param {ResumePreview} preview
+ * @returns {string}
+ */
+function formatResumePreview(preview) {
+  if (preview.complete || !preview.step) return `Resume ${preview.runId}: every step already finished.`
+  const { step, actions } = preview
+  const lines = [`Resume ${preview.runId}  (step ${step.index + 1}/${step.total}: ${step.title})`]
+  const width = Math.max(0, ...actions.map((action) => action.instanceId.length))
+  for (const action of actions) lines.push(`  ${action.instanceId.padEnd(width)}   ${action.action.padEnd(8)}   ${action.detail}`)
+  if (!step.started) lines.push('  (step not started; every instance runs fresh)')
+  const moved = preview.currentSha.slice(0, 12)
+  const headLabels = {
+    unchanged: 'unchanged',
+    moved: `moved to ${moved}; --force to resume anyway`,
+    'moved-later-steps': `moved to ${moved}; remaining steps use the new head`,
+    unknown: 'remote head unknown',
+  }
+  if (preview.runSha) lines.push(`  Branch: ${preview.branch} @ ${preview.runSha.slice(0, 12)} (${preview.headState ? headLabels[preview.headState] : ''})`)
+  else if (preview.branch) lines.push(`  Branch: ${preview.branch}`)
+  const { counts } = preview
+  lines.push(`  New agent runs: ${counts.newRuns}   Kept: ${counts.kept}   Polling: ${counts.polling}   Skipped: ${counts.skipped}`)
+  for (const note of preview.notes) lines.push(`  Note: ${note}`)
+  if (preview.stop) lines.push(`  Stopped (${preview.stop.code}): ${preview.stop.message}`)
+  return lines.join('\n')
+}
+
 module.exports = {
   DEFAULT_RESUME_WINDOW_MS,
   ERROR_COLOR,
@@ -357,9 +635,15 @@ module.exports = {
   flowLoadOptions,
   formatDetailedRelativeTime,
   formatHumanRunDate,
+  formatResumePreview,
+  resumePreviewModel,
   formatResumeRunDetails,
+  maybeCreatedSubmission,
+  planResume,
+  resumeSubmitsIntoStep,
   isAutomaticResumeCandidate,
   printResumeRunDetails,
+  reconcileStepInstances,
   resumeLastStepTitle,
   resumeRunDetailsTitle,
   resumeStatusColor,

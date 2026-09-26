@@ -19,6 +19,7 @@ const ACTIVITY_FOR_OPERATION = Object.freeze({
   getRun: 'run_get',
   waitForRun: 'run_wait',
   cancelRun: 'run_cancel',
+  resumeRun: 'run_resume',
   retryAgentRun: 'agent_run_retry',
   submitFollowup: 'agent_run_followup',
   resolveReviewGate: 'review_gate_resolve',
@@ -193,6 +194,9 @@ function createNaxControlPlane(input) {
         id: target?.agentRunId || target?.runId,
         parentId: target?.agentRunId ? target?.runId : undefined,
       }, () => ports.cancelRun(scope, actor, target), { runId: target?.runId })
+    },
+    resumeRun(scope, actor, resumeInput) {
+      return invoke(ports, 'resumeRun', scope, actor, { kind: 'run', id: resumeInput?.runId }, () => ports.resumeRun(scope, actor, resumeInput), { runId: resumeInput?.runId, requestId: resumeInput?.requestId })
     },
     retryAgentRun(scope, actor, retryInput) {
       return invoke(ports, 'retryAgentRun', scope, actor, { kind: 'agent-run', id: retryInput?.agentRunId, parentId: retryInput?.runId }, () => ports.retryAgentRun(scope, actor, retryInput), { runId: retryInput?.runId, requestId: retryInput?.requestId })

@@ -44,6 +44,7 @@ function fakeApi(overrides = {}) {
       getActiveRun: (id) => (id === 'active-1' ? { id, status: 'running' } : null),
       ...overrides.liveRuns,
     },
+    mutations: overrides.mutations,
     runPlans: overrides.runPlans,
   })
 }
@@ -282,4 +283,62 @@ test('Hono dashboard API reports unsupported hosted capabilities explicitly', as
   const response = await app.request('/api/runs', { headers: { 'x-nax-token': 'token-1' } })
   assert.equal(response.status, 501)
   assert.equal((await json(response)).error.code, 'unsupported_capability')
+})
+
+test('Hono dashboard API forwards invalid_flow diagnostics with 422', async () => {
+  const diagnostics = [{ stepId: 'one', code: 'missing_prompt_file', message: 'Prompt file is missing.', hint: 'Create it.' }]
+  const app = fakeApi({
+    runtime: { capabilities: { ...localDashboardCapabilities(), canPlanRuns: true } },
+    runPlans: {
+      createWorkflowPlan: async () => {
+        throw Object.assign(new Error('Flow "broken-flow" is invalid'), {
+          code: 'invalid_flow',
+          statusCode: 422,
+          details: { flowId: 'broken-flow', file: '/repo/flow.yml', diagnostics },
+        })
+      },
+    },
+  })
+  const response = await app.request('/api/run-plans/workflows/broken-flow', {
+    method: 'POST',
+    headers: { 'x-nax-token': 'token-1', 'content-type': 'application/json' },
+    body: '{}',
+  })
+  assert.equal(response.status, 422)
+  const payload = await json(response)
+  assert.equal(payload.error.code, 'invalid_flow')
+  assert.deepEqual(payload.error.details.diagnostics, diagnostics)
+})
+
+test('Hono dashboard API serves run findings and 404s unknown runs', async () => {
+  const artifact = { schemaVersion: 1, runId: 'run-1', findings: [], diagnostics: [] }
+  const app = fakeApi({ runStore: { getRunFindings: async (id) => (id === 'run-1' ? { findings: artifact } : null) } })
+  const ok = await app.request('/api/runs/run-1/findings', { headers: { 'x-nax-token': 'token-1' } })
+  assert.equal(ok.status, 200)
+  assert.deepEqual((await json(ok)).findings, artifact)
+  const missing = await app.request('/api/runs/nope/findings', { headers: { 'x-nax-token': 'token-1' } })
+  assert.equal(missing.status, 404)
+})
+
+test('Hono dashboard API serves resume previews and starts resumes', async () => {
+  /** @type {Array<{ id: string, body: unknown }>} */
+  const resumed = []
+  const preview = { runId: 'run-1', actions: [] }
+  const app = fakeApi({
+    runStore: { getResumePreview: async (id, options) => (id === 'run-1' ? { resumable: true, preview, blocked: null, includeCancelled: options?.includeCancelled === true } : null) },
+    mutations: { resumeRun: async (id, body) => { resumed.push({ id, body }); return { statusCode: 202, body: { run: { id: 'live-1' }, preview } } } },
+  })
+  const ok = await app.request('/api/runs/run-1/resume-preview?includeCancelled=1', { headers: { 'x-nax-token': 'token-1' } })
+  assert.equal(ok.status, 200)
+  const payload = await json(ok)
+  assert.deepEqual(payload.preview, preview)
+  assert.equal(payload.includeCancelled, true)
+  assert.equal((await app.request('/api/runs/nope/resume-preview', { headers: { 'x-nax-token': 'token-1' } })).status, 404)
+  const started = await app.request('/api/runs/run-1/resume', {
+    method: 'POST',
+    headers: { 'x-nax-token': 'token-1', 'content-type': 'application/json' },
+    body: JSON.stringify({ includeCancelled: true }),
+  })
+  assert.equal(started.status, 202)
+  assert.deepEqual(resumed, [{ id: 'run-1', body: { includeCancelled: true } }])
 })

@@ -44,11 +44,13 @@ const TEAL_COLOR = '#0d9488'
  *   issue: (prompt: string | undefined, options: JsonMap) => CommandActionResult,
  *   costs: (options: JsonMap) => CommandActionResult,
  *   list: (options: JsonMap) => CommandActionResult,
+ *   lint: (flows: string[], options: JsonMap) => CommandActionResult,
  *   mcp: (options: JsonMap) => CommandActionResult,
  *   mcpDoctor: (options: JsonMap) => CommandActionResult,
  *   mcpSetupClaude: (options: JsonMap) => CommandActionResult,
  *   previewBoxes: (flow: string | undefined, options: JsonMap) => CommandActionResult,
  *   previewSpinner: (options: JsonMap) => CommandActionResult,
+ *   resume: (runId: string, options: JsonMap) => CommandActionResult,
  *   retry: (runId: string, options: JsonMap) => CommandActionResult,
  *   run: (workflow: string | null | undefined, options: JsonMap) => CommandActionResult,
  *   skills: (subcommand: string, options: JsonMap) => CommandActionResult,
@@ -237,6 +239,18 @@ function addRetryOptions(command) {
     .option('--retry [run-id]', 'Retry one failed Netlify API agent run and continue the workflow')
     .addOption(hiddenOption('--agent <name>', 'Failed agent to retry, e.g. claude'))
     .addOption(hiddenOption('--instance <id>', 'Exact failed instance to retry, e.g. claude:claude-opus-5:high'))
+}
+
+/**
+ * Adds explicit resume flags.
+ * @param {CommanderCommand} command
+ * @returns {CommanderCommand}
+ */
+function addResumeOptions(command) {
+  return command
+    .option('--resume <run-id>', 'Resume a saved Netlify API run in place, resubmitting only unfinished agents (--dry previews; --force also allows a moved branch or ambiguous resubmission)')
+    .option('--include-cancelled', 'With --resume, also resubmit agents that were cancelled')
+    .option('--force-unlock', 'With --resume, take over a run lock whose owner process is gone')
 }
 
 /**
@@ -459,12 +473,13 @@ function buildNaxProgram({
     .option('--skip-secrets', 'Create/link project and workflow without setting GitHub secrets')
     .action((options, command) => settleAction(handlers.init(actionOptions(options, command))))
 
-  const runCommand = addRetryOptions(addAdvancedRunOptions(addPublicRunOptions(program
+  const runCommand = addResumeOptions(addRetryOptions(addAdvancedRunOptions(addPublicRunOptions(program
     .command('run [flow]')
     .description('Start a workflow or single-agent run')
-    .usage('[workflow]'), collectOption), collectOption, defaultOutputBudgetBytes))
+    .usage('[workflow]'), collectOption), collectOption, defaultOutputBudgetBytes)))
     .action((flow, options, command) => {
       const resolvedOptions = actionOptions(options, command)
+      if (resolvedOptions.resume) return settleAction(handlers.resume(String(resolvedOptions.resume), resolvedOptions))
       const retry = resolveRetryValue(resolvedOptions.retry)
       if (retry.requested) {
         if (!retry.runId && !process.stdin.isTTY) {
@@ -512,6 +527,18 @@ function buildNaxProgram({
     .option('--copy-path', 'Copy the selected summary path to the clipboard and exit')
     .option('--open', 'Open the selected summary file')
     .option('--path', 'Print the selected summary path')
+    .option('--findings', 'Print the structured findings for a workflow run')
+    .option('--json', 'With --findings or --to, print machine-readable JSON')
+    .option('--to <target>', 'Send selected findings to a target: github-issues, beads, pr-review')
+    .option('--select <ids>', 'With --to, comma-separated finding ids to send (e.g. S1,S3)')
+    .option('--limit <count>', 'With --to, send the top N ranked findings')
+    .option('--min-severity <level>', 'With --to, lowest severity to include: info, low, medium, high, critical', 'low')
+    .option('--include-contested', 'With --to, also offer contested and merge-dependent findings')
+    .option('--include-rejected', 'With --to, also offer rejected and dropped findings')
+    .option('--label <name>', 'With --to github-issues, extra issue label; repeatable', collectOption, [])
+    .option('--repo <owner/name>', 'With --to github-issues or pr-review, target repository (default: current gh repo)')
+    .option('--pr <number>', 'With --to pr-review, pull request number when the run was not started from a PR')
+    .option('--dry', 'With --to, print the plan without creating anything')
     .option('--agent <name>', 'Agent for a fresh handoff run, e.g. codex')
     .option('--flow <id>', 'Workflow id to run with the summary as context')
     .option('--transport <transport>', 'Transport for chained workflows: auto, github-actions, netlify-api, local-machine', 'auto')
@@ -536,6 +563,15 @@ function buildNaxProgram({
     .option('--json', 'Print available workflows as JSON')
     .option('--verbose', 'Include step count, models, and workflow location')
     .action((options, command) => settleAction(handlers.list(actionOptions(options, command))))
+
+  program
+    .command('lint [flows...]')
+    .description('Validate workflows and report every problem with a fix hint')
+    .option('--project-root <path>', 'Project root containing project workflows')
+    .option('--flows-dir <path>', 'Project workflow directory; repeatable', collectOption, [])
+    .option('--json', 'Print the lint report as JSON')
+    .option('--strict', 'Exit non-zero on warnings as well as errors')
+    .action((flows, options, command) => settleAction(handlers.lint(flows || [], actionOptions(options, command))))
 
   program
     .command('costs')

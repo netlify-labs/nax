@@ -42,6 +42,7 @@ const VALID_INPUTS = Object.freeze({
   run_get: { run_id: 'run_01JABCDEFG', view: 'events', since: 12, limit: 100 },
   run_wait: { run_id: 'run_01JABCDEFG', since: '12', timeout_ms: 30000 },
   run_cancel: { run_id: 'run_01JABCDEFG', agent_run_id: 'agent_run_01JABCDEFG', reason: 'Superseded' },
+  run_resume: { run_id: 'run_01JABCDEFG', request_id: 'request_resume_01J', include_cancelled: true },
   agent_run_retry: { run_id: 'run_01JABCDEFG', agent_run_id: 'agent_run_01JABCDEFG', request_id: 'request_retry_01J' },
   agent_run_followup: {
     run_id: 'run_01JABCDEFG',
@@ -55,7 +56,7 @@ const VALID_INPUTS = Object.freeze({
   review_gate_resolve: { run_id: 'run_01JABCDEFG', review_gate_id: 'review_gate_01JABCDEFG', decision: 'approve', reason: 'Looks correct' },
 })
 
-test('all 13 entity-first tool schemas accept their precise valid contract', () => {
+test('all 14 entity-first tool schemas accept their precise valid contract', () => {
   assert.deepEqual(Object.keys(TOOL_INPUT_SCHEMAS), [
     'context_get',
     'workflow_list',
@@ -67,6 +68,7 @@ test('all 13 entity-first tool schemas accept their precise valid contract', () 
     'run_get',
     'run_wait',
     'run_cancel',
+    'run_resume',
     'agent_run_retry',
     'agent_run_followup',
     'review_gate_resolve',
@@ -135,6 +137,7 @@ test('schema size, pagination, timeout, enum, and cross-field boundaries fail cl
 test('paid-run mutations require stable caller request IDs', () => {
   assert.equal(TOOL_INPUT_SCHEMAS.run_start.safeParse({ plan_id: 'plan_01J' }).success, false)
   assert.equal(TOOL_INPUT_SCHEMAS.agent_run_retry.safeParse({ run_id: 'run_01J', agent_run_id: 'agent_run_01J' }).success, false)
+  assert.equal(TOOL_INPUT_SCHEMAS.run_resume.safeParse({ run_id: 'run_01J' }).success, false)
   assert.equal(TOOL_INPUT_SCHEMAS.agent_run_followup.safeParse({ run_id: 'run_01J', agent_run_id: 'agent_run_01J', prompt: 'Continue' }).success, false)
 })
 

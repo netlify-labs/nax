@@ -290,8 +290,8 @@ function formatHandoffSourceDetailBox(source = {}, projectRoot = process.cwd()) 
   })
 }
 
-/** @param {{ sources?: HandoffSource[], latestSource?: HandoffSource, projectRoot?: string }} [input] @returns {HandoffMenuOption[]} */
-function handoffSourceMenuOptions({ sources = [], latestSource = {}, projectRoot = process.cwd() } = {}) {
+/** @param {{ sources?: HandoffSource[], latestSource?: HandoffSource, projectRoot?: string, findingsCount?: number }} [input] @returns {HandoffMenuOption[]} */
+function handoffSourceMenuOptions({ sources = [], latestSource = {}, projectRoot = process.cwd(), findingsCount = 0 } = {}) {
   const options = [
     {
       value: 'copy-latest',
@@ -314,6 +314,13 @@ function handoffSourceMenuOptions({ sources = [], latestSource = {}, projectRoot
       hint: formatCompactHandoffSourceHint(latestSource, projectRoot),
     },
   ]
+  if (latestSource.kind === 'workflow' && findingsCount > 0) {
+    options.push({
+      value: 'issues-latest',
+      label: 'Create GitHub issues from findings',
+      hint: `${findingsCount} consensus finding${findingsCount === 1 ? '' : 's'}`,
+    })
+  }
   const hasKind = (kind) => sources.some((source) => source.kind === kind)
   if (hasKind('workflow')) options.push({ value: 'pick:workflow', label: 'Pick previous workflow', hint: '' })
   if (hasKind('agent-session')) options.push({ value: 'pick:agent-session', label: 'Pick previous agent session', hint: '' })

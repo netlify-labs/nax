@@ -6,11 +6,9 @@ const {
   bodyHasRunnerStatusMarker,
   parsePromptMarker,
 } = require('../integrations/github/comment-markers')
+const { findStructuredBlocks } = require('./findings/extract')
 
 const PROMPT_HEADER_PATTERN = /^@\S+\s+(claude|gemini|codex|opencode)\b/i
-const STRUCTURED_HEADING_PATTERN = /^##\s+2\.\s+Structured\s+(Findings|Consensus)[^\n]*$/m
-const NEXT_SECTION_PATTERN = /^##\s+3\./m
-const FENCED_JSON_PATTERN = /```json\s*\n([\s\S]*?)\n```/
 const RESULT_HEADING_PATTERN = /^###\s+Result:[^\n]*\n+/m
 const CHAINING_NOISE_SECTION_NAMES = new Set([
   'repository state',
@@ -193,20 +191,11 @@ function rawIssuesFromResults(results) {
 }
 
 function extractStructuredSection(body) {
-  const text = String(body || '')
-  const headingMatch = STRUCTURED_HEADING_PATTERN.exec(text)
-  if (!headingMatch) return null
-
-  const after = text.slice(headingMatch.index + headingMatch[0].length)
-  const stop = NEXT_SECTION_PATTERN.exec(after)
-  const sectionBody = stop ? after.slice(0, stop.index) : after
-
-  const jsonMatch = FENCED_JSON_PATTERN.exec(sectionBody)
-  if (!jsonMatch) return null
-
+  const [block] = findStructuredBlocks(String(body || ''), { numberedOnly: true })
+  if (!block) return null
   return {
-    heading: headingMatch[0].trim(),
-    json: jsonMatch[1].trim(),
+    heading: block.heading,
+    json: block.raw,
   }
 }
 

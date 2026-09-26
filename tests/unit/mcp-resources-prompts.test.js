@@ -138,15 +138,16 @@ test('NAX resource templates enumerate stable scoped workflows and runs', async 
   })
   registerNaxResources({ server, client: fakeClient() })
   assert.deepEqual(resources.map((resource) => resource.name), [
-    'nax-context', 'nax-workflow', 'nax-run', 'nax-run-details', 'nax-run-events', 'nax-run-artifact',
+    'nax-context', 'nax-workflow', 'nax-run', 'nax-run-details', 'nax-run-findings', 'nax-run-events', 'nax-run-artifact',
   ])
   assert.equal(resources.every((resource) => resource.template instanceof ResourceTemplate), true)
-  assert.equal(resources[5].template.listCallback, undefined)
+  assert.equal(resources[6].template.listCallback, undefined)
   const workflows = await resources[1].template.listCallback?.(/** @type {never} */ ({}))
   assert.equal(workflows?.resources[0].uri, 'nax://scopes/scope_test/workflows/workflow_test')
   const runs = await resources[2].template.listCallback?.(/** @type {never} */ ({}))
   assert.equal(runs?.resources[0].uri, 'nax://scopes/scope_test/runs/run_test')
-  assert.equal(resources[4].template.uriTemplate.toString(), 'nax://scopes/{scope_id}/runs/{run_id}/events{?since}')
+  assert.equal(resources[4].template.uriTemplate.toString(), 'nax://scopes/{scope_id}/runs/{run_id}/findings')
+  assert.equal(resources[5].template.uriTemplate.toString(), 'nax://scopes/{scope_id}/runs/{run_id}/events{?since}')
 })
 
 test('resource reads route by URI scope through the shared multi-project resolver', async () => {

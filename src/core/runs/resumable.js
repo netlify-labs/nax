@@ -1,4 +1,4 @@
-const { isTerminalRunStatus } = require('../status')
+const { isTerminalRunStatus, stepAllowsContinuation } = require('../status')
 
 /**
  * @param {{ runs?: Array<{ runnerId?: unknown, issueNumber?: unknown, status?: unknown }> } | null | undefined} step
@@ -49,10 +49,14 @@ function hasRemainingInterruptedSteps(state) {
   if (flowSteps.length === 0 || savedSteps.length === 0) return false
 
   const savedById = new Map(savedSteps.map((step) => [step.id, step]))
-  for (const flowStep of flowSteps) {
+  const finalIndex = flowSteps.length - 1
+  for (const [index, flowStep] of flowSteps.entries()) {
     const saved = savedById.get(flowStep.id)
     if (!saved) return true
-    if (!isCompletedStep(saved)) return false
+    // Earlier partial steps let the run continue; the final step must be fully complete.
+    const satisfied = index < finalIndex ? stepAllowsContinuation(saved.status) || isCompletedStep(saved) : isCompletedStep(saved)
+    // A saved step that stopped the run (failed, partial final, or cut off mid-step) is resumed in place.
+    if (!satisfied) return true
   }
   return false
 }
@@ -100,6 +104,21 @@ function isUnfinishedRun(state) {
   })
 }
 
+/** Failure codes after which `nax run --resume` can resubmit the failed instances. */
+const RESUMABLE_FAILURE_CODES = new Set(['NAX_ALL_INSTANCES_FAILED', 'NAX_PARTIAL_FINAL_STEP'])
+
+/**
+ * Runs an explicit resume may pick up: every unfinished run, plus failed runs that stopped only
+ * because agent instances failed. The failed ones are never offered automatically.
+ * @param {Parameters<typeof isUnfinishedRun>[0] & { failureCode?: unknown }} state
+ * @returns {boolean}
+ */
+function isExplicitlyResumableRun(state) {
+  if (state?.status === 'dismissed' || state?.dismissedAt) return false
+  if (state?.status === 'failed') return RESUMABLE_FAILURE_CODES.has(String(state.failureCode || ''))
+  return isUnfinishedRun(state)
+}
+
 /**
  * @param {Parameters<typeof isUnfinishedRun>[0] & { transport?: unknown }} state
  * @returns {boolean}
@@ -114,6 +133,7 @@ module.exports = {
   hasRemainingInterruptedSteps,
   hasRepairableRuns,
   isCompletedStep,
+  isExplicitlyResumableRun,
   isNetlifyApiTransport,
   isUnfinishedLocalRun,
   isUnfinishedRun,

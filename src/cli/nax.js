@@ -1,6 +1,23 @@
 #!/usr/bin/env node
 
-const main = require('./commands/program')
+/**
+ * Loads the CLI modules with `--json` hidden from process.argv.
+ * @davidwells/box-logger reads argv at require time and disables colors on `--json`, and its
+ * disabled chalk returns strings from `hex()`, which crashes box rendering during program build.
+ * @returns {typeof import('./commands/program')}
+ */
+function loadProgramWithoutJsonArgv() {
+  if (!process.argv.includes('--json')) return require('./commands/program')
+  const originalArgv = process.argv
+  process.argv = process.argv.filter((arg) => arg !== '--json')
+  try {
+    return require('./commands/program')
+  } finally {
+    process.argv = originalArgv
+  }
+}
+
+const main = loadProgramWithoutJsonArgv()
 
 /** @param {unknown} error */
 function formatCaughtError(error) {

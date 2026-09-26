@@ -1,4 +1,4 @@
-import type { AgentRunRequest, AgentRunResponse, DashboardRun, DryRunOptions, DryRunResponse, HealthResponse, RunAgentCancelResponse, RunAgentTarget, RunDetailsResponse, RunFollowupRequest, RunFollowupResponse, RunGraphResponse, RunRetryRequest, RunRetryResponse, RunsResponse, StartRunResponse, WorkflowGraphResponse, WorkflowListResponse } from './types'
+import type { AgentRunRequest, AgentRunResponse, DashboardRun, DryRunOptions, DryRunResponse, FindingsArtifact, HealthResponse, RunAgentCancelResponse, RunAgentTarget, RunDetailsResponse, RunFollowupRequest, RunFollowupResponse, ResumePreviewResponse, RunGraphResponse, RunResumeResponse, RunRetryRequest, RunRetryResponse, RunsResponse, StartRunResponse, WorkflowGraphResponse, WorkflowListResponse } from './types'
 
 type DashboardWindow = Window & {
   NAX_DASHBOARD_API_BASE?: string
@@ -252,6 +252,23 @@ export async function retryAgentRun(id: string, target: RunRetryRequest): Promis
   )
 }
 
+export function getResumePreview(id: string, { includeCancelled = false }: { includeCancelled?: boolean } = {}): Promise<ResumePreviewResponse> {
+  return requestJson<ResumePreviewResponse>(`/api/runs/${encodeURIComponent(id)}/resume-preview${includeCancelled ? '?includeCancelled=1' : ''}`)
+}
+
+export async function resumeRun(id: string, { includeCancelled = false }: { includeCancelled?: boolean } = {}): Promise<RunResumeResponse> {
+  return fetchJson<RunResumeResponse>(
+    `/api/runs/${encodeURIComponent(id)}/resume`,
+    {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify({ includeCancelled }),
+    },
+  )
+}
+
 export type RunEventStream = { close: () => void }
 
 export function runEventsStream(
@@ -322,6 +339,10 @@ export function listRuns(options: { limit?: number; cursor?: string } = {}): Pro
 
 export function getRunGraph(id: string): Promise<RunGraphResponse> {
   return requestJson<RunGraphResponse>(`/api/runs/${encodeURIComponent(id)}/graph`)
+}
+
+export function getRunFindings(id: string): Promise<{ findings: FindingsArtifact | null }> {
+  return requestJson<{ findings: FindingsArtifact | null }>(`/api/runs/${encodeURIComponent(id)}/findings`)
 }
 
 export function getRunDetails(id: string): Promise<RunDetailsResponse> {

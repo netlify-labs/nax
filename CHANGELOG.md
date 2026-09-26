@@ -1,5 +1,68 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- Structured findings: workflows declare `findings: { step, adapter }`, and
+  terminal runs write `artifacts/findings.json` (schema v1) parsed from the
+  consensus. The bundled `review` flow declares it and its consensus schema
+  now records which `agents` each finding merges.
+- `nax handoff --findings [--json]` prints a run's findings, and
+  `nax handoff --to github-issues|pr-review|beads` sends selected findings to
+  labeled GitHub issues, one advisory PR review, or beads. Every target plans
+  first, supports `--dry`, and is idempotent through markers or external refs.
+- Findings in the dashboard run details and in MCP (`run_get` details
+  summary, `view: "findings"`, and a `.../runs/{run_id}/findings` resource).
+- `nax lint [flows...] [--json] [--strict]` reports every flow diagnostic
+  with a fix hint.
+  Every code is documented under "Validate your flow" in the custom
+  workflows guide; `npm run check:flows` lints bundled flows with `--strict`
+  in `release:verify`.
+- New flow checks: `followup_without_input`, `followup_source_not_agent_step`,
+  `invalid_default_transport`, `transport_lineup_conflict`,
+  `invalid_findings_source`, plus warnings for empty or unused prompt files
+  and model/effort lineup issues that were previously dropped.
+- Workflow plans pin a versioned flow digest; starting a plan whose flow
+  changed fails with recoverable `flow_changed_since_plan` and leaves the plan
+  re-plannable. Runs record `flowDigest`.
+- Plan-time prompt-size warnings for oversized static prompts.
+- `nax run --resume <run-id> [--dry] [--force] [--include-cancelled]`
+  resumes a Netlify API run in place: finished agents are kept, running
+  agents are polled, and only failed or never-sent agents are resubmitted
+  with their saved prompt. A per-instance preview shows what will happen.
+  Resume refuses before submitting on `flow_changed_since_run`,
+  `resume_ambiguous_submission`, `resume_plan_unavailable`,
+  `resume_auth_failure`, or `branch_moved_since_run`.
+- Runs that failed only because agents failed (`NAX_ALL_INSTANCES_FAILED`,
+  `NAX_PARTIAL_FINAL_STEP`) record `failureCode` and can be resumed
+  explicitly.
+- Run lock: one process executes a run at a time (`run.lock` with owner pid,
+  host and nonce). Contention fails with `run_locked`; dead same-host owners
+  are taken over; `--force-unlock` takes over a lock from another host.
+- Dashboard **Resume run** panel with the per-agent preview, backed by
+  `GET /api/runs/:id/resume-preview` and `POST /api/runs/:id/resume`
+  (409 with the refusal code before anything starts).
+- Resume adopts a runner created by a submission whose response was lost: the
+  exact request is saved before it is sent (SDK `onSubmitCheckpoint`) and
+  reconciled by request marker, so the runner is polled instead of duplicated.
+- MCP `run_resume` tool (idempotent by `request_id`) returning the per-agent
+  preview; resume refusals are recoverable MCP errors with guidance.
+- Superseded attempts are kept in `step.attempts` with lineage and usage;
+  costs count every attempt exactly once.
+
+### Fixed
+
+- One invalid flow no longer breaks every flow: broken flows are skipped with
+  a one-line warning, shown as invalid in the picker, dashboard and MCP, and
+  an invalid override never silently activates the flow it shadows.
+- `--json` on any command (for example `nax list --json`) no longer crashes
+  CLI startup.
+- Scripted and `--force` runs, and `nax run agent`, now warn on stderr about
+  uncommitted or unpushed changes that remote runners cannot see.
+- Dashboard dry-run shows flow diagnostics line by line instead of a generic
+  error.
+
 ## 3.0.0
 
 ### Breaking changes

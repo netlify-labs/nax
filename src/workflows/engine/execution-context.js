@@ -3,6 +3,7 @@ const {
   readAutoContext,
   readManualContext,
 } = require('../../integrations/github/issue-plan')
+const { stepAllowsContinuation } = require('../../core/status')
 
 const DEFAULT_OUTPUT_BUDGET_BYTES = 64000
 
@@ -155,7 +156,7 @@ function contextForRunState(runState, options) {
 function completedStepMapFromRunState(runState) {
   const completed = new Map()
   for (const step of runState.steps || []) {
-    if (step.status === 'completed' || step.status === 'dry-run') {
+    if (stepAllowsContinuation(step.status)) {
       completed.set(step.id, step)
     }
   }
@@ -170,9 +171,12 @@ function completedStepMapFromRunState(runState) {
  */
 function firstRunnableStepIndex(flow, runState) {
   const byId = new Map((runState.steps || []).map((step) => [step.id, step]))
+  const finalIndex = flow.steps.length - 1
   for (let index = 0; index < flow.steps.length; index += 1) {
     const saved = byId.get(flow.steps[index].id)
-    if (!saved || saved.status !== 'completed' && saved.status !== 'dry-run') return index
+    if (!saved || !stepAllowsContinuation(saved.status)) return index
+    // A workflow cannot finish on a partial final step, so it is resumed rather than skipped.
+    if (index === finalIndex && saved.status === 'completed_with_failures') return index
   }
   return flow.steps.length
 }

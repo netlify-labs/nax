@@ -126,6 +126,7 @@ Important constructor options include:
 | `onBlobCleanupError` | Receives a value-free cleanup failure event; cleanup never changes the run result. |
 | `onLandingCheckpoint` | Persists irreversible landing progress before the next mutation. |
 | `onRetryCheckpoint` | Persists consumed retry capacity and safe reason/timing metadata before replacement I/O. |
+| `onSubmitCheckpoint` | Receives the exact effective input (`requestId`, `prompt` or `promptRef`) and `sentAt` before every runner or session create, including capacity retries. Persist it to reconcile a crash or ambiguous response later with `reconcileCreate` / `reconcileSession`. If it throws, nothing is sent. |
 | `onTelemetry` | Receives redacted auth/transport events. |
 
 `fetch`, `sleep`, `now`, `random`, and `generateRequestId` can be injected for

@@ -7,7 +7,7 @@ import { Callout } from 'nextra/components'
 
 # MCP reference
 
-NAX exposes 13 entity-first tools. Names use `noun_action`, so related operations sort together and remain predictable for agents.
+NAX exposes 14 entity-first tools. Names use `noun_action`, so related operations sort together and remain predictable for agents.
 
 Every tool returns concise text plus a structured envelope containing `ok`, `data` or `error`, an optional scoped `context`, and bounded `next_actions`. Exact IDs and cursors come from prior results; placeholders, URLs, wildcard targets, credentials, transport overrides, and site overrides are rejected by strict schemas. Local paths are accepted only as `context_get.project_ref` values.
 
@@ -27,6 +27,7 @@ One `nax mcp` process can route among several local projects. Call `context_get`
 | `run_get` | Read one bounded run view. | No |
 | `run_wait` | Wait for events or a state transition. | No |
 | `run_cancel` | Cancel one run or exact agent run. | Yes; destructive |
+| `run_resume` | Resume a failed or interrupted run in place. | Yes; idempotent |
 | `agent_run_retry` | Retry one exact agent run. | Yes; idempotent |
 | `agent_run_followup` | Continue from one exact agent result. | Yes; idempotent |
 | `review_gate_resolve` | Approve or cancel one exact review gate. | Yes; destructive |
@@ -130,7 +131,10 @@ Accepts optional exact `status`, `workflow_id`, `limit` from 1 to 100, and opaqu
 
 ### `run_get`
 
-Requires `run_id` and one `view`: `summary`, `details`, `graph`, or `events`.
+Requires `run_id` and one `view`: `summary`, `details`, `graph`, `events`, or `findings`.
+
+- `details` also returns a `findings` summary (count, severity histogram, top ten ranked findings) when the run's workflow declares findings.
+- `findings` returns the full `findings.json` artifact, also available as the resource `nax://scopes/{scope_id}/runs/{run_id}/findings`.
 
 - `section_id` is valid only with `details`.
 - `since` and `limit` are valid only with `events`.
@@ -169,6 +173,19 @@ The wait reason is one of `events`, `terminal`, `review`, `stalled`, or `timeout
 ### `run_cancel`
 
 Requires `run_id`; add `agent_run_id` to stop only one exact active agent run. `reason` is optional and bounded. Omitting `agent_run_id` intentionally targets the whole run. The operation is state-idempotent but destructive, and remote stop confirmation may return warnings.
+
+### `run_resume`
+
+Requires `run_id` and a stable `request_id`; `include_cancelled` also resubmits cancelled agents. It resumes a failed or interrupted Netlify API run in place: completed agents are kept, running agents are polled, and only failed or never-sent agents are resubmitted with their saved prompts. The result includes the per-agent `keep`/`poll`/`resubmit`/`skip` preview. Identical requests replay the first result and never start a second resume.
+
+It refuses before starting anything with a recoverable code: `run_locked` (another process is executing the run; use `run_wait`), `flow_changed_since_run` or `resume_plan_unavailable` (plan a new run), `resume_ambiguous_submission` or `branch_moved_since_run` (a human must decide; the CLI's `nax run --resume <run-id> --force` overrides), `resume_auth_failure`, or `not_resumable`. See [Resume runs](/guides/resume-runs).
+
+```json
+{
+  "run_id": "run_01JEXAMPLE",
+  "request_id": "request_resume_01JEXAMPLE"
+}
+```
 
 ### `agent_run_retry`
 
@@ -211,6 +228,7 @@ Resources are scoped by the opaque `scope_id` returned from `context_get`.
 | `nax://scopes/{scope_id}/workflows/{workflow_id}` | Workflow definition and graph. |
 | `nax://scopes/{scope_id}/runs/{run_id}` | Durable run summary. |
 | `nax://scopes/{scope_id}/runs/{run_id}/details` | Details index and artifact links. |
+| `nax://scopes/{scope_id}/runs/{run_id}/findings` | Structured findings (`findings.json`) when the run's workflow declares findings. |
 | `nax://scopes/{scope_id}/runs/{run_id}/events{?since}` | Bounded event page from an opaque cursor. |
 | `nax://scopes/{scope_id}/runs/{run_id}/artifacts/{artifact_id}` | One exact text or binary artifact owned by the run. |
 

@@ -218,6 +218,8 @@ async function startStoredPlan({
   }
 
   const expectedStatus = plan.status === 'failed' ? /** @type {const} */ ('failed') : /** @type {const} */ ('prepared')
+  // Replays and in-flight starts returned above; only a claimable plan is checked for flow drift.
+  if (typeof executionBackend.validatePlan === 'function') await executionBackend.validatePlan(plan)
   const claimed = await store.claimStart(planId, requestId, expectedStatus)
   if (!claimed) {
     plan = await store.get(planId)

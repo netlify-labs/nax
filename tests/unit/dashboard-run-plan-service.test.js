@@ -100,3 +100,41 @@ test('dashboard run-plan service rejects start overrides, expiration, and foreig
   })
   await assert.rejects(() => foreign.getPlan(plan.planId), (error) => errorCode(error) === 'scope_forbidden')
 })
+
+test('workflow plans pin the flow digest of the loaded workflow', async () => {
+  const { flowDigest } = require('../../src/workflows/catalog/flow-manifest')
+  const { service, store } = fixture({ now: () => new Date('2026-08-08T12:00:00.000Z') })
+  const plan = await service.createWorkflowPlan('review', { branch: 'main' })
+  const stored = await store.get(plan.planId)
+  assert.equal(stored?.flowDigest, flowDigest(/** @type {import('../../src/types').WorkflowFlow} */ (flow)))
+})
+
+test('workflow plans warn when static prompt bytes plus explicit context exceed delivery limits', async () => {
+  const root = tempRoot()
+  fs.mkdirSync(path.join(root, 'prompts'), { recursive: true })
+  fs.writeFileSync(path.join(root, 'prompts', 'big.md'), `---\ntitle: Big\n---\n\n${'x'.repeat(120 * 1024)}\n`)
+  fs.writeFileSync(path.join(root, 'prompts', 'small.md'), '---\ntitle: Small\n---\n\nShort.\n')
+  const bigFlow = {
+    id: 'review',
+    title: 'Review',
+    dir: root,
+    steps: [
+      { id: 'big', title: 'Big', action: 'issue', submit: 'new-run', waitFor: 'agent-results', agents: ['claude'], prompt: 'prompts/big.md' },
+      { id: 'small', title: 'Small', action: 'issue', submit: 'new-run', waitFor: 'agent-results', agents: ['claude'], prompt: 'prompts/small.md' },
+    ],
+  }
+  const store = createLocalRunPlanStore({ projectRoot: root })
+  const service = createDashboardRunPlanService({
+    store,
+    executionBackend: { async startPlan() { throw new Error('not used') }, async reconcilePlan() { return null } },
+    workflowStore: { loadWorkflow: async () => bigFlow },
+    scope,
+    actor,
+    createPlanId: () => 'plan_big',
+    resolveTarget: async () => target,
+  })
+  const plan = await service.createWorkflowPlan('review', { branch: 'main' })
+  const codes = plan.warnings.map((warning) => `${warning.code}:${warning.message.split(':')[0]}`)
+  assert.ok(codes.includes('prompt_offload_required:big'), JSON.stringify(plan.warnings))
+  assert.ok(!codes.some((code) => code.endsWith(':small')))
+})

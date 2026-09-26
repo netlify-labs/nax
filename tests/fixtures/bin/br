@@ -1,0 +1,30 @@
+#!/usr/bin/env node
+// Fake br (beads_rust) CLI for process-boundary tests: records argv and serves list JSON shaped like real br output.
+// State lives in FAKE_BR_STATE (JSON file); argv lines are appended to FAKE_BR_LOG.
+const fs = require('fs')
+
+const args = process.argv.slice(2)
+const statePath = process.env.FAKE_BR_STATE
+const state = statePath && fs.existsSync(statePath) ? JSON.parse(fs.readFileSync(statePath, 'utf8')) : { issues: [] }
+if (process.env.FAKE_BR_LOG) fs.appendFileSync(process.env.FAKE_BR_LOG, `${JSON.stringify(args)}\n`)
+const save = () => { if (statePath) fs.writeFileSync(statePath, JSON.stringify(state)) }
+/** @param {string} name */
+const flag = (name) => { const index = args.indexOf(name); return index === -1 ? '' : args[index + 1] }
+
+if (args[0] === '--version') { process.stdout.write('br 0.1.34\n'); process.exit(0) }
+if (args[0] === 'list') {
+  const issues = state.issues.map((issue) => ({ id: issue.id, title: issue.title, status: 'open', priority: issue.priority, issue_type: issue.type, labels: issue.labels, ...(issue.external_ref ? { external_ref: issue.external_ref } : {}) }))
+  process.stdout.write(JSON.stringify({ issues, total: issues.length, limit: 0, offset: 0, has_more: false }))
+  process.exit(0)
+}
+if (args[0] === 'create') {
+  const title = args[1]
+  if (process.env.FAKE_BR_FAIL_TITLE && title.includes(process.env.FAKE_BR_FAIL_TITLE)) { process.stderr.write('Error: validation failed\n'); process.exit(1) }
+  const id = `demo-${state.issues.length + 1}`
+  state.issues.push({ id, title, type: flag('-t'), priority: Number(flag('-p')), description: flag('-d'), labels: flag('-l').split(',').filter(Boolean), external_ref: flag('--external-ref') })
+  save()
+  process.stdout.write(`${id}\n`)
+  process.exit(0)
+}
+process.stderr.write(`fake br: unsupported command ${args.join(' ')}\n`)
+process.exit(2)

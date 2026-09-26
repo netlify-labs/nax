@@ -152,7 +152,7 @@ const runListInputSchema = z.object({
 const runGetInputSchema = z.object({
   ...scopeSelectionShape,
   run_id: entityId('run_id'),
-  view: z.enum(['summary', 'details', 'graph', 'events']),
+  view: z.enum(['summary', 'details', 'graph', 'events', 'findings']),
   section_id: entityId('section_id').optional(),
   since: cursorSchema.optional(),
   limit: z.number().int().min(1).max(MAX_EVENT_LIMIT).optional(),
@@ -173,6 +173,13 @@ const runCancelInputSchema = z.object({
   run_id: entityId('run_id'),
   agent_run_id: entityId('agent_run_id').optional(),
   reason: boundedText(MAX_REASON_BYTES, `reason must be at most ${MAX_REASON_BYTES} UTF-8 bytes.`).optional(),
+}).strict()
+
+const runResumeInputSchema = z.object({
+  ...scopeSelectionShape,
+  run_id: entityId('run_id'),
+  request_id: entityId('request_id'),
+  include_cancelled: z.boolean().optional(),
 }).strict()
 
 const agentRunRetryInputSchema = z.object({
@@ -347,6 +354,12 @@ const TOOL_SPECS = Object.freeze({
     title: 'Cancel a NAX run target', inputSchema: runCancelInputSchema, outputSchema: toolResultOutputSchema, annotations: DESTRUCTIVE_ANNOTATIONS,
     description: toolDescription({
       discovery: 'Obtain run_id and optional exact agent_run_id from run_get or run_list.', use: 'Cancel one whole workflow run or one specifically identified active agent run.', avoid: 'Do confirm target scope and state first. Do not broadcast, cancel all, or omit agent_run_id when only one runner should stop.', parameters: 'Exact run_id, optional exact agent_run_id, and optional bounded reason.', returns: 'Resulting run state, exact cancelled target, and warnings.', example: '{"run_id":"run_01J...","agent_run_id":"agent_run_01J...","reason":"Superseded"}', idempotency: 'State-idempotent; an already terminal target returns its current state or a recoverable conflict.', edgeCases: 'Remote stop confirmation can produce warnings even when durable state changes.', mistakes: 'Never pass all, *, a provider name, or a runner URL as the target.',
+    }),
+  }),
+  run_resume: Object.freeze({
+    title: 'Resume a NAX run in place', inputSchema: runResumeInputSchema, outputSchema: toolResultOutputSchema, annotations: IDEMPOTENT_MUTATION_ANNOTATIONS,
+    description: toolDescription({
+      discovery: 'Read the run with run_get and confirm it is failed or interrupted.', use: 'Finish a Netlify API run: keep completed agents, poll running ones, and resubmit only failed or never-sent agents with their saved prompts.', avoid: 'Do inspect the run first. Do not resume active runs or use this to rerun a completed workflow.', parameters: 'Exact run_id, caller-generated request_id, and optional include_cancelled to also resubmit cancelled agents.', returns: 'Resulting run, the per-agent keep/poll/resubmit/skip preview, and replay status.', example: '{"run_id":"run_01J...","request_id":"request_01J..."}', idempotency: 'Durably idempotent by request_id; a repeated call replays the first result and never starts a second resume.', edgeCases: 'Refuses with recoverable codes before starting anything: run_locked, flow_changed_since_run, resume_ambiguous_submission, resume_plan_unavailable, resume_auth_failure, branch_moved_since_run, not_resumable.', mistakes: 'Reuse request_id only for the identical resume intent; GitHub transport runs cannot resume mid-step.',
     }),
   }),
   agent_run_retry: Object.freeze({

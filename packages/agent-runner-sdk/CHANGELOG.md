@@ -4,6 +4,12 @@ All notable changes to `nax-agent-runner-sdk` are recorded here.
 
 ## Unreleased
 
+- Added optional `onSubmitCheckpoint`: before every runner or session create
+  (start, follow-up, and capacity retries) the SDK hands the caller a
+  `SubmitCheckpoint` with the exact effective input, `sentAt`, and safe prompt
+  delivery metadata. A checkpoint that throws stops the send. Callers can use
+  it to reconcile a crash or ambiguous response after the send.
+
 ## 0.3.0 - 2026-08-06
 
 - Added optional open-string `effort` configuration to runner creation and

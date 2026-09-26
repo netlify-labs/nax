@@ -7,7 +7,7 @@ const { registerControlTools } = require('../../src/mcp/tools')
  * @typedef {{
  *   ok: boolean,
  *   data?: unknown,
- *   error?: { code?: string, details?: Record<string, unknown> },
+ *   error?: { code?: string, recoverable?: boolean, details?: Record<string, unknown> },
  *   next_actions: Array<{ kind: string, tool?: string, arguments?: Record<string, unknown> }>,
  * }} TestEnvelope
  * @typedef {{ isError?: boolean, content: Array<{ type: string, text: string }>, structuredContent: TestEnvelope }} TestToolResult
@@ -22,7 +22,7 @@ function contextFixture() {
     capabilities: {
       context_get: { available: true }, workflow_list: { available: true }, workflow_get: { available: true }, workflow_plan: { available: true },
       agent_run_plan: { available: true }, run_start: { available: true }, run_list: { available: true }, run_get: { available: true }, run_wait: { available: true },
-      run_cancel: { available: true }, agent_run_retry: { available: true }, agent_run_followup: { available: true }, review_gate_resolve: { available: true }, resource_read: { available: true },
+      run_cancel: { available: true }, run_resume: { available: true }, agent_run_retry: { available: true }, agent_run_followup: { available: true }, review_gate_resolve: { available: true }, resource_read: { available: true },
     },
     agentCatalog: { provenance: { source: 'test', commit: 'abc', syncedAt: '2026-08-08T00:00:00.000Z' }, providers: [] },
     target: { siteId: 'site_test', siteName: 'Test Site', branch: 'main', verified: true, caveats: [] },
@@ -67,10 +67,10 @@ function registeredTools(client) {
 
 test('control tools use entity-first names and truthful destructive annotations', () => {
   const tools = registeredTools(clientFixture())
-  assert.deepEqual(Object.keys(tools), ['run_cancel', 'agent_run_retry', 'agent_run_followup', 'review_gate_resolve'])
+  assert.deepEqual(Object.keys(tools), ['run_cancel', 'run_resume', 'agent_run_retry', 'agent_run_followup', 'review_gate_resolve'])
   assert.equal(/** @type {{ destructiveHint?: boolean }} */ (tools.run_cancel.config.annotations).destructiveHint, true)
   assert.equal(/** @type {{ destructiveHint?: boolean }} */ (tools.review_gate_resolve.config.annotations).destructiveHint, true)
-  for (const name of ['agent_run_retry', 'agent_run_followup']) {
+  for (const name of ['run_resume', 'agent_run_retry', 'agent_run_followup']) {
     const annotations = /** @type {{ idempotentHint?: boolean, destructiveHint?: boolean }} */ (tools[name].config.annotations)
     assert.equal(annotations.idempotentHint, true)
     assert.equal(annotations.destructiveHint, false)
@@ -86,6 +86,23 @@ test('run_cancel targets only the exact optional agent run and preserves reason'
   assert.match(result.content[0].text, /Cancelled agent run agent_run_old/)
   assert.match(result.content[0].text, /1 warning returned/)
   assert.deepEqual(result.structuredContent.next_actions, [{ kind: 'tool', tool: 'run_get', arguments: { run_id: 'run_01', view: 'summary', scope_id: 'scope_test' } }])
+})
+
+test('run_resume passes the durable request identity and summarizes the preview', async () => {
+  /** @type {unknown[]} */
+  const calls = []
+  const client = clientFixture({ resumeRun: async (input) => { calls.push(input); return { run: runFixture(), preview: { runId: input.runId, counts: { newRuns: 1, kept: 2, polling: 0, skipped: 1 } }, replayed: true } } })
+  const result = await registeredTools(client).run_resume.callback({ run_id: 'run_01', request_id: 'request_resume_01', include_cancelled: true })
+  assert.deepEqual(calls, [{ runId: 'run_01', requestId: 'request_resume_01', includeCancelled: true }])
+  assert.match(result.content[0].text, /Replayed resume request_resume_01 for run_01: 1 new agent runs, 2 kept, 0 polling, 1 skipped/)
+})
+
+test('run_resume returns a recoverable error when the run is locked', async () => {
+  const client = clientFixture({ resumeRun: async () => { throw Object.assign(new Error('Run run_01 is already being executed by pid 1.'), { code: 'run_locked', statusCode: 409 }) } })
+  const result = await registeredTools(client).run_resume.callback({ run_id: 'run_01', request_id: 'request_resume_01' })
+  assert.equal(result.isError, true)
+  assert.equal(result.structuredContent.error?.code, 'run_locked')
+  assert.equal(result.structuredContent.error?.recoverable, true)
 })
 
 test('agent_run_retry passes the durable request identity and returns wait guidance', async () => {

@@ -160,3 +160,11 @@ test('planner source is runtime-neutral and contains no I/O, transport call, or 
   assert.doesNotMatch(source, /node:fs|child_process|dashboard|submitLocalAgentRun|runWorkflow/)
   assert.doesNotMatch(source, /authToken|authorization|apiKey/)
 })
+
+test('workflow plans pin flowDigest in the plan and in the request hash', () => {
+  const base = { planId: 'plan_01', now: NOW, scope: scopeFixture(), target: targetFixture(), flow: flowFixture(), input: { workflowId: 'security-review' } }
+  const first = prepareWorkflowPlan({ ...base, flowDigest: 'a'.repeat(64) })
+  const second = prepareWorkflowPlan({ ...base, flowDigest: 'b'.repeat(64) })
+  assert.equal(first.plan.flowDigest, 'a'.repeat(64))
+  assert.notEqual(first.requestHash, second.requestHash)
+})

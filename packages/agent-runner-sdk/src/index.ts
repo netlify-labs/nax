@@ -113,6 +113,7 @@ export type {
   AgentRunnerSdk,
   AgentRunnerSdkOptions,
   BlobCleanupErrorEvent,
+  SubmitCheckpoint,
   LandingContext,
   LandingHandler,
   LandingResult,

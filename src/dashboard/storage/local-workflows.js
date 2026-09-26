@@ -1,4 +1,4 @@
-const { listFlows, loadFlow } = require('../../workflows/catalog/flows')
+const { listFlowCatalog, loadFlow } = require('../../workflows/catalog/flows')
 const { flowToGraph } = require('../shared/graph')
 const { publicFlow } = require('../api/serializers')
 
@@ -20,10 +20,11 @@ function createLocalWorkflowStore(options) {
 
   return {
     async listWorkflows() {
-      const flows = await listFlows(flowOptions)
+      const { flows, invalid } = await listFlowCatalog(flowOptions)
       return {
         count: flows.length,
         items: flows.map(publicFlow),
+        invalid,
       }
     },
     async getWorkflow(id) {

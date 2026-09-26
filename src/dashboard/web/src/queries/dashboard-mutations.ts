@@ -5,6 +5,7 @@ import {
   cancelFollowupRun,
   cancelHumanReviewGate,
   cancelWorkflowRun,
+  resumeRun,
   retryAgentRun,
   runWorkflowDryRun,
   startAgentRun,
@@ -104,6 +105,17 @@ export function useRetryAgentRunMutation() {
     onSuccess(response) {
       upsertRunInDashboardCache(queryClient, response.run)
       void invalidateRunViews(queryClient, response.run.runId || response.run.id)
+    },
+  })
+}
+
+export function useResumeRunMutation() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: ({ runId, includeCancelled }: { runId: string; includeCancelled: boolean }) => resumeRun(runId, { includeCancelled }),
+    onSuccess(response) {
+      upsertRunInDashboardCache(queryClient, response.run)
+      void invalidateRunViews(queryClient, response.preview.runId)
     },
   })
 }

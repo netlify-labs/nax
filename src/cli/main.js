@@ -53,7 +53,7 @@ const {
 } = require('../workflows/results/agent-run-results')
 const { runGh } = require('../integrations/github/gh-cli')
 const { multiline } = require('../utils/multiline')
-const { WAIT_FOR_AGENT_RESULTS, isHumanReviewStep, listFlows, loadFlow, loadStepPrompt } = requireWithoutArgvFlag('--verbose', () => require('../workflows/catalog/flows'))
+const { WAIT_FOR_AGENT_RESULTS, formatFlowValidation, isHumanReviewStep, listFlowCatalog, listFlows, loadFlow, loadStepPrompt } = requireWithoutArgvFlag('--verbose', () => require('../workflows/catalog/flows'))
 const { createRunState, dismissRunState, isUnfinishedRun, listRunStates, saveRunState, workflowStatePath } = require('../storage/local/run-state')
 const { AWAITING_REVIEW, approveHumanReviewGate, createHumanReviewStepState } = require('../workflows/human-review')
 const {
@@ -65,20 +65,30 @@ const {
   stepArtifactsDir,
   writeGithubStepSummary,
 } = require('../workflows/artifacts/workflow-artifacts')
-const { clearTrackedRunState, markRunCompleted, trackRunState } = require('../storage/local/graceful-run-state')
+const { clearTrackedRunState, settleTrackedRun, trackRunState } = require('../storage/local/graceful-run-state')
+const { completeRun, writeFindingsAtTerminal } = require('../workflows/run-completion')
 const { persistAgentRunnerArtifact } = require('../workflows/artifacts/agent-runner-artifacts')
 const { persistAgentSessionArtifact } = require('../workflows/artifacts/agent-session-artifacts')
 const { listHandoffSources, readHandoffSource, relativeDisplayPath } = require('../workflows/followups/handoff-sources')
 const { handleCi } = require('./commands/ci')
+const { handleLint } = require('./commands/lint')
+const { handleResumeCommand } = require('./commands/resume')
+const { prepareResume } = require('../workflows/engine/resume-preparation')
+const { handleFindingsHandoff, handleFindingsTarget } = require('./commands/findings')
+const { readFindings } = require('../workflows/findings')
+const { flowDigest } = require('../workflows/catalog/flow-manifest')
 const {
   AD_HOC_RUN_CHOICE,
   formatFlowList,
   formatFlowListBox,
   formatFlowListJson,
+  formatInvalidFlowWarnings,
   wordWrap,
   workflowPickerHint,
   workflowPickerLabel,
 } = require('./display/flow-list')
+
+const INVALID_FLOW_CHOICE_PREFIX = '__invalid_flow__:'
 const { buildCostsReport, formatCostsTable } = require('./display/costs-report')
 const { terminalTrafficLights } = require('./display/terminal')
 const { formatMcpDoctor, runMcpDoctor } = require('../mcp/doctor')
@@ -190,6 +200,7 @@ const {
   flowFromRunState,
   flowLoadOptions,
   formatDetailedRelativeTime,
+  formatResumePreview,
   formatResumeRunDetails,
   isAutomaticResumeCandidate,
   printResumeRunDetails,
@@ -575,10 +586,22 @@ async function loadClack() {
   return clackModulePromise
 }
 
+/** @param {string[]} flows @param {import('../types').JsonMap} [options] */
+async function handleLintCommand(flows = [], options = {}) {
+  const projectRoot = resolveProjectRoot(String(options.projectRoot || ''), { cwd: process.cwd() })
+  await handleLint({
+    ...flowLoadOptions(options, projectRoot),
+    flows,
+    json: options.json === true,
+    strict: options.strict === true,
+  })
+}
+
 async function handleList(options = {}) {
   const invocationDir = process.cwd()
   const projectRoot = resolveProjectRoot(options.projectRoot, { cwd: invocationDir })
-  const flows = await listFlows(flowLoadOptions(options, projectRoot))
+  const { flows, invalid } = await listFlowCatalog(flowLoadOptions(options, projectRoot))
+  for (const line of formatInvalidFlowWarnings(invalid)) console.error(line)
   if (options.json) {
     console.log(formatFlowListJson(flows))
     return
@@ -1184,6 +1207,33 @@ async function runSingleGithubAgent({ projectRoot, agent, promptText, source, op
 }
 
 async function handleHandoff(runId, options) {
+  if (options.to) {
+    await handleFindingsTarget({
+      projectRoot: resolveProjectRoot(String(options.projectRoot || ''), { cwd: process.cwd() }),
+      runId: String(runId || options.runId || ''),
+      to: String(options.to),
+      select: String(options.select || '').split(',').map((id) => id.trim()).filter(Boolean),
+      limit: Number(options.limit || 0),
+      minSeverity: String(options.minSeverity || 'low'),
+      includeContested: options.includeContested === true,
+      includeRejected: options.includeRejected === true,
+      labels: Array.isArray(options.label) ? options.label.map(String) : [],
+      repo: options.repo ? String(options.repo) : '',
+      pr: Number(options.pr || 0),
+      dry: options.dry === true,
+      force: options.force === true,
+      json: options.json === true,
+    })
+    return
+  }
+  if (options.findings) {
+    handleFindingsHandoff({
+      projectRoot: resolveProjectRoot(String(options.projectRoot || ''), { cwd: process.cwd() }),
+      runId: String(runId || options.runId || ''),
+      json: options.json === true,
+    })
+    return
+  }
   const selected = readSelectedHandoffWithFallback(runId, options, { cwd: process.cwd() })
   const projectRoot = selected.projectRoot
   let handoff = selected.handoff
@@ -1248,6 +1298,10 @@ async function handleHandoff(runId, options) {
   handoff = selectedSource.source || handoff
   const action = selectedSource.action || await chooseHandoffActionInteractively(handoff)
   if (action === 'cancel') return
+  if (action === 'github-issues') {
+    await handleFindingsTarget({ projectRoot, runId: String(handoff.id || ''), to: 'github-issues' })
+    return
+  }
   if (action === 'copy') {
     const command = copyToClipboard(handoff.summaryText)
     console.log(`\nCopied ${handoff.displayPath} to clipboard with ${command}.`)
@@ -1339,7 +1393,7 @@ async function handlePreviewBoxes(flowId, options) {
 
 async function pickFlowInteractively({ includeAdHoc = true, projectRoot = process.cwd(), options = {} } = {}) {
   const clack = await loadClack()
-  const flows = await listFlows(flowLoadOptions(options, projectRoot))
+  const { flows, invalid } = await listFlowCatalog(flowLoadOptions(options, projectRoot))
   if (includeAdHoc) {
     printInteractiveIntroBox()
   }
@@ -1350,6 +1404,11 @@ async function pickFlowInteractively({ includeAdHoc = true, projectRoot = proces
       label: workflowPickerLabel(flow, { includeAdHoc }),
       hint: workflowPickerHint(flow),
     })),
+    ...invalid.map((entry) => ({
+      value: `${INVALID_FLOW_CHOICE_PREFIX}${entry.id}`,
+      label: `${entry.id} (invalid: ${entry.errorCount} ${entry.errorCount === 1 ? 'error' : 'errors'})`,
+      hint: `Run: nax lint ${entry.id}`,
+    })),
     ...(includeAdHoc ? [{ value: 'cancel', label: 'Cancel' }] : []),
   ]
   const selected = await selectSearchableOption({
@@ -1359,6 +1418,11 @@ async function pickFlowInteractively({ includeAdHoc = true, projectRoot = proces
     placeholder: 'Type to filter workflows...',
   })
   if (clack.isCancel(selected) || selected === 'cancel') process.exit(0)
+  if (String(selected).startsWith(INVALID_FLOW_CHOICE_PREFIX)) {
+    const entry = invalid.find((candidate) => `${INVALID_FLOW_CHOICE_PREFIX}${candidate.id}` === selected)
+    console.error(formatFlowValidation({ flow: { id: entry?.id }, errors: entry?.diagnostics || [], warnings: [] }))
+    process.exit(1)
+  }
   return selected
 }
 
@@ -1782,15 +1846,18 @@ function printFlowPlan({ flow, steps, transport, branch, context, runState = nul
       ? { instances: [], warnings: [] }
       : resolvedLineupForStep(flow, step, options, transport),
   ]))
+  const flowWarningLines = (flow.warnings || []).map((warning) => `Warning: ${warning.stepId ? `${warning.stepId}: ` : ''}${warning.message || warning.code || 'workflow warning'}`)
+  // Flow validation already carries lineup warnings, so only print lineup warnings it did not include.
   const lineupWarningLines = steps.flatMap((step) =>
     (lineupsByStep.get(step.id)?.warnings || []).map((warning) => `Warning: ${step.id}: ${warning.message}`))
+    .filter((line) => !flowWarningLines.includes(line))
   const metaLines = [
     ...flowDescriptionLines,
     ...(flowDescriptionLines.length > 0 ? [''] : []),
     `Orchestrated via: ${isNetlifyApiTransport(transport) ? 'Netlify API' : 'GitHub Actions'}`,
     `Branch: ${branch}`,
     ...(hasContext ? ['Additional context: yes'] : []),
-    ...((flow.warnings || []).map((warning) => `Warning: ${warning.stepId ? `${warning.stepId}: ` : ''}${warning.message || warning.code || 'workflow warning'}`)),
+    ...flowWarningLines,
     ...lineupWarningLines,
   ]
   const headings = steps.map((step, i) => `${i + 1}. ${step.title}`)
@@ -2141,7 +2208,10 @@ async function chooseHandoffSourceInteractively({ projectRoot, latestSource }) {
     ...source,
     displayPath: relativeDisplayPath(projectRoot, source.summaryPath),
   }))
-  const options = handoffSourceMenuOptions({ sources, latestSource, projectRoot })
+  const findingsCount = latestSource.kind === 'workflow' && latestSource.source
+    ? (readFindings(latestSource.source)?.findings || []).filter((finding) => finding.bucket === 'consensus').length
+    : 0
+  const options = handoffSourceMenuOptions({ sources, latestSource, projectRoot, findingsCount })
   console.log(formatHandoffSourceDetailBox(latestSource, projectRoot))
   console.log('')
 
@@ -2154,6 +2224,7 @@ async function chooseHandoffSourceInteractively({ projectRoot, latestSource }) {
   if (selected === 'copy-latest-path') return { source: latestSource, action: 'copy-path' }
   if (selected === 'open-latest') return { source: latestSource, action: 'open' }
   if (selected === 'workflow-latest') return { source: latestSource, action: 'workflow' }
+  if (selected === 'issues-latest') return { source: latestSource, action: 'github-issues' }
 
   const [, kind] = String(selected).split(':')
   const choices = sources.filter((source) => source.kind === kind)
@@ -2454,6 +2525,12 @@ function findRunStateForRetry(projectRoot, { runId, flowId, stepId, agent, insta
   return matched
 }
 
+/** @param {string} runId @param {import('../types').JsonMap} options */
+async function handleResume(runId, options) {
+  const projectRoot = resolveProjectRoot(String(options.projectRoot || ''), { cwd: process.cwd() })
+  return handleResumeCommand(runId, { ...options, projectRoot })
+}
+
 async function handleRetry(runId, options) {
   const projectRoot = path.resolve(options.projectRoot || process.cwd())
   const runState = findRunStateForRetry(projectRoot, {
@@ -2485,150 +2562,154 @@ async function handleRetry(runId, options) {
   }
 
   trackRunState(runState)
-  const [{ step, stepIndex, run, runIndex }] = candidates
-  const retryingPartialStep = step.status === 'completed_with_failures'
-  const flowStep = flow.steps.find((candidate) => candidate.id === step.id)
-  if (!flowStep) throw new Error(`Flow ${flow.id} no longer contains step ${step.id}.`)
+  try {
+    const [{ step, stepIndex, run, runIndex }] = candidates
+    const retryingPartialStep = step.status === 'completed_with_failures'
+    const flowStep = flow.steps.find((candidate) => candidate.id === step.id)
+    if (!flowStep) throw new Error(`Flow ${flow.id} no longer contains step ${step.id}.`)
 
-  const branch = targetBranch(runState, { required: true })
-  const retryOptions = await chooseNetlifyFilterOption({
-    projectRoot,
-    options: {
-      ...(runState.options || {}),
-      ...options,
-      filter: options.filter || runState.options?.filter || '',
-    },
-  })
-  const netlify = resolveNetlifyProjectTarget({
-    projectRoot,
-    siteId: retryOptions.netlifySiteId,
-    filter: retryOptions.filter,
-    netlifyConfig: retryOptions.netlifyConfig,
-  })
-  const resolvedRetryOptions = netlifyOptionsFromTarget(retryOptions, netlify)
-  runState.options = {
-    ...(runState.options || {}),
-    ...(resolvedRetryOptions.filter ? { filter: resolvedRetryOptions.filter } : {}),
-    ...(resolvedRetryOptions.netlifyConfig ? { netlifyConfig: resolvedRetryOptions.netlifyConfig } : {}),
-    ...(resolvedRetryOptions.netlifySiteId ? { netlifySiteId: resolvedRetryOptions.netlifySiteId } : {}),
-    ...(resolvedRetryOptions.netlifySiteSource ? { netlifySiteSource: resolvedRetryOptions.netlifySiteSource } : {}),
-  }
-  const netlifyFilter = netlify.netlifyFilter
-  const compactPromptText = buildCompactLocalPromptForRetry({ flow, step: flowStep, runState, run })
-  if (!compactPromptText || compactPromptText.length >= String(run.promptText || '').length) {
-    throw new Error(`Could not build a shorter prompt for ${run.agent} ${step.id}.`)
-  }
-
-  console.log(`Retrying ${run.instanceLabel || run.instanceId || titleCase(run.agent)} ${step.title}`)
-  console.log(`Run: ${runState.runId}`)
-  console.log(`Runner: ${run.runnerId}`)
-  console.log(`Prompt: ${String(run.promptText || '').length} -> ${compactPromptText.length} chars`)
-  maybeReportNetlifySite(resolvedRetryOptions)
-  maybeReportNetlifyConfig(resolvedRetryOptions)
-  maybeReportNetlifyFilter(netlifyFilter)
-
-  const retryRun = {
-    ...run,
-    status: 'pending',
-    promptText: compactPromptText,
-    compactPromptText,
-    resultText: '',
-    existingRunnerId: run.runnerId,
-    promptShrinkRetryCount: Number(run.promptShrinkRetryCount || 0) + 1,
-    raw: {
-      ...run.raw,
-      retry: {
-        reason: 'manual-compact-prompt',
-        previousStatus: run.status,
-        previousResultText: run.resultText || '',
+    const branch = targetBranch(runState, { required: true })
+    const retryOptions = await chooseNetlifyFilterOption({
+      projectRoot,
+      options: {
+        ...(runState.options || {}),
+        ...options,
+        filter: options.filter || runState.options?.filter || '',
       },
-    },
-  }
-  const submitted = await submitLocalAgentRun({
-    run: retryRun,
-    projectRoot,
-    branch,
-    siteId: netlify.siteId,
-    netlifyFilter: netlifyFilter.filter,
-    env: netlify.env,
-    onRetry: ({ error, nextAttempt, attempts, delayMs }) => {
-      const delaySeconds = Math.round(delayMs / 1000)
-      console.log(`Submission failed, retrying ${nextAttempt}/${attempts} in ${delaySeconds}s — ${error.message}`)
-    },
-  })
-  step.runs[runIndex] = submitted
-  step.status = 'running'
-  saveRunState(runState)
-
-  const reporter = makeStepProgressReporter({
-    stepTitle: step.title,
-    total: 1,
-    agents: [run.agent],
-  })
-  const completed = await waitForLocalAgentRuns({
-    projectRoot,
-    runs: [submitted],
-    siteId: netlify.siteId,
-    netlifyFilter: netlifyFilter.filter,
-    env: netlify.env,
-    timeoutMinutes: Number.parseInt(retryOptions.timeoutMinutes || runState.options?.timeoutMinutes || '25', 10),
-    initialDelayMs: 0,
-    onProgress: (event) => reporter.updateRun(event),
-    onTerminalRun: (terminalRun) => {
-      addLocalRunLinks(terminalRun, projectRoot, resolvedRetryOptions)
-      step.runs[runIndex] = terminalRun
-      persistRunArtifact(runState, step, terminalRun)
-      reportTerminalLocalRun(reporter, terminalRun, projectRoot)
-    },
-  })
-  const completedRun = completed[0]
-  addLocalRunLinks(completedRun, projectRoot, resolvedRetryOptions)
-  step.runs[runIndex] = completedRun
-  step.status = localStepStatus(step)
-  persistStepArtifacts(runState, step)
-  reporter.updateRun({
-    run: completedRun,
-    state: completedRun.status,
-    terminal: true,
-    terminalSuccess: completedRun.status === 'completed',
-    terminalFailure: completedRun.status !== 'completed',
-  })
-  if (completedRun.status === 'completed') {
-    reporter.done(`${step.title}: ${titleCase(run.agent)} complete`)
-  } else {
-    reporter.fail(`${step.title}: ${titleCase(run.agent)} ${completedRun.status}`)
-  }
-  saveRunState(runState)
-
-  if (completedRun.status !== 'completed') {
-    throw new Error(`Retried ${run.agent} run did not complete successfully.`)
-  }
-
-  if (retryingPartialStep) {
-    if ((runState.steps || []).some((candidate) => candidate.status === 'completed_with_failures' || candidate.status === 'failed')) {
-      runState.status = 'completed_with_failures'
-      saveRunState(runState)
-    } else {
-      markRunCompleted(runState)
+    })
+    const netlify = resolveNetlifyProjectTarget({
+      projectRoot,
+      siteId: retryOptions.netlifySiteId,
+      filter: retryOptions.filter,
+      netlifyConfig: retryOptions.netlifyConfig,
+    })
+    const resolvedRetryOptions = netlifyOptionsFromTarget(retryOptions, netlify)
+    runState.options = {
+      ...(runState.options || {}),
+      ...(resolvedRetryOptions.filter ? { filter: resolvedRetryOptions.filter } : {}),
+      ...(resolvedRetryOptions.netlifyConfig ? { netlifyConfig: resolvedRetryOptions.netlifyConfig } : {}),
+      ...(resolvedRetryOptions.netlifySiteId ? { netlifySiteId: resolvedRetryOptions.netlifySiteId } : {}),
+      ...(resolvedRetryOptions.netlifySiteSource ? { netlifySiteSource: resolvedRetryOptions.netlifySiteSource } : {}),
     }
+    const netlifyFilter = netlify.netlifyFilter
+    const compactPromptText = buildCompactLocalPromptForRetry({ flow, step: flowStep, runState, run })
+    if (!compactPromptText || compactPromptText.length >= String(run.promptText || '').length) {
+      throw new Error(`Could not build a shorter prompt for ${run.agent} ${step.id}.`)
+    }
+
+    console.log(`Retrying ${run.instanceLabel || run.instanceId || titleCase(run.agent)} ${step.title}`)
+    console.log(`Run: ${runState.runId}`)
+    console.log(`Runner: ${run.runnerId}`)
+    console.log(`Prompt: ${String(run.promptText || '').length} -> ${compactPromptText.length} chars`)
+    maybeReportNetlifySite(resolvedRetryOptions)
+    maybeReportNetlifyConfig(resolvedRetryOptions)
+    maybeReportNetlifyFilter(netlifyFilter)
+
+    const retryRun = {
+      ...run,
+      status: 'pending',
+      promptText: compactPromptText,
+      compactPromptText,
+      resultText: '',
+      existingRunnerId: run.runnerId,
+      promptShrinkRetryCount: Number(run.promptShrinkRetryCount || 0) + 1,
+      raw: {
+        ...run.raw,
+        retry: {
+          reason: 'manual-compact-prompt',
+          previousStatus: run.status,
+          previousResultText: run.resultText || '',
+        },
+      },
+    }
+    const submitted = await submitLocalAgentRun({
+      run: retryRun,
+      projectRoot,
+      branch,
+      siteId: netlify.siteId,
+      netlifyFilter: netlifyFilter.filter,
+      env: netlify.env,
+      onRetry: ({ error, nextAttempt, attempts, delayMs }) => {
+        const delaySeconds = Math.round(delayMs / 1000)
+        console.log(`Submission failed, retrying ${nextAttempt}/${attempts} in ${delaySeconds}s — ${error.message}`)
+      },
+    })
+    step.runs[runIndex] = submitted
+    step.status = 'running'
+    saveRunState(runState)
+
+    const reporter = makeStepProgressReporter({
+      stepTitle: step.title,
+      total: 1,
+      agents: [run.agent],
+    })
+    const completed = await waitForLocalAgentRuns({
+      projectRoot,
+      runs: [submitted],
+      siteId: netlify.siteId,
+      netlifyFilter: netlifyFilter.filter,
+      env: netlify.env,
+      timeoutMinutes: Number.parseInt(retryOptions.timeoutMinutes || runState.options?.timeoutMinutes || '25', 10),
+      initialDelayMs: 0,
+      onProgress: (event) => reporter.updateRun(event),
+      onTerminalRun: (terminalRun) => {
+        addLocalRunLinks(terminalRun, projectRoot, resolvedRetryOptions)
+        step.runs[runIndex] = terminalRun
+        persistRunArtifact(runState, step, terminalRun)
+        reportTerminalLocalRun(reporter, terminalRun, projectRoot)
+      },
+    })
+    const completedRun = completed[0]
+    addLocalRunLinks(completedRun, projectRoot, resolvedRetryOptions)
+    step.runs[runIndex] = completedRun
+    step.status = localStepStatus(step)
+    persistStepArtifacts(runState, step)
+    reporter.updateRun({
+      run: completedRun,
+      state: completedRun.status,
+      terminal: true,
+      terminalSuccess: completedRun.status === 'completed',
+      terminalFailure: completedRun.status !== 'completed',
+    })
+    if (completedRun.status === 'completed') {
+      reporter.done(`${step.title}: ${titleCase(run.agent)} complete`)
+    } else {
+      reporter.fail(`${step.title}: ${titleCase(run.agent)} ${completedRun.status}`)
+    }
+    saveRunState(runState)
+
+    if (completedRun.status !== 'completed') {
+      throw new Error(`Retried ${run.agent} run did not complete successfully.`)
+    }
+
+    if (retryingPartialStep) {
+      if ((runState.steps || []).some((candidate) => candidate.status === 'completed_with_failures' || candidate.status === 'failed')) {
+        runState.status = 'completed_with_failures'
+        saveRunState(runState)
+      } else {
+        completeRun(runState)
+      }
+      clearTrackedRunState(runState)
+      printSuccessBox({ flow, runState, transport: NETLIFY_API_TRANSPORT, projectRoot })
+      return
+    }
+
+    const completedStepStates = completedStepMapFromRunState(runState)
+    completedStepStates.set(step.id, step)
+    await executeLocalFlow({
+      flow,
+      steps: flow.steps.slice(stepIndex + 1),
+      options: runState.options || {},
+      runState,
+      projectRoot,
+      completedStepStates,
+    })
+    completeRun(runState)
     clearTrackedRunState(runState)
     printSuccessBox({ flow, runState, transport: NETLIFY_API_TRANSPORT, projectRoot })
-    return
+  } finally {
+    settleTrackedRun(runState)
   }
-
-  const completedStepStates = completedStepMapFromRunState(runState)
-  completedStepStates.set(step.id, step)
-  await executeLocalFlow({
-    flow,
-    steps: flow.steps.slice(stepIndex + 1),
-    options: runState.options || {},
-    runState,
-    projectRoot,
-    completedStepStates,
-  })
-  markRunCompleted(runState)
-  clearTrackedRunState(runState)
-  printSuccessBox({ flow, runState, transport: NETLIFY_API_TRANSPORT, projectRoot })
 }
 
 async function handleAdHocAgentRun(options = {}) {
@@ -2742,16 +2823,21 @@ async function maybeResumeUnfinishedRun({ projectRoot, options = {}, flow = null
     return false
   }
 
-  const resumableSteps = runnableSteps(resumableFlow, resumable.options || {})
-  printFlowPlan({
-    flow: resumableFlow,
-    steps: resumableSteps.length > 0 ? resumableSteps : resumableFlow.steps,
-    transport: resumable.transport || 'github',
-    branch: targetBranch(resumable) || currentGitBranch(projectRoot),
-    context: String(resumable.options?.context || ''),
-    runState: resumable,
-    options: resumable.options || {},
-  })
+  if (resumable.transport === 'github') {
+    const resumableSteps = runnableSteps(resumableFlow, resumable.options || {})
+    printFlowPlan({
+      flow: resumableFlow,
+      steps: resumableSteps.length > 0 ? resumableSteps : resumableFlow.steps,
+      transport: resumable.transport,
+      branch: targetBranch(resumable) || currentGitBranch(projectRoot),
+      context: String(resumable.options?.context || ''),
+      runState: resumable,
+      options: resumable.options || {},
+    })
+  } else {
+    const prepared = await prepareResume({ runState: resumable, projectRoot, options })
+    console.log(formatResumePreview(prepared.preview))
+  }
   const resumeAfterPreview = await clack.confirm({
     message: `Resume ${resumableFlow.title} from saved run ${resumable.runId}?`,
     initialValue: true,
@@ -2771,20 +2857,27 @@ async function resumeRunById(runId, options = {}) {
   const runState = listRunStates(projectRoot).find((state) => state.runId === runId)
   if (!runState) throw new Error(`Could not find workflow run "${runId}".`)
   const flow = flowFromRunState(runState) || await loadFlow(runState.flowId, flowLoadOptions({ ...(runState.options || {}), ...options }, projectRoot))
-  if (options.approveReview !== false) {
-    approveHumanReviewGate({
-      runState,
-      stepId: options.stepId || '',
-      reviewer: options.reviewer || 'dashboard',
-    })
+  // Take the run lock before approving the gate, so no write happens while another process runs it.
+  // The same state object is resumed, which keeps holding that lock.
+  trackRunState(runState)
+  try {
+    if (options.approveReview !== false) {
+      Object.assign(runState, approveHumanReviewGate({
+        runState,
+        stepId: options.stepId || '',
+        reviewer: options.reviewer || 'dashboard',
+      }))
+    }
+    if (runState.transport === 'github') {
+      await resumeGithubFlow({ flow, runState, projectRoot })
+    } else {
+      await resumeLocalFlow({ flow, runState, projectRoot, includeCancelled: options.includeCancelled === true })
+    }
+  } finally {
+    // Dashboard resumes run in-process, so the run lock must be released even when resume fails.
+    clearTrackedRunState(runState)
   }
-  const refreshed = listRunStates(projectRoot).find((state) => state.runId === runId) || runState
-  if (refreshed.transport === 'github') {
-    await resumeGithubFlow({ flow, runState: refreshed, projectRoot })
-  } else {
-    await resumeLocalFlow({ flow, runState: refreshed, projectRoot })
-  }
-  return refreshed
+  return runState
 }
 
 async function handleRunEngine(flowId, options) {
@@ -2809,6 +2902,15 @@ async function handleRunEngine(flowId, options) {
     return
   }
   const flow = await loadFlow(resolvedFlowId, flowLoadOptions(options, projectRoot))
+  const loadedFlowDigest = flowDigest(flow)
+  if (options.controlPlaneFlowDigest && options.controlPlaneFlowDigest !== loadedFlowDigest) {
+    throw Object.assign(new Error(`Workflow "${flow.id}" changed after it was planned. Create a new plan before starting.`), {
+      code: 'flow_changed_since_plan',
+      statusCode: 409,
+      recoverable: true,
+      details: { workflowId: flow.id, mutationTransmitted: false },
+    })
+  }
 
   if (await maybeResumeUnfinishedRun({ projectRoot, options, flow })) return
 
@@ -2902,6 +3004,7 @@ async function handleRunEngine(flowId, options) {
   const runState = createRunState({
     projectRoot,
     flow: configuredFlow,
+    flowDigest: loadedFlowDigest,
     transport,
     target: runTarget,
     options: {
@@ -2928,16 +3031,21 @@ async function handleRunEngine(flowId, options) {
       })
     },
   })
-  runState.context = runContext
-  saveRunState(runState)
-  runtimeEvents.setRunState(runState)
-  runtimeEvents.workflowStarted({
-    command: ['nax', 'run', configuredFlow.id],
-    options: {
-      ...configuredOptions,
-      transport,
-    },
-  })
+  try {
+    runState.context = runContext
+    saveRunState(runState)
+    runtimeEvents.setRunState(runState)
+    runtimeEvents.workflowStarted({
+      command: ['nax', 'run', configuredFlow.id],
+      options: {
+        ...configuredOptions,
+        transport,
+      },
+    })
+  } catch (error) {
+    clearTrackedRunState(runState)
+    throw error
+  }
   console.log(`Run ${runState.runId}`)
   console.log(`Flow: ${configuredFlow.title}`)
   console.log(`Target: ${targetSummary(target)}`)
@@ -2958,7 +3066,7 @@ async function handleRunEngine(flowId, options) {
       reason: 'completed workflow',
     })
 
-    markRunCompleted(runState)
+    completeRun(runState)
     clearTrackedRunState(runState)
     persistWorkflowArtifacts(runState, { summaryOnly: true })
     emitWorkflowArtifacts(runtimeEvents, runState)
@@ -2976,6 +3084,7 @@ async function handleRunEngine(flowId, options) {
       return AWAITING_REVIEW
     }
     runState.status = 'failed'
+    runState.failureCode = String(error?.code || '')
     clearTrackedRunState(runState)
     try {
       cleanupWorkflowBlobsForRun({
@@ -2988,6 +3097,7 @@ async function handleRunEngine(flowId, options) {
       runState.blobCleanupWarning = cleanupError?.message || String(cleanupError)
     }
     saveRunState(runState)
+    writeFindingsAtTerminal(runState)
     persistWorkflowArtifacts(runState, { summaryOnly: true })
     emitWorkflowArtifacts(runtimeEvents, runState)
     writeGithubStepSummary(runState)
@@ -3115,11 +3225,13 @@ function buildProgram() {
       costs: handleCosts,
       issue: issueHandlers.handleIssue,
       list: handleList,
+      lint: handleLintCommand,
       mcp: handleMcp,
       mcpDoctor: handleMcpDoctor,
       mcpSetupClaude: handleMcpSetupClaude,
       previewBoxes: handlePreviewBoxes,
       previewSpinner: handlePreviewSpinner,
+      resume: handleResume,
       retry: handleRetry,
       run: handleRun,
       skills: handleSkills,

@@ -19,12 +19,16 @@ const { resolveRemoteBranchSha, validateGitRefName } = require('./review-context
  *   sourceType: string,
  *   verified: boolean,
  *   caveats: string[],
+ *   pullRequest?: PullRequestIdentity,
  * }} Target
+ *
+ * @typedef {{ number: number, url: string, isCrossRepository: boolean }} PullRequestIdentity
  *
  * @typedef {{
  *   branch: string,
  *   sha: string | null,
  *   fork: boolean,
+ *   pullRequest?: PullRequestIdentity,
  * }} PullRequestTarget
  *
  * @typedef {{
@@ -57,6 +61,7 @@ const { resolveRemoteBranchSha, validateGitRefName } = require('./review-context
  *   sourceType?: string,
  *   projectRoot?: string,
  *   remoteResolver?: RemoteResolver,
+ *   pullRequest?: PullRequestIdentity,
  * }} VerifiedRemoteTargetOptions
  *
  * @typedef {{
@@ -65,6 +70,7 @@ const { resolveRemoteBranchSha, validateGitRefName } = require('./review-context
  *   sha?: string | null,
  *   fork?: boolean,
  *   caveats?: string[],
+ *   pullRequest?: PullRequestIdentity,
  * }} AdvisoryGithubTargetOptions
  *
  * @typedef {{
@@ -122,8 +128,18 @@ function isPullRequestSelector(value) {
   return /^#?\d+$/.test(String(value || '').trim())
 }
 
+/** @param {unknown} value @returns {PullRequestIdentity | null} */
+function normalizePullRequest(value) {
+  if (!value || typeof value !== 'object') return null
+  const record = /** @type {Record<string, unknown>} */ (value)
+  const number = Number(record.number)
+  if (!Number.isInteger(number) || number <= 0) return null
+  return { number, url: String(record.url || ''), isCrossRepository: record.isCrossRepository === true }
+}
+
 /** @param {Partial<Target>} [target] @returns {Target} */
 function normalizeTarget(target = {}) {
+  const pullRequest = normalizePullRequest(target.pullRequest)
   return {
     branch: String(target.branch || ''),
     ref: String(target.ref || ''),
@@ -131,6 +147,7 @@ function normalizeTarget(target = {}) {
     sourceType: String(target.sourceType || ''),
     verified: target.verified === true,
     caveats: Array.isArray(target.caveats) ? [...new Set(target.caveats.map(String).filter(Boolean))] : [],
+    ...(pullRequest ? { pullRequest } : {}),
   }
 }
 
@@ -157,12 +174,12 @@ function resolvePullRequestTarget({ selector, repo, projectRoot, run = runComman
     '--repo',
     repo,
     '--json',
-    'headRefName,headRefOid,isCrossRepository',
+    'headRefName,headRefOid,isCrossRepository,number,url',
   ], { cwd: projectRoot })
   if (result.status !== 0) {
     throw new Error(`Could not resolve PR #${number} target${result.detail ? `: ${result.detail}` : ''}`)
   }
-  /** @type {{ headRefName?: string, headRefOid?: string, isCrossRepository?: boolean }} */
+  /** @type {{ headRefName?: string, headRefOid?: string, isCrossRepository?: boolean, number?: number, url?: string }} */
   let parsed
   try {
     parsed = JSON.parse(result.stdout || '{}')
@@ -172,15 +189,17 @@ function resolvePullRequestTarget({ selector, repo, projectRoot, run = runComman
   const branch = String(parsed.headRefName || '').trim()
   if (!branch) throw new Error(`Could not resolve PR #${number} branch.`)
   validateGitRefName(branch, `PR #${number} branch`)
+  const pullRequest = normalizePullRequest({ number: parsed.number ?? Number(number), url: parsed.url, isCrossRepository: parsed.isCrossRepository })
   return {
     branch,
     sha: /^[0-9a-f]{40}$/i.test(String(parsed.headRefOid || '')) ? String(parsed.headRefOid) : null,
     fork: parsed.isCrossRepository === true,
+    ...(pullRequest ? { pullRequest } : {}),
   }
 }
 
 /** @param {VerifiedRemoteTargetOptions} [options] @returns {Target} */
-function verifiedRemoteTarget({ branch, sourceType, projectRoot, remoteResolver = resolveRemoteBranchSha } = {}) {
+function verifiedRemoteTarget({ branch, sourceType, projectRoot, remoteResolver = resolveRemoteBranchSha, pullRequest } = {}) {
   const safeBranch = validateGitRefName(branch)
   const remote = remoteResolver({ repoRoot: projectRoot, branch: safeBranch })
   return normalizeTarget({
@@ -190,12 +209,14 @@ function verifiedRemoteTarget({ branch, sourceType, projectRoot, remoteResolver 
     sourceType,
     verified: true,
     caveats: [],
+    pullRequest,
   })
 }
 
 /** @param {AdvisoryGithubTargetOptions} [options] @returns {Target} */
-function advisoryGithubTarget({ branch, sourceType, sha = null, fork = false, caveats = [] } = {}) {
+function advisoryGithubTarget({ branch, sourceType, sha = null, fork = false, caveats = [], pullRequest } = {}) {
   return normalizeTarget({
+    pullRequest,
     branch,
     ref: branch ? `github-actions:${branch}` : 'github-actions',
     sha: null,
@@ -264,6 +285,7 @@ function resolveTarget({
       sha: pr?.sha || headSha(projectRoot, { run }),
       fork: pr?.fork === true,
       caveats,
+      pullRequest: pr?.pullRequest,
     })
   }
 
@@ -280,6 +302,7 @@ function resolveTarget({
       sourceType,
       verified: false,
       caveats,
+      pullRequest: pr?.pullRequest,
     })
   }
 
@@ -289,6 +312,7 @@ function resolveTarget({
       sourceType,
       projectRoot,
       remoteResolver,
+      pullRequest: pr?.pullRequest,
     })
   } catch (error) {
     const detail = error?.message || String(error)

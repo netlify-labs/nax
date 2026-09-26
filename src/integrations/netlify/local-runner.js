@@ -174,6 +174,7 @@ const NETLIFY_CONFIG_SCAN_SKIP_DIRS = new Set([
  *   runCommand?: AsyncRunCommand,
  *   sdk?: import('nax-agent-runner-sdk').AgentRunnerSdk,
  *   timeoutMinutes?: number,
+ *   onSubmitCheckpoint?: (checkpoint: import('nax-agent-runner-sdk').SubmitCheckpoint) => void | Promise<void>,
  * }} SubmitLocalAgentRunOptions
  *
  * Agent Runner query command options.
@@ -236,6 +237,7 @@ const NETLIFY_CONFIG_SCAN_SKIP_DIRS = new Set([
  *   refreshRuns?: () => import('../../types').AgentRun[],
  *   runCommand?: SyncRunCommand,
  *   sdk?: import('nax-agent-runner-sdk').AgentRunnerSdk,
+ *   onSubmitCheckpoint?: (run: import('../../types').AgentRun, checkpoint: import('nax-agent-runner-sdk').SubmitCheckpoint) => void | Promise<void>,
  * }} WaitForLocalAgentRunsOptions
  *
  * Polling progress event for Agent Runner execution.
@@ -833,6 +835,7 @@ async function submitLocalAgentRun({
   retryDelayMs = DEFAULT_SUBMISSION_RETRY_DELAY_MS,
   onRetry = () => {},
   sleepFn,
+  onSubmitCheckpoint,
 }) {
   const deadlineMs = Math.max(0, Number(timeoutMinutes) || 25) * 60 * 1000
   const resolvedSiteId = siteId || run.netlifySiteId
@@ -859,6 +862,7 @@ async function submitLocalAgentRun({
     retryDelayMs,
     onRetry,
     sleepFn,
+    ...(onSubmitCheckpoint ? { onSubmitCheckpoint } : {}),
   })
   try {
     const handle = run.existingRunnerId
@@ -922,6 +926,28 @@ async function submitLocalAgentRun({
   } catch (error) {
     throw wrapFailure(error, { siteId: resolvedSiteId, attempts: retryAttempts })
   }
+}
+
+/**
+ * Looks for the runner or session a saved submit checkpoint may have created, matching the SDK's
+ * request marker inside the request window. Returns the SDK reconciliation result as is.
+ * @param {{
+ *   checkpoint: import('nax-agent-runner-sdk').SubmitCheckpoint,
+ *   window: import('nax-agent-runner-sdk').RequestWindow,
+ *   sourceHandle?: import('nax-agent-runner-sdk').Handle,
+ *   siteId?: string,
+ *   env?: NodeJS.ProcessEnv,
+ *   sdk?: import('nax-agent-runner-sdk').AgentRunnerSdk,
+ * }} input
+ * @returns {Promise<import('nax-agent-runner-sdk').ReconciliationResult<import('nax-agent-runner-sdk').Handle>>}
+ */
+async function reconcileLocalSubmission({ checkpoint, window, sourceHandle, siteId, env = process.env, sdk }) {
+  const client = createNaxAgentRunnerSdk({ sdk, env, siteId, promptBlobDisable: true })
+  if (checkpoint.kind === 'session') {
+    if (!sourceHandle) return { kind: 'none' }
+    return client.reconcileSession(sourceHandle, /** @type {import('nax-agent-runner-sdk').EffectiveFollowUpInput} */ (checkpoint.effectiveInput), window)
+  }
+  return client.reconcileCreate(/** @type {import('nax-agent-runner-sdk').EffectiveStartInput} */ (checkpoint.effectiveInput), window)
 }
 
 /** @param {ShowAgentRunOptions} param0 */
@@ -1072,6 +1098,16 @@ function normalizeFailedRun({ run, shown, sessions }) {
   })
 }
 
+/**
+ * Drops the saved retry request once its runner is recorded, so resume does not reconcile it.
+ * @param {import('../../types').JsonMap | undefined} raw
+ * @returns {import('../../types').JsonMap}
+ */
+function withoutRetryCheckpoint(raw) {
+  const { retrySubmitCheckpoint: _checkpoint, ...rest } = raw || {}
+  return rest
+}
+
 /** @param {WaitForLocalAgentRunsOptions} param0 */
 async function waitForLocalAgentRuns({
   runs,
@@ -1084,6 +1120,7 @@ async function waitForLocalAgentRuns({
   onTerminalRun = () => {},
   refreshRuns = () => [],
   sdk,
+  onSubmitCheckpoint,
 } = {}) {
   const deadline = Date.now() + timeoutMinutes * 60 * 1000
   const client = createNaxAgentRunnerSdk({ sdk, env, siteId })
@@ -1111,6 +1148,8 @@ async function waitForLocalAgentRuns({
       compactPromptText: runState.compactPromptText,
       safePromptBytes: Number(delivery.safePromptBytes || 0) || undefined,
       promptBlobDisable: ['1', 'true', 'yes', 'on'].includes(disableValue),
+      // Automatic retries create new runners or sessions; the caller saves each request first.
+      ...(onSubmitCheckpoint ? { onSubmitCheckpoint: (checkpoint) => onSubmitCheckpoint(runState, checkpoint) } : {}),
     })
   }
   const isTerminalStoredStatus = (status) => {
@@ -1231,7 +1270,7 @@ async function waitForLocalAgentRuns({
       ...(promptDelivery ? { promptDelivery } : {}),
       ...(blobRef ? { blobRef } : {}),
       raw: {
-        ...runState.raw,
+        ...withoutRetryCheckpoint(runState.raw),
         sdkHandle: retriedHandle,
         session: sessionArtifactPayload(retriedSession),
         autoRetries: [
@@ -1455,6 +1494,7 @@ async function waitForLocalAgentRuns({
 }
 
 module.exports = {
+  reconcileLocalSubmission,
   archiveAgentRun,
   buildNetlifyEnv,
   compactPromptForArgumentLimitRetry,

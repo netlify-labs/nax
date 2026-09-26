@@ -43,6 +43,7 @@ const contract = {
   async getRun(_scope, _actor, runId, options) { return { run: { runId, status: 'queued' }, view: options.view } },
   async waitForRun(_scope, _actor, runId) { return { run: { runId, status: 'queued' }, reason: 'timeout' as const, events: [], nextCursor: '0' } },
   async cancelRun() { throw new Error('not implemented by fixture') },
+  async resumeRun() { throw new Error('not implemented by fixture') },
   async retryAgentRun() { throw new Error('not implemented by fixture') },
   async submitFollowup() { throw new Error('not implemented by fixture') },
   async resolveReviewGate() { throw new Error('not implemented by fixture') },

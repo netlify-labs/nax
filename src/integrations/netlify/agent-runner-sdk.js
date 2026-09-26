@@ -38,6 +38,7 @@ const DEFAULT_RETRY_DELAY_MS = 5000
  *     attempts: number,
  *     delayMs: number,
  *   }) => void,
+ *   onSubmitCheckpoint?: (checkpoint: import('nax-agent-runner-sdk').SubmitCheckpoint) => void | Promise<void>,
  * }} NaxAgentRunnerSdkOptions
  */
 
@@ -57,6 +58,7 @@ function createNaxAgentRunnerSdk({
   retryDelayMs = DEFAULT_RETRY_DELAY_MS,
   sleepFn,
   onRetry = () => {},
+  onSubmitCheckpoint,
 } = {}) {
   if (sdk) return sdk
   const attempts = Math.max(1, Math.floor(Number(retryAttempts) || DEFAULT_RETRY_ATTEMPTS))
@@ -96,6 +98,7 @@ function createNaxAgentRunnerSdk({
       ...(compact ? { compact } : {}),
     },
     ...(sleepFn ? { sleep: sleepFn } : {}),
+    ...(onSubmitCheckpoint ? { onSubmitCheckpoint } : {}),
     onTelemetry: (event) => {
       if (event.kind !== 'transportRetry') return
       onRetry({

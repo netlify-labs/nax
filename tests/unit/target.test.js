@@ -242,3 +242,61 @@ test('legacyTargetFromRunState exposes compatibility target for old workflow sta
   assert.ok(target.caveats.includes('legacy-unverified'))
   assert.equal(targetBranch({ target }, { required: true }), 'main')
 })
+
+const PULL_REQUEST = { number: 123, url: 'https://github.com/o/r/pull/123', isCrossRepository: false }
+/** @returns {{ branch: string, sha: string, fork: boolean, pullRequest: typeof PULL_REQUEST }} */
+function prResolver() {
+  return { branch: 'fix/auth', sha: 'b'.repeat(40), fork: false, pullRequest: { ...PULL_REQUEST } }
+}
+
+test('PR selector keeps pullRequest on the GitHub transport path', () => {
+  const repo = makeRepo()
+  const target = resolveTarget({ projectRoot: repo, transport: 'github', options: { branch: '#123', repo: 'o/r' }, prResolver, repoResolver: () => 'o/r' })
+  assert.deepEqual(target.pullRequest, PULL_REQUEST)
+})
+
+test('PR selector keeps pullRequest on the Netlify verified path', () => {
+  const repo = makeRepo()
+  const target = resolveTarget({
+    projectRoot: repo,
+    transport: 'netlify-api',
+    options: { branch: '#123', repo: 'o/r' },
+    prResolver,
+    repoResolver: () => 'o/r',
+    remoteResolver: remoteResolverFor({ 'fix/auth': 'c'.repeat(40) }),
+  })
+  assert.equal(target.verified, true)
+  assert.deepEqual(target.pullRequest, PULL_REQUEST)
+})
+
+test('PR selector keeps pullRequest on the generic transport path', () => {
+  const repo = makeRepo()
+  const target = resolveTarget({ projectRoot: repo, transport: 'local-test', options: { branch: '#123', repo: 'o/r' }, prResolver, repoResolver: () => 'o/r' })
+  assert.deepEqual(target.pullRequest, PULL_REQUEST)
+})
+
+test('non-PR targets omit pullRequest and legacy re-normalization preserves it', () => {
+  const repo = makeRepo()
+  const sha = git(repo, ['rev-parse', 'HEAD'])
+  const plain = resolveTarget({ projectRoot: repo, transport: 'netlify-api', remoteResolver: remoteResolverFor({ main: sha }) })
+  assert.equal(Object.prototype.hasOwnProperty.call(plain, 'pullRequest'), false)
+  const legacy = legacyTargetFromRunState({ target: { branch: 'fix/auth', ref: 'origin/fix/auth', sha, sourceType: 'pull-request', verified: true, caveats: [], pullRequest: PULL_REQUEST } })
+  assert.deepEqual(legacy?.pullRequest, PULL_REQUEST)
+})
+
+test('resolvePullRequestTarget requests number and url and returns one pullRequest object', () => {
+  const { resolvePullRequestTarget } = require('../../src/integrations/git/target')
+  /** @type {string[][]} */
+  const calls = []
+  const result = resolvePullRequestTarget({
+    selector: '#123',
+    repo: 'o/r',
+    projectRoot: '/tmp',
+    run: (command, args) => {
+      calls.push([command, ...args])
+      return { status: 0, stdout: JSON.stringify({ headRefName: 'fix/auth', headRefOid: 'd'.repeat(40), isCrossRepository: false, number: 123, url: PULL_REQUEST.url }), stderr: '', detail: '' }
+    },
+  })
+  assert.match(calls[0].join(' '), /--json headRefName,headRefOid,isCrossRepository,number,url/)
+  assert.deepEqual(result.pullRequest, PULL_REQUEST)
+})

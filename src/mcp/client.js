@@ -33,6 +33,7 @@ function createMcpControlPlaneClient({ controlPlane, scope, actor }) {
     getRun: (runId, options) => controlPlane.getRun(boundScope, boundActor, runId, options),
     waitForRun: (runId, cursor, timeoutMs, signal) => controlPlane.waitForRun(boundScope, boundActor, runId, cursor, timeoutMs, signal),
     cancelRun: (target) => controlPlane.cancelRun(boundScope, boundActor, target),
+    resumeRun: (resumeInput) => controlPlane.resumeRun(boundScope, boundActor, resumeInput),
     retryAgentRun: (retryInput) => controlPlane.retryAgentRun(boundScope, boundActor, retryInput),
     submitFollowup: (followupInput) => controlPlane.submitFollowup(boundScope, boundActor, followupInput),
     resolveReviewGate: (reviewInput) => controlPlane.resolveReviewGate(boundScope, boundActor, reviewInput),

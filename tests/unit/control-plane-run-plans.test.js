@@ -174,3 +174,63 @@ test('a crash while binding a transmitted run leaves starting state for later re
   assert.equal(firstBackend.starts, 1)
   assert.equal(replayBackend.starts, 0)
 })
+
+/** @param {ReturnType<typeof backendFixture>} backend @param {(plan: import('../../src/contracts').StoredControlPlanePlan) => Promise<void>} validatePlan */
+function withValidation(backend, validatePlan) {
+  let validations = 0
+  Object.defineProperty(backend, 'validations', { get: () => validations })
+  return Object.assign(backend, {
+    async validatePlan(/** @type {import('../../src/contracts').StoredControlPlanePlan} */ plan) {
+      validations += 1
+      await validatePlan(plan)
+    },
+  })
+}
+
+test('validatePlan runs before claimStart and a drifted flow leaves the plan prepared', async () => {
+  const store = memoryStore([storedFixture()])
+  const backend = withValidation(backendFixture(), async () => {
+    throw Object.assign(new Error('Flow changed since plan'), { code: 'flow_changed_since_plan', statusCode: 409, recoverable: true })
+  })
+  const input = { store, executionBackend: backend, scope: scopeFixture(), actor: actorFixture(), target: targetFixture(), planId: 'plan_01', requestId: 'request_01', now: NOW }
+  await assert.rejects(startStoredPlan(input), (error) => errorCode(error) === 'flow_changed_since_plan')
+  assert.equal(backend.validations, 1)
+  assert.equal(backend.starts, 0)
+  assert.equal((await store.get('plan_01'))?.status, 'prepared')
+})
+
+test('replaying an already-started plan never revalidates the flow', async () => {
+  const store = memoryStore([storedFixture()])
+  let drifted = false
+  const backend = withValidation(backendFixture(), async () => {
+    if (drifted) throw Object.assign(new Error('Flow changed since plan'), { code: 'flow_changed_since_plan' })
+  })
+  const input = { store, executionBackend: backend, scope: scopeFixture(), actor: actorFixture(), target: targetFixture(), planId: 'plan_01', requestId: 'request_01', now: NOW }
+  await startStoredPlan(input)
+  drifted = true
+  const replayed = await startStoredPlan(input)
+  assert.equal(replayed.replayed, true)
+  assert.equal(backend.validations, 1)
+})
+
+test('a lost claim that recurses into the started plan replays without revalidating', async () => {
+  const plan = storedFixture()
+  const store = memoryStore([plan])
+  const originalClaim = store.claimStart
+  let first = true
+  store.claimStart = async (planId, requestId, expectedStatus) => {
+    if (first) {
+      first = false
+      const claimed = await originalClaim(planId, requestId, expectedStatus)
+      await store.bindStarted(planId, requestId, 'run_other')
+      return claimed ? null : null
+    }
+    return originalClaim(planId, requestId, expectedStatus)
+  }
+  const backend = withValidation(backendFixture({ reconcileRunId: 'run_other' }), async () => {})
+  const input = { store, executionBackend: backend, scope: scopeFixture(), actor: actorFixture(), target: targetFixture(), planId: 'plan_01', requestId: 'request_01', now: NOW }
+  const result = await startStoredPlan(input)
+  assert.equal(result.run.runId, 'run_other')
+  assert.equal(backend.validations, 1)
+  assert.equal(backend.starts, 0)
+})

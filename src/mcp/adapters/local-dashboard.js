@@ -486,6 +486,7 @@ function mapCapabilities(dashboard) {
     run_get: available(dashboard.canReadRuns === true, noRuns),
     run_wait: available(dashboard.canReadRuns === true && dashboard.canReadEventsJson === true, 'Bounded event reads are unavailable in this dashboard runtime.'),
     run_cancel: available(dashboard.canCancelRuns === true, 'Run cancellation is unavailable in this dashboard runtime.'),
+    run_resume: available(dashboard.canStartRuns === true, 'Run resume is unavailable in this dashboard runtime.'),
     agent_run_retry: available(dashboard.canStartRuns === true, 'Agent retry is unavailable in this dashboard runtime.'),
     agent_run_followup: available(dashboard.canSubmitFollowups === true, 'Agent follow-up is unavailable in this dashboard runtime.'),
     review_gate_resolve: available(dashboard.canReviewGates === true, 'Review gates are unavailable in this dashboard runtime.'),
@@ -659,6 +660,40 @@ function createLocalDashboardPorts(config, identity) {
     return objectValue(payload.run)
   }
 
+  /**
+   * Findings summary (count, severity histogram, top ranked items) for one run; the full artifact on request.
+   * Details reads tolerate runtimes without a findings endpoint.
+   * @param {import('./local-dashboard-http').LocalDashboardSession} current
+   * @param {string} runId
+   * @param {boolean} includeArtifact
+   * @returns {Promise<import('../../contracts').ControlPlaneRunFindings | null>}
+   */
+  async function runFindings(current, runId, includeArtifact) {
+    let payload
+    try {
+      payload = await request(current, `/api/runs/${encodeURIComponent(runId)}/findings`)
+    } catch (error) {
+      if (includeArtifact) throw error
+      return null
+    }
+    const artifact = objectValue(payload.findings)
+    const findings = objectList(artifact.findings)
+    if (!payload.findings) return null
+    /** @type {Record<string, number>} */
+    const bySeverity = {}
+    for (const finding of findings) {
+      const severity = stringValue(finding.severity) || 'info'
+      bySeverity[severity] = (bySeverity[severity] || 0) + 1
+    }
+    const ranked = [...findings].sort((a, b) => (Number(a.rank) || Number.MAX_SAFE_INTEGER) - (Number(b.rank) || Number.MAX_SAFE_INTEGER))
+    return {
+      count: findings.length,
+      bySeverity,
+      top: /** @type {import('../../contracts').ControlPlaneJsonObject[]} */ (ranked.slice(0, 10)),
+      ...(includeArtifact ? { artifact: /** @type {import('../../contracts').ControlPlaneJsonObject & { findings: import('../../contracts').ControlPlaneJsonObject[] }} */ ({ ...artifact, findings }) } : {}),
+    }
+  }
+
   return {
     audit,
     auditContext: { runtime: 'local-dashboard', clientName: 'mcp-stdio', ...config.auditContext },
@@ -706,9 +741,17 @@ function createLocalDashboardPorts(config, identity) {
       const offset = workflowOffset(query.cursor)
       const limit = positiveLimit(query.limit, 50, MAX_WORKFLOW_PAGE)
       const page = workflows.slice(offset, offset + limit).map(mapWorkflowSummary)
+      const invalid = objectList(payload.invalid).map((entry) => ({
+        workflowId: stringValue(entry.id),
+        file: stringValue(entry.file),
+        status: stringValue(entry.status),
+        invalid: /** @type {const} */ (true),
+        errorCount: Number(entry.errorCount) || 0,
+      }))
       return {
         workflows: page,
         nextCursor: offset + page.length < workflows.length ? workflowCursor(offset + page.length) : null,
+        ...(invalid.length > 0 ? { invalid } : {}),
       }
     },
     async getWorkflow(_scope, _actor, workflowId, options = {}) {
@@ -794,7 +837,12 @@ function createLocalDashboardPorts(config, identity) {
         requireDashboardCapability(capabilities, 'canReadRunDetails')
         const response = await request(current, `/api/runs/${encodeURIComponent(runId)}/details`)
         const run = mapRun(response.run, current.health)
-        return { run, view, details: mapRunDetails(response, run, identity.scope.scopeId, options.sectionId) }
+        return { run, view, details: mapRunDetails(response, run, identity.scope.scopeId, options.sectionId), findings: await runFindings(current, runId, false) }
+      }
+      if (view === 'findings') {
+        requireDashboardCapability(capabilities, 'canReadRunDetails')
+        const raw = await rawRun(current, runId)
+        return { run: mapRun(raw, current.health), view, findings: await runFindings(current, runId, true) }
       }
       if (view === 'graph') {
         const response = await request(current, `/api/runs/${encodeURIComponent(runId)}/graph`)
@@ -873,6 +921,20 @@ function createLocalDashboardPorts(config, identity) {
         cancelled: response.cancelled === true,
         ...(target.agentRunId ? { agentRunId: target.agentRunId } : {}),
         warnings: stringList(response.warnings),
+      }
+    },
+    async resumeRun(_scope, _actor, input) {
+      const current = await session()
+      const capabilities = objectValue(current.health.capabilities)
+      requireDashboardCapability(capabilities, 'canStartRuns')
+      const response = await request(current, `/api/runs/${encodeURIComponent(input.runId)}/resume`, {
+        method: 'POST',
+        body: { requestId: input.requestId, ...(input.includeCancelled ? { includeCancelled: true } : {}) },
+      })
+      return {
+        run: mapRun(await rawRun(current, input.runId), current.health),
+        preview: /** @type {import('../../contracts').ControlPlaneJsonObject} */ (objectValue(response.preview)),
+        replayed: response.replayed === true,
       }
     },
     async retryAgentRun(_scope, _actor, input) {

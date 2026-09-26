@@ -606,6 +606,21 @@ function buildTopSummaryMarkdown(runState = {}) {
   return lines.join('\n')
 }
 
+/**
+ * Run-relative path of the attempt markdown artifact already written for this exact run, or ''.
+ * @param {import('../../types').WorkflowRunState} runState
+ * @param {import('../../types').WorkflowStep} step
+ * @param {import('../../types').AgentRun} run
+ * @returns {string}
+ */
+function attemptArtifactPath(runState = {}, step = {}, run = {}) {
+  if (!runState.dir) return ''
+  const dir = runsArtifactsDir(runState, step)
+  const attemptNumber = attemptNumberForRun(dir, step, run)
+  if (!attemptNumber) return ''
+  return posixPath(path.relative(runState.dir, path.join(dir, `${runArtifactBase(step, run)}.attempt-${attemptNumber}.md`)))
+}
+
 function writeAgentFiles(runState, step, run, options = {}) {
   if (!isTerminalRun(run) || !hasMeaningfulRunArtifact(run)) return null
   const dir = runsArtifactsDir(runState, step)
@@ -748,6 +763,7 @@ module.exports = {
   nestedMarkdownHeadings,
   existingAttemptCount,
   nextAttemptNumber,
+  attemptArtifactPath,
   persistRunArtifact,
   persistStepArtifacts,
   persistWorkflowArtifacts,

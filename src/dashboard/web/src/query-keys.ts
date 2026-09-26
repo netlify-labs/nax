@@ -8,6 +8,8 @@ export const dashboardQueryKeys = {
   run: (runId: string) => [...dashboardQueryKeys.all, 'run', runId] as const,
   runGraph: (runId: string) => [...dashboardQueryKeys.run(runId), 'graph'] as const,
   runDetails: (runId: string) => [...dashboardQueryKeys.run(runId), 'details'] as const,
+  runFindings: (runId: string) => [...dashboardQueryKeys.run(runId), 'findings'] as const,
+  resumePreview: (runId: string, includeCancelled: boolean) => [...dashboardQueryKeys.run(runId), 'resume-preview', includeCancelled] as const,
 }
 
 export type DashboardQueryKey =
@@ -20,3 +22,4 @@ export type DashboardQueryKey =
   | ReturnType<typeof dashboardQueryKeys.run>
   | ReturnType<typeof dashboardQueryKeys.runGraph>
   | ReturnType<typeof dashboardQueryKeys.runDetails>
+  | ReturnType<typeof dashboardQueryKeys.runFindings>

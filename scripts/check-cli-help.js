@@ -25,11 +25,17 @@ const targets = [
       'Usage: nax run [workflow]',
       '--agents <provider[:model[:effort]]>',
       'Agent instance for workflow steps',
+      '--resume <run-id>',
+      '--include-cancelled',
     ],
   },
   {
     args: ['run', 'agent', '--help'],
     mustContain: ['Usage: nax run agent [options] <type> [prompt...]'],
+  },
+  {
+    args: ['lint', '--help'],
+    mustContain: ['Usage: nax lint [options] [flows...]', '--strict'],
   },
   {
     args: ['dashboard', '--help'],

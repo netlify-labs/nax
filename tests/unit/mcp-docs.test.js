@@ -70,3 +70,8 @@ test('MCP docs use the public setup lifecycle and contain required recovery guid
   ]
   for (const name of removedNames) assert.doesNotMatch(`${guide}\n${read(REFERENCE_PATH)}`, new RegExp(`\\b${name}\\b`))
 })
+
+test('the MCP reference states the real tool count', () => {
+  const reference = read(REFERENCE_PATH)
+  assert.match(reference, new RegExp(`NAX exposes ${Object.keys(TOOL_SPECS).length} entity-first tools`))
+})

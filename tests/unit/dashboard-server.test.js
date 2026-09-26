@@ -623,6 +623,25 @@ test('dashboard server serves built static assets when dist exists', async () =>
   }
 })
 
+test('legacy dashboard dry-run of a broken flow returns 422 invalid_flow with diagnostics', async () => {
+  const projectRoot = tmpRoot()
+  writeProjectFlow(projectRoot, 'broken-flow')
+  fs.rmSync(path.join(projectRoot, '.github', 'nax-flows', 'broken-flow', 'prompts', 'one.md'))
+  const server = await startDashboardServer({ projectRoot })
+  try {
+    const base = `http://127.0.0.1:${server.port}`
+    const response = await postJson(`${base}/api/workflows/broken-flow/dry-run`, server.token, {})
+    assert.equal(response.statusCode, 422)
+    assert.equal(response.payload.error.code, 'invalid_flow')
+    assert.equal(response.payload.error.details.flowId, 'broken-flow')
+    const codes = response.payload.error.details.diagnostics.map((diagnostic) => diagnostic.code)
+    assert.deepEqual(codes, ['missing_prompt_file'])
+    assert.ok(response.payload.error.details.diagnostics[0].hint)
+  } finally {
+    await server.close()
+  }
+})
+
 test('dashboard dry-run requires token and validates options', async () => {
   const server = await startDashboardServer({ projectRoot: process.cwd() })
   try {
@@ -2037,4 +2056,82 @@ test('dashboard does not duplicate terminal events the child already logged', ()
   assert.equal(appended, false)
   const events = fs.readFileSync(logPath, 'utf8').trim().split('\n').map((line) => JSON.parse(line))
   assert.deepEqual(events.map((event) => event.type), ['workflow_started', 'workflow_failed'])
+})
+
+/** @param {string} projectRoot @param {string} runId @param {Record<string, unknown>} [overrides] */
+function writeResumeFixture(projectRoot, runId, overrides = {}) {
+  const dir = path.join(projectRoot, '.nax', 'workflows', runId)
+  fs.mkdirSync(dir, { recursive: true })
+  fs.writeFileSync(path.join(projectRoot, 'review.md'), '---\ntitle: Review\n---\n\nReview it.\n')
+  fs.writeFileSync(path.join(dir, 'workflow.json'), JSON.stringify({
+    runId,
+    flowId: 'resume-flow',
+    transport: 'netlify-api',
+    status: 'interrupted',
+    branch: 'main',
+    flow: { id: 'resume-flow', title: 'Resume flow', dir: projectRoot, steps: [{ id: 'review', title: 'Review', submit: 'new-run', prompt: 'review.md', agents: ['claude', 'codex'] }] },
+    steps: [{ id: 'review', status: 'running', runs: [
+      { agent: 'claude', instanceId: 'claude:auto:auto', status: 'completed', runnerId: 'r1', resultText: 'done', promptText: 'p' },
+      { agent: 'codex', instanceId: 'codex:auto:auto', status: 'failed', runnerId: 'r2', promptText: 'p' },
+    ] }],
+    ...overrides,
+  }))
+  return dir
+}
+
+test('dashboard resume refuses with 409 before starting anything', async () => {
+  const { runLockDir } = require('../../src/storage/local/run-lock')
+  const projectRoot = tmpRoot()
+  writeResumeFixture(projectRoot, 'run-done', { status: 'completed', steps: [{ id: 'review', status: 'completed', runs: [{ agent: 'claude', status: 'completed', resultText: 'ok' }] }] })
+  writeResumeFixture(projectRoot, 'run-ambiguous', { steps: [{ id: 'review', status: 'running', runs: [{ agent: 'claude', instanceId: 'claude:auto:auto', status: 'pending', runnerId: '', sentAt: '2026-09-25T12:00:00.000Z', promptText: 'p' }] }] })
+  const lockedDir = writeResumeFixture(projectRoot, 'run-locked')
+  fs.mkdirSync(runLockDir(lockedDir), { recursive: true })
+  fs.writeFileSync(path.join(runLockDir(lockedDir), 'owner.json'), JSON.stringify({ pid: process.pid, hostname: os.hostname(), nonce: 'n', command: 'nax run --resume run-locked' }))
+  const server = await startDashboardServer({ projectRoot })
+  try {
+    const base = `http://127.0.0.1:${server.port}`
+    const done = await postJson(`${base}/api/runs/run-done/resume`, server.token, {})
+    assert.equal(done.statusCode, 409)
+    assert.equal(done.payload.error.code, 'not_resumable')
+    const ambiguous = await postJson(`${base}/api/runs/run-ambiguous/resume`, server.token, {})
+    assert.equal(ambiguous.statusCode, 409)
+    assert.equal(ambiguous.payload.error.code, 'resume_ambiguous_submission')
+    const locked = await postJson(`${base}/api/runs/run-locked/resume`, server.token, {})
+    assert.equal(locked.statusCode, 409)
+    assert.equal(locked.payload.error.code, 'run_locked')
+    const missing = await postJson(`${base}/api/runs/nope/resume`, server.token, {})
+    assert.equal(missing.statusCode, 404)
+    const preview = await requestJson(`${base}/api/runs/run-locked/resume-preview`, { token: server.token })
+    assert.equal(preview.statusCode, 200)
+    assert.equal(preview.payload.blocked.code, 'run_locked')
+  } finally {
+    await server.close()
+  }
+})
+
+test('dashboard resume with a request id executes once and replays the same result', async () => {
+  const projectRoot = tmpRoot()
+  // Nothing needs resubmitting (one kept, one cancelled), so the real in-process resume stays offline.
+  writeResumeFixture(projectRoot, 'run-replay', {
+    options: { branch: 'main', netlifySiteId: 'site_test' },
+    steps: [{ id: 'review', status: 'running', runs: [
+      { agent: 'claude', instanceId: 'claude:auto:auto', status: 'completed', runnerId: 'r1', resultText: 'done', promptText: 'p' },
+      { agent: 'codex', instanceId: 'codex:auto:auto', status: 'cancelled', runnerId: 'r2', promptText: 'p' },
+    ] }],
+  })
+  const server = await startDashboardServer({ projectRoot })
+  try {
+    const base = `http://127.0.0.1:${server.port}`
+    const first = await postJson(`${base}/api/runs/run-replay/resume`, server.token, { requestId: 'request-1' })
+    assert.equal(first.statusCode, 202, JSON.stringify(first.payload))
+    assert.equal(first.payload.replayed, false)
+    const second = await postJson(`${base}/api/runs/run-replay/resume`, server.token, { requestId: 'request-1' })
+    assert.equal(second.statusCode, 202)
+    assert.equal(second.payload.replayed, true)
+    assert.equal(second.payload.run.id, first.payload.run.id)
+    const conflicting = await postJson(`${base}/api/runs/run-replay/resume`, server.token, { requestId: 'request-1', includeCancelled: true })
+    assert.equal(conflicting.statusCode, 409)
+  } finally {
+    await server.close()
+  }
 })

@@ -493,3 +493,71 @@ test('local run store omits usage totals when no run reported usage', () => {
   const listed = store.listRunsPage().runs.find((run) => run.runId === 'run-no-usage')
   assert.equal(listed?.usageTotals, undefined)
 })
+
+test('local run store returns findings computed from the run without writing them', async () => {
+  const projectRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'nax-local-findings-'))
+  const runId = '2026-09-25T12-00-00-000Z-review'
+  const dir = path.join(projectRoot, '.nax', 'workflows', runId)
+  fs.mkdirSync(dir, { recursive: true })
+  const synthesizeText = fs.readFileSync(path.join(__dirname, '..', 'fixtures', 'findings', 'synthesize-3-findings.md'), 'utf8')
+  fs.writeFileSync(path.join(dir, 'workflow.json'), JSON.stringify({
+    runId,
+    flowId: 'review',
+    status: 'completed',
+    flow: { id: 'review', findings: { step: 'synthesize', adapter: 'review-consensus' }, steps: [{ id: 'synthesize', agents: ['codex'] }] },
+    steps: [{ id: 'synthesize', status: 'completed', runs: [{ agent: 'codex', status: 'completed', resultText: synthesizeText }] }],
+  }))
+  const store = createLocalRunStore({ projectRoot })
+  const result = await store.getRunFindings(runId)
+  assert.equal(result?.findings?.findings.filter((finding) => finding.bucket === 'consensus').length, 3)
+  assert.equal(fs.existsSync(path.join(dir, 'artifacts', 'findings.json')), false)
+  assert.equal(await store.getRunFindings('missing-run'), null)
+})
+
+/** @param {string} projectRoot @param {string} runId @param {Record<string, unknown>} [overrides] */
+function writeResumableRun(projectRoot, runId, overrides = {}) {
+  const dir = path.join(projectRoot, '.nax', 'workflows', runId)
+  fs.mkdirSync(dir, { recursive: true })
+  fs.writeFileSync(path.join(projectRoot, 'review.md'), '---\ntitle: Review\n---\n\nReview it.\n')
+  fs.writeFileSync(path.join(dir, 'workflow.json'), JSON.stringify({
+    runId,
+    flowId: 'resume-flow',
+    transport: 'netlify-api',
+    status: 'interrupted',
+    branch: 'main',
+    flow: { id: 'resume-flow', title: 'Resume flow', dir: projectRoot, steps: [{ id: 'review', title: 'Review', submit: 'new-run', prompt: 'review.md', agents: ['claude', 'codex'] }] },
+    steps: [{ id: 'review', status: 'running', runs: [
+      { agent: 'claude', instanceId: 'claude:auto:auto', status: 'completed', runnerId: 'r1', resultText: 'done', promptText: 'p' },
+      { agent: 'codex', instanceId: 'codex:auto:auto', status: 'failed', runnerId: 'r2', promptText: 'p' },
+    ] }],
+    ...overrides,
+  }))
+  return dir
+}
+
+test('local run store previews a resume per instance and explains refusals', async () => {
+  const projectRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'nax-local-resume-preview-'))
+  writeResumableRun(projectRoot, 'run-resumable')
+  writeResumableRun(projectRoot, 'run-done', { status: 'completed', steps: [{ id: 'review', status: 'completed', runs: [{ agent: 'claude', status: 'completed', resultText: 'done' }] }] })
+  const store = createLocalRunStore({ projectRoot })
+  const result = await store.getResumePreview('run-resumable')
+  assert.equal(result?.resumable, true)
+  assert.deepEqual(result?.preview?.actions.map((action) => [action.instanceId, action.action]), [['claude:auto:auto', 'keep'], ['codex:auto:auto', 'resubmit']])
+  assert.equal(result?.preview?.counts.newRuns, 1)
+  const refused = await store.getResumePreview('run-done')
+  assert.equal(refused?.resumable, false)
+  assert.equal(refused?.blocked?.code, 'not_resumable')
+  assert.equal(await store.getResumePreview('missing-run'), null)
+})
+
+test('local run store resume preview reports a live run lock', async () => {
+  const { runLockDir } = require('../../src/storage/local/run-lock')
+  const projectRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'nax-local-resume-lock-'))
+  const dir = writeResumableRun(projectRoot, 'run-locked')
+  fs.mkdirSync(runLockDir(dir), { recursive: true })
+  fs.writeFileSync(path.join(runLockDir(dir), 'owner.json'), JSON.stringify({ pid: process.pid, hostname: os.hostname(), nonce: 'n', command: 'nax run --resume run-locked' }))
+  const result = await createLocalRunStore({ projectRoot }).getResumePreview('run-locked')
+  assert.equal(result?.resumable, false)
+  assert.equal(result?.blocked?.code, 'run_locked')
+  assert.match(String(result?.blocked?.message), /nax run --resume run-locked/)
+})

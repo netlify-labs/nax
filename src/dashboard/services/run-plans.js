@@ -1,5 +1,30 @@
 const { prepareAgentRunPlan, prepareWorkflowPlan } = require('../../control-plane/planner')
 const { startStoredPlan, storedPlanFromPrepared } = require('../../control-plane/run-plans')
+const fs = require('fs')
+const path = require('path')
+const { flowDigest } = require('../../workflows/catalog/flow-manifest')
+
+/**
+ * Lower-bound prompt size per step for plan-time warnings: the step's prompt file bytes plus
+ * explicitly supplied context. Auto-context and prior-round results are not known at plan time.
+ * @param {import('../../types').WorkflowFlow} flow
+ * @param {string} context
+ * @returns {Record<string, number>}
+ */
+function staticPromptBytesByStep(flow, context) {
+  const contextBytes = Buffer.byteLength(context, 'utf8')
+  /** @type {Record<string, number>} */
+  const bytesByStep = {}
+  for (const step of flow.steps || []) {
+    if (!step.prompt || !flow.dir) continue
+    try {
+      bytesByStep[String(step.id)] = fs.statSync(path.resolve(flow.dir, String(step.prompt))).size + contextBytes
+    } catch (_error) {
+      // A missing prompt file is reported by flow validation, not by size warnings.
+    }
+  }
+  return bytesByStep
+}
 
 /** @typedef {import('../../contracts').ControlPlaneActor} ControlPlaneActor */
 /** @typedef {import('../../contracts').ControlPlaneJsonObject} ControlPlaneJsonObject */
@@ -172,6 +197,8 @@ function createDashboardRunPlanService({
           scope,
           target,
           flow,
+          flowDigest: flowDigest(flow),
+          promptBytesByStep: staticPromptBytesByStep(flow, typeof input.context === 'string' ? input.context : ''),
           input: /** @type {import('../../contracts').ControlPlaneWorkflowPlanInput} */ ({ ...input, workflowId }),
         })
         return await persist(prepared, at)

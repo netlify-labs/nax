@@ -81,7 +81,11 @@ function OutputSection({ panel }: { panel: OutputPanel }) {
         <Text fw={700} size="sm">{panel.title}</Text>
         <OutputBadge panel={panel} />
       </Group>
-      {panel.error ? <Alert color="red" variant="light" py={6} radius={0}>{panel.error}</Alert> : null}
+      {panel.error ? (
+        <Alert className="output-error-alert" color="red" variant="light" py={6} radius={0} styles={{ message: { whiteSpace: 'pre-wrap' } }}>
+          {panel.error}
+        </Alert>
+      ) : null}
       {panel.result?.command?.length ? (
         <Box>
           <Code block className="command-line">{panel.result.command.join(' ')}</Code>

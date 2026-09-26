@@ -77,6 +77,7 @@ export type Target = {
   sourceType: string
   verified: boolean
   caveats: string[]
+  pullRequest?: { number: number, url: string, isCrossRepository: boolean }
 }
 
 export type DryRunOptions = {
@@ -354,6 +355,33 @@ export type RunRetryResponse = {
   previousRunnerId: string
   runnerId: string
   sessionId: string
+}
+
+export type ResumeAction = 'keep' | 'poll' | 'resubmit' | 'submit' | 'skip'
+
+export type ResumePreview = {
+  runId: string
+  complete: boolean
+  step: { id: string; title: string; index: number; total: number; started: boolean } | null
+  actions: Array<{ instanceId: string; action: ResumeAction; detail: string }>
+  branch: string
+  runSha: string
+  currentSha: string
+  headState: 'unchanged' | 'moved' | 'moved-later-steps' | 'unknown' | ''
+  counts: { newRuns: number; kept: number; polling: number; skipped: number }
+  notes: string[]
+  stop: { code: string; message: string } | null
+}
+
+export type ResumePreviewResponse = {
+  resumable: boolean
+  preview: ResumePreview | null
+  blocked: { code: string; message: string } | null
+}
+
+export type RunResumeResponse = {
+  run: DashboardRun
+  preview: ResumePreview
 }
 
 export type RunFollowupSubmission = {

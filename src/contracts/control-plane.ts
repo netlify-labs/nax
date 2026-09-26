@@ -50,6 +50,7 @@ export type ControlPlaneToolName =
   | 'run_get'
   | 'run_wait'
   | 'run_cancel'
+  | 'run_resume'
   | 'agent_run_retry'
   | 'agent_run_followup'
   | 'review_gate_resolve'
@@ -65,6 +66,7 @@ export type ControlPlaneOperation =
   | 'getRun'
   | 'waitForRun'
   | 'cancelRun'
+  | 'resumeRun'
   | 'retryAgentRun'
   | 'submitFollowup'
   | 'resolveReviewGate'
@@ -191,9 +193,18 @@ export type ControlPlaneWorkflowQuery = {
   cursor?: string
 }
 
+export type ControlPlaneInvalidWorkflowSummary = {
+  workflowId: string
+  file: string
+  status: string
+  invalid: true
+  errorCount: number
+}
+
 export type ControlPlaneWorkflowList = {
   workflows: ControlPlaneWorkflowSummary[]
   nextCursor: string | null
+  invalid?: ControlPlaneInvalidWorkflowSummary[]
 }
 
 export type ControlPlaneWorkflowReadOptions = {
@@ -236,6 +247,7 @@ export type ControlPlanePlan = {
   target: ControlPlaneTarget
   expiresAt: string
   workflowId?: string
+  flowDigest?: string
   steps: ControlPlaneWorkflowStep[]
   instances: ControlPlaneAgentInstanceInput[]
   expectedAgentRuns: number
@@ -302,7 +314,7 @@ export type ControlPlaneRunList = {
   total?: number
 }
 
-export type ControlPlaneRunView = 'summary' | 'details' | 'graph' | 'events'
+export type ControlPlaneRunView = 'summary' | 'details' | 'graph' | 'events' | 'findings'
 
 export type ControlPlaneRunReadOptions = {
   view: ControlPlaneRunView
@@ -352,12 +364,20 @@ export type ControlPlaneEventPage = {
   truncated: boolean
 }
 
+export type ControlPlaneRunFindings = {
+  count: number
+  bySeverity: Record<string, number>
+  top: ControlPlaneJsonObject[]
+  artifact?: ControlPlaneJsonObject & { findings: ControlPlaneJsonObject[] }
+}
+
 export type ControlPlaneRunRead = {
   run: ControlPlaneRunSummary
   view: ControlPlaneRunView
   details?: ControlPlaneRunDetails
   graph?: ControlPlaneGraph
   events?: ControlPlaneEventPage
+  findings?: ControlPlaneRunFindings | null
 }
 
 export type ControlPlaneWaitReason = 'events' | 'terminal' | 'review' | 'stalled' | 'timeout'
@@ -387,6 +407,18 @@ export type ControlPlaneCancelResult = {
   cancelled: boolean
   agentRunId?: string
   warnings: string[]
+}
+
+export type ControlPlaneRunResumeInput = {
+  runId: string
+  requestId: string
+  includeCancelled?: boolean
+}
+
+export type ControlPlaneRunResumeResult = {
+  run: ControlPlaneRunSummary
+  preview: ControlPlaneJsonObject
+  replayed: boolean
 }
 
 export type ControlPlaneAgentRetryInput = {
@@ -491,6 +523,7 @@ export type NaxControlPlane = {
   getRun(scope: ControlPlaneScope, actor: ControlPlaneActor, runId: string, options: ControlPlaneRunReadOptions): Promise<ControlPlaneRunRead>
   waitForRun(scope: ControlPlaneScope, actor: ControlPlaneActor, runId: string, cursor?: string, timeoutMs?: number, signal?: AbortSignal): Promise<ControlPlaneWaitResult>
   cancelRun(scope: ControlPlaneScope, actor: ControlPlaneActor, target: ControlPlaneCancelTarget): Promise<ControlPlaneCancelResult>
+  resumeRun(scope: ControlPlaneScope, actor: ControlPlaneActor, input: ControlPlaneRunResumeInput): Promise<ControlPlaneRunResumeResult>
   retryAgentRun(scope: ControlPlaneScope, actor: ControlPlaneActor, input: ControlPlaneAgentRetryInput): Promise<ControlPlaneAgentRetryResult>
   submitFollowup(scope: ControlPlaneScope, actor: ControlPlaneActor, input: ControlPlaneFollowupInput): Promise<ControlPlaneFollowupResult>
   resolveReviewGate(scope: ControlPlaneScope, actor: ControlPlaneActor, input: ControlPlaneReviewDecisionInput): Promise<ControlPlaneReviewDecisionResult>
@@ -508,6 +541,7 @@ export type NaxControlPlaneClient = {
   getRun(runId: string, options: ControlPlaneRunReadOptions): Promise<ControlPlaneRunRead>
   waitForRun(runId: string, cursor?: string, timeoutMs?: number, signal?: AbortSignal): Promise<ControlPlaneWaitResult>
   cancelRun(target: ControlPlaneCancelTarget): Promise<ControlPlaneCancelResult>
+  resumeRun(input: ControlPlaneRunResumeInput): Promise<ControlPlaneRunResumeResult>
   retryAgentRun(input: ControlPlaneAgentRetryInput): Promise<ControlPlaneAgentRetryResult>
   submitFollowup(input: ControlPlaneFollowupInput): Promise<ControlPlaneFollowupResult>
   resolveReviewGate(input: ControlPlaneReviewDecisionInput): Promise<ControlPlaneReviewDecisionResult>
@@ -567,6 +601,7 @@ export type ControlPlaneMutationStore = {
 export type WorkflowExecutionBackend = {
   startPlan(plan: StoredControlPlanePlan): Promise<ControlPlaneStartResult>
   reconcilePlan(plan: StoredControlPlanePlan): Promise<ControlPlaneStartResult | null>
+  validatePlan?(plan: StoredControlPlanePlan): Promise<void>
 }
 
 export type ControlPlaneEventStore = {

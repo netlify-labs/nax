@@ -84,6 +84,14 @@ test('createRunState persists immutable target and branch aliases', () => {
   assert.equal(state.branchSource, 'current-branch')
 })
 
+test('createRunState records the flow digest when provided', () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'nax-run-state-digest-test-'))
+  const withDigest = createRunState({ projectRoot: tmp, flow: { id: 'review', title: 'Review' }, flowDigest: 'f'.repeat(64) })
+  const withoutDigest = createRunState({ projectRoot: tmp, flow: { id: 'review', title: 'Review' } })
+  assert.equal(withDigest.flowDigest, 'f'.repeat(64))
+  assert.equal(Object.prototype.hasOwnProperty.call(withoutDigest, 'flowDigest'), false)
+})
+
 test('saveRunState adds .nax to gitignore once when writing artifacts', () => {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'nax-run-state-gitignore-test-'))
   const gitignorePath = path.join(tmp, '.gitignore')
@@ -397,4 +405,25 @@ test('saveRunState preserves dashboard retry replacement over stale agent snapsh
   assert.equal(saved.steps[0].runs[0].runnerId, 'runner-new')
   assert.equal(saved.steps[0].runs[0].status, 'submitted')
   assert.equal(saved.steps[0].runs[0].raw.dashboardRetry.previous.runnerId, 'runner-old')
+})
+
+test('an interrupted run whose saved step did not allow continuation is unfinished', () => {
+  const state = runState('/tmp/x', {
+    status: 'interrupted',
+    flow: { id: 'review', steps: [{ id: 'review' }, { id: 'summarize' }] },
+    steps: [{ id: 'review', status: 'failed', runs: [{ runnerId: 'r1', status: 'failed' }] }],
+  })
+  assert.equal(isUnfinishedRun(state), true)
+})
+
+test('failed runs that stopped on failed instances are resumable only when asked explicitly', () => {
+  const { isExplicitlyResumableRun } = require('../../src/core/runs/resumable')
+  const steps = [{ id: 'review', status: 'failed', runs: [{ runnerId: 'r1', status: 'failed' }] }]
+  for (const failureCode of ['NAX_ALL_INSTANCES_FAILED', 'NAX_PARTIAL_FINAL_STEP']) {
+    const state = { ...runState('/tmp/x', { status: 'failed', steps }), failureCode }
+    assert.equal(isUnfinishedRun(state), false)
+    assert.equal(isExplicitlyResumableRun(state), true)
+  }
+  assert.equal(isExplicitlyResumableRun({ ...runState('/tmp/x', { status: 'failed', steps }), failureCode: 'wrong_account' }), false)
+  assert.equal(isExplicitlyResumableRun({ ...runState('/tmp/x', { status: 'failed', steps }), failureCode: 'NAX_ALL_INSTANCES_FAILED', dismissedAt: '2026-09-25T00:00:00.000Z' }), false)
 })

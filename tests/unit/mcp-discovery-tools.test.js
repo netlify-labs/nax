@@ -36,7 +36,7 @@ function contextFixture() {
       run_get: { available: true },
       run_wait: { available: true },
       run_cancel: { available: true },
-      agent_run_retry: { available: true },
+      run_resume: { available: true }, agent_run_retry: { available: true },
       agent_run_followup: { available: true },
       review_gate_resolve: { available: true },
       resource_read: { available: false, reason: 'Not installed' },

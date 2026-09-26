@@ -137,6 +137,21 @@ export interface AgentRunnerSdkOptions
   githubMergeMethod?: GithubMergeMethod
   onLandingCheckpoint?: (handle: Handle) => void | Promise<void>
   onRetryCheckpoint?: (handle: Handle) => void | Promise<void>
+  onSubmitCheckpoint?: (checkpoint: SubmitCheckpoint) => void | Promise<void>
+}
+
+/**
+ * Handed to the caller immediately before a create request (new runner or new session) is sent,
+ * so a crash or ambiguous response after the send can later be reconciled with reconcileCreate or
+ * reconcileSession using the exact effective input. A checkpoint that throws stops the send.
+ */
+export interface SubmitCheckpoint {
+  v: 1
+  kind: 'create' | 'session'
+  runnerId?: string
+  effectiveInput: EffectiveStartInput | EffectiveFollowUpInput
+  sentAt: number
+  promptDelivery?: PromptDeliveryAttempt
 }
 
 export interface BlobCleanupErrorEvent {
@@ -412,6 +427,7 @@ export function createAgentRunnerSdk(
     githubMergeMethod,
     onLandingCheckpoint,
     onRetryCheckpoint,
+    onSubmitCheckpoint,
     random = Math.random,
     baseRetryDelayMs = 250,
     maxRetryDelayMs = 5_000,
@@ -484,6 +500,23 @@ export function createAgentRunnerSdk(
     return 'promptRef' in promptInput
       ? { ...rest, promptRef: promptInput.promptRef }
       : { ...rest, prompt: promptInput.prompt }
+  }
+
+  async function checkpointSubmit(
+    kind: SubmitCheckpoint['kind'],
+    effectiveInput: EffectiveStartInput | EffectiveFollowUpInput,
+    attempt: PromptDeliveryAttempt,
+    runnerId?: string,
+  ): Promise<void> {
+    if (onSubmitCheckpoint === undefined) return
+    await onSubmitCheckpoint({
+      v: 1,
+      kind,
+      ...(runnerId === undefined ? {} : { runnerId }),
+      effectiveInput,
+      sentAt: now(),
+      promptDelivery: attempt,
+    })
   }
 
   async function prepareStartDelivery(
@@ -690,6 +723,7 @@ export function createAgentRunnerSdk(
     }
     const planned = await prepareStartDelivery(resolvedInput)
     const { prepared } = planned
+    await checkpointSubmit('create', prepared.effectiveInput, planned.attempt)
     let submitted
     try {
       submitted = await submitStartOperation(
@@ -1038,6 +1072,7 @@ export function createAgentRunnerSdk(
       rotateRequestId,
     )
     const { prepared } = planned
+    await checkpointSubmit('session', prepared.effectiveInput, planned.attempt, handle.runnerId)
     try {
       const submitted = await submitFollowUpOperation(
         prepared,
@@ -1191,6 +1226,7 @@ export function createAgentRunnerSdk(
 
     const planned = await prepareStartDelivery(handle.input, true)
     const { prepared } = planned
+    await checkpointSubmit('create', prepared.effectiveInput, planned.attempt)
     let submitted
     try {
       submitted = await submitStartOperation(

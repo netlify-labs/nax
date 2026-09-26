@@ -25,7 +25,7 @@ function resourceId(value, field) {
 
 /**
  * @param {URL | string} input
- * @returns {{ kind: 'context' | 'workflow' | 'run' | 'details' | 'events' | 'artifact', scopeId: string, workflowId?: string, runId?: string, artifactId?: string, since?: string }}
+ * @returns {{ kind: 'context' | 'workflow' | 'run' | 'details' | 'findings' | 'events' | 'artifact', scopeId: string, workflowId?: string, runId?: string, artifactId?: string, since?: string }}
  */
 function parseNaxResourceUri(input) {
   const uri = input instanceof URL ? input : new URL(input)
@@ -50,6 +50,10 @@ function parseNaxResourceUri(input) {
     if (parts.length === 3) {
       noQuery()
       return { kind: 'run', scopeId, runId }
+    }
+    if (parts.length === 4 && parts[3] === 'findings') {
+      noQuery()
+      return { kind: 'findings', scopeId, runId }
     }
     if (parts.length === 4 && parts[3] === 'details') {
       noQuery()
@@ -141,6 +145,10 @@ async function readNaxResource(client, uri) {
     const result = await client.getRun(target.runId || '', { view: 'details' })
     return textResource(uri, boundedResourceText(jsonText(result), { kind: target.kind, runId: target.runId || '' }))
   }
+  if (target.kind === 'findings') {
+    const result = await client.getRun(target.runId || '', { view: 'findings' })
+    return textResource(uri, boundedResourceText(jsonText(result), { kind: target.kind, runId: target.runId || '' }))
+  }
   if (target.kind === 'events') {
     const result = await client.getRun(target.runId || '', { view: 'events', since: target.since || '0', limit: 200 })
     return textResource(uri, boundedResourceText(jsonText(result), { kind: target.kind, runId: target.runId || '', since: target.since || '0' }))
@@ -199,6 +207,7 @@ function registerNaxResources({ server, client, resolveClient }) {
   }
   server.registerResource('nax-run', template('nax://scopes/{scope_id}/runs/{run_id}', () => listRuns('', 'summary')), { title: 'NAX run', description: 'One durable run summary.', mimeType: 'application/json' }, read)
   server.registerResource('nax-run-details', template('nax://scopes/{scope_id}/runs/{run_id}/details', () => listRuns('/details', 'details')), { title: 'NAX run details', description: 'Detailed sections and artifact index for one run.', mimeType: 'application/json' }, read)
+  server.registerResource('nax-run-findings', template('nax://scopes/{scope_id}/runs/{run_id}/findings', () => listRuns('/findings', 'findings')), { title: 'NAX run findings', description: 'Structured findings (findings.json) for one run whose workflow declares findings.', mimeType: 'application/json' }, read)
   server.registerResource('nax-run-events', template('nax://scopes/{scope_id}/runs/{run_id}/events{?since}', () => listRuns('/events?since=0', 'events')), { title: 'NAX run events', description: 'A bounded event page beginning at an opaque cursor.', mimeType: 'application/json' }, read)
   server.registerResource('nax-run-artifact', template('nax://scopes/{scope_id}/runs/{run_id}/artifacts/{artifact_id}', undefined), { title: 'NAX run artifact', description: 'One exact artifact owned by one run.', mimeType: 'application/octet-stream' }, read)
 }

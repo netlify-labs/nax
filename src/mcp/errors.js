@@ -12,6 +12,13 @@ const LOCAL_PATH_KEY_PATTERN = /^(?:absolutePath|dir|file|promptPath|sourceDir|s
 const RECOVERABLE_CODES = new Set([
   'agent_run_not_found',
   'ambiguous_agent_run',
+  'branch_moved_since_run',
+  'flow_changed_since_run',
+  'not_resumable',
+  'resume_ambiguous_submission',
+  'resume_auth_failure',
+  'resume_plan_unavailable',
+  'run_locked',
   'ambiguous_cancel_target',
   'ambiguous_followup_target',
   'ambiguous_retry_target',
@@ -202,6 +209,38 @@ function recoveryGuidance(code, toolName, details) {
         arguments: agentPlan || !details.workflowId ? {} : { workflow_id: String(details.workflowId) },
       }],
     }
+  }
+  if (code === 'run_locked') {
+    return {
+      fix: 'Another process is already executing this run. Wait for it with run_wait instead of resuming again.',
+      actions: details.runId ? [{ kind: 'tool', tool: 'run_wait', arguments: { run_id: String(details.runId), timeout_ms: 30000 } }] : [],
+    }
+  }
+  if (code === 'flow_changed_since_run' || code === 'resume_plan_unavailable') {
+    return {
+      fix: 'This run cannot be resumed exactly because its saved prompts no longer match or were never saved. Plan and start a new run of the workflow.',
+      actions: [{ kind: 'tool', tool: 'workflow_plan', arguments: {} }],
+    }
+  }
+  if (code === 'resume_ambiguous_submission' || code === 'branch_moved_since_run') {
+    return {
+      fix: 'Resuming now could duplicate a runner or mix results from different code. Ask the user to check the run and resume from the CLI with nax run --resume <run-id> --force if they accept that.',
+      actions: [],
+    }
+  }
+  if (code === 'flow_changed_since_plan') {
+    return {
+      fix: 'The workflow changed after this plan was prepared. Create a fresh plan, review it, then start the new plan.',
+      actions: [{ kind: 'tool', tool: 'workflow_plan', arguments: details.workflowId ? { workflow_id: String(details.workflowId) } : {} }],
+    }
+  }
+  if (code === 'invalid_flow' || code === 'flow_load_failed') {
+    const flowId = typeof details.flowId === 'string' ? details.flowId : ''
+    const lintCommand = `nax lint${flowId ? ` ${flowId}` : ''} --json`
+    const fix = code === 'invalid_flow'
+      ? `Fix the listed diagnostics in the flow file, then call workflow_plan again; \`${lintCommand}\` shows the same list.`
+      : `The flow file could not be parsed. Fix its syntax, then call workflow_plan again; \`${lintCommand}\` shows the load error.`
+    return { fix, actions: [{ kind: 'command', command: lintCommand }] }
   }
   if (code === 'idempotency_conflict') return { fix: 'Review the differing intent, then generate a new request_id instead of reusing the old key.', actions: [] }
   if (code === 'mutation_in_progress') return {

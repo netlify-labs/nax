@@ -1,0 +1,102 @@
+---
+title: Resume Runs
+description: Resume an interrupted or partly failed Netlify API run in place, keeping finished agents and resubmitting only what did not finish.
+---
+
+import { Callout } from 'nextra/components'
+
+# Resume runs
+
+A multi-agent step can end with three agents finished and one failed. Maybe the model was at capacity, or your laptop went to sleep, or you pressed Ctrl-C. `nax run --resume` picks the run up where it stopped. It keeps every finished result, waits on agents that are still running, and resubmits only the agents that did not finish. It never starts the whole step again, so you never pay again for work that already completed.
+
+```sh
+nax run --resume <run-id> --dry   # preview what resume would do
+nax run --resume <run-id>         # confirm and resume
+```
+
+Find run ids with `nax handoff`, in the dashboard, or under `.nax/workflows/`.
+
+## The preview
+
+Resume always shows what it will do per agent instance before it does anything:
+
+```text
+Resume 2026-09-25T12-00-00-000Z-review  (step 2/3: Cross review)
+  claude:auto:auto     keep       completed
+  gemini:auto:auto     poll       running (runner 6a0e...)
+  codex:auto:auto      resubmit   failed: model_capacity (attempt 2)
+  opencode:auto:auto   skip       cancelled by user
+  Branch: fix/auth @ abc123def456 (unchanged)
+  New agent runs: 1   Kept: 1   Polling: 1   Skipped: 1
+```
+
+`--dry` prints the preview and exits. In a terminal, resume asks for confirmation. In scripts and CI (non-TTY), pass `--force` to skip the prompt, or resume refuses and names the flag. When you start `nax run` in a terminal with an unfinished run, the resume offer shows the same preview.
+
+## From the dashboard
+
+Failed and interrupted runs show a **Resume run** panel in the run details modal. Opening it shows the same per-agent preview. Tick **Also resubmit cancelled agents** to include cancelled ones, then press **Resume**. If a run cannot resume (for example, another process is executing it, or a submission is ambiguous), the panel explains why and the button stays disabled. Overrides that need `--force` are only available from the CLI.
+
+## What happens to each agent
+
+Resume starts at the first step that did not let the workflow continue, or at a final step that finished with some failed agents. It then decides one action for each saved agent instance of that step:
+
+| Saved state | Action | Notes |
+| --- | --- | --- |
+| Completed with a result | `keep` | The result is reused byte for byte. No new run. |
+| Submitted or running, with a runner id | `poll` | Resume waits for the existing runner instead of starting another. |
+| Failed or timed out | `resubmit` | A new attempt with the exact prompt that was saved for that agent. |
+| Failed because the prompt was too large | `resubmit` with the compact prompt | Skipped when no shorter prompt was saved. |
+| Pending and never sent | `submit` | Sent for the first time. |
+| Cancelled | `skip` | Pass `--include-cancelled` to resubmit cancelled agents. |
+| Follow-up whose source agent did not complete | `skip` | There is no session to continue (`source_unavailable`). |
+
+Before it decides, resume checks every agent whose submission was sent but never got a runner id: `nax` crashed mid-submit, or the API failed after the request may have landed. `nax` saves the exact request before sending it, so resume can ask the Agent Runner API whether that request created a runner. If exactly one runner matches, resume adopts it and polls it, and the preview notes the runner it found. If none matches, a submission that may have landed still stops with `resume_ambiguous_submission`, and one that failed before landing is resubmitted. If several match, resume stops and lists them.
+
+After the step settles, resume continues with the remaining steps as a normal run would. Each resubmitted agent's prompt is rebuilt from the saved text, and prompt delivery is prepared fresh, so an expired prompt blob is never reused.
+
+## When resume refuses
+
+Resume checks the whole run before it submits anything. If any of these apply, it stops with zero new agent runs:
+
+| Code | Why | What to do |
+| --- | --- | --- |
+| `flow_changed_since_run` | The workflow file or a prompt changed after the run started, so the saved prompts no longer match. | Start a new run. |
+| `resume_ambiguous_submission` | `nax` sent a submission but never saved a runner id (it crashed mid-submit, or the API failed after the request may have landed), and checking the Agent Runner API found no runner, or several. A runner may already exist. | Check the Netlify agent runs page. Rerun with `--force` to resubmit anyway (a duplicate is possible). |
+| `resume_plan_unavailable` | A step started but its runs were never saved, so the original prompts are unknown. | Start a new run with `nax run <flow> --from-step <step>`. |
+| `resume_auth_failure` | An agent failed with an expired token or the wrong Netlify account. | Fix authentication (`netlify status`), then resume again. |
+| `branch_moved_since_run` | The branch's remote head moved since the run started, so new agents would review different code than the kept results. | Rerun with `--force` to resume anyway, or start a new run. |
+| `run_locked` | Another process is already executing this run. | Wait for it, or see [Run lock](#run-lock). |
+
+Runs that predate flow digests resume with a note that flow-change detection is unavailable.
+
+## Which runs can resume
+
+- Interrupted runs, including those cut off mid-step.
+- Runs that failed because every agent in a step failed, or because the final step finished with failed agents. These are only resumed when you ask with `--resume`; the automatic offer does not suggest them.
+- Completed, cancelled, and dismissed runs are not resumable.
+
+## Costs
+
+A resubmitted agent gets a new attempt, and the previous attempt moves to the step's attempt history with its usage and a link to its result. `nax costs` and usage summaries count every attempt exactly once, so a resume shows the true cost of the run: the kept work once, plus each attempt that actually ran.
+
+## Run lock
+
+Only one process can execute a run at a time. A fresh run, a resume, or a retry holds `.nax/workflows/<run-id>/run.lock` while it runs. The lock records the owner's pid, host, and command. It is released when the run settles or the process exits.
+
+- A second `nax run --resume` of the same run fails with `run_locked` and names the owner.
+- A lock left by a process that is gone on the same machine is detected (the pid no longer exists) and taken over automatically.
+- A lock from another machine is never assumed stale. If you are sure its owner is gone, pass `--force-unlock` to take it over.
+- A process only removes a lock it still owns, so an old owner cannot delete a lock someone else took over.
+
+## Limits
+
+<Callout type="info">
+  Mid-step resume supports `netlify-api` runs. GitHub transport runs resume at step level: run `nax run` in a terminal and accept the resume offer.
+</Callout>
+
+`nax run --retry <run-id>` still exists for retrying one failed agent with a compact follow-up prompt in the existing runner. Use `--resume` to finish a whole run.
+
+## See also
+
+- [Run workflows](/guides/run-workflows) for starting runs.
+- [Command reference](/reference/commands) for every `nax run` flag.

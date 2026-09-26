@@ -132,3 +132,16 @@ test('two concurrent resumes of one run: exactly one proceeds, the other gets ru
   assert.equal(outcomes.filter((outcome) => outcome.ok === false && outcome.code === 'run_locked' && outcome.submitted === 0).length, 1, JSON.stringify(outcomes))
   assert.equal(fs.existsSync(runLockDir(dir)), false)
 })
+
+test('many processes racing to take over one stale lock: exactly one acquires it', async () => {
+  const dir = runDir()
+  fs.mkdirSync(runLockDir(dir), { recursive: true })
+  const dead = spawnSync(process.execPath, ['-e', 'process.stdout.write(String(process.pid))'], { encoding: 'utf8' })
+  fs.writeFileSync(path.join(runLockDir(dir), 'owner.json'), JSON.stringify({ pid: Number(dead.stdout), hostname: os.hostname(), nonce: 'crashed', command: 'crashed' }))
+  const workers = await Promise.all(Array.from({ length: 8 }, () => startWorker(['hold', dir])))
+  const acquired = workers.filter(({ first }) => first.locked === true)
+  assert.equal(acquired.length, 1, JSON.stringify(workers.map(({ first }) => first)))
+  assert.equal(workers.filter(({ first }) => first.code === 'run_locked').length, 7)
+  for (const { child } of workers) child.kill('SIGKILL')
+  await Promise.all(workers.map(({ child }) => exited(child)))
+})

@@ -87,6 +87,25 @@ function describeRunLockOwner(owner) {
 }
 
 /**
+ * Claims the takeover mutex beside a lock. A takeover left by a process that died on this host is
+ * cleared once. Returns the mutex path, or null when another process is taking over.
+ * @param {string} lockDir @param {RunLockOwner} owner @returns {string | null}
+ */
+function acquireTakeover(lockDir, owner) {
+  const takeover = `${lockDir}.takeover`
+  if (createLockDir(takeover, owner)) return takeover
+  if (!isStaleOwner(readLockOwner(takeover), owner.hostname)) return null
+  fs.rmSync(takeover, { recursive: true, force: true })
+  return createLockDir(takeover, owner) ? takeover : null
+}
+
+/** @param {Partial<RunLockOwner> | null} left @param {Partial<RunLockOwner> | null} right */
+function sameOwner(left, right) {
+  if (!left || !right) return left === right
+  return left.nonce === right.nonce && left.pid === right.pid && left.hostname === right.hostname
+}
+
+/**
  * The owner of a run's lock when one is held by a live (or unverifiable remote) process.
  * @param {string} runDir
  * @returns {Partial<RunLockOwner> | null}
@@ -109,15 +128,26 @@ function acquireRunLock(runDir, { runId = '', command = '', forceUnlock = false 
   /** @type {RunLockOwner} */
   const owner = { pid: process.pid, hostname, nonce: randomUUID(), startedAt: new Date().toISOString(), command, runId }
   fs.mkdirSync(runDir, { recursive: true })
+  const locked = (/** @type {Partial<RunLockOwner> | null} */ current) => {
+    const error = /** @type {Error & { code: string, owner: Partial<RunLockOwner> | null }} */ (new Error(`Run ${runId || path.basename(runDir)} is already being executed by ${describeRunLockOwner(current)}. Wait for it to finish, or rerun with --force-unlock if that process is gone.`))
+    error.code = 'run_locked'
+    error.owner = current
+    return error
+  }
   if (!createLockDir(lockDir, owner)) {
     const current = readLockOwner(lockDir)
-    if (!forceUnlock && !isStaleOwner(current, hostname)) {
-      const error = /** @type {Error & { code: string, owner: Partial<RunLockOwner> | null }} */ (new Error(`Run ${runId || path.basename(runDir)} is already being executed by ${describeRunLockOwner(current)}. Wait for it to finish, or rerun with --force-unlock if that process is gone.`))
-      error.code = 'run_locked'
-      error.owner = current
-      throw error
+    if (!forceUnlock && !isStaleOwner(current, hostname)) throw locked(current)
+    // Only the holder of the takeover mutex may remove a lock, and only after re-checking that it
+    // still belongs to the owner judged stale. mkdir of the run lock stays the only way to acquire.
+    const takeover = acquireTakeover(lockDir, owner)
+    if (!takeover) throw locked(current)
+    try {
+      const recheck = readLockOwner(lockDir)
+      if (fs.existsSync(lockDir) && !sameOwner(recheck, current)) throw locked(recheck)
+      fs.rmSync(lockDir, { recursive: true, force: true })
+    } finally {
+      fs.rmSync(takeover, { recursive: true, force: true })
     }
-    fs.rmSync(lockDir, { recursive: true, force: true })
     if (!createLockDir(lockDir, owner)) return acquireRunLock(runDir, { runId, command, forceUnlock: false })
   }
   let released = false

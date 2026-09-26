@@ -102,3 +102,26 @@ test('runLockHolder reports a live owner and ignores a stale or missing lock', (
   fs.writeFileSync(path.join(runLockDir(dir), 'owner.json'), JSON.stringify({ pid: deadPid(), hostname: os.hostname(), nonce: 'old' }))
   assert.equal(runLockHolder(dir), null)
 })
+
+test('a stale lock is not taken over while another live process holds the takeover', () => {
+  const dir = runDir()
+  const stale = { pid: deadPid(), hostname: os.hostname(), nonce: 'old' }
+  fs.mkdirSync(runLockDir(dir), { recursive: true })
+  fs.writeFileSync(path.join(runLockDir(dir), 'owner.json'), JSON.stringify(stale))
+  fs.mkdirSync(`${runLockDir(dir)}.takeover`)
+  fs.writeFileSync(path.join(`${runLockDir(dir)}.takeover`, 'owner.json'), JSON.stringify({ pid: process.ppid, hostname: os.hostname(), nonce: 'busy' }))
+  assert.equal(thrown(() => acquireRunLock(dir, { runId: 'run-1' })).code, 'run_locked')
+  assert.equal(readRunLockOwner(dir)?.nonce, 'old', 'the stale lock is left for the live takeover')
+})
+
+test('a takeover left by a crashed process is cleared, then the stale lock is taken over', () => {
+  const dir = runDir()
+  fs.mkdirSync(runLockDir(dir), { recursive: true })
+  fs.writeFileSync(path.join(runLockDir(dir), 'owner.json'), JSON.stringify({ pid: deadPid(), hostname: os.hostname(), nonce: 'old' }))
+  fs.mkdirSync(`${runLockDir(dir)}.takeover`)
+  fs.writeFileSync(path.join(`${runLockDir(dir)}.takeover`, 'owner.json'), JSON.stringify({ pid: deadPid(), hostname: os.hostname(), nonce: 'crashed-takeover' }))
+  const lock = acquireRunLock(dir, { runId: 'run-1' })
+  assert.equal(readRunLockOwner(dir)?.pid, process.pid)
+  assert.equal(fs.existsSync(`${runLockDir(dir)}.takeover`), false)
+  lock.release()
+})

@@ -44,7 +44,13 @@ async function resume() {
 }
 
 if (mode === 'hold') {
-  const lock = acquireRunLock(target, { runId: 'run-1', command: 'worker hold' })
+  let lock
+  try {
+    lock = acquireRunLock(target, { runId: 'run-1', command: 'worker hold' })
+  } catch (error) {
+    report({ locked: false, code: errorCode(error) })
+    process.exit(0)
+  }
   report({ locked: true, pid: process.pid })
   process.stdin.setEncoding('utf8')
   process.stdin.on('data', (chunk) => {

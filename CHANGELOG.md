@@ -16,6 +16,9 @@
   summary, `view: "findings"`, and a `.../runs/{run_id}/findings` resource).
 - `nax lint [flows...] [--json] [--strict]` reports every flow diagnostic
   with a fix hint.
+  Every code is documented under "Validate your flow" in the custom
+  workflows guide; `npm run check:flows` lints bundled flows with `--strict`
+  in `release:verify`.
 - New flow checks: `followup_without_input`, `followup_source_not_agent_step`,
   `invalid_default_transport`, `transport_lineup_conflict`,
   `invalid_findings_source`, plus warnings for empty or unused prompt files

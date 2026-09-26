@@ -64,6 +64,8 @@ You want the best possible coding outcome from the world's leading agentic codin
 | **Auto-injected review context** | Pinned SHA + open-PR ledger appended to every prompt unless you opt out. |
 | **Hand-off in one flag** | `nax handoff -c` copies the latest consensus summary to your clipboard. |
 | **Structured findings** | `nax handoff --to github-issues`, `pr-review`, or `beads` turns the consensus into issues, a PR review, or beads, idempotently. See [Hand off findings](https://netlify-agent-executor.netlify.app/guides/hand-off-findings). |
+| **Resume in place** | `nax run --resume <run-id>` keeps finished agents and resubmits only the ones that failed. See [Resume runs](https://netlify-agent-executor.netlify.app/guides/resume-runs). |
+| **Flow lint** | `nax lint` checks every flow and prints each problem with a fix. See [Validate your flow](https://netlify-agent-executor.netlify.app/guides/write-custom-workflows#validate-your-flow). |
 
 ---
 

@@ -100,6 +100,88 @@ nax run conversion-audit --dry --force
   export. NAX parses that object as data and rejects dynamic executable code.
 </Callout>
 
+## Validate your flow
+
+Run `nax lint` after you add or edit a flow. It checks every discovered flow, or only the ones you name, and prints each problem with a fix:
+
+```sh
+nax lint                       # every flow
+nax lint conversion-audit      # one flow
+nax lint --json                # machine-readable report
+nax lint --strict              # also fail on warnings
+```
+
+`nax lint` exits `0` when every flow is valid, and `1` when any flow has an error. With `--strict`, warnings also exit `1`. The bundled flows are checked this way in CI (`npm run check:flows`).
+
+### How discovery treats broken flows
+
+- Flows are discovered from each configured flow root in order, then the bundled flows. The first flow with a given id wins, and later flows with the same id are shadowed.
+- A flow that fails to load or validate still claims its id, so it shadows a bundled flow of the same id instead of silently falling back to it. It is listed as invalid and skipped. One broken flow never breaks `nax list` or the other flows.
+- Disabled flows never shadow anything.
+- `nax run`, the dashboard, and MCP refuse an invalid flow with `invalid_flow` (or `flow_load_failed` when the file could not be parsed). The dashboard and MCP return HTTP `422` with the full diagnostics list, and the dashboard dry-run panel shows each diagnostic.
+
+### Plans pin the flow
+
+A run plan (the dashboard's reviewed plan or MCP `workflow_plan`) records a digest of the flow and its prompt files. Starting that plan after the flow or a prompt changed fails with `flow_changed_since_plan` (HTTP `409`, recoverable) before anything runs. Create a fresh plan and start that instead. Runs record the same digest, which is how [resume](/guides/resume-runs) detects `flow_changed_since_run`.
+
+### Errors
+
+| Code | Meaning | Fix |
+| --- | --- | --- |
+| `invalid_flow` | The flow has at least one error below. | Fix every listed diagnostic. |
+| `flow_load_failed` | The flow file could not be read or parsed. | Fix the YAML/JSON/TOML syntax, or make a JS/TS flow a single static object export. |
+| `duplicate_step_id` | Two steps share an id. | Give each step a unique id. |
+| `invalid_agent_config_wrapper` | `agentConfig` is used on defaults or a step. | Use first-class `models` and `efforts` maps. |
+| `invalid_default_transport` | `defaults.transport` is not a known transport. | Use `auto`, `github`, or `netlify-api` (or a listed alias). |
+| `missing_prompt` | A step has no `prompt`. | Set `prompt` to a file relative to the flow directory. |
+| `missing_prompt_file` | The prompt file does not exist. | Create the file or fix the path. |
+| `invalid_action` | `action` is not `issue` or `comment`. | Use a supported action. |
+| `invalid_submit` | `submit` is not `new-run` or `follow-up`. | Use a supported submit mode. |
+| `invalid_wait_for` | `waitFor` is unsupported. | Use `agent-results` (or `human-review` for review steps). |
+| `invalid_input` | `input` is not an array. | Use entries like `{ step: previous-step, results: all }`. |
+| `missing_input_step` | An input entry has no `step`. | Set `input[].step` to an earlier step id. |
+| `unknown_input_step` | An input names a step that does not exist. | Use an existing step id. |
+| `self_input_step` | A step uses itself as input. | Reference an earlier step. |
+| `future_input_step` | An input names a later step. | Inputs can only reference earlier steps. |
+| `invalid_input_results` | An input's `results` mode is unsupported. | Use a supported mode such as `all` or `peers`. |
+| `followup_without_input` | A `follow-up` step has no input to continue from. | Add an input from an earlier agent step, or use `submit: new-run`. |
+| `followup_source_not_agent_step` | A `follow-up` step's first input runs no agents (for example, a human-review step). | Point the first input at an agent step, or use `submit: new-run`. |
+| `invalid_findings_source` | `findings.step` is missing, is a human-review step, or `findings.adapter` is not registered. | Point `findings` at an agent step and use a registered adapter such as `review-consensus`. |
+| `invalid_lineup` | `agents` is not a list of entries. | Make `agents` an array. |
+| `invalid_lineup_entry` | An `agents` entry has the wrong shape. | Use a provider name or `{ agent, model(s), effort(s) }`. |
+| `invalid_instance_spec` | An instance string is empty or malformed. | Use `provider[:model[:effort]]`. |
+| `unsupported_agent` | An unknown agent provider is named. | Use a supported provider such as `claude`, `gemini`, `codex`, or `opencode`. |
+| `duplicate_instance` | The same provider, model, and effort appear twice in one step. | Vary the model or effort, or remove the duplicate. |
+| `step_instance_limit` | A step resolves to more agent instances than allowed. | Reduce the fan-out or split the work into another step. |
+| `ambiguous_provider_map` | A provider appears more than once, so its `models`/`efforts` map entry is ambiguous. | Put the model and effort inline on each entry. |
+| `model_provider_mismatch` | A model belongs to a different provider. | Use a model owned by that provider. |
+| `unsupported_model_effort` | A model does not support the requested effort. | Use one of the model's efforts, or `auto`. |
+| `effort_requires_model` | An effort is set while the model is Auto. | Pin a model, or set the effort to `auto`. |
+| `invalid_agent_configuration` | Another model or effort configuration problem. | Use a model owned by the provider and a supported effort, or set both to `auto`. |
+| `github_transport_unsupported` | The lineup needs features the GitHub transport lacks (pinned models, efforts, or several instances of one provider). | Use the `netlify-api` transport for this flow. |
+| `transport_lineup_conflict` | The flow is pinned to the GitHub transport but a step's lineup needs `netlify-api`. | Switch `defaults.transport` to `netlify-api` or `auto`, or simplify the lineup. |
+
+### Warnings
+
+Warnings do not stop a run. `--strict` turns them into failures.
+
+| Code | Meaning | Fix |
+| --- | --- | --- |
+| `deprecated_followup_lineup` | A `follow-up` step declares `agents` in a flow pinned to `netlify-api`, where follow-ups inherit the source step's lineup. | Remove the declaration, or keep it only if the flow also runs on the GitHub transport. |
+| `empty_prompt_file` | A prompt file is empty. | Write the step's instructions. |
+| `unused_prompt_file` | A file in `prompts/` is not used by any step. | Reference it from a step, or delete it. |
+| `flow_id_mismatch` | The flow's `id` differs from its directory name. | Rename the directory or remove the `id` field. |
+| `catalog_passthrough` | A model id is not in the known catalog and is passed through unchanged. | Check the spelling; the Agent Runner rejects unsupported models when the run is submitted. |
+| `effort_clamped` | The requested effort is unsupported, so the nearest supported effort is used. | Choose an effort the model supports. |
+| `effort_unavailable` | The model has no reasoning effort, so Auto is used. | Remove the effort for this model. |
+| `lineup_warning` | Another lineup note from the agent catalog. | Review the step's model and effort configuration. |
+
+### When starting a run
+
+| Code | Meaning | Fix |
+| --- | --- | --- |
+| `flow_changed_since_plan` | The flow or a prompt changed after the plan was made. | Create a fresh plan and start it. |
+
 ## See also
 
 - [Workflow file reference](/reference/workflow-files) for every supported key.

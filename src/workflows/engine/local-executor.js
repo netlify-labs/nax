@@ -871,6 +871,13 @@ async function waitForLocalRunSubset({ runState, stepState, step, runs, reporter
     env: netlify.env,
     timeoutMinutes,
     initialDelayMs,
+    onSubmitCheckpoint: (run, checkpoint) => {
+      const index = localRunIndex(stepState.runs, run)
+      if (index === -1) return
+      const current = stepState.runs[index]
+      stepState.runs[index] = { ...current, raw: { ...(current.raw || {}), retrySubmitCheckpoint: /** @type {import('../../types').JsonMap} */ (/** @type {unknown} */ (checkpoint)) } }
+      saveRunState(runState)
+    },
     onProgress: (event) => {
       if (!event.run?.runnerId) return
       if (event.retry === true) {

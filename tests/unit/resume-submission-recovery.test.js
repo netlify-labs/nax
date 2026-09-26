@@ -235,3 +235,118 @@ test('a follow-up submission is reconciled against the source runner handle, and
   assert.match(prepared.preview.notes.join('\n'), /found runner r-codex-source/)
   assert.equal(/** @type {{ runs: Array<{ status: string }> }} */ (steps[1]).runs[0].status, 'pending', 'preview does not change the saved run')
 })
+
+/** @param {Record<string, unknown>} codex */
+function checkpointedFixture(codex) {
+  const { projectRoot, flow, runState } = fixture()
+  Object.assign(runState.steps[0].runs[1], codex)
+  return { projectRoot, flow, runState }
+}
+
+const SAVED_CHECKPOINT = { v: 1, kind: 'create', effectiveInput: { siteId: 'site_test', requestId: 'req-1', prompt: 'Codex prompt' }, sentAt: 1_000 }
+
+test('a reconcile error on a checkpointed submit failure stops resume with zero creates', async () => {
+  const { projectRoot, flow, runState } = checkpointedFixture({
+    runnerId: '', sentAt: '2026-09-25T12:00:00.000Z',
+    raw: { stepId: 'review', failurePhase: 'submit', submissionError: 'socket hang up', submitCheckpoint: SAVED_CHECKPOINT },
+  })
+  let submits = 0
+  /** @type {typeof submitLocalAgentRun} */
+  const submitAgentRun = async ({ run }) => { submits += 1; return { ...run, status: 'submitted', runnerId: 'dup' } }
+  await assert.rejects(
+    resumeLocalFlow({ flow, runState, projectRoot, submitAgentRun, waitForAgentRuns: waitCompleted, resolveRemoteSha: () => RUN_SHA, reconcileSubmission: async () => { throw new Error('Agent Runner API request failed with status 503') } }),
+    (error) => /** @type {{ code?: string }} */ (error).code === 'resume_ambiguous_submission',
+  )
+  await assert.rejects(
+    resumeLocalFlow({ flow, runState, projectRoot, submitAgentRun, waitForAgentRuns: waitCompleted, resolveRemoteSha: () => RUN_SHA, reconcileSubmission: async () => { throw new Error('Agent Runner API request failed with status 401: token expired') } }),
+    (error) => /** @type {{ code?: string }} */ (error).code === 'resume_auth_failure',
+  )
+  assert.equal(submits, 0)
+})
+
+test('an automatic retry that created a runner before the crash is adopted; an unresolved one stops', async () => {
+  const retryCheckpoint = { v: 1, kind: 'create', effectiveInput: { siteId: 'site_test', requestId: 'req-retry', prompt: 'Codex prompt' }, sentAt: 2_000 }
+  const saved = { status: 'running', runnerId: 'r-codex', raw: { stepId: 'review', retrySubmitCheckpoint: retryCheckpoint } }
+  let submits = 0
+  /** @type {typeof submitLocalAgentRun} */
+  const submitAgentRun = async ({ run }) => { submits += 1; return { ...run, status: 'submitted', runnerId: 'dup' } }
+
+  const unresolved = checkpointedFixture(structuredClone(saved))
+  await assert.rejects(
+    resumeLocalFlow({ ...unresolved, submitAgentRun, waitForAgentRuns: waitCompleted, resolveRemoteSha: () => RUN_SHA, reconcileSubmission: async () => ({ kind: 'none' }) }),
+    (error) => /** @type {{ code?: string }} */ (error).code === 'resume_ambiguous_submission',
+  )
+
+  const found = checkpointedFixture(structuredClone(saved))
+  /** @type {string[]} */
+  const polled = []
+  /** @type {typeof waitCompleted} */
+  const waitForAgentRuns = async (options = {}) => { polled.push(String(options.runs?.[0]?.runnerId)); return waitCompleted(options) }
+  await resumeLocalFlow({
+    ...found,
+    submitAgentRun,
+    waitForAgentRuns,
+    resolveRemoteSha: () => RUN_SHA,
+    reconcileSubmission: async ({ checkpoint }) => {
+      assert.equal(checkpoint.effectiveInput.requestId, 'req-retry')
+      return { kind: 'matched', handle: /** @type {import('nax-agent-runner-sdk').Handle} */ (/** @type {unknown} */ ({ v: 1, kind: 'run', runnerId: 'r-codex-retry', currentSessionId: 's-retry' })) }
+    },
+  })
+  assert.deepEqual(polled, ['r-codex-retry'])
+  assert.equal(codexRun(found.runState).runnerId, 'r-codex-retry')
+  assert.equal(codexRun(found.runState).raw.retrySubmitCheckpoint, undefined)
+  assert.equal(submits, 0)
+})
+
+test('an automatic capacity retry hands over its request before creating the replacement runner', async () => {
+  const { waitForLocalAgentRuns } = require('../../src/integrations/netlify/local-runner')
+  const api = fakeApi()
+  /** @type {string[]} */
+  const events = []
+  const originalFetch = api.fetch
+  /** @type {typeof api.fetch} */
+  const fetch = async (input, init = {}) => {
+    const url = new URL(String(input))
+    if (String(init.method || 'GET').toUpperCase() === 'POST') events.push(`create:${api.state.posts + 1}`)
+    // The first runner fails with a capacity error; the replacement completes.
+    if (/\/agent_runners\/runner-1$/.test(url.pathname)) return new Response(JSON.stringify({ id: 'runner-1', state: 'failed', site_id: 'site_test', branch: 'main' }))
+    if (/\/agent_runners\/runner-1\/sessions\/session-1$/.test(url.pathname)) {
+      return new Response(JSON.stringify({ id: 'session-1', agent_runner_id: 'runner-1', state: 'failed', result: 'The Codex model is currently at capacity. Retrying automatically...' }))
+    }
+    if (/\/agent_runners\/runner-2$/.test(url.pathname)) return new Response(JSON.stringify({ id: 'runner-2', state: 'completed', site_id: 'site_test', branch: 'main' }))
+    if (/\/agent_runners\/runner-2\/sessions\/session-2$/.test(url.pathname)) {
+      return new Response(JSON.stringify({ id: 'session-2', agent_runner_id: 'runner-2', state: 'completed', result: 'Done after retry' }))
+    }
+    return originalFetch(input, init)
+  }
+  await withApi({ ...api, fetch }, async () => {
+    const env = { NETLIFY_AUTH_TOKEN: 'test-token', NAX_PROMPT_BLOB_DISABLE: '1' }
+    const submitted = await submitLocalAgentRun({
+      run: /** @type {import('../../src/types').AgentRun} */ ({ agent: 'codex', instanceId: 'codex:auto:auto', promptText: 'Codex prompt', raw: { stepId: 'review' } }),
+      branch: 'main', siteId: 'site_test', env, retryAttempts: 1, sleepFn: async () => {},
+    })
+    events.length = 0
+    /** @type {Array<{ runnerId: string, requestId: string }>} */
+    const checkpoints = []
+    /** @type {import('../../src/types').AgentRun[]} */
+    const terminal = []
+    await waitForLocalAgentRuns({
+      runs: [submitted],
+      siteId: 'site_test',
+      env,
+      initialDelayMs: 0,
+      pollIntervalMs: 5,
+      timeoutMinutes: 1,
+      onTerminalRun: (run) => { terminal.push(run) },
+      onSubmitCheckpoint: (run, checkpoint) => {
+        events.push('checkpoint')
+        checkpoints.push({ runnerId: String(run.runnerId), requestId: String(checkpoint.effectiveInput.requestId) })
+      },
+    })
+    assert.deepEqual(events, ['checkpoint', 'create:2'])
+    assert.equal(checkpoints[0]?.runnerId, 'runner-1')
+    const last = terminal[terminal.length - 1]
+    assert.deepEqual([last?.runnerId, last?.status], ['runner-2', 'completed'])
+    assert.equal(/** @type {Record<string, unknown>} */ (last?.raw || {}).retrySubmitCheckpoint, undefined)
+  })
+})

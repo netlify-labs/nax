@@ -237,6 +237,7 @@ const NETLIFY_CONFIG_SCAN_SKIP_DIRS = new Set([
  *   refreshRuns?: () => import('../../types').AgentRun[],
  *   runCommand?: SyncRunCommand,
  *   sdk?: import('nax-agent-runner-sdk').AgentRunnerSdk,
+ *   onSubmitCheckpoint?: (run: import('../../types').AgentRun, checkpoint: import('nax-agent-runner-sdk').SubmitCheckpoint) => void | Promise<void>,
  * }} WaitForLocalAgentRunsOptions
  *
  * Polling progress event for Agent Runner execution.
@@ -1097,6 +1098,16 @@ function normalizeFailedRun({ run, shown, sessions }) {
   })
 }
 
+/**
+ * Drops the saved retry request once its runner is recorded, so resume does not reconcile it.
+ * @param {import('../../types').JsonMap | undefined} raw
+ * @returns {import('../../types').JsonMap}
+ */
+function withoutRetryCheckpoint(raw) {
+  const { retrySubmitCheckpoint: _checkpoint, ...rest } = raw || {}
+  return rest
+}
+
 /** @param {WaitForLocalAgentRunsOptions} param0 */
 async function waitForLocalAgentRuns({
   runs,
@@ -1109,6 +1120,7 @@ async function waitForLocalAgentRuns({
   onTerminalRun = () => {},
   refreshRuns = () => [],
   sdk,
+  onSubmitCheckpoint,
 } = {}) {
   const deadline = Date.now() + timeoutMinutes * 60 * 1000
   const client = createNaxAgentRunnerSdk({ sdk, env, siteId })
@@ -1136,6 +1148,8 @@ async function waitForLocalAgentRuns({
       compactPromptText: runState.compactPromptText,
       safePromptBytes: Number(delivery.safePromptBytes || 0) || undefined,
       promptBlobDisable: ['1', 'true', 'yes', 'on'].includes(disableValue),
+      // Automatic retries create new runners or sessions; the caller saves each request first.
+      ...(onSubmitCheckpoint ? { onSubmitCheckpoint: (checkpoint) => onSubmitCheckpoint(runState, checkpoint) } : {}),
     })
   }
   const isTerminalStoredStatus = (status) => {
@@ -1256,7 +1270,7 @@ async function waitForLocalAgentRuns({
       ...(promptDelivery ? { promptDelivery } : {}),
       ...(blobRef ? { blobRef } : {}),
       raw: {
-        ...runState.raw,
+        ...withoutRetryCheckpoint(runState.raw),
         sdkHandle: retriedHandle,
         session: sessionArtifactPayload(retriedSession),
         autoRetries: [

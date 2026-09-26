@@ -19,14 +19,18 @@ function rawOf(run) {
 }
 
 /**
- * True for a run that tried to submit and has no runner: either the send may have landed
- * (pending after send, ambiguous create) or it failed during submit after the checkpoint.
+ * The saved request to reconcile, if any: an automatic retry that may have created a replacement
+ * runner or session, or a first submission with no runner that may have landed or failed during
+ * submit after its checkpoint.
  * @param {import('../../types').AgentRun} run
+ * @returns {import('nax-agent-runner-sdk').SubmitCheckpoint | null}
  */
-function needsRecovery(run) {
-  if (run.runnerId || !rawOf(run).submitCheckpoint) return false
-  const failedAtSubmit = String(run.status || '') === 'failed' && rawOf(run).failurePhase === 'submit'
-  return maybeCreatedSubmission(run) || failedAtSubmit
+function checkpointToRecover(run) {
+  const raw = rawOf(run)
+  if (raw.retrySubmitCheckpoint) return /** @type {import('nax-agent-runner-sdk').SubmitCheckpoint} */ (raw.retrySubmitCheckpoint)
+  if (run.runnerId || !raw.submitCheckpoint) return null
+  const failedAtSubmit = String(run.status || '') === 'failed' && raw.failurePhase === 'submit'
+  return maybeCreatedSubmission(run) || failedAtSubmit ? /** @type {import('nax-agent-runner-sdk').SubmitCheckpoint} */ (raw.submitCheckpoint) : null
 }
 
 /**
@@ -50,13 +54,17 @@ async function recoverSubmissions({ flow, runState, reconcileSubmission = reconc
   if (!stepState?.runs) return { notes }
   const sourceStates = completedStepMapFromRunState(runState)
   for (const [index, run] of stepState.runs.entries()) {
-    if (!needsRecovery(run)) continue
+    const checkpoint = checkpointToRecover(run)
+    if (!checkpoint) continue
     const raw = rawOf(run)
-    const checkpoint = /** @type {import('nax-agent-runner-sdk').SubmitCheckpoint} */ (raw.submitCheckpoint)
-    const window = /** @type {import('nax-agent-runner-sdk').RequestWindow} */ (raw.submitWindow || { sentAt: checkpoint.sentAt, failedAt: now() })
-    const sourceRun = checkpoint.kind === 'session'
-      ? [...sourceStates.values()].flatMap((step) => step.runs || []).find((candidate) => candidate.runnerId === checkpoint.runnerId && candidate.sdkHandle)
-      : null
+    const retry = Boolean(raw.retrySubmitCheckpoint)
+    const window = /** @type {import('nax-agent-runner-sdk').RequestWindow} */ ((!retry && raw.submitWindow) || { sentAt: checkpoint.sentAt, failedAt: now() })
+    // A follow-up continues its source runner; a retry session continues this run's own runner.
+    const sourceRun = checkpoint.kind !== 'session'
+      ? null
+      : retry && run.sdkHandle
+        ? run
+        : [...sourceStates.values()].flatMap((step) => step.runs || []).find((candidate) => candidate.runnerId === checkpoint.runnerId && candidate.sdkHandle)
     const instanceId = String(run.instanceId || run.agent || '')
     const siteId = String(runState.options?.netlifySiteId || /** @type {{ siteId?: string }} */ (checkpoint.effectiveInput).siteId || '')
     try {
@@ -67,7 +75,7 @@ async function recoverSubmissions({ flow, runState, reconcileSubmission = reconc
         ...(siteId ? { siteId } : {}),
       })
       if (result.kind === 'matched') {
-        const { submissionError: _error, submissionErrorCode: _code, failurePhase: _phase, ...kept } = raw
+        const { submissionError: _error, submissionErrorCode: _code, failurePhase: _phase, retrySubmitCheckpoint: _retry, ...kept } = raw
         stepState.runs[index] = {
           ...run,
           status: 'submitted',
@@ -77,7 +85,7 @@ async function recoverSubmissions({ flow, runState, reconcileSubmission = reconc
           sdkHandle: result.handle,
           raw: { ...kept, submitReconcile: { kind: 'matched' } },
         }
-        notes.push(`${instanceId}: found runner ${result.handle.runnerId} from the saved submission; polling it instead of resubmitting`)
+        notes.push(`${instanceId}: found runner ${result.handle.runnerId} from the saved ${retry ? 'automatic retry' : 'submission'}; polling it instead of resubmitting`)
       } else if (result.kind === 'ambiguous') {
         run.raw = { ...raw, submitReconcile: { kind: 'ambiguous', candidates: result.candidates.map((candidate) => candidate.runnerId) } }
       } else {

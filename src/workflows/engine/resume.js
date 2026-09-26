@@ -373,12 +373,16 @@ const POLLABLE_STATUSES = new Set(['submitted', 'running', 'retrying'])
  * @param {import('../../types').AgentRun} run
  */
 function maybeCreatedSubmission(run) {
-  if (run.runnerId || !run.sentAt) return false
   const raw = /** @type {Record<string, unknown>} */ (run.raw || {})
   const reconciled = /** @type {{ kind?: string }} */ (raw.submitReconcile || {})
+  // An automatic retry that was sent but never recorded its replacement runner.
+  if (raw.retrySubmitCheckpoint) return true
+  if (run.runnerId || !run.sentAt) return false
   return String(run.status || '').toLowerCase() === 'pending'
     || AMBIGUOUS_SUBMISSION_CODES.has(String(raw.submissionErrorCode || ''))
     || reconciled.kind === 'ambiguous'
+    // Reconciliation could not rule out that the submission landed.
+    || (Boolean(raw.submitCheckpoint) && reconciled.kind === 'error')
 }
 
 /** @param {import('../../types').AgentRun} run */
@@ -427,8 +431,12 @@ function reconcileStepInstances({ stepState, flowStep, completedStepStates, runS
     const decide = (/** @type {ReconcileActionKind} */ action, /** @type {string} */ reason, extra = {}) => {
       actions.push({ index, instanceId, action, reason, run, useCompactPrompt: false, existingRunnerId: '', ...extra })
     }
+    const reconcileError = /** @type {{ kind?: string, message?: string }} */ (/** @type {Record<string, unknown>} */ (run.raw || {}).submitReconcile || {})
+    if (reconcileError.kind === 'error' && AUTH_FAILURE_CODES.has(explainFailure(String(reconcileError.message || ''))?.code || '')) {
+      return stop('resume_auth_failure', `Checking whether ${instanceId}'s saved submission created a runner failed: ${reconcileError.message}. Fix Netlify authentication or the selected account (netlify status), then resume again.`)
+    }
     if (status === 'completed' && String(run.resultText || '').trim()) { decide('keep', 'completed'); continue }
-    if (POLLABLE_STATUSES.has(status) && run.runnerId) { decide('poll', status); continue }
+    if (POLLABLE_STATUSES.has(status) && run.runnerId && !maybeCreatedSubmission(run)) { decide('poll', status); continue }
     if (maybeCreatedSubmission(run)) {
       const reconciled = /** @type {{ candidates?: string[] }} */ (/** @type {Record<string, unknown>} */ (run.raw || {}).submitReconcile || {})
       const candidates = reconciled.candidates?.length ? `; candidate runners: ${reconciled.candidates.join(', ')}` : ''

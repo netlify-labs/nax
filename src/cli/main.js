@@ -254,6 +254,7 @@ const {
   submitLocalAgentRun,
   waitForLocalAgentRuns,
 } = require('../integrations/netlify/local-runner')
+const { salvageAgentRun } = require('../integrations/netlify/salvage')
 const {
   BODY_FALLBACK_THRESHOLD,
   GITHUB_ACTION_TRIGGER_TEXT_ENV_PREFIX,
@@ -2530,6 +2531,35 @@ function findRunStateForRetry(projectRoot, { runId, flowId, stepId, agent, insta
 }
 
 /** @param {string} runId @param {import('../types').JsonMap} options */
+/**
+ * Commits a finished or cancelled runner's session diff onto a branch and prints how to review it.
+ * @param {import('../types').JsonMap} [options]
+ * @returns {Promise<void>}
+ */
+async function handleSalvage(options = {}) {
+  const projectRoot = resolveProjectRoot(String(options.projectRoot || ''), { cwd: process.cwd() })
+  const netlify = resolveNetlifyProjectTarget({
+    projectRoot,
+    siteId: String(options.netlifySiteId || options.siteId || ''),
+    filter: String(options.filter || ''),
+  })
+  const result = await salvageAgentRun({
+    runnerId: String(options.runner || ''),
+    sessionId: String(options.session || ''),
+    branch: String(options.branch || ''),
+    allowDefaultBranch: options.allowDefaultBranch === true,
+    projectRoot,
+    siteId: netlify.siteId,
+    env: netlify.env,
+    onProgress: (message) => console.log(message),
+  })
+  console.log(`Committed ${result.commitSha} onto ${result.branch}`)
+  console.log('')
+  console.log('Review the whole diff before merging:')
+  console.log(`git fetch origin ${result.branch}`)
+  console.log(result.baseSha ? `git diff ${result.baseSha.slice(0, 12)}..origin/${result.branch}` : `git log -p origin/${result.branch}`)
+}
+
 async function handleResume(runId, options) {
   const projectRoot = resolveProjectRoot(String(options.projectRoot || ''), { cwd: process.cwd() })
   return handleResumeCommand(runId, { ...options, projectRoot })
@@ -3243,6 +3273,7 @@ function buildProgram() {
       resume: handleResume,
       retry: handleRetry,
       run: handleRun,
+      salvage: handleSalvage,
       skills: handleSkills,
       sync: handleSync,
       dashboard: handleDashboard,

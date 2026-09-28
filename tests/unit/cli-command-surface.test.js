@@ -55,6 +55,7 @@ function makeProgram() {
       previewSpinner: (options) => record('previewSpinner', options),
       resume: (runId, options) => record('resume', runId, options),
       retry: (runId, options) => record('retry', runId, options),
+      salvage: (options) => record('salvage', options),
       run: (workflow, options) => record('run', workflow, options),
       skills: (subcommand, options) => record('skills', subcommand, options),
       sync: (target, options) => record('sync', target, options),
@@ -291,6 +292,19 @@ test('handoff, admin, and hidden ci route to their handlers', async () => {
   assert.equal(calls[5].args[0], 'list')
   assert.equal(calls[6].args[0], 'check')
   assert.deepEqual(calls[7].args[0], ['npm', 'test'])
+})
+
+test('salvage routes its runner, branch, and default-branch options', async () => {
+  const { calls, program } = makeProgram()
+
+  await parse(program, ['salvage', '--runner', 'runner-1', '--branch', 'nax/fix', '--session', 'session-1', '--allow-default-branch'])
+
+  assert.equal(calls[0].name, 'salvage')
+  const options = /** @type {{ runner?: string, branch?: string, session?: string, allowDefaultBranch?: boolean }} */ (calls[0].args[0])
+  assert.equal(options.runner, 'runner-1')
+  assert.equal(options.branch, 'nax/fix')
+  assert.equal(options.session, 'session-1')
+  assert.equal(options.allowDefaultBranch, true)
 })
 
 test('removed root invocations are rejected', async () => {

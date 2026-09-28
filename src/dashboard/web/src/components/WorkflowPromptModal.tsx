@@ -10,7 +10,6 @@ type Props = {
   workflow: Workflow | null
   graph: WorkflowGraph | null
   initialStepId?: string
-  projectRoot?: string
   canOpenLocalFiles?: boolean
   onStepSelect?: (stepId: string) => void
 }
@@ -28,17 +27,6 @@ type PromptStepMetadata = {
 
 type PromptTimelineEntry = TimelineEntry & {
   metadata: PromptStepMetadata
-}
-
-function shortHomePath(value: string, projectRoot = ''): string {
-  if (!value) return ''
-  if (projectRoot.startsWith('/Users/david/dotfiles') && value.startsWith('/Users/david/dotfiles')) {
-    return `~/dotfiles${value.slice('/Users/david/dotfiles'.length)}`
-  }
-  if (projectRoot.startsWith('/Users/david') && value.startsWith('/Users/david')) {
-    return `~${value.slice('/Users/david'.length)}`
-  }
-  return value
 }
 
 function fileNameFromPath(value: string): string {
@@ -85,11 +73,9 @@ function stepSubtitle(step: WorkflowStep, node?: WorkflowGraphNodeData): string 
 
 function stepMetadataForStep({
   node,
-  projectRoot,
   step,
 }: {
   node?: WorkflowGraphNodeData
-  projectRoot?: string
   step: WorkflowStep
 }): PromptStepMetadata {
   const agents = node?.agents || step.agents || []
@@ -101,7 +87,7 @@ function stepMetadataForStep({
     waitFor: node?.waitFor || step.waitFor || '',
     agents: agentsLabel(agents),
     promptTitle: promptTitleForStep(step, node),
-    promptFile: promptPath ? fileNameFromPath(shortHomePath(promptPath, projectRoot)) : '',
+    promptFile: promptPath ? fileNameFromPath(promptPath) : '',
     promptFilePath: promptPath,
   }
 }
@@ -124,11 +110,9 @@ function stepPromptMarkdown({
 
 function buildPromptEntries({
   graph,
-  projectRoot,
   workflow,
 }: {
   graph: WorkflowGraph | null
-  projectRoot?: string
   workflow: Workflow | null
 }): PromptTimelineEntry[] {
   if (!workflow) return []
@@ -150,7 +134,7 @@ function buildPromptEntries({
       promptPath,
       promptTitle: promptTitleForStep(step, node),
       stepNumber: index + 1,
-      metadata: stepMetadataForStep({ node, projectRoot, step }),
+      metadata: stepMetadataForStep({ node, step }),
     }
   })
 }
@@ -201,12 +185,12 @@ function PromptStepMetadataPanel({ canOpenLocalFiles = true, entry }: { canOpenL
   )
 }
 
-export function WorkflowPromptModal({ opened, onClose, workflow, graph, initialStepId = '', projectRoot = '', canOpenLocalFiles = true, onStepSelect }: Props) {
+export function WorkflowPromptModal({ opened, onClose, workflow, graph, initialStepId = '', canOpenLocalFiles = true, onStepSelect }: Props) {
   const [activeTimelineId, setActiveTimelineId] = useState('')
   const markdownScrollRef = useRef<HTMLDivElement>(null)
   const entries = useMemo(
-    () => buildPromptEntries({ graph, projectRoot, workflow }),
-    [graph, projectRoot, workflow],
+    () => buildPromptEntries({ graph, workflow }),
+    [graph, workflow],
   )
   const preferredTimelineId = initialStepId ? `prompt-step:${initialStepId}` : entries[0]?.id || ''
   const activeEntry: PromptTimelineEntry | null = entries.find((entry) => entry.id === activeTimelineId) || entries[0] || null

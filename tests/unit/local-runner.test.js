@@ -17,6 +17,7 @@ const {
   stopAgentRun,
   submitLocalAgentRun,
   waitForLocalAgentRuns,
+  withRunTimeLimit,
 } = require('../../src/integrations/netlify/local-runner')
 
 const REQUEST_ID = '11111111-1111-4111-8111-111111111111'
@@ -214,7 +215,7 @@ test('submission creates a fresh SDK run and persists its exact handle', async (
 
   const start = calls.find(([operation]) => operation === 'start')
   assert.equal(start[1].siteId, 'site-1')
-  assert.equal(start[1].prompt, 'Review this repo')
+  assert.equal(start[1].prompt, withRunTimeLimit('Review this repo', 12))
   assert.equal(start[1].model, 'gpt-5.6-sol')
   assert.equal(start[1].effort, 'high')
   assert.equal(start[1].branch, 'feature/sdk')
@@ -225,6 +226,32 @@ test('submission creates a fresh SDK run and persists its exact handle', async (
   assert.equal(submitted.sdkHandle.runnerId, 'runner-1')
   assert.equal(submitted.sdkHandle.currentSessionId, 'session-1')
   assert.deepEqual(submitted.raw.sdkHandle, submitted.sdkHandle)
+})
+
+test('withRunTimeLimit appends the wait limit once and tells the agent to wrap up before it', () => {
+  const prompt = withRunTimeLimit('Review this repo', 40)
+  assert.ok(prompt.startsWith('Review this repo\n\n## Time Limit\n\n'))
+  assert.match(prompt, /stops waiting for this run after 40 minutes/)
+  assert.match(prompt, /Aim to finish well before that/)
+  assert.match(prompt, /report back with what you finished, what is left/)
+  assert.equal(withRunTimeLimit(prompt, 40), prompt)
+  assert.equal(withRunTimeLimit('', 40), '')
+})
+
+test('submission keeps the saved prompt without the time limit', async () => {
+  const { sdk } = sdkHarness({
+    transport: {
+      getRunner: async () => runner(),
+      getSession: async () => session(),
+    },
+  })
+  const submitted = await submitLocalAgentRun({
+    run: { agent: 'codex', status: 'pending', promptText: 'Review this repo', raw: {} },
+    siteId: 'site-1',
+    timeoutMinutes: 12,
+    sdk,
+  })
+  assert.equal(submitted.promptText, 'Review this repo')
 })
 
 test('follow-up submission resumes the persisted handle and records the new session', async () => {
@@ -253,7 +280,7 @@ test('follow-up submission resumes the persisted handle and records the new sess
   const followUp = calls.find(([operation]) => operation === 'followUp')
   assert.deepEqual(followUp[1], base)
   assert.deepEqual(followUp[2], {
-    prompt: 'Continue the review',
+    prompt: withRunTimeLimit('Continue the review', 25),
     agent: 'codex',
     model: 'gpt-5.6-sol',
     effort: 'high',

@@ -825,6 +825,24 @@ function appendAutoRetryMetadata(runState, rawRetry, {
   }
 }
 
+const RUN_TIME_LIMIT_HEADING = '## Time Limit'
+
+/**
+ * Appends the local wait limit so the agent wraps up and reports before nax stops waiting.
+ * @param {string} promptText
+ * @param {number} timeoutMinutes
+ * @returns {string}
+ */
+function withRunTimeLimit(promptText, timeoutMinutes) {
+  const prompt = String(promptText || '')
+  if (!prompt.trim() || prompt.includes(`\n${RUN_TIME_LIMIT_HEADING}\n`)) return prompt
+  return [
+    prompt,
+    RUN_TIME_LIMIT_HEADING,
+    `nax stops waiting for this run after ${timeoutMinutes} minutes. Aim to finish well before that. If you are getting close to the limit, stop and report back with what you finished, what is left, and any partial findings.`,
+  ].join('\n\n')
+}
+
 /** @param {SubmitLocalAgentRunOptions} param0 @returns {Promise<import('../../types').AgentRun>} */
 async function submitLocalAgentRun({
   run,
@@ -839,7 +857,9 @@ async function submitLocalAgentRun({
   sleepFn,
   onSubmitCheckpoint,
 }) {
-  const deadlineMs = Math.max(0, Number(timeoutMinutes) || 25) * 60 * 1000
+  const resolvedTimeoutMinutes = Math.max(0, Number(timeoutMinutes) || 25)
+  const deadlineMs = resolvedTimeoutMinutes * 60 * 1000
+  const promptText = withRunTimeLimit(run.promptText, resolvedTimeoutMinutes)
   const resolvedSiteId = siteId || run.netlifySiteId
   const configuredDelivery = run.promptDelivery || {}
   const safePromptBytes = Number(configuredDelivery.safePromptBytes || 0) || undefined
@@ -856,7 +876,7 @@ async function submitLocalAgentRun({
       resolvedSiteId,
       run.raw?.workflowRunId || run.raw?.stepId || 'nax',
     ].filter(Boolean).join('/'),
-    compactPromptText: run.compactPromptText,
+    compactPromptText: withRunTimeLimit(run.compactPromptText, resolvedTimeoutMinutes),
     inlinePromptText: run.inlinePromptText,
     safePromptBytes,
     promptBlobDisable: ['1', 'true', 'yes', 'on'].includes(disableValue),
@@ -880,7 +900,7 @@ async function submitLocalAgentRun({
             deadlineMs,
           }),
           {
-            prompt: run.promptText,
+            prompt: promptText,
             agent: run.agent,
             ...(run.model ? { model: run.model } : {}),
             ...(run.effort ? { effort: run.effort } : {}),
@@ -888,7 +908,7 @@ async function submitLocalAgentRun({
         )
       : await client.start({
           siteId: resolvedSiteId,
-          prompt: run.promptText,
+          prompt: promptText,
           agent: run.agent,
           ...(run.model ? { model: run.model } : {}),
           ...(run.effort ? { effort: run.effort } : {}),
@@ -1248,7 +1268,7 @@ async function waitForLocalAgentRuns({
     const retriedHandle = classifiedCapacityFailure
       ? await retryClient.retry(handle, { failure: classifiedCapacityFailure })
       : await retryClient.followUp(handle, {
-          prompt: promptText,
+          prompt: withRunTimeLimit(promptText, timeoutMinutes),
           agent: runState.agent,
           ...(runState.model ? { model: runState.model } : {}),
           ...(runState.effort ? { effort: runState.effort } : {}),
@@ -1564,4 +1584,5 @@ module.exports = {
   showAgentRun,
   submitLocalAgentRun,
   waitForLocalAgentRuns,
+  withRunTimeLimit,
 }

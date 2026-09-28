@@ -989,6 +989,7 @@ async function runSingleNetlifyAgent({
     siteId: netlify.siteId,
     netlifyFilter: netlifyFilter.filter,
     env: netlify.env,
+    timeoutMinutes: Number.parseInt(String(options.timeoutMinutes || '25'), 10),
     onRetry: ({ error, nextAttempt, attempts, delayMs }) => {
       const delaySeconds = Math.round(delayMs / 1000)
       console.log(`Submission failed, retrying ${nextAttempt}/${attempts} in ${delaySeconds}s — ${error.message}`)
@@ -2663,6 +2664,7 @@ async function handleRetry(runId, options) {
       siteId: netlify.siteId,
       netlifyFilter: netlifyFilter.filter,
       env: netlify.env,
+      timeoutMinutes: Number.parseInt(retryOptions.timeoutMinutes || runState.options?.timeoutMinutes || '25', 10),
       onRetry: ({ error, nextAttempt, attempts, delayMs }) => {
         const delaySeconds = Math.round(delayMs / 1000)
         console.log(`Submission failed, retrying ${nextAttempt}/${attempts} in ${delaySeconds}s — ${error.message}`)

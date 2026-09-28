@@ -107,6 +107,21 @@ test('an in-flight instance is polled, not resubmitted', async () => {
   assert.equal(runState.steps[0].status, 'completed')
 })
 
+test('a timed-out instance whose runner was left running is polled on resume, not resubmitted', async () => {
+  const { projectRoot, flow, runState } = fixture([
+    saved('claude', { status: 'completed', runnerId: 'r-claude', resultText: 'claude done' }),
+    saved('gemini', { status: 'timeout', runnerId: 'r-gemini', resultText: 'partial', raw: { stepId: 'review', workflowRunId: 'run-mid-step', timeout: { cancelledRunner: false } } }),
+    saved('codex', { status: 'completed', runnerId: 'r-codex', resultText: 'codex done' }),
+    saved('opencode', { status: 'completed', runnerId: 'r-opencode', resultText: 'opencode done' }),
+  ], { stepStatus: 'completed_with_failures' })
+  runState.status = 'failed'
+  const io = boundary()
+  await resumeLocalFlow({ flow, runState, projectRoot, ...io })
+  assert.equal(io.submitted.length, 0)
+  assert.deepEqual(io.polled, ['r-gemini'])
+  assert.equal(runState.steps[0].status, 'completed')
+})
+
 test('a partial final step resumes and resubmits only the failed instance', async () => {
   const { projectRoot, flow, runState } = fixture([
     saved('claude', { status: 'completed', runnerId: 'r-claude', resultText: 'claude done' }),

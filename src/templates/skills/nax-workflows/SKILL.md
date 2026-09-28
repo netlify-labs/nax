@@ -42,7 +42,8 @@ Useful flags:
 --step-efforts <step:agent=effort>    # assign one step effort; repeatable
 --step <id>                 # run only one step
 --from-step <id>            # continue from a step through the end
---timeout-minutes <n>       # per-step wait timeout
+--timeout-minutes <n>       # per-step wait timeout; runners keep working, `--resume` polls them
+--cancel-on-timeout         # also cancel runners when the wait timeout hits
 --context <text>            # append manual context
 --context-file <path>       # append context from a file
 --session <id>              # handoff: select one agent session artifact

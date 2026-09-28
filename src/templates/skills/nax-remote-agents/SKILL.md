@@ -61,7 +61,8 @@ nax run agent <claude|codex|gemini|opencode> \
 - `--force` skips confirmation prompts. Without it, a non-interactive call can hang.
 - `--transport netlify-api` gives local progress and `.nax/` artifacts. Pinned `--model <id>` / `--effort <level>` require it; leave both off for Auto.
 - `--context-file <path>` appends extra context from a local file.
-- `--timeout-minutes <n>` (hidden from `--help`, default **25**) is how long nax waits. **When it runs out, nax cancels the remote runner**, even if the runner is healthy and still working. Implementation tasks often take longer than 25 minutes, so pass `--timeout-minutes 90` (or more) for anything beyond a short review. A `timeout` status therefore usually means "nax gave up and cancelled it", not a platform limit. The work may still be recoverable (see "Salvage a Cancelled Run").
+- `--timeout-minutes <n>` (default **25**) is how long nax waits. When it runs out, nax stops *waiting* but the remote runner keeps working (and billing). nax syncs the session's partial result, prints the runner id and View run link, and exits with `timeout`. A `timeout` status is nax's local limit, not a platform limit. Implementation tasks often take longer than 25 minutes, so pass `--timeout-minutes 90` (or more) for anything beyond a short review.
+- `--cancel-on-timeout` also cancels the runner when the timeout hits. Use it for cost-capped CI. The diff may still be recoverable (see "Salvage a Run's Diff").
 - Runs take minutes. Start the command in the background, save stdout to a log file, and wait for it to exit. Don't poll in a tight loop.
 
 ### Choose agent, model, effort
@@ -131,25 +132,17 @@ netlify api getAgentRunner --data '{"agent_runner_id":"<runner-id>"}'         # 
 
 Use the `Runner ID:` nax printed. Cancel only runners you started for this task. For workflow runs and PR-triggered GitHub Actions reviews, follow "Stopping Runs" in the `nax-workflows` skill.
 
-## Salvage a Cancelled Run
+## Salvage a Run's Diff
 
-A cancelled or `timeout` run can still hold finished work. nax records `result: ""` and `fileChanges: null` because it doesn't read the session back after cancelling, and the **runner** can report `has_result_diff: false` while the **session** says `true`. Always check the session:
-
-```bash
-netlify api getAgentRunnerSession --data '{"agent_runner_id":"<runner-id>","agent_runner_session_id":"<session-id>"}' > session.json
-jq '{state, has_result_diff, base_sha, steps_count, credits: .usage.total_credits_cost}' session.json
-jq -r .result session.json   # the agent's own summary, if it wrote one
-```
-
-If `has_result_diff` is true, commit the diff onto a **new** branch. This needs user approval, because it pushes:
+nax never commits a runner's code changes itself. A finished, cancelled, or timed-out run whose session has a diff (`agent-session.json` `.fileChanges.hasChanges`, or the session's `has_result_diff`) can be committed onto a **new** branch. The **runner** can report `has_result_diff: false` while the **session** says `true`; nax checks the session. This needs user approval, because it pushes:
 
 ```bash
-git push origin <base_sha>:refs/heads/nax/<slug>        # the branch must exist first, or you get "Failed to apply commit"
-netlify api agentRunnerCommitToBranch --data '{"agent_runner_id":"<runner-id>","target_branch":"nax/<slug>"}'
-netlify api getAgentRunner --data '{"agent_runner_id":"<runner-id>"}' | jq '{merge_commit_is_being_created, merge_commit_sha, merge_commit_error}'
+nax salvage --runner <runner-id> --branch nax/<slug>
 ```
 
-- Poll the last command until `merge_commit_is_being_created` is `false`.
+- It creates the branch at the session's base commit if the branch is missing, asks Netlify to commit the diff, and waits for the commit.
+- It refuses runners that are still running, sessions with no diff, and the repo's default branch (unless you pass `--allow-default-branch`).
+- `--session <id>` picks an earlier session; the default is the latest.
 - You get **one squashed commit** containing the whole session diff.
 - Review every file before opening a PR. Runs sometimes make changes outside the prompt's scope. Verify the claims in `result` like any other remote output.
 
@@ -163,4 +156,4 @@ netlify api getAgentRunner --data '{"agent_runner_id":"<runner-id>"}' | jq '{mer
 | `argument list too long` / oversized prompt | Commit the context into the repo and reference it by path |
 | Command waits forever in a script | Add `--force`; run it in the background and wait on process exit |
 | Runner still running after you stopped nax or cancelled the Actions job | Cancel it on Netlify: see "Stopping a Run" |
-| `<agent> <id>: timeout` after about 25 min; runner `cancelled`; empty `result.md` | nax's `--timeout-minutes` (default 25) cancelled it. Check the session for `has_result_diff`/`result` and salvage it (see "Salvage a Cancelled Run"). Rerun with a larger `--timeout-minutes` |
+| `<agent> <id>: timeout` after about 25 min | nax stopped waiting (`--timeout-minutes`, default 25); the runner is still working. Watch it via the View run link, then `nax salvage --runner <id>` once it finishes. Next time pass a larger `--timeout-minutes` |

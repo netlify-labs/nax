@@ -1,5 +1,11 @@
 # nax Timeout Cancels the Remote Runner and Drops Its Result
 
+## Status
+
+Fixed on branch `fix/nax-timeout-detach` (fixes 1-5 below). A local timeout no longer cancels the
+runner unless `--cancel-on-timeout` is passed. Every timeout path syncs the session. `nax run --resume`
+polls runners that were left running, and `nax salvage --runner <id>` commits a run's diff onto a branch.
+
 ## Ticket Draft
 
 Title: `nax run agent` silently cancels a still-working Netlify runner at its hidden 25-minute timeout, reports an empty result, and discards a recoverable diff

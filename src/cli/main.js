@@ -177,6 +177,7 @@ const {
   futureFollowUpReferencesStep,
   localAgentRunUrl,
   localStepStatus,
+  printTimeoutGuidance,
   reportTerminalLocalRun,
   requireHumanReview,
   resumeLocalFlow,
@@ -1062,6 +1063,7 @@ async function runSingleNetlifyAgent({
       reporter.done(`${runTitle}: ${titleCase(agent)} complete`)
     } else {
       reporter.fail(`${runTitle}: ${titleCase(agent)} ${completed.status}`)
+      printTimeoutGuidance([completed], { timeoutMinutes: Number.parseInt(String(options.timeoutMinutes || '25'), 10) })
       throw new Error(`${runTitle} did not complete successfully.`)
     }
     settled = true
@@ -2678,6 +2680,10 @@ async function handleRetry(runId, options) {
       reporter.done(`${step.title}: ${titleCase(run.agent)} complete`)
     } else {
       reporter.fail(`${step.title}: ${titleCase(run.agent)} ${completedRun.status}`)
+      printTimeoutGuidance([completedRun], {
+        timeoutMinutes: Number.parseInt(retryOptions.timeoutMinutes || runState.options?.timeoutMinutes || '25', 10),
+        resumeCommand: `nax run --resume ${runState.runId}`,
+      })
     }
     saveRunState(runState)
 

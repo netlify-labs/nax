@@ -4,7 +4,7 @@ const { formatAgentRunUrl, formatAgentRunUrlFromAdminUrl } = require('../results
 const { WAIT_FOR_AGENT_RESULTS, isHumanReviewStep, loadStepPrompt } = require('../catalog/flows')
 const { AWAITING_REVIEW, createHumanReviewStepState } = require('../human-review')
 const { readNetlifyProject } = require('../../integrations/netlify/init')
-const { describeRunFailure } = require('../../integrations/netlify/failure-guidance')
+const { describeRunFailure, describeTimeout } = require('../../integrations/netlify/failure-guidance')
 const {
   archiveAgentRun,
   currentGitBranch,
@@ -840,6 +840,27 @@ function reportTerminalLocalRun(reporter, run, projectRoot, options = {}) {
 }
 
 /**
+ * @param {{ runId?: string } | null | undefined} runState
+ * @returns {string}
+ */
+function resumeCommandFor(runState) {
+  return runState?.runId ? `nax run --resume ${runState.runId}` : ''
+}
+
+/**
+ * Prints what happened to each run whose local wait timed out and what to run next.
+ * @param {import('../../types').AgentRun[]} runs
+ * @param {{ timeoutMinutes?: number, resumeCommand?: string }} ctx
+ * @returns {void}
+ */
+function printTimeoutGuidance(runs, ctx) {
+  for (const run of runs) {
+    const message = describeTimeout(run, ctx)
+    if (message) console.log(`\n${message}`)
+  }
+}
+
+/**
  * Finds the persisted slot for a run even when an SDK retry replaces its runner id.
  * @param {import('../../types').AgentRun[]} runs
  * @param {import('../../types').AgentRun} run
@@ -908,10 +929,11 @@ async function waitForLocalRunSubset({ runState, stepState, step, runs, reporter
       emitRunArtifact(runtimeEvents, runState, stepState, classifiedRun, artifactResult)
       saveRunState(runState)
       reportTerminalLocalRun(reporter, classifiedRun, projectRoot)
-      const failureDetail = classifiedRun.status === 'failed' || classifiedRun.status === 'timeout'
+      const timeoutMessage = describeTimeout(classifiedRun, { timeoutMinutes, resumeCommand: resumeCommandFor(runState) })
+      const failureDetail = classifiedRun.status === 'failed' || (classifiedRun.status === 'timeout' && !timeoutMessage)
         ? conciseErrorMessage(classifiedRun.resultText || classifiedRun.raw?.submissionError || '')
         : ''
-      const failureMessage = describeRunFailure(failureDetail)
+      const failureMessage = timeoutMessage || describeRunFailure(failureDetail)
       runtimeEvents?.agentStatus(classifiedRun.status || 'completed', classifiedRun, stepState, step, {
         terminal: true,
         usage: classifiedRun.usage || null,
@@ -987,6 +1009,7 @@ async function completeLocalStep({ runState, stepState, step, options, projectRo
       } else {
         reporter.done(completionSummary)
       }
+      printTimeoutGuidance(classifiedRuns, { timeoutMinutes: Number.parseInt(String(options.timeoutMinutes || '25'), 10), resumeCommand: resumeCommandFor(runState) })
       settled = true
     } finally {
       if (!settled) reporter.fail(`Failed waiting for ${step.title}`)
@@ -1497,6 +1520,7 @@ async function resumeLocalFlow({ flow, runState, projectRoot, currentFlowDigest,
 }
 
 module.exports = {
+  printTimeoutGuidance,
   runStepInstance,
   submitStepInstance,
   addLocalRunLinks,

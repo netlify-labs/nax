@@ -3,7 +3,7 @@
 const test = require('node:test')
 const assert = require('node:assert/strict')
 
-const { explainFailure, wrapFailure } = require('../../src/integrations/netlify/failure-guidance')
+const { describeTimeout, explainFailure, wrapFailure } = require('../../src/integrations/netlify/failure-guidance')
 
 test('explainFailure maps wrong-account access signatures', () => {
   for (const detail of [
@@ -101,4 +101,44 @@ test('describeRunFailure prepends guidance when matched and passes detail throug
   assert.equal(passthrough, 'agent crashed with a novel error')
 
   assert.equal(describeRunFailure('', {}), '')
+})
+
+test('describeTimeout says a runner left running is still working and how to resume', () => {
+  const run = {
+    agent: 'claude',
+    runnerId: 'runner-1',
+    status: 'timeout',
+    links: { agentRunUrl: 'https://app.netlify.com/runs/runner-1' },
+    raw: { timeout: { cancelledRunner: false } },
+  }
+  const message = describeTimeout(run, { timeoutMinutes: 25, resumeCommand: 'nax run --resume run-1' })
+  assert.match(message, /runner-1 is still running on Netlify/)
+  assert.match(message, /stopped waiting after 25 min \(--timeout-minutes\)/)
+  assert.match(message, /https:\/\/app\.netlify\.com\/runs\/runner-1/)
+  assert.match(message, /nax run --resume run-1/)
+  assert.doesNotMatch(message, /nax salvage/)
+})
+
+test('describeTimeout without a resume command points a running runner at salvage', () => {
+  const run = { agent: 'claude', runnerId: 'runner-1', status: 'timeout', raw: { timeout: { cancelledRunner: false } } }
+  const message = describeTimeout(run, { timeoutMinutes: 25 })
+  assert.match(message, /When it finishes, commit its diff to a branch with: nax salvage --runner runner-1/)
+  assert.doesNotMatch(message, /Resume waiting/)
+})
+
+test('describeTimeout on a cancelled runner with a diff points at salvage', () => {
+  const run = {
+    agent: 'claude',
+    runnerId: 'runner-1',
+    status: 'timeout',
+    fileChanges: { hasChanges: true },
+    raw: { timeout: { cancelledRunner: true } },
+  }
+  const message = describeTimeout(run, { timeoutMinutes: 25 })
+  assert.match(message, /nax cancelled runner runner-1 after 25 min \(--cancel-on-timeout\)/)
+  assert.match(message, /nax salvage --runner runner-1/)
+})
+
+test('describeTimeout is empty for runs that did not time out', () => {
+  assert.equal(describeTimeout({ status: 'failed', runnerId: 'runner-1' }, { timeoutMinutes: 25 }), '')
 })

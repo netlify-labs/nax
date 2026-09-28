@@ -16,6 +16,7 @@ const {
   sessionArtifactPayload,
 } = require('./agent-runner-sdk')
 const { normalizeAgentRunResult } = require('../../workflows/results/agent-run-results')
+const { AGENT_RUNNER_MAX_MINUTES } = require('../../core/constants')
 
 const TERMINAL_SUCCESS_STATES = new Set(['completed', 'done'])
 const TERMINAL_FAILURE_STATES = new Set(['failed', 'cancelled', 'canceled'])
@@ -826,8 +827,6 @@ function appendAutoRetryMetadata(runState, rawRetry, {
 }
 
 const RUN_TIME_LIMIT_HEADING = '## Time Limit'
-// Netlify agent runners stop a session after this many minutes.
-const AGENT_RUNNER_MAX_MINUTES = 25
 
 /**
  * Appends the agent runner's max runtime so the agent wraps up and reports back before it.

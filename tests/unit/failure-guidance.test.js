@@ -111,9 +111,9 @@ test('describeTimeout says a runner left running is still working and how to res
     links: { agentRunUrl: 'https://app.netlify.com/runs/runner-1' },
     raw: { timeout: { cancelledRunner: false } },
   }
-  const message = describeTimeout(run, { timeoutMinutes: 25, resumeCommand: 'nax run --resume run-1' })
+  const message = describeTimeout(run, { timeoutMinutes: 10, resumeCommand: 'nax run --resume run-1' })
   assert.match(message, /runner-1 is still running on Netlify/)
-  assert.match(message, /stopped waiting after 25 min \(--timeout-minutes\)/)
+  assert.match(message, /stopped waiting after 10 min \(--timeout-minutes\)/)
   assert.match(message, /https:\/\/app\.netlify\.com\/runs\/runner-1/)
   assert.match(message, /nax run --resume run-1/)
   assert.doesNotMatch(message, /nax salvage/)
@@ -121,9 +121,28 @@ test('describeTimeout says a runner left running is still working and how to res
 
 test('describeTimeout without a resume command points a running runner at salvage', () => {
   const run = { agent: 'claude', runnerId: 'runner-1', status: 'timeout', raw: { timeout: { cancelledRunner: false } } }
-  const message = describeTimeout(run, { timeoutMinutes: 25 })
+  const message = describeTimeout(run, { timeoutMinutes: 10 })
   assert.match(message, /When it finishes, commit its diff to a branch with: nax salvage --runner runner-1/)
   assert.doesNotMatch(message, /Resume waiting/)
+})
+
+test('describeTimeout at or past the 25-minute runner max says the run hit the limit', () => {
+  const run = {
+    agent: 'claude',
+    runnerId: 'runner-1',
+    status: 'timeout',
+    fileChanges: { hasChanges: true },
+    links: { agentRunUrl: 'https://app.netlify.com/runs/runner-1' },
+    raw: { timeout: { cancelledRunner: false } },
+  }
+  for (const timeoutMinutes of [25, 60]) {
+    const message = describeTimeout(run, { timeoutMinutes, resumeCommand: 'nax run --resume run-1' })
+    assert.match(message, /Runner runner-1 hit the 25-minute agent runner limit/)
+    assert.match(message, /Its diff is recoverable: nax salvage --runner runner-1/)
+    assert.match(message, /Split the remaining work into smaller runs/)
+    assert.match(message, /View run: https:\/\/app\.netlify\.com\/runs\/runner-1/)
+    assert.doesNotMatch(message, /still running|Resume waiting/)
+  }
 })
 
 test('describeTimeout on a cancelled runner with a diff points at salvage', () => {

@@ -61,8 +61,9 @@ nax run agent <claude|codex|gemini|opencode> \
 - `--force` skips confirmation prompts. Without it, a non-interactive call can hang.
 - `--transport netlify-api` gives local progress and `.nax/` artifacts. Pinned `--model <id>` / `--effort <level>` require it; leave both off for Auto.
 - `--context-file <path>` appends extra context from a local file.
-- `--timeout-minutes <n>` (default **25**) is how long nax waits. When it runs out, nax stops *waiting* but the remote runner keeps working (and billing). nax syncs the session's partial result, prints the runner id and View run link, and exits with `timeout`. A `timeout` status is nax's local limit, not a platform limit. Implementation tasks often take longer than 25 minutes, so pass `--timeout-minutes 90` (or more) for anything beyond a short review.
-- nax appends a `## Time Limit` section to every prompt with this value, telling the agent to finish well before it and to report back with partial results if it gets close.
+- Agent runners have a **maximum runtime of 25 minutes**. Scope each run so the agent can finish well inside that; split large implementation tasks into several runs.
+- nax appends a `## Time Limit` section to every prompt stating the 25-minute max and telling the agent to finish well before it and report back with partial results if it gets close.
+- `--timeout-minutes <n>` (default **25**) is how long nax waits locally. A larger value doesn't give the agent more time. When the wait runs out, nax stops waiting, syncs the session's partial result, prints the runner id and View run link, and exits with `timeout`.
 - `--cancel-on-timeout` also cancels the runner when the timeout hits. Use it for cost-capped CI. The diff may still be recoverable (see "Salvage a Run's Diff").
 - Runs take minutes. Start the command in the background, save stdout to a log file, and wait for it to exit. Don't poll in a tight loop.
 
@@ -157,4 +158,4 @@ nax salvage --runner <runner-id> --branch nax/<slug>
 | `argument list too long` / oversized prompt | Commit the context into the repo and reference it by path |
 | Command waits forever in a script | Add `--force`; run it in the background and wait on process exit |
 | Runner still running after you stopped nax or cancelled the Actions job | Cancel it on Netlify: see "Stopping a Run" |
-| `<agent> <id>: timeout` after about 25 min | nax stopped waiting (`--timeout-minutes`, default 25); the runner is still working. Watch it via the View run link, then `nax salvage --runner <id>` once it finishes. Next time pass a larger `--timeout-minutes` |
+| `<agent> <id>: timeout` after about 25 min | The run hit the 25-minute limit. Read the partial `result.md`, `nax salvage --runner <id>` if it has a diff, and split the remaining work into smaller runs |

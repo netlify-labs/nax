@@ -6,6 +6,10 @@ Fixed on branch `fix/nax-timeout-detach` (fixes 1-5 below). A local timeout no l
 runner unless `--cancel-on-timeout` is passed. Every timeout path syncs the session. `nax run --resume`
 polls runners that were left running, and `nax salvage --runner <id>` commits a run's diff onto a branch.
 
+Correction (2026-09-28): agent runners have a 25-minute maximum runtime (per David). The claims below that 25
+minutes is only nax's limit, and the advice to raise `--timeout-minutes` to 60-90, are wrong. Prompts now state
+the 25-minute max so agents report back before it.
+
 ## Ticket Draft
 
 Title: `nax run agent` silently cancels a still-working Netlify runner at its hidden 25-minute timeout, reports an empty result, and discards a recoverable diff

@@ -826,20 +826,21 @@ function appendAutoRetryMetadata(runState, rawRetry, {
 }
 
 const RUN_TIME_LIMIT_HEADING = '## Time Limit'
+// Netlify agent runners stop a session after this many minutes.
+const AGENT_RUNNER_MAX_MINUTES = 25
 
 /**
- * Appends the local wait limit so the agent wraps up and reports before nax stops waiting.
+ * Appends the agent runner's max runtime so the agent wraps up and reports back before it.
  * @param {string} promptText
- * @param {number} timeoutMinutes
  * @returns {string}
  */
-function withRunTimeLimit(promptText, timeoutMinutes) {
+function withRunTimeLimit(promptText) {
   const prompt = String(promptText || '')
   if (!prompt.trim() || prompt.includes(`\n${RUN_TIME_LIMIT_HEADING}\n`)) return prompt
   return [
     prompt,
     RUN_TIME_LIMIT_HEADING,
-    `nax stops waiting for this run after ${timeoutMinutes} minutes. Aim to finish well before that. If you are getting close to the limit, stop and report back with what you finished, what is left, and any partial findings.`,
+    `Agent runners have a maximum runtime of ${AGENT_RUNNER_MAX_MINUTES} minutes. Aim to finish well before that. If you are getting close to the limit, stop and report back with what you finished, what is left, and any partial findings.`,
   ].join('\n\n')
 }
 
@@ -857,9 +858,8 @@ async function submitLocalAgentRun({
   sleepFn,
   onSubmitCheckpoint,
 }) {
-  const resolvedTimeoutMinutes = Math.max(0, Number(timeoutMinutes) || 25)
-  const deadlineMs = resolvedTimeoutMinutes * 60 * 1000
-  const promptText = withRunTimeLimit(run.promptText, resolvedTimeoutMinutes)
+  const deadlineMs = Math.max(0, Number(timeoutMinutes) || 25) * 60 * 1000
+  const promptText = withRunTimeLimit(run.promptText)
   const resolvedSiteId = siteId || run.netlifySiteId
   const configuredDelivery = run.promptDelivery || {}
   const safePromptBytes = Number(configuredDelivery.safePromptBytes || 0) || undefined
@@ -876,7 +876,7 @@ async function submitLocalAgentRun({
       resolvedSiteId,
       run.raw?.workflowRunId || run.raw?.stepId || 'nax',
     ].filter(Boolean).join('/'),
-    compactPromptText: withRunTimeLimit(run.compactPromptText, resolvedTimeoutMinutes),
+    compactPromptText: withRunTimeLimit(run.compactPromptText),
     inlinePromptText: run.inlinePromptText,
     safePromptBytes,
     promptBlobDisable: ['1', 'true', 'yes', 'on'].includes(disableValue),
@@ -1268,7 +1268,7 @@ async function waitForLocalAgentRuns({
     const retriedHandle = classifiedCapacityFailure
       ? await retryClient.retry(handle, { failure: classifiedCapacityFailure })
       : await retryClient.followUp(handle, {
-          prompt: withRunTimeLimit(promptText, timeoutMinutes),
+          prompt: withRunTimeLimit(promptText),
           agent: runState.agent,
           ...(runState.model ? { model: runState.model } : {}),
           ...(runState.effort ? { effort: runState.effort } : {}),

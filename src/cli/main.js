@@ -337,6 +337,7 @@ function loadDashboardServer() {
  *   filter?: string,
  *   netlifyConfig?: string,
  *   timeoutMinutes?: string | number,
+ *   cancelOnTimeout?: boolean,
  *   repo?: string,
  *   date?: string,
  *   runner?: string,
@@ -1017,6 +1018,7 @@ async function runSingleNetlifyAgent({
       netlifyFilter: netlifyFilter.filter,
       env: netlify.env,
       timeoutMinutes: Number.parseInt(String(options.timeoutMinutes || '25'), 10),
+      cancelOnTimeout: options.cancelOnTimeout === true,
       initialDelayMs: 0,
       onProgress: (event) => {
         if (!event.run?.runnerId) return
@@ -2650,6 +2652,7 @@ async function handleRetry(runId, options) {
       netlifyFilter: netlifyFilter.filter,
       env: netlify.env,
       timeoutMinutes: Number.parseInt(retryOptions.timeoutMinutes || runState.options?.timeoutMinutes || '25', 10),
+      cancelOnTimeout: retryOptions.cancelOnTimeout === true,
       initialDelayMs: 0,
       onProgress: (event) => reporter.updateRun(event),
       onTerminalRun: (terminalRun) => {

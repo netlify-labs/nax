@@ -130,3 +130,42 @@ test('run updates are merged by instance id when one provider has multiple runne
     [SONNET, 'completed'],
   ])
 })
+
+test('step waits pass the timeout and cancel-on-timeout options to the runner wait', async () => {
+  const projectRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'nax-multi-execution-'))
+  const step = { id: 'review', title: 'Review', waitFor: 'agent-results', agents: ['claude'] }
+  const stepState = { ...step, status: 'running', runs: [{ agent: 'claude', instanceId: OPUS, runnerId: 'runner-opus', status: 'submitted' }] }
+  const runState = {
+    schemaVersion: 1,
+    runId: 'run-timeout',
+    flowId: 'review',
+    flowTitle: 'Review',
+    transport: 'netlify-api',
+    projectRoot,
+    status: 'running',
+    createdAt: '2026-09-27T00:00:00.000Z',
+    updatedAt: '2026-09-27T00:00:00.000Z',
+    dir: path.join(projectRoot, '.nax', 'workflows', 'run-timeout'),
+    steps: [stepState],
+  }
+  const seen = []
+  for (const options of [{ timeoutMinutes: 90 }, { timeoutMinutes: 90, cancelOnTimeout: true }]) {
+    await waitForLocalRunSubset({
+      runState,
+      stepState,
+      step,
+      runs: stepState.runs,
+      reporter: reporter(),
+      options,
+      projectRoot,
+      netlify: { siteId: 'site-1', env: {} },
+      netlifyFilter: '',
+      waitForAgentRuns: async ({ runs, timeoutMinutes, cancelOnTimeout }) => {
+        seen.push([timeoutMinutes, cancelOnTimeout])
+        return runs
+      },
+    })
+  }
+
+  assert.deepEqual(seen, [[90, false], [90, true]])
+})

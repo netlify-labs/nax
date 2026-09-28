@@ -91,6 +91,7 @@ const localNetlifyProjectCache = new Map()
  *   outputBudgetBytes?: number | string,
  *   siteId?: string,
  *   timeoutMinutes?: string | number,
+ *   cancelOnTimeout?: boolean,
  * }} LocalExecutorOptions
  *
  * Netlify site context resolved for a local workflow.
@@ -870,6 +871,7 @@ async function waitForLocalRunSubset({ runState, stepState, step, runs, reporter
     netlifyFilter: resolvedNetlifyFilter,
     env: netlify.env,
     timeoutMinutes,
+    cancelOnTimeout: options.cancelOnTimeout === true,
     initialDelayMs,
     onSubmitCheckpoint: (run, checkpoint) => {
       const index = localRunIndex(stepState.runs, run)

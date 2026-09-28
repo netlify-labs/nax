@@ -437,6 +437,8 @@ function reconcileStepInstances({ stepState, flowStep, completedStepStates, runS
     }
     if (status === 'completed' && String(run.resultText || '').trim()) { decide('keep', 'completed'); continue }
     if (POLLABLE_STATUSES.has(status) && run.runnerId && !maybeCreatedSubmission(run)) { decide('poll', status); continue }
+    const timeout = /** @type {{ cancelledRunner?: boolean }} */ (/** @type {Record<string, unknown>} */ (run.raw || {}).timeout || {})
+    if (status === 'timeout' && run.runnerId && timeout.cancelledRunner === false) { decide('poll', 'timed out locally; runner left running'); continue }
     if (maybeCreatedSubmission(run)) {
       const raw = /** @type {Record<string, unknown>} */ (run.raw || {})
       const reconciled = /** @type {{ candidates?: string[] }} */ (raw.submitReconcile || {})

@@ -60,3 +60,13 @@ test('nax command help smoke covers public and hidden commands', () => {
     assert.match(help, matcher)
   }
 })
+
+test('run and run agent help list the wait timeout flags', () => {
+  const program = buildProgram()
+  const run = commandByName(program, 'run')
+  const agent = commandByName(run, 'agent')
+  for (const help of [run.helpInformation(), agent.helpInformation()]) {
+    assert.match(help, /--timeout-minutes <count>/)
+    assert.match(help, /--cancel-on-timeout/)
+  }
+})

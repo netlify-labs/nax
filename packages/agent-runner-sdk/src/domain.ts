@@ -218,6 +218,7 @@ export interface Session {
   updatedAt?: number
   doneAt?: number
   currentTask?: string
+  baseSha?: string
   commitSha?: string
   deployId?: string
   deployUrl?: string

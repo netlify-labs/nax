@@ -4,6 +4,8 @@ All notable changes to `nax-agent-runner-sdk` are recorded here.
 
 ## Unreleased
 
+- Added optional `baseSha` to normalized sessions: the commit the session's
+  diff was made against.
 - Added optional `onSubmitCheckpoint`: before every runner or session create
   (start, follow-up, and capacity retries) the SDK hands the caller a
   `SubmitCheckpoint` with the exact effective input, `sentAt`, and safe prompt

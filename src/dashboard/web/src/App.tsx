@@ -1620,7 +1620,6 @@ export default function App() {
         workflow={selectedWorkflow}
         graph={projectedGraph}
         initialStepId={promptModalStepId || ''}
-        projectRoot={projectRoot}
         canOpenLocalFiles={capabilities.canOpenLocalFiles}
         onStepSelect={selectPromptStep}
       />

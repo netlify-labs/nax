@@ -52,6 +52,7 @@ const TEAL_COLOR = '#0d9488'
  *   previewSpinner: (options: JsonMap) => CommandActionResult,
  *   resume: (runId: string, options: JsonMap) => CommandActionResult,
  *   retry: (runId: string, options: JsonMap) => CommandActionResult,
+ *   salvage: (options: JsonMap) => CommandActionResult,
  *   run: (workflow: string | null | undefined, options: JsonMap) => CommandActionResult,
  *   skills: (subcommand: string, options: JsonMap) => CommandActionResult,
  *   sync: (target: string, options: JsonMap) => CommandActionResult,
@@ -218,7 +219,8 @@ function addAdvancedRunOptions(command, collectOption, defaultOutputBudgetBytes)
     .addOption(hiddenOption('--date <yyyy-mm-dd>', 'Issue title date prefix; defaults to local date'))
     .addOption(hiddenOption('--issue <list>', 'Recovery: comma-separated issue numbers for comment steps'))
     .addOption(hiddenOption('--from-issues <list>', 'Recovery: comma-separated source issue numbers to embed for comment steps'))
-    .addOption(hiddenOption('--timeout-minutes <count>', 'Minutes to wait for each step to complete', '25'))
+    .option('--timeout-minutes <count>', 'Minutes to wait for each step; the remote runner keeps working after this', '25')
+    .option('--cancel-on-timeout', 'Cancel the remote runner when --timeout-minutes runs out')
     .addOption(hiddenOption('--notify', 'Show a desktop notification when the flow finishes'))
     .addOption(hiddenOption('--notify-url <url>', 'POST workflow and step notifications to a webhook URL'))
     .addOption(hiddenOption('--notify-events <list>', 'Comma-separated notification events to send'))
@@ -572,6 +574,18 @@ function buildNaxProgram({
     .option('--json', 'Print the lint report as JSON')
     .option('--strict', 'Exit non-zero on warnings as well as errors')
     .action((flows, options, command) => settleAction(handlers.lint(flows || [], actionOptions(options, command))))
+
+  program
+    .command('salvage')
+    .description('Commit a finished or cancelled agent run\'s diff onto a branch')
+    .requiredOption('--runner <id>', 'Agent runner id to salvage')
+    .option('--session <id>', 'Session id to salvage; defaults to the latest session')
+    .option('--branch <name>', 'Branch to commit onto; created at the session base commit when missing (default: nax/salvage-<runner>)')
+    .option('--allow-default-branch', 'Allow committing onto the repository default branch')
+    .addOption(hiddenOption('--project-root <path>', 'Project root for git and Netlify site resolution'))
+    .addOption(hiddenOption('--site-id <id>', 'Netlify site ID'))
+    .addOption(hiddenOption('--filter <app>', 'Netlify CLI monorepo app filter'))
+    .action((options, command) => settleAction(handlers.salvage(actionOptions(options, command))))
 
   program
     .command('costs')

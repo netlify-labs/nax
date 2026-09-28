@@ -1,6 +1,7 @@
 // Maps known agent-runner failure signatures to plain-language guidance.
 // Guidance always prepends; the original error detail is preserved after it.
 const { accessDeniedMessage } = require('./preflight')
+const { AGENT_RUNNER_MAX_MINUTES } = require('../../core/constants')
 
 /**
  * @typedef {{ siteId?: string, email?: string, attempts?: number }} FailureContext
@@ -116,8 +117,44 @@ function describeRunFailure(detail, ctx = {}) {
   return explained ? `${explained.message} (${text})` : text
 }
 
+/**
+ * Explains a local wait timeout: whether the remote runner is still working and what to run next.
+ * @param {import('../../types').AgentRun} run
+ * @param {{ timeoutMinutes?: number, resumeCommand?: string }} [ctx]
+ * @returns {string}
+ */
+function describeTimeout(run, ctx = {}) {
+  if (run.status !== 'timeout' || !run.runnerId) return ''
+  const timeout = /** @type {{ cancelledRunner?: boolean }} */ (/** @type {Record<string, unknown>} */ (run.raw || {}).timeout || {})
+  const minutes = ctx.timeoutMinutes ? `${ctx.timeoutMinutes} min` : 'the wait timeout'
+  const url = run.links?.agentRunUrl || run.links?.sessionUrl || ''
+  const hitRunnerLimit = timeout.cancelledRunner !== true && Number(ctx.timeoutMinutes) >= AGENT_RUNNER_MAX_MINUTES
+  if (hitRunnerLimit) {
+    return [
+      `Runner ${run.runnerId} hit the ${AGENT_RUNNER_MAX_MINUTES}-minute agent runner limit.`,
+      ...(run.fileChanges?.hasChanges ? [`Its diff is recoverable: nax salvage --runner ${run.runnerId}`] : []),
+      'Split the remaining work into smaller runs.',
+      ...(url ? [`View run: ${url}`] : []),
+    ].join('\n')
+  }
+  const lines = timeout.cancelledRunner === true
+    ? [`nax cancelled runner ${run.runnerId} after ${minutes} (--cancel-on-timeout).`]
+    : [
+        `Runner ${run.runnerId} is still running on Netlify; nax stopped waiting after ${minutes} (--timeout-minutes).`,
+        ctx.resumeCommand
+          ? `Resume waiting with: ${ctx.resumeCommand}`
+          : `When it finishes, commit its diff to a branch with: nax salvage --runner ${run.runnerId}`,
+      ]
+  if (url) lines.push(`View run: ${url}`)
+  if (timeout.cancelledRunner === true && run.fileChanges?.hasChanges) {
+    lines.push(`Its diff is recoverable: nax salvage --runner ${run.runnerId}`)
+  }
+  return lines.join('\n')
+}
+
 module.exports = {
   describeRunFailure,
+  describeTimeout,
   explainFailure,
   wrapFailure,
 }

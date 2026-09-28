@@ -37,7 +37,7 @@ Run examples:
 
 ```bash
 nax run ideas
-nax run ideas --transport netlify-api --timeout-minutes 45
+nax run ideas --transport netlify-api --timeout-minutes 25
 nax run ideas --from-step react
 ```
 

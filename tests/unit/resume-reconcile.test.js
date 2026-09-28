@@ -44,6 +44,15 @@ test('transient or unknown failures resubmit with the saved prompt', () => {
   assert.equal(result.actions[0].useCompactPrompt, false)
 })
 
+test('a timeout that left its runner running polls it; a cancelled one resubmits', () => {
+  const result = reconcile([
+    base({ status: 'timeout', runnerId: 'r1', raw: { timeout: { cancelledRunner: false } } }),
+    base({ instanceId: 'claude:auto:auto', agent: 'claude', status: 'timeout', runnerId: 'r2', raw: { timeout: { cancelledRunner: true } } }),
+  ])
+  assert.deepEqual(actionsOf(result), ['poll', 'resubmit'])
+  assert.match(result.actions[0].reason, /left running/)
+})
+
 test('auth failures stop the whole resume before any submission', () => {
   const result = reconcile([base({ status: 'failed', error: 'Agent Runner API request failed with status 401: token expired' }), base({ instanceId: 'claude:auto:auto', status: 'failed' })])
   assert.equal(result.stop?.code, 'resume_auth_failure')

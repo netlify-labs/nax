@@ -17,6 +17,7 @@ const {
   stopAgentRun,
   submitLocalAgentRun,
   waitForLocalAgentRuns,
+  withRunTimeLimit,
 } = require('../../src/integrations/netlify/local-runner')
 
 const REQUEST_ID = '11111111-1111-4111-8111-111111111111'
@@ -214,7 +215,7 @@ test('submission creates a fresh SDK run and persists its exact handle', async (
 
   const start = calls.find(([operation]) => operation === 'start')
   assert.equal(start[1].siteId, 'site-1')
-  assert.equal(start[1].prompt, 'Review this repo')
+  assert.equal(start[1].prompt, withRunTimeLimit('Review this repo'))
   assert.equal(start[1].model, 'gpt-5.6-sol')
   assert.equal(start[1].effort, 'high')
   assert.equal(start[1].branch, 'feature/sdk')
@@ -225,6 +226,32 @@ test('submission creates a fresh SDK run and persists its exact handle', async (
   assert.equal(submitted.sdkHandle.runnerId, 'runner-1')
   assert.equal(submitted.sdkHandle.currentSessionId, 'session-1')
   assert.deepEqual(submitted.raw.sdkHandle, submitted.sdkHandle)
+})
+
+test('withRunTimeLimit appends the 25-minute runner max once and tells the agent to wrap up before it', () => {
+  const prompt = withRunTimeLimit('Review this repo')
+  assert.ok(prompt.startsWith('Review this repo\n\n## Time Limit\n\n'))
+  assert.match(prompt, /Agent runners have a maximum runtime of 25 minutes/)
+  assert.match(prompt, /Aim to finish well before that/)
+  assert.match(prompt, /report back with what you finished, what is left/)
+  assert.equal(withRunTimeLimit(prompt), prompt)
+  assert.equal(withRunTimeLimit(''), '')
+})
+
+test('submission keeps the saved prompt without the time limit', async () => {
+  const { sdk } = sdkHarness({
+    transport: {
+      getRunner: async () => runner(),
+      getSession: async () => session(),
+    },
+  })
+  const submitted = await submitLocalAgentRun({
+    run: { agent: 'codex', status: 'pending', promptText: 'Review this repo', raw: {} },
+    siteId: 'site-1',
+    timeoutMinutes: 12,
+    sdk,
+  })
+  assert.equal(submitted.promptText, 'Review this repo')
 })
 
 test('follow-up submission resumes the persisted handle and records the new session', async () => {
@@ -253,7 +280,7 @@ test('follow-up submission resumes the persisted handle and records the new sess
   const followUp = calls.find(([operation]) => operation === 'followUp')
   assert.deepEqual(followUp[1], base)
   assert.deepEqual(followUp[2], {
-    prompt: 'Continue the review',
+    prompt: withRunTimeLimit('Continue the review'),
     agent: 'codex',
     model: 'gpt-5.6-sol',
     effort: 'high',
@@ -312,6 +339,193 @@ test('polling attributes completion to the handle current session', async () => 
   assert.equal(completed.rawResult.latestSession.id, 'session-current')
   assert.equal(terminal.length, 1)
   assert.equal(progress.at(-1).terminalSuccess, true)
+})
+
+function timeoutHarness(overrides = {}) {
+  const harness = sdkHarness({
+    transport: {
+      getRunner: async () => runner({ state: 'running', hasResultDiff: false }),
+      listSessions: async () => [
+        session('session-1', {
+          state: 'running',
+          resultText: 'Partial summary',
+          hasResultDiff: true,
+          usage: { totalTokens: 7 },
+        }),
+      ],
+      ...overrides.transport,
+    },
+    sdk: overrides.sdk,
+  })
+  const listSessions = harness.sdk.transport.listSessions
+  harness.sdk.transport.listSessions = async (runnerId) => {
+    harness.calls.push(['listSessions', runnerId])
+    return listSessions(runnerId)
+  }
+  return harness
+}
+
+function timeoutRunInput(persisted) {
+  return {
+    agent: 'codex',
+    status: 'submitted',
+    promptText: 'Review this repo',
+    runnerId: 'runner-1',
+    sessionId: 'session-1',
+    netlifySiteId: 'site-1',
+    sdkHandle: persisted,
+    raw: { sdkHandle: persisted },
+  }
+}
+
+/**
+ * Two runs where the first poll outlasts the wait deadline, so the second run reaches it mid-poll.
+ * @param {{ cancelOnTimeout?: boolean }} [options]
+ */
+async function waitPastDeadlineMidPoll({ cancelOnTimeout = false } = {}) {
+  const terminal = []
+  const { sdk, calls } = timeoutHarness({
+    sdk: {
+      getSnapshot: async (value) => {
+        calls.push(['getSnapshot', value])
+        await new Promise((resolve) => setTimeout(resolve, 150))
+        return { kind: 'running', state: 'running' }
+      },
+    },
+  })
+  const slow = timeoutRunInput(handle({ runnerId: 'runner-slow' }))
+  const late = timeoutRunInput(handle())
+  const completed = await waitForLocalAgentRuns({
+    runs: [{ ...slow, runnerId: 'runner-slow' }, late],
+    siteId: 'site-1',
+    timeoutMinutes: 0.001,
+    initialDelayMs: 0,
+    pollIntervalMs: 1,
+    cancelOnTimeout,
+    sdk,
+    onTerminalRun: (run) => terminal.push(run),
+  })
+  return { calls, terminal, timedOut: completed.find((run) => run.runnerId === 'runner-1') }
+}
+
+test('deadline reached mid-poll stops waiting without cancelling the runner and syncs the session', async () => {
+  const { calls, terminal, timedOut } = await waitPastDeadlineMidPoll()
+
+  assert.equal(calls.filter(([operation]) => operation === 'getSnapshot').length, 1)
+  assert.equal(calls.some(([operation]) => operation === 'stop'), false)
+  assert.equal(timedOut.status, 'timeout')
+  assert.equal(timedOut.resultText, 'Partial summary')
+  assert.equal(timedOut.fileChanges.hasChanges, true)
+  assert.equal(timedOut.usage.totalTokens, 7)
+  assert.equal(timedOut.rawResult.latestSession.id, 'session-1')
+  assert.deepEqual(timedOut.raw.timeout, { cancelledRunner: false })
+  assert.equal(terminal.length, 2)
+})
+
+test('deadline reached mid-poll cancels the runner with cancelOnTimeout and still syncs the session', async () => {
+  const { calls, timedOut } = await waitPastDeadlineMidPoll({ cancelOnTimeout: true })
+
+  const stopIndex = calls.findIndex(([operation]) => operation === 'stop')
+  const listIndex = calls.findIndex(([operation]) => operation === 'listSessions')
+  assert.ok(stopIndex >= 0)
+  assert.ok(listIndex > stopIndex, 'session is read after the stop')
+  assert.equal(timedOut.status, 'timeout')
+  assert.equal(timedOut.resultText, 'Partial summary')
+  assert.equal(timedOut.fileChanges.hasChanges, true)
+  assert.deepEqual(timedOut.raw.timeout, { cancelledRunner: true })
+})
+
+test('a persisted handle past its submit deadline is polled for the current wait', async () => {
+  const persisted = handle({ policy: { ...handle().policy, deadlineAt: Date.now() - 60_000 } })
+  const { sdk, calls } = timeoutHarness({
+    transport: {
+      getRunner: async () => runner({ state: 'completed' }),
+      listSessions: async () => [session('session-1', { state: 'completed', resultText: 'Finished later' })],
+    },
+  })
+  const [completed] = await waitForLocalAgentRuns({
+    runs: [timeoutRunInput(persisted)],
+    siteId: 'site-1',
+    initialDelayMs: 0,
+    pollIntervalMs: 1,
+    sdk,
+  })
+
+  assert.equal(calls.some(([operation]) => operation === 'stop'), false)
+  assert.equal(completed.status, 'completed')
+  assert.equal(completed.resultText, 'Finished later')
+})
+
+test('wait deadline leaves pending runners running and syncs their sessions', async () => {
+  const persisted = handle()
+  const { sdk, calls } = timeoutHarness()
+  const [timedOut] = await waitForLocalAgentRuns({
+    runs: [timeoutRunInput(persisted)],
+    siteId: 'site-1',
+    timeoutMinutes: 0,
+    initialDelayMs: 0,
+    pollIntervalMs: 1,
+    sdk,
+  })
+
+  assert.equal(calls.some(([operation]) => operation === 'stop'), false)
+  assert.equal(timedOut.status, 'timeout')
+  assert.equal(timedOut.resultText, 'Partial summary')
+  assert.equal(timedOut.fileChanges.hasChanges, true)
+  assert.deepEqual(timedOut.raw.timeout, { cancelledRunner: false })
+})
+
+test('wait deadline cancels pending runners with cancelOnTimeout', async () => {
+  const persisted = handle()
+  const { sdk, calls } = timeoutHarness()
+  const [timedOut] = await waitForLocalAgentRuns({
+    runs: [timeoutRunInput(persisted)],
+    siteId: 'site-1',
+    timeoutMinutes: 0,
+    initialDelayMs: 0,
+    pollIntervalMs: 1,
+    cancelOnTimeout: true,
+    sdk,
+  })
+
+  assert.ok(calls.some(([operation]) => operation === 'stop'))
+  assert.equal(timedOut.resultText, 'Partial summary')
+  assert.deepEqual(timedOut.raw.timeout, { cancelledRunner: true })
+})
+
+test('remote timedOut result keeps the session result text', async () => {
+  const persisted = handle()
+  const { sdk } = timeoutHarness({
+    transport: {
+      getRunner: async () => runner({ state: 'timeout' }),
+      listSessions: async () => [
+        session('session-1', { state: 'timeout', resultText: 'Partial summary', hasResultDiff: true }),
+      ],
+    },
+    sdk: {
+      getSnapshot: async (value) => ({
+        kind: 'terminal',
+        result: {
+          status: 'timedOut',
+          runnerId: value.runnerId,
+          sessionId: value.currentSessionId,
+          usage: null,
+          cancelledRunner: false,
+        },
+      }),
+    },
+  })
+  const [timedOut] = await waitForLocalAgentRuns({
+    runs: [timeoutRunInput(persisted)],
+    siteId: 'site-1',
+    initialDelayMs: 0,
+    pollIntervalMs: 1,
+    sdk,
+  })
+
+  assert.equal(timedOut.status, 'timeout')
+  assert.equal(timedOut.resultText, 'Partial summary')
+  assert.equal(timedOut.fileChanges.hasChanges, true)
 })
 
 test('capacity recovery delegates to SDK retry and advances the handle once', async () => {

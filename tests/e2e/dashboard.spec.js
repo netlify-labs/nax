@@ -952,6 +952,7 @@ test('dashboard deep-links workflow routes and prompt modal routes', async ({ pa
   const promptDialog = page.getByRole('dialog', { name: /"Review" workflow details/ })
   await expect(promptDialog).toBeVisible()
   await expect(promptDialog.getByRole('heading', { name: 'Step 2: Cross Review' })).toBeVisible()
+  await expect(promptDialog.getByText('2_cross-review.md', { exact: true })).toBeVisible()
 
   await page.goto(dashboardRouteUrl(instance.url, '/workflows/review/prompts/synthesize'), { waitUntil: 'networkidle' })
   await expect(page).toHaveURL(/\/workflows\/review\/prompts\/synthesize$/)

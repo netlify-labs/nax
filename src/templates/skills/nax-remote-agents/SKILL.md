@@ -61,6 +61,10 @@ nax run agent <claude|codex|gemini|opencode> \
 - `--force` skips confirmation prompts. Without it, a non-interactive call can hang.
 - `--transport netlify-api` gives local progress and `.nax/` artifacts. Pinned `--model <id>` / `--effort <level>` require it; leave both off for Auto.
 - `--context-file <path>` appends extra context from a local file.
+- Agent runners have a **maximum runtime of 25 minutes**. Scope each run so the agent can finish well inside that; split large implementation tasks into several runs.
+- nax appends a `## Time Limit` section to every prompt stating the 25-minute max and telling the agent to finish well before it and report back with partial results if it gets close.
+- `--timeout-minutes <n>` (default **25**) is how long nax waits locally. A larger value doesn't give the agent more time. When the wait runs out, nax stops waiting, syncs the session's partial result, prints the runner id and View run link, and exits with `timeout`.
+- `--cancel-on-timeout` also cancels the runner when the timeout hits. Use it for cost-capped CI. The diff may still be recoverable (see "Salvage a Run's Diff").
 - Runs take minutes. Start the command in the background, save stdout to a log file, and wait for it to exit. Don't poll in a tight loop.
 
 ### Choose agent, model, effort
@@ -130,6 +134,20 @@ netlify api getAgentRunner --data '{"agent_runner_id":"<runner-id>"}'         # 
 
 Use the `Runner ID:` nax printed. Cancel only runners you started for this task. For workflow runs and PR-triggered GitHub Actions reviews, follow "Stopping Runs" in the `nax-workflows` skill.
 
+## Salvage a Run's Diff
+
+nax never commits a runner's code changes itself. A finished, cancelled, or timed-out run whose session has a diff (`agent-session.json` `.fileChanges.hasChanges`, or the session's `has_result_diff`) can be committed onto a **new** branch. The **runner** can report `has_result_diff: false` while the **session** says `true`; nax checks the session. This needs user approval, because it pushes:
+
+```bash
+nax salvage --runner <runner-id> --branch nax/<slug>
+```
+
+- It creates the branch at the session's base commit if the branch is missing, asks Netlify to commit the diff, and waits for the commit.
+- It refuses runners that are still running, sessions with no diff, and the repo's default branch (unless you pass `--allow-default-branch`).
+- `--session <id>` picks an earlier session; the default is the latest.
+- You get **one squashed commit** containing the whole session diff.
+- Review every file before opening a PR. Runs sometimes make changes outside the prompt's scope. Verify the claims in `result` like any other remote output.
+
 ## Failure Quick Reference
 
 | Symptom | Fix |
@@ -140,3 +158,4 @@ Use the `Runner ID:` nax printed. Cancel only runners you started for this task.
 | `argument list too long` / oversized prompt | Commit the context into the repo and reference it by path |
 | Command waits forever in a script | Add `--force`; run it in the background and wait on process exit |
 | Runner still running after you stopped nax or cancelled the Actions job | Cancel it on Netlify: see "Stopping a Run" |
+| `<agent> <id>: timeout` after about 25 min | The run hit the 25-minute limit. Read the partial `result.md`, `nax salvage --runner <id>` if it has a diff, and split the remaining work into smaller runs |

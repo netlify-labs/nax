@@ -430,6 +430,7 @@ export function normalizeSession(
   addOptional(session, 'updatedAt', timestamp(source, 'updated_at', 'updatedAt', style))
   addOptional(session, 'doneAt', timestamp(source, 'done_at', 'doneAt', style))
   addOptional(session, 'currentTask', optionalString(source, 'current_task', 'currentTask', style))
+  addOptional(session, 'baseSha', optionalString(source, 'base_sha', 'baseSha', style))
   addOptional(session, 'commitSha', optionalString(source, 'commit_sha', 'commitSha', style))
   addOptional(session, 'deployId', optionalString(source, 'deploy_id', 'deployId', style))
   addOptional(session, 'deployUrl', optionalString(source, 'deploy_url', 'deployUrl', style))

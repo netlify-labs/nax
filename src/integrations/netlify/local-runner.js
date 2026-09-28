@@ -16,6 +16,7 @@ const {
   sessionArtifactPayload,
 } = require('./agent-runner-sdk')
 const { normalizeAgentRunResult } = require('../../workflows/results/agent-run-results')
+const { AGENT_RUNNER_MAX_MINUTES } = require('../../core/constants')
 
 const TERMINAL_SUCCESS_STATES = new Set(['completed', 'done'])
 const TERMINAL_FAILURE_STATES = new Set(['failed', 'cancelled', 'canceled'])
@@ -174,6 +175,7 @@ const NETLIFY_CONFIG_SCAN_SKIP_DIRS = new Set([
  *   runCommand?: AsyncRunCommand,
  *   sdk?: import('nax-agent-runner-sdk').AgentRunnerSdk,
  *   timeoutMinutes?: number,
+ *   cancelOnTimeout?: boolean,
  *   onSubmitCheckpoint?: (checkpoint: import('nax-agent-runner-sdk').SubmitCheckpoint) => void | Promise<void>,
  * }} SubmitLocalAgentRunOptions
  *
@@ -230,6 +232,7 @@ const NETLIFY_CONFIG_SCAN_SKIP_DIRS = new Set([
  *   netlifyFilter?: string,
  *   env?: NodeJS.ProcessEnv,
  *   timeoutMinutes?: number,
+ *   cancelOnTimeout?: boolean,
  *   initialDelayMs?: number,
  *   pollIntervalMs?: number,
  *   onProgress?: (event: LocalRunProgressEvent) => void,
@@ -823,6 +826,23 @@ function appendAutoRetryMetadata(runState, rawRetry, {
   }
 }
 
+const RUN_TIME_LIMIT_HEADING = '## Time Limit'
+
+/**
+ * Appends the agent runner's max runtime so the agent wraps up and reports back before it.
+ * @param {string} promptText
+ * @returns {string}
+ */
+function withRunTimeLimit(promptText) {
+  const prompt = String(promptText || '')
+  if (!prompt.trim() || prompt.includes(`\n${RUN_TIME_LIMIT_HEADING}\n`)) return prompt
+  return [
+    prompt,
+    RUN_TIME_LIMIT_HEADING,
+    `Agent runners have a maximum runtime of ${AGENT_RUNNER_MAX_MINUTES} minutes. Aim to finish well before that. If you are getting close to the limit, stop and report back with what you finished, what is left, and any partial findings.`,
+  ].join('\n\n')
+}
+
 /** @param {SubmitLocalAgentRunOptions} param0 @returns {Promise<import('../../types').AgentRun>} */
 async function submitLocalAgentRun({
   run,
@@ -838,6 +858,7 @@ async function submitLocalAgentRun({
   onSubmitCheckpoint,
 }) {
   const deadlineMs = Math.max(0, Number(timeoutMinutes) || 25) * 60 * 1000
+  const promptText = withRunTimeLimit(run.promptText)
   const resolvedSiteId = siteId || run.netlifySiteId
   const configuredDelivery = run.promptDelivery || {}
   const safePromptBytes = Number(configuredDelivery.safePromptBytes || 0) || undefined
@@ -854,7 +875,7 @@ async function submitLocalAgentRun({
       resolvedSiteId,
       run.raw?.workflowRunId || run.raw?.stepId || 'nax',
     ].filter(Boolean).join('/'),
-    compactPromptText: run.compactPromptText,
+    compactPromptText: withRunTimeLimit(run.compactPromptText),
     inlinePromptText: run.inlinePromptText,
     safePromptBytes,
     promptBlobDisable: ['1', 'true', 'yes', 'on'].includes(disableValue),
@@ -878,7 +899,7 @@ async function submitLocalAgentRun({
             deadlineMs,
           }),
           {
-            prompt: run.promptText,
+            prompt: promptText,
             agent: run.agent,
             ...(run.model ? { model: run.model } : {}),
             ...(run.effort ? { effort: run.effort } : {}),
@@ -886,7 +907,7 @@ async function submitLocalAgentRun({
         )
       : await client.start({
           siteId: resolvedSiteId,
-          prompt: run.promptText,
+          prompt: promptText,
           agent: run.agent,
           ...(run.model ? { model: run.model } : {}),
           ...(run.effort ? { effort: run.effort } : {}),
@@ -1114,6 +1135,7 @@ async function waitForLocalAgentRuns({
   siteId,
   env,
   timeoutMinutes = 25,
+  cancelOnTimeout = false,
   initialDelayMs = 50000,
   pollIntervalMs = 15000,
   onProgress = () => {},
@@ -1245,7 +1267,7 @@ async function waitForLocalAgentRuns({
     const retriedHandle = classifiedCapacityFailure
       ? await retryClient.retry(handle, { failure: classifiedCapacityFailure })
       : await retryClient.followUp(handle, {
-          prompt: promptText,
+          prompt: withRunTimeLimit(promptText),
           agent: runState.agent,
           ...(runState.model ? { model: runState.model } : {}),
           ...(runState.effort ? { effort: runState.effort } : {}),
@@ -1305,7 +1327,8 @@ async function waitForLocalAgentRuns({
     return true
   }
 
-  const terminalRun = async (runState, handle, result) => {
+  // Reads the runner and its current session so every outcome keeps the session's result, usage and diff state.
+  const syncRun = async (runState, handle, result) => {
     const [runner, sessions] = await Promise.all([
       client.transport.getRunner(handle.runnerId),
       client.transport.listSessions(handle.runnerId),
@@ -1353,6 +1376,63 @@ async function waitForLocalAgentRuns({
         sdkHandle: handle,
       },
     }
+    return { withHandle, shown, sessionList }
+  }
+
+  /**
+   * @param {{ withHandle: import('../../types').AgentRun, shown: { raw: import('../../types').JsonMap }, sessionList: { raw: import('../../types').JsonMap[], latest: import('../../types').JsonMap } }} synced
+   * @param {boolean} cancelledRunner
+   * @param {import('../../types').UsageSummary | null} [usage]
+   */
+  const timeoutFromSync = ({ withHandle, shown, sessionList }, cancelledRunner, usage) => normalizeAgentRunResult({
+    run: {
+      ...withHandle,
+      raw: { ...withHandle.raw, timeout: { cancelledRunner } },
+    },
+    runner: shown.raw || {},
+    session: sessionList.latest,
+    status: 'timeout',
+    resultText: String(sessionList.latest.result || ''),
+    usage: usage || undefined,
+    rawResult: {
+      runner: shown.raw || {},
+      sessions: sessionList.raw,
+      latestSession: sessionList.latest,
+    },
+  })
+
+  // Ends the local wait for a run; the remote runner keeps working unless cancelOnTimeout is set.
+  const timeoutRun = async (runState, handle) => {
+    let cancelledRunner = false
+    if (handle && cancelOnTimeout) {
+      cancelledRunner = await client.stop(handle).then(() => true, () => false)
+    }
+    const bare = {
+      ...runState,
+      ...(handle ? { sessionId: handle.currentSessionId, sdkHandle: handle } : {}),
+      status: 'timeout',
+      resultText: '',
+      raw: { ...runState.raw, timeout: { cancelledRunner } },
+    }
+    if (!handle) return bare
+    try {
+      return timeoutFromSync(await syncRun(runState, handle, { status: 'timedOut' }), cancelledRunner)
+    } catch (error) {
+      onProgress({
+        message: `${runState.agent} ${runState.runnerId}: session sync after timeout failed`,
+        run: runState,
+        state: 'timeout',
+        error: error?.message || String(error),
+        terminal: false,
+        terminalSuccess: false,
+        terminalFailure: false,
+      })
+      return bare
+    }
+  }
+
+  const terminalRun = async (runState, handle, result) => {
+    const { withHandle, shown, sessionList } = await syncRun(runState, handle, result)
     if (result.status === 'succeeded') {
       return normalizeCompletedRun({
         run: withHandle,
@@ -1361,12 +1441,7 @@ async function waitForLocalAgentRuns({
       })
     }
     if (result.status === 'timedOut') {
-      return {
-        ...withHandle,
-        status: 'timeout',
-        resultText: '',
-        usage: result.usage || withHandle.usage,
-      }
+      return timeoutFromSync({ withHandle, shown, sessionList }, result.cancelledRunner === true, result.usage)
     }
     return normalizeFailedRun({
       run: withHandle,
@@ -1404,17 +1479,10 @@ async function waitForLocalAgentRuns({
       let snapshot
       try {
         handle = await handleFor(runState)
-        if (Date.now() >= handle.policy.deadlineAt) {
-          await client.stop(handle).catch(() => {})
-          const timeoutRun = {
-            ...runState,
-            sessionId: handle.currentSessionId,
-            sdkHandle: handle,
-            status: 'timeout',
-            resultText: '',
-          }
-          onTerminalRun(timeoutRun)
-          completed.set(runState.runnerId, timeoutRun)
+        if (Date.now() >= deadline) {
+          const timedOut = await timeoutRun(runState, handle)
+          onTerminalRun(timedOut)
+          completed.set(runState.runnerId, timedOut)
           pending.delete(runState.runnerId)
           continue
         }
@@ -1480,14 +1548,9 @@ async function waitForLocalAgentRuns({
 
   for (const runState of pending.values()) {
     const handle = await handleFor(runState).catch(() => null)
-    if (handle) await client.stop(handle).catch(() => {})
-    const timeoutRun = {
-      ...runState,
-      status: 'timeout',
-      resultText: '',
-    }
-    onTerminalRun(timeoutRun)
-    completed.set(runState.runnerId, timeoutRun)
+    const timedOut = await timeoutRun(runState, handle)
+    onTerminalRun(timedOut)
+    completed.set(runState.runnerId, timedOut)
   }
 
   return trackedRuns.map((runState) => completed.get(runState.runnerId) || runState)
@@ -1520,4 +1583,5 @@ module.exports = {
   showAgentRun,
   submitLocalAgentRun,
   waitForLocalAgentRuns,
+  withRunTimeLimit,
 }

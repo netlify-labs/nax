@@ -3,6 +3,8 @@ const DEFAULT_AGENT_PROVIDERS = ['claude', 'gemini', 'codex']
 const DEFAULT_AGENT_CSV = DEFAULT_AGENT_PROVIDERS.join(',')
 /** @type {string[]} */
 const DEFAULT_FOLLOWUP_AGENTS = ['codex']
+/** Minutes a Netlify agent runner session can run before the platform stops it. */
+const AGENT_RUNNER_MAX_MINUTES = 25
 /** Maximum resolved agent instances allowed in one workflow step. */
 const MAX_STEP_AGENT_INSTANCES = 4
 
@@ -32,6 +34,7 @@ const TRANSPORT_ALIASES = {
 }
 
 module.exports = {
+  AGENT_RUNNER_MAX_MINUTES,
   CANCELLED_RUN_STATUS_VALUES,
   DEFAULT_AGENT_CSV,
   DEFAULT_AGENT_PROVIDERS,

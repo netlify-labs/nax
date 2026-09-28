@@ -212,6 +212,18 @@ test('empty usage payloads normalize to null without invented values', async () 
   assert.deepEqual(normalized.fileKeys, ['context.md'])
 })
 
+test('session base_sha normalizes to baseSha', async () => {
+  const fake = fakeFetch([{ body: { ...session(), base_sha: '9049b18' } }])
+  const transport = createHttpTransport({
+    fetch: fake.fetch,
+    token: 'token',
+    baseUrl: 'https://api.example.test/api/v1',
+  })
+
+  const normalized = await transport.getSession('runner-1', 'session-1')
+  assert.equal(normalized.baseSha, '9049b18')
+})
+
 test('HTTP transport creates sessions with the exact follow-up body', async () => {
   const fake = fakeFetch([{ body: session('session-2') }])
   const transport = createHttpTransport({

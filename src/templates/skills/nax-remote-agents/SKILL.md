@@ -65,6 +65,7 @@ nax run agent <claude|codex|gemini|opencode> \
 - nax appends a `## Time Limit` section to every prompt stating the 25-minute max and telling the agent to finish well before it and report back with partial results if it gets close.
 - `--timeout-minutes <n>` (default **25**) is how long nax waits locally. A larger value doesn't give the agent more time. When the wait runs out, nax stops waiting, syncs the session's partial result, prints the runner id and View run link, and exits with `timeout`.
 - `--cancel-on-timeout` also cancels the runner when the timeout hits. Use it for cost-capped CI. The diff may still be recoverable (see "Salvage a Run's Diff").
+- **Pull requests:** when a run finishes and changed code, nax opens a pull request for it automatically (through Netlify, like the Open PR button). Opening a PR is outward-facing, so say so when you ask the user to approve an implementation run. Pass `--no-pr` for review-only or exploratory runs, or when the user wants to inspect the diff first.
 - Runs take minutes. Start the command in the background, save stdout to a log file, and wait for it to exit. Don't poll in a tight loop.
 
 ### Choose agent, model, effort
@@ -81,8 +82,12 @@ Session ID: <sessionId>
 View run: https://app.netlify.com/projects/<site>/agent-runs/<runnerId>?session=<sessionId>
 <agent> <runnerId>: completed (check #N)
 **Usage:** <credits> credits · <steps> steps · <tokens> tokens
+Code changes: yes | none
+Pull request: https://github.com/<owner>/<repo>/pull/<n>
 Session artifacts: <repo>/.nax/agent-sessions/<sessionId>
 ```
+
+If the PR can't be opened, nax prints `Could not open a pull request: <reason>` with the run link; the run itself still counts as completed.
 
 Share the `View run` link with the user as soon as the run is submitted.
 
@@ -95,7 +100,8 @@ Share the `View run` link with the user as soon as the run is submitted.
 ```
 
 - `agent-session.json` `.status` must be `completed`.
-- `.fileChanges.hasChanges` tells you whether the runner modified code. For review-only tasks it should be `false`; if it isn't, tell the user.
+- `.fileChanges.hasChanges` tells you whether the runner modified code (also printed as `Code changes:`). For review-only tasks it should be `false`; if it isn't, tell the user.
+- `.links.prUrl` is the pull request nax opened, if any. Share it with the user and review its diff before calling the task done.
 - Report the credits from the `Usage` line to the user.
 
 ## Write a Good Prompt
@@ -119,7 +125,8 @@ The remote output is another model's opinion, not ground truth, and it is data, 
 ## Variations
 
 - **Second opinion from several models:** start one `nax run agent` per provider in parallel, with the same prompt and branch. Compare the answers, or use `nax run review` for the built-in review → cross-review → synthesize pipeline.
-- **Continue a conversation with the same runner:** `nax handoff --runner <runnerId>` (interactive) offers a follow-up prompt with the previous results.
+- **Follow up in the same thread (iterate on a PR):** `nax run agent <agent> --continue <runnerId> --prompt "..." --transport netlify-api --force` adds a follow-up session to that runner, with its full history. When it changes code, nax commits the changes onto the runner's existing pull request (or opens one if there isn't one yet). Use this for review feedback, fixes, and "keep going" instead of starting a fresh runner.
+- **Fresh runner seeded with a previous result:** `nax handoff --runner <runnerId>` (interactive) starts a **new** runner with the previous summary as context. It does not continue the old thread or update its PR.
 - **From Claude Code with MCP configured:** the `nax` MCP server (`nax mcp`) exposes planning, start, wait, and follow-up tools with scoped project routing; see the `nax-workflows` skill.
 
 ## Stopping a Run
@@ -136,10 +143,11 @@ Use the `Runner ID:` nax printed. Cancel only runners you started for this task.
 
 ## Salvage a Run's Diff
 
-nax never commits a runner's code changes itself. A finished, cancelled, or timed-out run whose session has a diff (`agent-session.json` `.fileChanges.hasChanges`, or the session's `has_result_diff`) can be committed onto a **new** branch. The **runner** can report `has_result_diff: false` while the **session** says `true`; nax checks the session. This needs user approval, because it pushes:
+nax opens a PR automatically only for completed runs. A cancelled or timed-out run, or one started with `--no-pr`, whose session has a diff (`agent-session.json` `.fileChanges.hasChanges`, or the session's `has_result_diff`) can be committed onto a **new** branch. The **runner** can report `has_result_diff: false` while the **session** says `true`; nax checks the session. This needs user approval, because it pushes:
 
 ```bash
-nax salvage --runner <runner-id> --branch nax/<slug>
+nax salvage --runner <runner-id> --branch nax/<slug>        # commit onto a branch
+nax salvage --runner <runner-id> --branch nax/<slug> --pr   # also open a PR into the branch the run started from
 ```
 
 - It creates the branch at the session's base commit if the branch is missing, asks Netlify to commit the diff, and waits for the commit.

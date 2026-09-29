@@ -126,6 +126,8 @@ Completed results also persist as artifacts:
 
 Use `nax handoff` to continue from prior results interactively, or `nax handoff -c` to copy the latest useful summary.
 
+Workflow steps never open pull requests. Single `nax run agent` runs open one when they change code, and `nax run agent <agent> --continue <runnerId>` follows up in that runner's thread and updates its PR (see the `nax-remote-agents` skill).
+
 Use `nax admin sync last` when a Netlify UI follow-up happened outside the local process and the latest local runner is missing remote sessions.
 
 Use `nax dashboard` to inspect saved runs in a browser. Run details can switch between rendered Results and the original Prompt when the prompt file is still resolvable from the flow definition.

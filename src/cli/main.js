@@ -247,6 +247,7 @@ const { findStepRange, resolvedLineupForStep } = require('../core/planning/workf
 const {
   archiveAgentRun,
   buildNetlifyEnv,
+  landAgentRun,
   currentGitBranch,
   stopAgentRun,
   resolveNetlifyFilter,
@@ -255,6 +256,7 @@ const {
   waitForLocalAgentRuns,
 } = require('../integrations/netlify/local-runner')
 const { salvageAgentRun } = require('../integrations/netlify/salvage')
+const { describeRunChanges, shouldLandRun } = require('./display/run-landing')
 const {
   BODY_FALLBACK_THRESHOLD,
   GITHUB_ACTION_TRIGGER_TEXT_ENV_PREFIX,
@@ -340,6 +342,8 @@ function loadDashboardServer() {
  *   netlifyConfig?: string,
  *   timeoutMinutes?: string | number,
  *   cancelOnTimeout?: boolean,
+ *   pr?: boolean,
+ *   continue?: string,
  *   repo?: string,
  *   date?: string,
  *   runner?: string,
@@ -963,6 +967,7 @@ async function runSingleNetlifyAgent({
     compactPromptText: '',
     resultText: '',
     runnerId: '',
+    ...(options.continue ? { existingRunnerId: String(options.continue) } : {}),
     issueUrl: '',
     commentUrl: '',
     prUrl: '',
@@ -1013,7 +1018,7 @@ async function runSingleNetlifyAgent({
   })
   let settled = false
   try {
-    const [completed] = await waitForLocalAgentRuns({
+    const [waited] = await waitForLocalAgentRuns({
       projectRoot,
       runs: [submitted],
       siteId: netlify.siteId,
@@ -1031,7 +1036,10 @@ async function runSingleNetlifyAgent({
         reportTerminalLocalRun(reporter, terminalRun, projectRoot)
       },
     })
-    addLocalRunLinks(completed, projectRoot, options)
+    addLocalRunLinks(waited, projectRoot, options)
+    const completed = shouldLandRun(waited, options)
+      ? await openRunPullRequest(waited, netlify)
+      : waited
     const artifactSource = source || { type: 'ad-hoc' }
     const sessionArtifact = persistAgentSessionArtifact({
       projectRoot,
@@ -1070,6 +1078,7 @@ async function runSingleNetlifyAgent({
     settled = true
     const url = completed.links?.sessionUrl || completed.links?.agentRunUrl || ''
     if (url) console.log(`Result: ${url}`)
+    console.log(describeRunChanges(completed))
     if (sessionArtifact?.dir || runnerArtifact?.dir) {
       console.log('')
       if (sessionArtifact?.dir) console.log(`Session artifacts: ${sessionArtifact.dir}`)
@@ -1087,6 +1096,24 @@ async function runSingleNetlifyAgent({
     }
   } finally {
     if (!settled) reporter.fail(`${runTitle} failed`)
+  }
+}
+
+/**
+ * Opens a pull request for a finished run's changes, or updates the runner's existing PR on a follow-up.
+ * @param {import('../types').AgentRun} run
+ * @param {{ siteId?: string, env?: NodeJS.ProcessEnv }} netlify
+ * @returns {Promise<import('../types').AgentRun>}
+ */
+async function openRunPullRequest(run, netlify) {
+  console.log(run.existingRunnerId ? '\nUpdating the pull request...' : '\nOpening a pull request...')
+  try {
+    return await landAgentRun({ run, siteId: netlify.siteId, env: netlify.env })
+  } catch (error) {
+    return {
+      ...run,
+      raw: { ...run.raw, landing: { kind: 'failed', step: 'pr', failure: { message: error?.message || String(error) } } },
+    }
   }
 }
 
@@ -2548,12 +2575,14 @@ async function handleSalvage(options = {}) {
     sessionId: String(options.session || ''),
     branch: String(options.branch || ''),
     allowDefaultBranch: options.allowDefaultBranch === true,
+    pullRequest: options.pr === true,
     projectRoot,
     siteId: netlify.siteId,
     env: netlify.env,
     onProgress: (message) => console.log(message),
   })
   console.log(`Committed ${result.commitSha} onto ${result.branch}`)
+  if (result.prUrl) console.log(`Pull request: ${result.prUrl}`)
   console.log('')
   console.log('Review the whole diff before merging:')
   console.log(`git fetch origin ${result.branch}`)
@@ -2751,6 +2780,17 @@ async function handleRetry(runId, options) {
   }
 }
 
+/**
+ * Continuing a runner's thread needs the Netlify API transport.
+ * @param {unknown} requested
+ * @returns {string}
+ */
+function continueTransport(requested) {
+  const value = String(requested || 'auto')
+  if (value === 'auto' || isNetlifyApiTransport(value)) return NETLIFY_API_TRANSPORT
+  throw new Error(`--continue needs --transport netlify-api; got --transport ${value}.`)
+}
+
 async function handleAdHocAgentRun(options = {}) {
   const invocationDir = path.resolve(options.invocationDir || process.cwd())
   const projectRoot = resolveProjectRoot(options.projectRoot, { cwd: invocationDir })
@@ -2773,16 +2813,19 @@ async function handleAdHocAgentRun(options = {}) {
     },
   })
   const pinnedConfiguration = Boolean(resolvedConfig.model || resolvedConfig.effort)
+  const requestedTransport = configuredOptions.continue
+    ? continueTransport(configuredOptions.transport)
+    : configuredOptions.transport || 'auto'
   const transport = pinnedConfiguration
     ? resolveTransportForAgentConfigurations({
-        requested: configuredOptions.transport || 'auto',
+        requested: requestedTransport,
         detections: configuredOptions.dryRun
           ? [{ id: 'github', available: true }, { id: NETLIFY_API_TRANSPORT, available: true }]
           : detectTransports({ projectRoot }),
         configurations: [resolvedConfig],
       })
     : await chooseSingleRunTransportInteractively({
-        requested: configuredOptions.transport || 'auto',
+        requested: requestedTransport,
         projectRoot,
       })
   if (configuredOptions.dryRun) {

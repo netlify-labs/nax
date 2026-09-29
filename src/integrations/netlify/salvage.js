@@ -2,6 +2,10 @@
 // Creates the branch at the session base SHA first, because the platform cannot commit onto a missing branch.
 const { createNaxAgentRunnerSdk } = require('./agent-runner-sdk')
 const { runCommand, validateGitRefName } = require('../git/review-context')
+const { runGh } = require('../github/gh-cli')
+
+// GitHub rejects pull request bodies over 65,536 characters.
+const MAX_PR_BODY_CHARS = 60000
 
 // Runner states the Agent Runner SDK treats as terminal (success, failure, cancelled, timed out).
 const FINISHED_STATES = new Set([
@@ -14,16 +18,20 @@ const FINISHED_STATES = new Set([
 /**
  * @typedef {(command: string, args: string[], options?: { cwd?: string }) => { status: number | null, stdout: string, stderr: string, detail: string }} GitRunner
  *
+ * @typedef {(args: string[], options?: { cwd?: string }) => { stdout?: string }} GhRunner
+ *
  * @typedef {{
  *   runnerId: string,
  *   sessionId?: string,
  *   branch?: string,
  *   allowDefaultBranch?: boolean,
+ *   pullRequest?: boolean,
  *   projectRoot?: string,
  *   siteId?: string,
  *   env?: NodeJS.ProcessEnv,
  *   sdk?: import('nax-agent-runner-sdk').AgentRunnerSdk,
  *   run?: GitRunner,
+ *   gh?: GhRunner,
  *   pollIntervalMs?: number,
  *   pollTimeoutMs?: number,
  *   onProgress?: (message: string) => void,
@@ -36,6 +44,7 @@ const FINISHED_STATES = new Set([
  *   baseSha: string,
  *   createdBranch: boolean,
  *   commitSha: string,
+ *   prUrl: string,
  * }} SalvageResult
  */
 
@@ -73,6 +82,17 @@ function remoteBranchExists(run, branch, cwd) {
 }
 
 /**
+ * Returns the open pull request for the branch, or opens one into the branch the run started from.
+ * @param {{ gh: GhRunner, cwd: string, head: string, base: string, title: string, body: string }} input
+ * @returns {string}
+ */
+function ensurePullRequest({ gh, cwd, head, base, title, body }) {
+  const existing = String(gh(['pr', 'list', '--head', head, '--state', 'open', '--json', 'url', '--jq', '.[0].url'], { cwd }).stdout || '').trim()
+  if (existing) return existing
+  return String(gh(['pr', 'create', '--head', head, '--base', base, '--title', title, '--body', body], { cwd }).stdout || '').trim()
+}
+
+/**
  * @param {SalvageInput} input
  * @returns {Promise<SalvageResult>}
  */
@@ -81,11 +101,13 @@ async function salvageAgentRun({
   sessionId = '',
   branch = '',
   allowDefaultBranch = false,
+  pullRequest = false,
   projectRoot = process.cwd(),
   siteId,
   env,
   sdk,
   run = runCommand,
+  gh = runGh,
   pollIntervalMs = 3000,
   pollTimeoutMs = 5 * 60 * 1000,
   onProgress = () => {},
@@ -138,7 +160,20 @@ async function salvageAgentRun({
       if (current.mergeCommitError) throw new Error(`Netlify could not commit runner ${runnerId} onto ${targetBranch}: ${current.mergeCommitError}`)
       const commitSha = String(current.mergeCommitSha || '')
       if (commitSha && commitSha !== previousSha) {
-        return { runnerId, sessionId: session.sessionId, branch: targetBranch, baseSha, createdBranch, commitSha }
+        const prUrl = pullRequest
+          ? ensurePullRequest({
+              gh,
+              cwd: projectRoot,
+              head: targetBranch,
+              base: String(runner.branch || defaultBranch),
+              title: session.title || `nax salvage: runner ${runnerId}`,
+              body: [
+                String(session.resultText || '').slice(0, MAX_PR_BODY_CHARS),
+                `Salvaged from Netlify agent runner ${runnerId}, session ${session.sessionId}.`,
+              ].filter(Boolean).join('\n\n---\n\n'),
+            })
+          : ''
+        return { runnerId, sessionId: session.sessionId, branch: targetBranch, baseSha, createdBranch, commitSha, prUrl }
       }
     }
     await new Promise((resolve) => setTimeout(resolve, pollIntervalMs))

@@ -500,7 +500,9 @@ function buildNaxProgram({
     .description('Run one Netlify agent directly')
     .option('--prompt <text>', 'Prompt text for the agent run')
     .option('--model <id>', 'Model for this agent; Auto omits the model')
-    .option('--effort <level>', 'Reasoning effort for this agent; Auto omits effort'), collectOption), collectOption, defaultOutputBudgetBytes)
+    .option('--effort <level>', 'Reasoning effort for this agent; Auto omits effort')
+    .option('--continue <runner-id>', 'Continue this runner\'s thread with a follow-up session; updates its pull request')
+    .option('--no-pr', 'Do not open a pull request when the run changes code'), collectOption), collectOption, defaultOutputBudgetBytes)
     .action((type, promptParts, options, command) => {
       const agent = validateAgentName(type)
       const resolvedOptions = actionOptions(options, command)
@@ -582,6 +584,7 @@ function buildNaxProgram({
     .option('--session <id>', 'Session id to salvage; defaults to the latest session')
     .option('--branch <name>', 'Branch to commit onto; created at the session base commit when missing (default: nax/salvage-<runner>)')
     .option('--allow-default-branch', 'Allow committing onto the repository default branch')
+    .option('--pr', 'Open a pull request from the branch into the branch the run started from')
     .addOption(hiddenOption('--project-root <path>', 'Project root for git and Netlify site resolution'))
     .addOption(hiddenOption('--site-id <id>', 'Netlify site ID'))
     .addOption(hiddenOption('--filter <app>', 'Netlify CLI monorepo app filter'))

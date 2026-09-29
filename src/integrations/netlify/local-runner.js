@@ -1041,6 +1041,36 @@ async function stopAgentRun({ runnerId, siteId, env, sdk, sdkHandle } = {}) {
   }
 }
 
+// Time budget for opening or updating a pull request after the run finished.
+const LANDING_DEADLINE_MS = 10 * 60 * 1000
+
+/**
+ * Opens a pull request for a finished run's changes, or commits a follow-up session onto the runner's existing PR.
+ * Landing failures stay on `raw.landing` as data; the run status is unchanged.
+ * @param {{ run: import('../../types').AgentRun, siteId?: string, env?: NodeJS.ProcessEnv, sdk?: import('nax-agent-runner-sdk').AgentRunnerSdk }} input
+ * @returns {Promise<import('../../types').AgentRun>}
+ */
+async function landAgentRun({ run, siteId, env, sdk }) {
+  const resolvedSiteId = siteId || run.netlifySiteId
+  const client = createNaxAgentRunnerSdk({ sdk, env, siteId: resolvedSiteId })
+  const handle = await resolveRunHandle({ sdk: client, run, siteId: resolvedSiteId })
+  const { handle: landedHandle, landing } = await client.land({
+    ...handle,
+    policy: { ...handle.policy, landing: 'pr', deadlineAt: Date.now() + LANDING_DEADLINE_MS },
+  })
+  const prUrl = 'prUrl' in landing ? landing.prUrl : ''
+  return {
+    ...run,
+    sdkHandle: landedHandle,
+    ...(prUrl ? { prUrl, links: { ...(run.links || {}), prUrl } } : {}),
+    raw: {
+      ...run.raw,
+      sdkHandle: landedHandle,
+      landing: /** @type {import('../../types').JsonMap} */ (/** @type {unknown} */ (landing)),
+    },
+  }
+}
+
 /** @param {AgentRunnerCommandOptions} param0 */
 async function archiveAgentRun({ runnerId, env, sdk } = {}) {
   if (!runnerId) throw new Error('Netlify agent runner ID is required to archive a run.')
@@ -1557,6 +1587,7 @@ async function waitForLocalAgentRuns({
 }
 
 module.exports = {
+  landAgentRun,
   reconcileLocalSubmission,
   archiveAgentRun,
   buildNetlifyEnv,

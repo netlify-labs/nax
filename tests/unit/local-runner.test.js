@@ -9,6 +9,7 @@ const {
   buildNetlifyEnv,
   compactPromptForArgumentLimitRetry,
   formatCommandForError,
+  landAgentRun,
   latestSessionFromList,
   listAgentSessions,
   listLinkedNetlifySites,
@@ -526,6 +527,54 @@ test('remote timedOut result keeps the session result text', async () => {
   assert.equal(timedOut.status, 'timeout')
   assert.equal(timedOut.resultText, 'Partial summary')
   assert.equal(timedOut.fileChanges.hasChanges, true)
+})
+
+test('landAgentRun opens a pull request through SDK landing and records its URL', async () => {
+  const persisted = handle({ policy: { ...handle().policy, deadlineAt: Date.now() - 60_000 } })
+  const { sdk, calls } = sdkHarness({
+    sdk: {
+      land: async (value) => {
+        calls.push(['land', value])
+        return {
+          handle: { ...value, landing: { prUrl: 'https://github.com/o/r/pull/7' } },
+          landing: { kind: 'prOpen', prUrl: 'https://github.com/o/r/pull/7', merged: false },
+        }
+      },
+    },
+  })
+  const landed = await landAgentRun({
+    run: { agent: 'codex', status: 'completed', runnerId: 'runner-1', sdkHandle: persisted, raw: { sdkHandle: persisted } },
+    siteId: 'site-1',
+    sdk,
+  })
+
+  const [, landingHandle] = calls.find(([operation]) => operation === 'land')
+  assert.equal(landingHandle.policy.landing, 'pr')
+  assert.ok(landingHandle.policy.deadlineAt > Date.now(), 'landing gets its own deadline')
+  assert.equal(landed.prUrl, 'https://github.com/o/r/pull/7')
+  assert.equal(landed.links.prUrl, 'https://github.com/o/r/pull/7')
+  assert.deepEqual(landed.raw.landing, { kind: 'prOpen', prUrl: 'https://github.com/o/r/pull/7', merged: false })
+  assert.equal(landed.sdkHandle.landing.prUrl, 'https://github.com/o/r/pull/7')
+  assert.deepEqual(landed.raw.sdkHandle, landed.sdkHandle)
+})
+
+test('landAgentRun keeps a failed landing as data', async () => {
+  const persisted = handle()
+  const failure = { category: 'platform', code: 'pr-failed', message: 'GitHub rejected the PR', retryable: false }
+  const { sdk } = sdkHarness({
+    sdk: {
+      land: async (value) => ({ handle: value, landing: { kind: 'failed', step: 'pr', failure } }),
+    },
+  })
+  const landed = await landAgentRun({
+    run: { agent: 'codex', status: 'completed', runnerId: 'runner-1', sdkHandle: persisted, raw: {} },
+    siteId: 'site-1',
+    sdk,
+  })
+
+  assert.equal(landed.status, 'completed')
+  assert.equal(landed.prUrl || '', '')
+  assert.equal(/** @type {{ kind?: string }} */ (landed.raw.landing).kind, 'failed')
 })
 
 test('capacity recovery delegates to SDK retry and advances the handle once', async () => {

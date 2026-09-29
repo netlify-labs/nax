@@ -65,7 +65,7 @@ test('salvage creates the missing branch at the session base SHA and commits the
 
   assert.ok(git.calls.some((call) => call.join(' ') === `git push origin ${BASE_SHA}:refs/heads/nax/fix`))
   assert.deepEqual(calls.find(([operation]) => operation === 'member'), ['member', 'runner-1', 'commit', { targetBranch: 'nax/fix' }])
-  assert.deepEqual(result, { runnerId: 'runner-1', sessionId: 'session-1', branch: 'nax/fix', baseSha: BASE_SHA, createdBranch: true, commitSha: 'abc123' })
+  assert.deepEqual(result, { runnerId: 'runner-1', sessionId: 'session-1', branch: 'nax/fix', baseSha: BASE_SHA, createdBranch: true, commitSha: 'abc123', prUrl: '' })
 })
 
 test('salvage fetches the base SHA when it is not in the local clone', async () => {
@@ -149,4 +149,55 @@ test('salvage waits while the commit is being created', async () => {
   })
   const result = await salvageAgentRun({ runnerId: 'runner-1', branch: 'nax/fix', sdk, run: gitHarness().run, pollIntervalMs: 1 })
   assert.equal(result.commitSha, 'def456')
+})
+
+/**
+ * @param {{ existingUrl?: string }} [input]
+ */
+function ghHarness({ existingUrl = '' } = {}) {
+  const calls = []
+  /** @param {string[]} args */
+  const gh = (args) => {
+    calls.push(args)
+    if (args[0] === 'pr' && args[1] === 'list') return { stdout: existingUrl }
+    if (args[0] === 'pr' && args[1] === 'create') return { stdout: 'https://github.com/o/r/pull/9' }
+    return { stdout: '' }
+  }
+  return { gh, calls }
+}
+
+test('salvage with pullRequest opens a PR from the branch into the run branch', async () => {
+  const { sdk } = sdkHarness({
+    runner: { branch: 'develop' },
+    sessions: [{ sessionId: 'session-1', state: 'cancelled', hasResultDiff: true, baseSha: BASE_SHA, title: 'Refactor billing', resultText: 'Six refactors done.' }],
+  })
+  const github = ghHarness()
+  const result = await salvageAgentRun({ runnerId: 'runner-1', branch: 'nax/fix', pullRequest: true, sdk, run: gitHarness().run, gh: github.gh, pollIntervalMs: 1 })
+
+  const create = github.calls.find((args) => args[1] === 'create')
+  assert.ok(create)
+  const flag = (/** @type {string} */ name) => create[create.indexOf(name) + 1]
+  assert.equal(flag('--head'), 'nax/fix')
+  assert.equal(flag('--base'), 'develop')
+  assert.equal(flag('--title'), 'Refactor billing')
+  assert.match(flag('--body'), /Six refactors done\./)
+  assert.match(flag('--body'), /Salvaged from Netlify agent runner runner-1, session session-1/)
+  assert.equal(result.prUrl, 'https://github.com/o/r/pull/9')
+})
+
+test('salvage with pullRequest reuses an open PR for the branch', async () => {
+  const { sdk } = sdkHarness()
+  const github = ghHarness({ existingUrl: 'https://github.com/o/r/pull/3' })
+  const result = await salvageAgentRun({ runnerId: 'runner-1', branch: 'nax/fix', pullRequest: true, sdk, run: gitHarness().run, gh: github.gh, pollIntervalMs: 1 })
+
+  assert.equal(github.calls.some((args) => args[1] === 'create'), false)
+  assert.equal(result.prUrl, 'https://github.com/o/r/pull/3')
+})
+
+test('salvage without pullRequest never calls gh', async () => {
+  const { sdk } = sdkHarness()
+  const github = ghHarness()
+  const result = await salvageAgentRun({ runnerId: 'runner-1', branch: 'nax/fix', sdk, run: gitHarness().run, gh: github.gh, pollIntervalMs: 1 })
+  assert.equal(github.calls.length, 0)
+  assert.equal(result.prUrl, '')
 })

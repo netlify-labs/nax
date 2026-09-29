@@ -294,13 +294,28 @@ test('handoff, admin, and hidden ci route to their handlers', async () => {
   assert.deepEqual(calls[7].args[0], ['npm', 'test'])
 })
 
+test('run agent routes --continue and --no-pr', async () => {
+  const { calls, program } = makeProgram()
+
+  await parse(program, ['run', 'agent', 'claude', '--prompt', 'Fix the test', '--continue', 'runner-1', '--no-pr'])
+  await parse(program, ['run', 'agent', 'claude', '--prompt', 'Fix the test'])
+
+  const followUp = /** @type {{ continue?: string, pr?: boolean }} */ (calls[0].args[1])
+  assert.equal(followUp.continue, 'runner-1')
+  assert.equal(followUp.pr, false)
+  const fresh = /** @type {{ continue?: string, pr?: boolean }} */ (calls[1].args[1])
+  assert.equal(fresh.continue, undefined)
+  assert.equal(fresh.pr, true)
+})
+
 test('salvage routes its runner, branch, and default-branch options', async () => {
   const { calls, program } = makeProgram()
 
-  await parse(program, ['salvage', '--runner', 'runner-1', '--branch', 'nax/fix', '--session', 'session-1', '--allow-default-branch'])
+  await parse(program, ['salvage', '--runner', 'runner-1', '--branch', 'nax/fix', '--session', 'session-1', '--allow-default-branch', '--pr'])
 
   assert.equal(calls[0].name, 'salvage')
-  const options = /** @type {{ runner?: string, branch?: string, session?: string, allowDefaultBranch?: boolean }} */ (calls[0].args[0])
+  const options = /** @type {{ runner?: string, branch?: string, session?: string, allowDefaultBranch?: boolean, pr?: boolean }} */ (calls[0].args[0])
+  assert.equal(options.pr, true)
   assert.equal(options.runner, 'runner-1')
   assert.equal(options.branch, 'nax/fix')
   assert.equal(options.session, 'session-1')

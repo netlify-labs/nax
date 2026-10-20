@@ -71,8 +71,9 @@ nax run agent <claude|codex|gemini|opencode> \
 ### Choose agent, model, effort
 
 - **Agent** (positional): `claude`, `codex`, `gemini`, or `opencode`. Pick what the user asked for. For a second opinion on your own work, pick a different provider from yourself.
-- **Model** (`--model <id>`): omit it for Auto (the runner's default), which is the safest choice. If the user names a model, pass its exact provider model id (for example `--model gpt-5.6-sol`). Ids outside nax's bundled catalog pass through with a warning and are validated by the backend, so a typo fails at submit time, not earlier.
+- **Model** (`--model <id>`): omit it for Auto (the runner's default), which is the safest choice. If the user names a model, pass its exact provider model id (for example `--model gpt-6.1-sol`). Ids outside nax's bundled catalog pass through with a warning and are validated by the backend, so a typo fails at submit time, not earlier.
 - **Effort** (`--effort <level>`): usually `low`, `medium`, or `high`, depending on the model. Effort requires a model; omit both for Auto.
+- **Codex reviews default:** when asked for a Codex review or cross-check and no model is named, use `nax run agent codex --model gpt-6.1-sol --effort high`.
 
 Log lines to capture:
 

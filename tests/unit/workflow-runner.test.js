@@ -162,7 +162,7 @@ test('CLI dry-run previews all four multi-instance lineup use cases', () => {
     {
       name: 'combined lineup',
       agents: ['claude:claude-opus-5:high,codex:latest,gemini'],
-      expected: [/Claude · Opus 5 · High/, /Codex · GPT 5\.6/, /Gemini ·/],
+      expected: [/Claude · Opus 5 · High/, /Codex · GPT 6\.1/, /Gemini ·/],
     },
   ]
 

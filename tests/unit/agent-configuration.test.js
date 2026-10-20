@@ -26,6 +26,7 @@ const EXPECTED_MODELS = {
     'claude-haiku-4-5',
   ],
   codex: [
+    'gpt-6.1-sol',
     'gpt-5.6-sol',
     'gpt-5.6-terra',
     'gpt-5.6-luna',
@@ -53,6 +54,7 @@ const EXPECTED_LABELS = {
   'claude-fable-5': 'Fable 5',
   'claude-sonnet-5': 'Sonnet 5',
   'claude-haiku-4-5': 'Haiku 4.5',
+  'gpt-6.1-sol': 'GPT 6.1 Sol',
   'gpt-5.6-sol': 'GPT 5.6 Sol',
   'gpt-5.6-terra': 'GPT 5.6 Terra',
   'gpt-5.6-luna': 'GPT 5.6 Luna',
@@ -295,7 +297,7 @@ test('catalog helpers preserve unknown values and display Max', () => {
 test('getBestModelForProvider returns the flagship model per provider', () => {
   assert.equal(getBestModelForProvider('claude'), 'claude-fable-5')
   assert.equal(getBestModelForProvider('gemini'), 'gemini-3.1-pro-preview')
-  assert.equal(getBestModelForProvider('codex'), 'gpt-5.6-sol')
+  assert.equal(getBestModelForProvider('codex'), 'gpt-6.1-sol')
   assert.equal(getBestModelForProvider('opencode'), 'moonshotai/kimi-k3')
   assert.equal(getBestModelForProvider('unknown-provider'), 'auto')
 })
@@ -315,7 +317,7 @@ test('catalog exposes a configurable defaultModel per provider (Claude = Fable 5
   assert.deepEqual(byId, {
     claude: 'claude-fable-5',
     gemini: 'gemini-3.1-pro-preview',
-    codex: 'gpt-5.6-sol',
+    codex: 'gpt-6.1-sol',
     opencode: 'moonshotai/kimi-k3',
   })
   // every defaultModel is a real model of its provider

@@ -116,8 +116,9 @@ const AGENT_CONFIGURATION_CATALOG = {
     {
       id: 'codex',
       label: 'Codex',
-      defaultModel: 'gpt-5.6-sol',
+      defaultModel: 'gpt-6.1-sol',
       models: [
+        { id: 'gpt-6.1-sol', label: 'GPT 6.1 Sol', efforts: LOW_MEDIUM_HIGH_EFFORTS },
         { id: 'gpt-5.6-sol', label: 'GPT 5.6 Sol', efforts: LOW_MEDIUM_HIGH_EFFORTS },
         { id: 'gpt-5.6-terra', label: 'GPT 5.6 Terra', efforts: LOW_MEDIUM_HIGH_EFFORTS },
         { id: 'gpt-5.6-luna', label: 'GPT 5.6 Luna', efforts: LOW_MEDIUM_HIGH_EFFORTS },

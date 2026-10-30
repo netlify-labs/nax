@@ -27,7 +27,7 @@
   },
   "properties": {
     "$schema": { "type": "string" },
-    "description": { "type": "string", "description": "Shown at the top of the generated AGENTS.md section." },
+    "description": { "type": "string", "description": "Shown at the top of the netlify-agent-kit skill that install writes for the agent." },
     "hyperframes": {
       "type": "object",
       "description": "The HyperFrames preset: FFmpeg, the HyperFrames skills and its headless Chrome. `npx netlify-agent-kit add hyperframes` fills this in.",

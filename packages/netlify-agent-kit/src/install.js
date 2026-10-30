@@ -3,6 +3,7 @@ const path = require('node:path')
 const { loadConfig } = require('./config')
 const { detect } = require('./detect')
 const { excludePaths } = require('./exclude')
+const { writeGuide } = require('./guide')
 const { configureMcpServers } = require('./mcp')
 const { commandEnv } = require('./paths')
 const { writeRecord } = require('./record')
@@ -41,7 +42,7 @@ function messageOf(error) {
 }
 
 /**
- * Installs what the agent needs: secrets → repositories → tools → skills → MCP → run → exclusions.
+ * Installs what the agent needs: secrets → repositories → tools → skills → guide skill → MCP → run → exclusions.
  * Does nothing outside agent runners unless forced; a dry run shows the plan anywhere.
  * Never throws for step failures; they're recorded.
  * @param {InstallOptions} [options]
@@ -165,6 +166,10 @@ async function install({
         addStep({ kind: 'skills', from: skill.from, status: 'error', error: messageOf(error), ms: Date.now() - stepStarted })
       }
     }
+
+    const guide = writeGuide({ config, cwd, env, dryRun })
+    addStep(guide.step)
+    repoPaths.push(...guide.createdPaths)
 
     if (Object.keys(config.mcpServers).length > 0) {
       if (config.experimental.mcpServers) {

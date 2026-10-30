@@ -35,7 +35,7 @@ test('the hyperframes preset expands to ffmpeg, the skills the npm package ships
   assert.equal(config.skills[0].path, 'dist/skills')
   assert.deepEqual(config.skills[0].names, ['hyperframes', 'hyperframes-cli', 'media-use'])
   assert.deepEqual(config.run, [{ cwd: 'video', command: 'npx -y hyperframes@0.8.217 browser ensure' }])
-  assert.equal(config.agentsMd.length > 0, true)
+  assert.match(config.guide.join('\n'), /read the `hyperframes` skill first/)
 })
 
 test('validation errors and pinning warnings', () => {

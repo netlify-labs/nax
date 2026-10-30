@@ -1,7 +1,6 @@
 const fs = require('node:fs')
 const path = require('node:path')
 
-const { renderAgentsSection, upsertSection } = require('./agents-md')
 const { PACKAGE_KEY, normalizeConfig } = require('./config')
 const { PRESETS } = require('./presets')
 const { version } = require('../package.json')
@@ -31,8 +30,6 @@ function buildPostinstall(existing) {
  * @returns {{
  *   packageJsonPath: string,
  *   packageJson: Record<string, unknown>,
- *   agentsPath: string,
- *   agentsContent: string,
  *   notes: string[],
  *   warnings: string[],
  *   errors: string[],
@@ -41,7 +38,6 @@ function buildPostinstall(existing) {
  */
 function planAdd({ cwd, preset, options = {}, runFile }) {
   const packageJsonPath = path.join(cwd, 'package.json')
-  const agentsPath = path.join(cwd, 'AGENTS.md')
   const isNewPackage = !fs.existsSync(packageJsonPath)
   /** @type {Record<string, unknown> & { scripts?: Record<string, string>, devDependencies?: Record<string, string>, private?: boolean }} */
   const pkg = isNewPackage
@@ -50,7 +46,7 @@ function planAdd({ cwd, preset, options = {}, runFile }) {
   const notes = []
   const warnings = []
   const fail = (/** @type {string} */ message) => ({
-    packageJsonPath, packageJson: pkg, agentsPath, agentsContent: '', notes, warnings, errors: [message], isNewPackage,
+    packageJsonPath, packageJson: pkg, notes, warnings, errors: [message], isNewPackage,
   })
 
   if (!isNewPackage && pkg.private !== true) {
@@ -78,16 +74,9 @@ function planAdd({ cwd, preset, options = {}, runFile }) {
   pkg.devDependencies = { ...(pkg.devDependencies || {}), [COMMAND]: `^${version}` }
   pkg[PACKAGE_KEY] = nextConfig
 
-  const currentAgents = fs.existsSync(agentsPath) ? fs.readFileSync(agentsPath, 'utf8') : ''
-  const agentsContent = normalized.config
-    ? upsertSection(currentAgents, renderAgentsSection(normalized.config))
-    : currentAgents
-
   return {
     packageJsonPath,
     packageJson: pkg,
-    agentsPath,
-    agentsContent,
     notes,
     warnings: [...warnings, ...normalized.warnings],
     errors: normalized.errors,
@@ -101,7 +90,6 @@ function planAdd({ cwd, preset, options = {}, runFile }) {
  */
 function applyAdd(plan) {
   fs.writeFileSync(plan.packageJsonPath, JSON.stringify(plan.packageJson, null, 2) + '\n')
-  fs.writeFileSync(plan.agentsPath, plan.agentsContent)
 }
 
 module.exports = {

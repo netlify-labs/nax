@@ -94,6 +94,7 @@ try {
   assert.match(installOutput, /run-step-ok/)
   assert.equal(fs.existsSync(path.join(project, '.claude', 'skills', 'house-style', 'SKILL.md')), true)
   assert.equal(fs.existsSync(path.join(project, '.agents', 'skills', 'house-style', 'SKILL.md')), true)
+  assert.equal(fs.existsSync(path.join(project, '.claude', 'skills', 'netlify-agent-kit', 'SKILL.md')), true)
   assert.equal(git(project, ['status', '--porcelain']), '', 'install must not show up in git status')
 
   const status = execFileSync(path.join(project, 'node_modules', '.bin', 'netlify-agent-kit'), ['status', '--json'], { cwd: project, env: baseEnv, encoding: 'utf8' })

@@ -25,23 +25,25 @@ npx netlify-agent-kit add hyperframes
 npm install
 ```
 
-Commit `package.json` and `AGENTS.md`. `add` finds the HyperFrames project and the version it pins, and writes:
+Commit `package.json`. `add` finds the HyperFrames project and the version it pins, and writes:
 
 ```json
 {
   "scripts": { "postinstall": "netlify-agent-kit install || exit 0" },
-  "devDependencies": { "netlify-agent-kit": "^0.1.0" },
+  "devDependencies": { "netlify-agent-kit": "^0.2.0" },
   "netlifyAgent": { "hyperframes": { "version": "0.8.217", "dir": "video" } }
 }
 ```
 
-It also adds a section to `AGENTS.md`, so the agent knows what's installed. An existing `postinstall` is kept, and ours runs after it.
+That's the only file it changes. An existing `postinstall` is kept, and ours runs after it.
+
+In agent runners, `install` also writes a `netlify-agent-kit` skill that tells the agent what's installed: tools, the HyperFrames project, cloned repositories and secret names. It's regenerated on every install and hidden from git, so it never goes stale and never shows up in a diff.
 
 ## Commands
 
 | Command | Who runs it | What it does |
 | --- | --- | --- |
-| `npx netlify-agent-kit add hyperframes` | You, once | Configures the repo. `--version` and `--dir` override what it detects. |
+| `npx netlify-agent-kit add hyperframes` | You, once | Configures `package.json`. `--version` and `--dir` override what it detects. |
 | `netlify-agent-kit install` | Your `postinstall` | Installs everything, in agent runners only. `--dry-run` shows what it would install, `--force` installs anywhere. |
 | `npx netlify-agent-kit status` | You or the agent | Shows what the last install did. |
 
@@ -92,7 +94,7 @@ For a private source, `auth` names the environment variable that holds the token
 
 ## Keeping it out of the agent's changes
 
-Installed skills and project tool links are listed in a managed block in `.git/info/exclude`, git's per-clone ignore file. That file isn't committed, so the paths never show up in `git status`. Everything else lives outside the repo: tools in `~/.cache/netlify-agent-kit/`, links in `~/.local/bin`, and clones in `~/repos/`.
+Installed skills, the `netlify-agent-kit` skill and project tool links are listed in a managed block in `.git/info/exclude`, git's per-clone ignore file. That file isn't committed, so the paths never show up in `git status`. Everything else lives outside the repo: tools in `~/.cache/netlify-agent-kit/`, links in `~/.local/bin`, and clones in `~/repos/`.
 
 The record of the last install, at `~/.cache/netlify-agent-kit/last-install.json`, lists each step, its result and timing, with environment variable names only.
 

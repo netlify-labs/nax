@@ -9,14 +9,14 @@ npx netlify-agent-kit add hyperframes
 npm install
 ```
 
-Commit `package.json` and `AGENTS.md`. That's it: the next agent run has FFmpeg, the HyperFrames skills and HyperFrames' Chrome before the agent starts.
+Commit `package.json`. That's it: the next agent run has FFmpeg, the HyperFrames skills and HyperFrames' Chrome before the agent starts, plus a `netlify-agent-kit` skill that tells the agent what's installed.
 
 ## Commands
 
 | Command | Who runs it | What it does |
 | --- | --- | --- |
-| `npx netlify-agent-kit add hyperframes` | You, once | Configures the repo: adds the preset to `package.json`, the `postinstall` hook, and a section in `AGENTS.md` so the agent knows what's installed. |
-| `netlify-agent-kit install` | Your `postinstall`, on every `npm install` | Installs everything, in agent runners only. Anywhere else it prints one line and exits. |
+| `npx netlify-agent-kit add hyperframes` | You, once | Configures the repo: adds the preset and the `postinstall` hook to `package.json`. Nothing else changes. |
+| `netlify-agent-kit install` | Your `postinstall`, on every `npm install` | Installs everything, and writes the `netlify-agent-kit` skill, in agent runners only. Anywhere else it prints one line and exits. |
 | `npx netlify-agent-kit status` | You or the agent | Shows what the last install did. |
 
 `add` options: `--version <v>` and `--dir <path>` override what it detects.
@@ -30,7 +30,7 @@ For a repo with a HyperFrames project in `video/`:
 ```json
 {
   "scripts": { "postinstall": "netlify-agent-kit install || exit 0" },
-  "devDependencies": { "netlify-agent-kit": "^0.1.0" },
+  "devDependencies": { "netlify-agent-kit": "^0.2.0" },
   "netlifyAgent": { "hyperframes": { "version": "0.8.217", "dir": "video" } }
 }
 ```
@@ -40,7 +40,11 @@ For a repo with a HyperFrames project in `video/`:
 - **An existing `postinstall`:** kept. Ours runs after it: `<yours> && (netlify-agent-kit install || exit 0)`.
 - **`|| exit 0`:** installs that skip dev dependencies (`npm install --omit=dev`) don't have the command, and shouldn't fail because of it.
 
-Running `add` again is safe: it updates the same config and the same `AGENTS.md` section.
+Running `add` again is safe: it updates the same config.
+
+## The `netlify-agent-kit` skill
+
+Agents need to know what's set up for them: that FFmpeg is on `PATH` and `apt-get` won't work, where the HyperFrames project is, where related repos were cloned, which secrets exist. `install` writes that into a `netlify-agent-kit` skill, next to the other installed skills in `.claude/skills` and `.agents/skills`. It's regenerated on every install from the current config, so it never goes stale, and it's hidden from git like the other skills, so it never shows up in a diff. If the repo or `~/.claude/skills` already has a skill with that name, it's left alone.
 
 ## Presets
 
@@ -59,7 +63,7 @@ Everything a preset does, you can also list yourself, under the same `netlifyAge
   "netlifyAgent": {
     "hyperframes": { "version": "0.8.217", "dir": "video" },
 
-    // Shown at the top of the AGENTS.md section.
+    // Shown at the top of the netlify-agent-kit skill.
     "description": "Marketing site and its HyperFrames hero video.",
 
     // Environment variable names the agent needs. Checked, never printed.
@@ -147,7 +151,7 @@ Agent runner setup runs `npm install` with `BUILD_ID` and `DEPLOY_ID` set but wi
 
 ## What it changes
 
-- **Inside the repo:** installed skills and any project tool links. Each path goes in a managed block in `.git/info/exclude`, git's per-clone ignore file, so it never shows up in `git status`.
+- **Inside the repo:** installed skills, the `netlify-agent-kit` skill, and any project tool links. Each path goes in a managed block in `.git/info/exclude`, git's per-clone ignore file, so it never shows up in `git status`.
 - **Outside the repo:** tools in `~/.cache/netlify-agent-kit/`, links in `~/.local/bin`, repositories in `~/repos/`, and the record of the last install in `~/.cache/netlify-agent-kit/last-install.json`.
 
 Logs and the record contain environment variable names only, never values.

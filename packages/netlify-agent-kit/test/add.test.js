@@ -3,7 +3,6 @@ const fs = require('node:fs')
 const path = require('node:path')
 const test = require('node:test')
 
-const { START } = require('../src/agents-md')
 const { applyAdd, buildPostinstall, planAdd } = require('../src/add')
 const { findProjects, pinnedVersion } = require('../src/presets/hyperframes')
 const { tempDir } = require('./helpers')
@@ -32,9 +31,8 @@ test('buildPostinstall runs install, guarded, and chains onto an existing script
   assert.equal(buildPostinstall('husky install && (netlify-agent-kit install || exit 0)'), 'husky install && (netlify-agent-kit install || exit 0)')
 })
 
-test('add hyperframes finds the project and its pinned version, and writes the hook, config and AGENTS.md once', () => {
+test('add hyperframes finds the project and its pinned version, and changes only package.json', () => {
   const dir = makeSite()
-  fs.writeFileSync(path.join(dir, 'AGENTS.md'), '# Agent guide\n\nExisting notes.\n')
 
   const plan = planAdd({ cwd: dir, preset: 'hyperframes', runFile: noNpm })
   assert.deepEqual(plan.errors, [])
@@ -48,12 +46,10 @@ test('add hyperframes finds the project and its pinned version, and writes the h
   assert.match(pkg.devDependencies['netlify-agent-kit'], /^\^\d+\.\d+\.\d+$/)
   assert.deepEqual(pkg.netlifyAgent, { hyperframes: { version: '0.8.217', dir: 'video' } })
 
-  const agents = fs.readFileSync(path.join(dir, 'AGENTS.md'), 'utf8')
-  assert.match(agents, /^# Agent guide\n\nExisting notes\.\n\n<!-- netlify-agent-kit:start -->/)
-  assert.match(agents, /read the `hyperframes` skill first/)
+  assert.equal(fs.existsSync(path.join(dir, 'AGENTS.md')), false)
 
   applyAdd(planAdd({ cwd: dir, preset: 'hyperframes', runFile: noNpm }))
-  assert.equal(fs.readFileSync(path.join(dir, 'AGENTS.md'), 'utf8').split(START).length - 1, 1)
+  assert.deepEqual(JSON.parse(fs.readFileSync(path.join(dir, 'package.json'), 'utf8')), pkg)
 })
 
 test('add uses the latest published version when the project pins none', () => {

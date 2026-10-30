@@ -24,7 +24,23 @@ test('classifyNetlifyRuntime detects Netlify build CI with deploy metadata', () 
   assert.equal(runtime.label, 'netlify-build')
   assert.equal(runtime.isNetlifyBuild, true)
   assert.equal(runtime.isAgentRunner, false)
-  assert.match(runtime.reason, /build\/deploy metadata/)
+  assert.match(runtime.reason, /CONTEXT=production/)
+})
+
+test('classifyNetlifyRuntime detects agent runner setup, which has build metadata', () => {
+  const env = {
+    NETLIFY: 'true',
+    CONTEXT: 'dev-server',
+    BUILD_ID: 'build-1',
+    DEPLOY_ID: 'deploy-1',
+    NETLIFY_BUILD_BASE: '/opt/build/repo',
+  }
+
+  const runtime = classifyNetlifyRuntime(env)
+  assert.equal(runtime.label, 'agent-runner')
+  assert.equal(runtime.isNetlifyBuild, false)
+  assert.equal(runtime.isAgentRunner, true)
+  assert.equal(handleCi(['true'], { quiet: true }, { env, runCommand: () => ({ status: 0 }), log() {} }).skipped, false)
 })
 
 test('classifyNetlifyRuntime detects Netlify agent runners', () => {

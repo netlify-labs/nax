@@ -1,0 +1,46 @@
+{
+  "name": "netlify-agent-kit",
+  "version": "0.1.0",
+  "description": "Gives agents in Netlify Agent Runners the tools and skills they need: `add` configures a repo once, and `install` runs from postinstall in agent runners only.",
+  "license": "MIT",
+  "type": "commonjs",
+  "engines": {
+    "node": ">=18.17"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/netlify-labs/nax.git",
+    "directory": "packages/netlify-agent-kit"
+  },
+  "keywords": [
+    "netlify",
+    "agent-runner",
+    "agents",
+    "skills",
+    "postinstall"
+  ],
+  "bin": {
+    "netlify-agent-kit": "bin/netlify-agent-kit.js"
+  },
+  "main": "src/index.js",
+  "exports": {
+    ".": "./src/index.js",
+    "./schema.json": "./schema.json",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "bin",
+    "src",
+    "schema.json",
+    "README.md",
+    "CHANGELOG.md"
+  ],
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json",
+    "test": "node --test test/*.test.js",
+    "pack:smoke": "node scripts/pack-smoke.js",
+    "ci": "npm run typecheck && npm run test && npm run pack:smoke",
+    "prepublishOnly": "npm run ci",
+    "test:ffmpeg": "node scripts/ffmpeg-smoke.js"
+  }
+}

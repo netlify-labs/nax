@@ -1,0 +1,133 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://unpkg.com/netlify-agent-kit/schema.json",
+  "title": "netlify-agent-kit config",
+  "description": "What netlify-agent-kit sets up inside Netlify Agent Runners. Put it in package.json under \"netlifyAgent\", or in netlify-agent.json.",
+  "type": "object",
+  "additionalProperties": false,
+  "$defs": {
+    "auth": {
+      "type": "object",
+      "description": "Names the environment variable that holds a credential. Never put the credential itself here.",
+      "required": ["env"],
+      "additionalProperties": false,
+      "properties": { "env": { "type": "string", "minLength": 1 } }
+    },
+    "envValue": {
+      "oneOf": [
+        { "type": "string" },
+        {
+          "type": "object",
+          "required": ["env"],
+          "additionalProperties": false,
+          "properties": { "env": { "type": "string" }, "prefix": { "type": "string" } }
+        }
+      ]
+    }
+  },
+  "properties": {
+    "$schema": { "type": "string" },
+    "description": { "type": "string", "description": "Shown at the top of the generated AGENTS.md section." },
+    "hyperframes": {
+      "type": "object",
+      "description": "The HyperFrames preset: FFmpeg, the HyperFrames skills and its headless Chrome. `npx netlify-agent-kit add hyperframes` fills this in.",
+      "required": ["version"],
+      "additionalProperties": false,
+      "properties": {
+        "version": { "type": "string", "description": "Exact HyperFrames version, e.g. 0.8.217" },
+        "dir": { "type": "string", "description": "Folder containing hyperframes.json. Default: ." }
+      }
+    },
+    "secrets": {
+      "type": "array",
+      "description": "Environment variable names the agent needs. Install checks they exist and lists them for the agent; values are never printed.",
+      "items": { "type": "string", "minLength": 1 }
+    },
+    "repositories": {
+      "type": "array",
+      "description": "Related GitHub repos to clone read-only for the agent, outside the working tree.",
+      "items": {
+        "type": "object",
+        "required": ["repo"],
+        "additionalProperties": false,
+        "properties": {
+          "repo": { "type": "string", "pattern": "^[^/\\s]+/[^/\\s]+$" },
+          "ref": { "type": "string", "description": "Tag, branch or 40-character SHA. Pin a tag or SHA." },
+          "path": { "type": "string", "description": "Clone destination. Default: ~/repos/<owner>/<name>" },
+          "auth": { "$ref": "#/$defs/auth" }
+        }
+      }
+    },
+    "tools": {
+      "type": "array",
+      "items": {
+        "oneOf": [
+          { "type": "string", "enum": ["ffmpeg"] },
+          {
+            "type": "object",
+            "required": ["name"],
+            "additionalProperties": false,
+            "properties": {
+              "name": { "type": "string", "enum": ["ffmpeg"] },
+              "link": { "type": "array", "items": { "type": "string" }, "description": "Extra project folders to link the binaries into." }
+            }
+          }
+        ]
+      }
+    },
+    "skills": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["from"],
+        "additionalProperties": false,
+        "properties": {
+          "from": {
+            "type": "string",
+            "description": "npm:<package>@<exact version>, github:<owner>/<repo>#<tag or sha>, or ./relative/path",
+            "pattern": "^(npm:|github:|\\./|\\.\\./|/)"
+          },
+          "path": { "type": "string", "description": "Folder inside the source that contains skill folders." },
+          "names": { "type": "array", "items": { "type": "string" } },
+          "registry": { "type": "string", "format": "uri" },
+          "auth": { "$ref": "#/$defs/auth" }
+        }
+      }
+    },
+    "run": {
+      "type": "array",
+      "items": {
+        "oneOf": [
+          { "type": "string" },
+          {
+            "type": "object",
+            "required": ["command"],
+            "additionalProperties": false,
+            "properties": { "command": { "type": "string" }, "cwd": { "type": "string" } }
+          }
+        ]
+      }
+    },
+    "mcpServers": {
+      "type": "object",
+      "description": "Experimental. Added to ~/.claude.json when experimental.mcpServers is true.",
+      "additionalProperties": {
+        "type": "object",
+        "properties": {
+          "type": { "type": "string" },
+          "command": { "type": "string" },
+          "args": { "type": "array", "items": { "type": "string" } },
+          "url": { "type": "string" },
+          "env": { "type": "object", "additionalProperties": { "$ref": "#/$defs/envValue" } },
+          "headers": { "type": "object", "additionalProperties": { "$ref": "#/$defs/envValue" } }
+        }
+      }
+    },
+    "experimental": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": { "mcpServers": { "type": "boolean" } }
+    },
+    "strict": { "type": "boolean", "description": "Exit non-zero when a step fails. Default false." }
+  }
+}

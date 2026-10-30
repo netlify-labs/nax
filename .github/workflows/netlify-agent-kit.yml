@@ -1,0 +1,72 @@
+name: netlify-agent-kit
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/netlify-agent-kit.yml"
+      - "package.json"
+      - "package-lock.json"
+      - "packages/netlify-agent-kit/**"
+      - "src/integrations/netlify/runtime.js"
+      - "tests/unit/netlify-runtime.test.js"
+  push:
+    branches:
+      - master
+    paths:
+      - ".github/workflows/netlify-agent-kit.yml"
+      - "package.json"
+      - "package-lock.json"
+      - "packages/netlify-agent-kit/**"
+      - "src/integrations/netlify/runtime.js"
+      - "tests/unit/netlify-runtime.test.js"
+
+permissions:
+  contents: read
+
+jobs:
+  package:
+    name: ${{ matrix.os }} / Node ${{ matrix.node }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - ubuntu-latest
+          - macos-latest
+        node:
+          - 18
+          - 20
+          - 22
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+      - run: npm ci --ignore-scripts
+      - run: node scripts/check-jsdoc-types.js $(find packages/netlify-agent-kit/src packages/netlify-agent-kit/bin packages/netlify-agent-kit/scripts -name '*.js')
+      - run: npm run agent-kit:ci
+
+  ffmpeg:
+    name: Real FFmpeg install (Linux)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci --ignore-scripts
+      - run: npm run test:ffmpeg --workspace netlify-agent-kit
+
+  windows-noop:
+    name: Windows no-op install
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci --ignore-scripts
+      - run: node packages/netlify-agent-kit/scripts/pack-smoke.js --noop-only

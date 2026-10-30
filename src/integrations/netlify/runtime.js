@@ -1,4 +1,4 @@
-const { detect, isTruthy } = require('netlify-agent-init')
+const { detect, isTruthy } = require('netlify-agent-kit')
 
 /**
  * Netlify runtime classification derived from process environment markers.
@@ -12,7 +12,7 @@ const { detect, isTruthy } = require('netlify-agent-init')
  */
 
 /**
- * Classifies the environment with netlify-agent-init's detection. Agent runner setup
+ * Classifies the environment with netlify-agent-kit's detection. Agent runner setup
  * has BUILD_ID and DEPLOY_ID set, so build metadata alone doesn't mean a deploy build.
  * @param {NodeJS.ProcessEnv} [env]
  * @returns {NetlifyRuntimeClassification}

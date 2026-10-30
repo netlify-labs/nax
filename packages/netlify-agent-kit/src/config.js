@@ -26,7 +26,7 @@ const PACKAGE_KEY = 'netlifyAgent'
  *   tools?: ToolSpec[],
  *   skills?: SkillSpec[],
  *   run?: RunSpec[],
- *   agentsMd?: string[],
+ *   guide?: string[],
  * }} PresetResult
  *
  * @typedef {{
@@ -40,7 +40,7 @@ const PACKAGE_KEY = 'netlifyAgent'
  *   mcpServers: Record<string, McpServerSpec>,
  *   experimental: { mcpServers: boolean },
  *   strict: boolean,
- *   agentsMd: string[],
+ *   guide: string[],
  * }} AgentConfig
  *
  * @typedef {{
@@ -173,7 +173,7 @@ function normalizeConfig(raw, source) {
     mcpServers: {},
     experimental: { mcpServers: false },
     strict: raw.strict === true,
-    agentsMd: [],
+    guide: [],
   }
 
   for (const [name, preset] of Object.entries(PRESETS)) {
@@ -189,7 +189,7 @@ function normalizeConfig(raw, source) {
       config.tools.push(...(result.tools || []))
       config.skills.push(...(result.skills || []))
       config.run.push(...(result.run || []))
-      config.agentsMd.push(...(result.agentsMd || []))
+      config.guide.push(...(result.guide || []))
     } catch (error) {
       errors.push(error.message)
     }

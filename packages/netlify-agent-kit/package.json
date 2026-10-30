@@ -1,6 +1,6 @@
 {
   "name": "netlify-agent-kit",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Gives agents in Netlify Agent Runners the tools and skills they need: `add` configures a repo once, and `install` runs from postinstall in agent runners only.",
   "license": "MIT",
   "type": "commonjs",

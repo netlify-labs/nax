@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.2.0
+
+- `add` changes only `package.json`. It no longer writes a section into `AGENTS.md`, so setting up a repo is a one-file commit.
+- `install` writes a `netlify-agent-kit` skill into the same skill folders as the others, describing what's installed: tools, the HyperFrames project and version, cloned repositories, secret names, and how to check or retry. It's regenerated on every install, so it matches the config, and it's hidden from git like the other installed skills. A `netlify-agent-kit` skill the repo or user already has is never replaced.
+- `description` now goes at the top of that skill.
+
+If you used 0.1.0, you can delete the `<!-- netlify-agent-kit:start -->` section from `AGENTS.md`.
+
 ## 0.1.0
 
 First release, replacing `netlify-agent-init`.

@@ -23,9 +23,9 @@ function expand(options = {}) {
     tools: [{ name: 'ffmpeg', link: [] }],
     skills: [{ from: `npm:hyperframes@${version}`, path: 'dist/skills', names: HYPERFRAMES_SKILLS }],
     run: [{ cwd: dir, command: `npx -y hyperframes@${version} browser ensure` }],
-    agentsMd: [
-      `- To edit or render the HyperFrames video, read the \`hyperframes\` skill first and follow its work loop. Run \`npx hyperframes\` commands from \`${dir}\`.`,
-      '- FFmpeg, FFprobe and HyperFrames\' Chrome are installed for you. Check with `npx hyperframes doctor --json`. Never try `apt-get`; there is no root.',
+    guide: [
+      `- To edit or render the HyperFrames video, read the \`hyperframes\` skill first and follow its work loop. The project is in \`${dir}\`; run \`npx hyperframes\` commands from there. It uses hyperframes@${version}.`,
+      '- FFmpeg, FFprobe and HyperFrames\' Chrome are ready. Check with `npx hyperframes doctor --json`.',
     ],
   }
 }

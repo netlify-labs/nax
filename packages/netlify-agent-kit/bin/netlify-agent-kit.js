@@ -12,7 +12,7 @@ const HELP = `netlify-agent-kit ${version}
 Gives agents in Netlify Agent Runners the tools and skills they need.
 
 Commands:
-  add [preset]   Configure this repo, once. Then commit package.json and AGENTS.md.
+  add [preset]   Configure this repo, once. Then commit package.json.
                    npx netlify-agent-kit add ${Object.keys(PRESETS).join(' | ')}
                    --version <v>, --dir <path>   override what's detected
   install        Install everything (your postinstall runs this). Only acts in
@@ -74,8 +74,8 @@ async function main() {
     if (plan.errors.length > 0) return 1
     for (const warning of plan.warnings) console.log(`! ${warning}`)
     applyAdd(plan)
-    console.log(`${plan.isNewPackage ? 'Created' : 'Updated'} package.json and AGENTS.md.`)
-    console.log('Next: run `npm install`, then commit package.json and AGENTS.md.')
+    console.log(`${plan.isNewPackage ? 'Created' : 'Updated'} package.json.`)
+    console.log('Next: run `npm install`, then commit package.json.')
     return 0
   }
 

@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.3.1
+
+- The generated `netlify-agent-kit` skill lists the skills install set up. Before, a repo that only installed skills got a guide with no list, ending in "If something above is missing".
+
 ## 0.3.0
 
 - Skills can come from a zip: `{ "from": "https://example.com/skills.zip" }`. The zip can hold skill folders, or be a single skill with `SKILL.md` at its root (named after the file). `.skill` files work too. `path` and `names` pick skills as with other sources, and `auth: { "env": "VARIABLE" }` sends a bearer token. Extraction uses `unzip`, which agent runners have.

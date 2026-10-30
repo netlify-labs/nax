@@ -84,8 +84,8 @@
         "properties": {
           "from": {
             "type": "string",
-            "description": "npm:<package>@<exact version>, github:<owner>/<repo>#<tag or sha>, or ./relative/path",
-            "pattern": "^(npm:|github:|\\./|\\.\\./|/)"
+            "description": "npm:<package>@<exact version>, github:<owner>/<repo>#<tag or sha>, https://<url to a .zip of skills>, or ./relative/path",
+            "pattern": "^(npm:|github:|https://|\\./|\\.\\./|/)"
           },
           "path": { "type": "string", "description": "Folder inside the source that contains skill folders." },
           "names": { "type": "array", "items": { "type": "string" } },

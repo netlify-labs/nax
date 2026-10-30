@@ -30,7 +30,7 @@ Commit `package.json`. `add` finds the HyperFrames project and the version it pi
 ```json
 {
   "scripts": { "postinstall": "netlify-agent-kit install || exit 0" },
-  "devDependencies": { "netlify-agent-kit": "^0.2.0" },
+  "devDependencies": { "netlify-agent-kit": "^0.3.0" },
   "netlifyAgent": { "hyperframes": { "version": "0.8.217", "dir": "video" } }
 }
 ```
@@ -73,7 +73,7 @@ Presets cover the common cases. Everything else goes under the same `netlifyAgen
 | `secrets` | Environment variable names to check. Values are never printed. |
 | `repositories` | Read-only shallow clones into `~/repos/<owner>/<name>`. |
 | `tools` | `ffmpeg`, installed without root and linked into `~/.local/bin`. |
-| `skills` | From `npm:<pkg>@<version>`, `github:<owner>/<repo>#<ref>` or a local folder. Copied into `.claude/skills` and `.agents/skills`, never over an existing skill. |
+| `skills` | From `npm:<pkg>@<version>`, `github:<owner>/<repo>#<ref>`, an `https://` zip URL or a local folder. Copied into `.claude/skills` and `.agents/skills`, never over an existing skill. |
 | `run` | Extra commands, after everything else. |
 | `mcpServers` | Experimental: adds servers to `~/.claude.json` when `"experimental": { "mcpServers": true }` is set. |
 | `strict` | Fail the install when a step fails. Off by default: failures are recorded instead. |

@@ -4,7 +4,7 @@ const path = require('node:path')
 const { Readable } = require('node:stream')
 const { pipeline } = require('node:stream/promises')
 
-const { parseGitHubSpec, parseNpmSpec } = require('../config')
+const { displaySource, parseGitHubSpec, parseNpmSpec, parseZipUrl } = require('../config')
 const { resolveGitHubToken } = require('../github-token')
 const { runFile } = require('../process')
 
@@ -139,11 +139,58 @@ async function resolveGitHubSource(skill, {
 }
 
 /**
+ * Downloads a zip of skills from an https URL and unzips it. A zip whose root is a
+ * single skill (SKILL.md at the top) is installed under the archive's file name.
+ * @param {import('../config').SkillSpec} skill
+ * @param {SourceOptions} options
+ * @returns {Promise<ResolvedSource>}
+ */
+async function resolveZipSource(skill, { env = process.env, fetch: fetchImpl = globalThis.fetch, runFile: run = runFile }) {
+  const url = parseZipUrl(skill.from)
+  const shown = displaySource(skill.from)
+  if (!url) throw new SourceError(`${shown}: use an https:// URL to a .zip of skills`)
+  if (skill.auth?.env && !env[skill.auth.env]) throw new SourceError(`${skill.auth.env} is not set, so ${shown} can't be downloaded`)
+
+  /** @type {Record<string, string>} */
+  const headers = { 'User-Agent': 'netlify-agent-kit' }
+  if (skill.auth?.env) headers.Authorization = `Bearer ${env[skill.auth.env]}`
+  const response = await fetchImpl(url, { headers, redirect: 'follow' })
+  if (!response.ok || !response.body) {
+    const hint = skill.auth?.env ? ` (check ${skill.auth.env})` : ''
+    throw new SourceError(`${shown} returned ${response.status}${hint}`)
+  }
+
+  const work = fs.mkdtempSync(path.join(os.tmpdir(), 'netlify-agent-kit-zip-'))
+  const cleanup = () => fs.rmSync(work, { recursive: true, force: true })
+  try {
+    const archive = path.join(work, 'source.zip')
+    await pipeline(Readable.fromWeb(/** @type {import('node:stream/web').ReadableStream} */ (response.body)), fs.createWriteStream(archive))
+    const extracted = path.join(work, 'extracted')
+    fs.mkdirSync(extracted)
+    const result = run('unzip', ['-q', '-o', archive, '-d', extracted])
+    if (result.error) throw new SourceError(`unzip isn't available to extract ${shown}`)
+    if (result.status !== 0) throw new SourceError(`couldn't unzip ${shown}: ${(result.stderr || result.stdout).trim().split('\n').pop()}`)
+    let dir = path.join(extracted, skill.path || '')
+    if (!skill.path && fs.existsSync(path.join(extracted, 'SKILL.md'))) {
+      const name = (url.pathname.split('/').pop() || 'skill').replace(/\.(zip|skill)$/i, '')
+      dir = path.join(work, 'named')
+      fs.mkdirSync(dir)
+      fs.renameSync(extracted, path.join(dir, name))
+    }
+    return { dir, cleanup, tokenEnv: skill.auth?.env || null }
+  } catch (error) {
+    cleanup()
+    throw error
+  }
+}
+
+/**
  * @param {import('../config').SkillSpec} skill
  * @param {SourceOptions} options
  * @returns {Promise<ResolvedSource>}
  */
 async function resolveSource(skill, options = {}) {
+  if (skill.from.startsWith('https://')) return resolveZipSource(skill, options)
   if (skill.from.startsWith('npm:')) return resolveNpmSource(skill, options)
   if (skill.from.startsWith('github:')) return resolveGitHubSource(skill, options)
   const dir = path.resolve(options.cwd || process.cwd(), skill.from, skill.path || '')
@@ -157,4 +204,5 @@ module.exports = {
   resolveGitHubSource,
   resolveNpmSource,
   resolveSource,
+  resolveZipSource,
 }

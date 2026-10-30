@@ -90,7 +90,7 @@
     "hono": "^4.12.26",
     "json5": "^2.2.3",
     "nax-agent-runner-sdk": "0.3.0",
-    "netlify-agent-kit": "^0.3.0",
+    "netlify-agent-kit": "^0.3.1",
     "open": "^10.2.0",
     "zod": "^4.4.3"
   },

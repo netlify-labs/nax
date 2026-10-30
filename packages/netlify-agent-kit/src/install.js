@@ -102,6 +102,8 @@ async function install({
 
   /** @type {string[]} */
   const repoPaths = []
+  /** @type {string[]} */
+  const skillNames = []
 
   if (config && record.errors.length === 0) {
     log(dryRun ? 'would install:' : `installing (${detection.label}: ${detection.reason})`)
@@ -147,6 +149,7 @@ async function install({
         try {
           const result = installSkills({ sourceDir: source.dir, from: displaySource(skill.from), names: skill.names, cwd, env, dryRun })
           repoPaths.push(...result.createdPaths)
+          skillNames.push(...result.installed, ...result.skipped.map((entry) => entry.name))
           const step = {
             kind: 'skills',
             from: displaySource(skill.from),
@@ -167,7 +170,7 @@ async function install({
       }
     }
 
-    const guide = writeGuide({ config, cwd, env, dryRun })
+    const guide = writeGuide({ config, skills: [...new Set(skillNames)].sort(), cwd, env, dryRun })
     addStep(guide.step)
     repoPaths.push(...guide.createdPaths)
 

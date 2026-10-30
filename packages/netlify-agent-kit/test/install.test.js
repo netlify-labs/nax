@@ -110,6 +110,7 @@ test('install writes a netlify-agent-kit skill describing the setup, refreshes i
   assert.match(content, /installed-by: netlify-agent-kit/)
   assert.match(content, /Demo site\./)
   assert.match(content, /`PRESENT_SECRET`, `MISSING_SECRET`/)
+  assert.match(content, /Skills set up for this repo: `house-style`\./)
   assert.equal(content.includes('super-SECRET-value'), false)
   assert.equal(fs.readFileSync(path.join(repo, '.agents', 'skills', 'netlify-agent-kit', 'SKILL.md'), 'utf8'), content)
   assert.equal(git(repo, ['status', '--porcelain']), '')

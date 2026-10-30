@@ -1,6 +1,6 @@
 const path = require('node:path')
 
-const { loadConfig } = require('./config')
+const { displaySource, loadConfig } = require('./config')
 const { detect } = require('./detect')
 const { excludePaths } = require('./exclude')
 const { writeGuide } = require('./guide')
@@ -145,11 +145,11 @@ async function install({
       try {
         const source = await resolveSource(skill, { env, cwd, ...deps.sources })
         try {
-          const result = installSkills({ sourceDir: source.dir, from: skill.from, names: skill.names, cwd, env, dryRun })
+          const result = installSkills({ sourceDir: source.dir, from: displaySource(skill.from), names: skill.names, cwd, env, dryRun })
           repoPaths.push(...result.createdPaths)
           const step = {
             kind: 'skills',
-            from: skill.from,
+            from: displaySource(skill.from),
             status: result.missing.length > 0 ? 'error' : dryRun ? 'would-install' : 'ok',
             installed: result.installed,
             skipped: result.skipped,
@@ -163,7 +163,7 @@ async function install({
           source.cleanup()
         }
       } catch (error) {
-        addStep({ kind: 'skills', from: skill.from, status: 'error', error: messageOf(error), ms: Date.now() - stepStarted })
+        addStep({ kind: 'skills', from: displaySource(skill.from), status: 'error', error: messageOf(error), ms: Date.now() - stepStarted })
       }
     }
 

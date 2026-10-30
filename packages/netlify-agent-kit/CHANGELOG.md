@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.3.0
+
+- Skills can come from a zip: `{ "from": "https://example.com/skills.zip" }`. The zip can hold skill folders, or be a single skill with `SKILL.md` at its root (named after the file). `.skill` files work too. `path` and `names` pick skills as with other sources, and `auth: { "env": "VARIABLE" }` sends a bearer token. Extraction uses `unzip`, which agent runners have.
+- Logs, the install record and installed skills show a URL source as its host and file name only (`https://example.com/…/skills.zip`), so a URL with a secret path doesn't leak.
+
 ## 0.2.0
 
 - `add` changes only `package.json`. It no longer writes a section into `AGENTS.md`, so setting up a repo is a one-file commit.

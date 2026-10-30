@@ -130,6 +130,37 @@ function parseGitHubSpec(from) {
 }
 
 /**
+ * Parses an https URL to a .zip (or .skill) archive of skills.
+ * @param {string} from
+ * @returns {URL | null}
+ */
+function parseZipUrl(from) {
+  try {
+    const url = new URL(from)
+    return url.protocol === 'https:' ? url : null
+  } catch {
+    return null
+  }
+}
+
+/**
+ * How a source appears in logs, records and installed skills. A zip URL shows only
+ * its host and file name, because the path may be a secret.
+ * @param {string} from
+ */
+function displaySource(from) {
+  if (!/^https?:\/\//.test(from)) return from
+  let url
+  try {
+    url = new URL(from)
+  } catch {
+    return 'an invalid URL'
+  }
+  const file = url.pathname.split('/').filter(Boolean).pop() || ''
+  return `${url.protocol}//${url.host}/…/${file}`
+}
+
+/**
  * @param {unknown} auth
  * @param {string} where
  * @param {string[]} errors
@@ -268,7 +299,7 @@ function normalizeConfig(raw, source) {
   }
 
   config.skills.forEach((skill, index) => {
-    const where = `skills[${index}] (${skill.from})`
+    const where = `skills[${index}] (${displaySource(skill.from)})`
     if (skill.from.startsWith('npm:')) {
       const spec = parseNpmSpec(skill.from)
       if (!spec) errors.push(`${where}: use "npm:<package>@<exact version>"`)
@@ -277,8 +308,10 @@ function normalizeConfig(raw, source) {
       const spec = parseGitHubSpec(skill.from)
       if (!spec) errors.push(`${where}: use "github:<owner>/<repo>#<tag or sha>"`)
       else if (!isPinnedRef(spec.ref)) warnings.push(`${where}: "${spec.ref}" looks like a branch; pin a tag or SHA`)
+    } else if (/^https?:\/\//.test(skill.from)) {
+      if (!parseZipUrl(skill.from)) errors.push(`skills[${index}] (${displaySource(skill.from)}): use an https:// URL to a .zip of skills`)
     } else if (!skill.from.startsWith('./') && !skill.from.startsWith('../') && !path.isAbsolute(skill.from)) {
-      errors.push(`${where}: "from" must start with npm:, github:, or ./`)
+      errors.push(`${where}: "from" must start with npm:, github:, https:// or ./`)
     }
   })
 
@@ -348,6 +381,7 @@ function loadConfig(cwd) {
 
 module.exports = {
   CONFIG_FILE,
+  displaySource,
   PACKAGE_KEY,
   isExactVersion,
   isPinnedRef,
@@ -355,4 +389,5 @@ module.exports = {
   normalizeConfig,
   parseGitHubSpec,
   parseNpmSpec,
+  parseZipUrl,
 }

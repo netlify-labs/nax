@@ -52,7 +52,7 @@ test('validation errors and pinning warnings', () => {
     surprise: true,
   }, 'test')
   assert.match(errors.join('\n'), /needs a "version"/)
-  assert.match(errors.join('\n'), /must start with npm:, github:, or \.\//)
+  assert.match(errors.join('\n'), /must start with npm:, github:, https:\/\/ or \.\//)
   assert.match(errors.join('\n'), /auth must be \{ "env"/)
   assert.match(errors.join('\n'), /repositories\[0\]\.repo/)
   assert.match(errors.join('\n'), /secrets must be a list/)

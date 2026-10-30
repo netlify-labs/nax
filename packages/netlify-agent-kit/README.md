@@ -30,7 +30,7 @@ For a repo with a HyperFrames project in `video/`:
 ```json
 {
   "scripts": { "postinstall": "netlify-agent-kit install || exit 0" },
-  "devDependencies": { "netlify-agent-kit": "^0.2.0" },
+  "devDependencies": { "netlify-agent-kit": "^0.3.0" },
   "netlifyAgent": { "hyperframes": { "version": "0.8.217", "dir": "video" } }
 }
 ```
@@ -78,6 +78,7 @@ Everything a preset does, you can also list yourself, under the same `netlifyAge
     // Agent skills, installed into .claude/skills and .agents/skills.
     "skills": [
       { "from": "github:my-org/private-skills#v1.4.0", "path": "skills", "auth": { "env": "SKILLS_TOKEN" } },
+      { "from": "https://skills.example.com/team-skills.zip" },
       { "from": "./tools/skills/house-style" }
     ],
 
@@ -106,12 +107,14 @@ Everything a preset does, you can also list yourself, under the same `netlifyAge
 | --- | --- |
 | npm | `npm:<package>@<exact version>`, with `path` to the folder that holds the skills |
 | GitHub | `github:<owner>/<repo>#<tag or sha>`, with `path` |
+| Zip | `https://<url>.zip` (or `.skill`): skill folders, or one skill with `SKILL.md` at the root |
 | Local | `./relative/path`, either one skill folder or a folder of skills |
 
 - **Which skills:** `names` picks skills from the source; leave it out to install every folder with a `SKILL.md`.
 - **Where:** `.claude/skills/` and `.agents/skills/`, plus `.codex/skills/`, `.cursor/skills/` and similar when those folders already exist.
 - **Never overwritten:** a skill is never installed over one that already exists, committed in the repo or preinstalled in `~/.claude/skills`.
 - **Marked as ours:** installed copies get `installed-by: netlify-agent-kit` in their frontmatter.
+- **Zip URLs stay private in logs:** logs, the install record and installed skills show only the host and file name (`https://example.com/…/skills.zip`), so a URL with a secret path isn't printed. Add `"auth": { "env": "VARIABLE" }` to send a bearer token.
 
 ### Private sources
 

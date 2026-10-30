@@ -57,7 +57,7 @@ A full example:
 
     // Agent skills, installed into .claude/skills and .agents/skills.
     "skills": [
-      { "from": "npm:hyperframes@0.8.217", "path": "dist/skills", "names": ["hyperframes"] },
+      { "from": "npm:hyperframes@0.8.217", "path": "dist/skills", "names": ["hyperframes", "media-use"] },
       { "from": "github:my-org/private-skills#v1.4.0", "path": "skills", "auth": { "env": "SKILLS_TOKEN" } },
       { "from": "./tools/skills/house-style" }
     ],
@@ -75,7 +75,9 @@ A full example:
 
 | Preset | Options | Sets up |
 | --- | --- | --- |
-| `hyperframes` | `version` (required), `dir` | FFmpeg and FFprobe; the `hyperframes`, `hyperframes-cli`, `hyperframes-registry` and `media-use` skills from the npm package at that version; HyperFrames' headless Chrome |
+| `hyperframes` | `version` (required), `dir` | FFmpeg and FFprobe; the `hyperframes`, `hyperframes-cli` and `media-use` skills from the npm package at that version; HyperFrames' headless Chrome |
+
+The `hyperframes-registry` skill isn't in the npm package. To add it, list it as a GitHub source, for example `{ "from": "github:heygen-com/hyperframes#v0.8.217", "path": "skills", "names": ["hyperframes-registry"] }`. That downloads the whole repository (about 140 MB) on every agent run.
 
 ### Tools
 

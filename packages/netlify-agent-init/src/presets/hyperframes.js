@@ -1,8 +1,9 @@
-const HYPERFRAMES_SKILLS = ['hyperframes', 'hyperframes-cli', 'hyperframes-registry', 'media-use']
+/** The skills the hyperframes npm package ships in dist/skills. hyperframes-registry is only on GitHub. */
+const HYPERFRAMES_SKILLS = ['hyperframes', 'hyperframes-cli', 'media-use']
 
 /**
- * HyperFrames: static FFmpeg, the four core skills from the npm package at the
- * pinned version, and the headless Chrome HyperFrames renders with.
+ * HyperFrames: static FFmpeg, the skills the npm package ships at the pinned
+ * version, and the headless Chrome HyperFrames renders with.
  * @param {{ version?: string, dir?: string }} options
  * @returns {import('../config').PresetResult}
  */

@@ -24,7 +24,7 @@ test('no config means no config and no errors', () => {
   assert.deepEqual(loaded.errors, [])
 })
 
-test('the hyperframes preset expands to ffmpeg, the four skills and browser ensure, merged with explicit config', () => {
+test('the hyperframes preset expands to ffmpeg, the skills the npm package ships and browser ensure, merged with explicit config', () => {
   const { config, errors } = normalizeConfig({
     schemaVersion: 1,
     presets: { hyperframes: { version: '0.8.217', dir: 'video' } },
@@ -34,7 +34,7 @@ test('the hyperframes preset expands to ffmpeg, the four skills and browser ensu
   assert.deepEqual(config.tools, [{ name: 'ffmpeg', link: ['video/.hyperframes/bin'] }])
   assert.equal(config.skills[0].from, 'npm:hyperframes@0.8.217')
   assert.equal(config.skills[0].path, 'dist/skills')
-  assert.deepEqual(config.skills[0].names, ['hyperframes', 'hyperframes-cli', 'hyperframes-registry', 'media-use'])
+  assert.deepEqual(config.skills[0].names, ['hyperframes', 'hyperframes-cli', 'media-use'])
   assert.deepEqual(config.run, [{ cwd: 'video', command: 'npx -y hyperframes@0.8.217 browser ensure' }])
   assert.equal(config.agentsMd.length > 0, true)
 })

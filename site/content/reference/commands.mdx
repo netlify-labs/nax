@@ -180,6 +180,8 @@ nax ci 'npm test && npm run build'
 
 Outside Agent Runner, `nax ci` exits successfully without running the command. Inside Agent Runner it executes through the shell and exits with the command status.
 
+`nax ci` uses [netlify-agent-init](/guides/agent-runner-setup)'s detection. That includes Agent Runner environment setup, where `BUILD_ID` and `DEPLOY_ID` are set, so `nax ci` in a `postinstall` runs during setup. Set `NETLIFY_AGENT_INIT=0` to turn it off, or `NETLIFY_AGENT_INIT=1` to force it locally.
+
 ## See also
 
 - [Run workflows](/guides/run-workflows) for task-oriented examples.

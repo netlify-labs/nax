@@ -1,0 +1,108 @@
+---
+title: Set up Agent Runners with netlify-agent-init
+description: Install tools, agent skills and related repositories inside Netlify Agent Runners from a postinstall hook, without touching deploys or the agent's commits.
+---
+
+# Set up Agent Runners with netlify-agent-init
+
+`netlify-agent-init` is a small package that a repo runs from `postinstall`. Inside a Netlify Agent Runner, it sets up what the agent needs:
+
+- tools such as FFmpeg;
+- agent skills;
+- read-only clones of related repositories;
+- a check that required secrets exist.
+
+Everywhere else (deploys, CI, local installs) it does nothing. Nothing it adds shows up in `git status`, so none of it ends up in the agent's pull request.
+
+## Why it exists
+
+Agent Runners run in Netlify build containers: Ubuntu, Node, no root and no `apt`. A repo that needs anything beyond that has to install it itself, during environment setup, without root, and without the files landing in the agent's commits. Getting there by hand takes a setup script, a `postinstall`, environment detection, vendored skills and `AGENTS.md` notes. Detection is the easy part to get wrong: setup has `BUILD_ID` and `DEPLOY_ID` set, so it looks like a deploy build.
+
+## Add it to a repo
+
+```sh
+npx netlify-agent-init init --preset hyperframes --version 0.8.217 --dir video
+npm install
+```
+
+`init` shows its changes and asks before writing. It adds:
+
+- the dev dependency;
+- `"postinstall": "netlify-agent-init || exit 0"`;
+- a `netlifyAgent` config block;
+- a managed section in `AGENTS.md`, so the agent knows what's installed.
+
+Commit `package.json` and `AGENTS.md`.
+
+## Configure it
+
+The config lives in `package.json` under `netlifyAgent`, or in `netlify-agent.json`:
+
+```json
+{
+  "netlifyAgent": {
+    "schemaVersion": 1,
+    "presets": { "hyperframes": { "version": "0.8.217", "dir": "video" } },
+    "secrets": ["SENTRY_AUTH_TOKEN"],
+    "repositories": [{ "repo": "netlify/design-tokens", "ref": "v3.2.0" }],
+    "tools": ["ffmpeg"],
+    "skills": [
+      { "from": "github:my-org/private-skills#v1.4.0", "path": "skills", "auth": { "env": "SKILLS_TOKEN" } },
+      { "from": "./tools/skills/house-style" }
+    ],
+    "run": ["npx -y some-cli warm-cache"]
+  }
+}
+```
+
+| Key | What it does |
+| --- | --- |
+| `presets` | Bundles. `hyperframes` sets up FFmpeg, the HyperFrames skills shipped in its npm package, and HyperFrames' headless Chrome. |
+| `secrets` | Environment variable names to check. Values are never printed. |
+| `repositories` | Read-only shallow clones into `~/repos/<owner>/<name>`. |
+| `tools` | `ffmpeg`, installed without root and linked into `~/.local/bin`. |
+| `skills` | From `npm:<pkg>@<version>`, `github:<owner>/<repo>#<ref>` or a local folder. Copied into `.claude/skills` and `.agents/skills`, never over an existing skill. |
+| `run` | Extra commands, after everything else. |
+| `mcpServers` | Experimental: adds servers to `~/.claude.json` when `"experimental": { "mcpServers": true }` is set. |
+| `strict` | Fail the install when a step fails. Off by default: failures are recorded instead. |
+
+For a private source, `auth` names the environment variable that holds the token. Set the value as a Netlify environment variable on the site.
+
+- **GitHub:** the token travels only in an `Authorization` header. Without `auth`, GitHub sources use `NETLIFY_AGENT_INIT_GITHUB_TOKEN`, `GITHUB_TOKEN` or `GH_TOKEN`, whichever is set first.
+- **npm:** setup's temporary `.npmrc` contains `${VARIABLE_NAME}`, which npm fills in itself, so the token is never written to disk.
+
+## Where it runs
+
+| Environment | Setup |
+| --- | --- |
+| Agent Runner environment setup (`NETLIFY=true`, `CONTEXT=dev-server`) | Runs |
+| The agent's shell (`NETLIFY_AGENT_RUNNER_ID` set) | Runs |
+| Netlify deploys, CI, local installs, `netlify dev` | Skips |
+| `NETLIFY_AGENT_INIT=1` or `--local` | Runs anyway |
+| `NETLIFY_AGENT_INIT=0` | Never runs |
+
+## Keeping it out of the agent's changes
+
+Installed skills and project tool links are listed in a managed block in `.git/info/exclude`, git's per-clone ignore file. That file isn't committed, so the paths never show up in `git status`. Everything else lives outside the repo:
+
+- tool installs in `~/.cache/netlify-agent-init/`;
+- links in `~/.local/bin`;
+- clones in `~/repos/`.
+
+## Check what happened
+
+```sh
+npx netlify-agent-init status          # environment + last setup record
+npx netlify-agent-init doctor          # validate config, show what setup would do
+NETLIFY_AGENT_INIT=1 npm install       # run setup locally
+```
+
+The record at `~/.cache/netlify-agent-init/last-setup.json` lists each step, its result and timing, with environment variable names only.
+
+## Use it from code
+
+NAX uses the same detection for `nax ci`:
+
+```js
+const { detect, setup, run, status } = require('netlify-agent-init')
+```

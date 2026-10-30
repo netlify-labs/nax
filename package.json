@@ -49,7 +49,8 @@
     "prepare": "npm run sdk:build && npm run dashboard:build",
     "prepack": "npm run dashboard:build",
     "test": "node --import tsx --test tests/unit/*.test.js tests/unit/*.test.ts tests/integration/*.test.js",
-    "release:verify": "npm run sdk:ci && npm run sdk:pack-smoke && npm run check && npm test && npm run check:cli-help && npm run check:flows && npm run dashboard:build && npm run dashboard:smoke && npm pack --dry-run"
+    "release:verify": "npm run sdk:ci && npm run sdk:pack-smoke && npm run check && npm test && npm run check:cli-help && npm run check:flows && npm run dashboard:build && npm run dashboard:smoke && npm pack --dry-run",
+    "agent-init:ci": "npm run ci --workspace netlify-agent-init"
   },
   "keywords": [
     "netlify",
@@ -89,6 +90,7 @@
     "hono": "^4.12.26",
     "json5": "^2.2.3",
     "nax-agent-runner-sdk": "0.3.0",
+    "netlify-agent-init": "^0.1.0",
     "open": "^10.2.0",
     "zod": "^4.4.3"
   },

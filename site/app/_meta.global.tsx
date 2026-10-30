@@ -20,7 +20,8 @@ export default {
       'use-the-dashboard': 'Use the Dashboard',
       'use-nax-with-claude': 'Use NAX With Claude',
       'run-nax-in-ci': 'Run NAX in CI',
-      'agent-runner-sdk': 'Agent Runner SDK'
+      'agent-runner-sdk': 'Agent Runner SDK',
+      'agent-runner-setup': 'Agent Runner Setup'
     }
   },
   reference: {

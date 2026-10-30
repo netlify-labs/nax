@@ -12,14 +12,19 @@ const path = require('node:path')
  * ) => ProcessResult} RunFile
  */
 
+/** npm and npx are .cmd shims on Windows, which Node can only start through a shell. */
+const WINDOWS_SHIMS = new Set(['npm', 'npx'])
+
 /** @type {RunFile} */
 function runFile(command, args, { cwd, env, input } = {}) {
-  const result = spawnSync(command, args, {
+  const useShell = process.platform === 'win32' && WINDOWS_SHIMS.has(command)
+  const result = spawnSync(command, useShell ? args.map((arg) => (/[\s"]/.test(arg) ? `"${arg.replace(/"/g, '\\"')}"` : arg)) : args, {
     cwd,
     env,
     input,
     encoding: 'utf8',
     maxBuffer: 64 * 1024 * 1024,
+    shell: useShell,
   })
   return {
     status: typeof result.status === 'number' ? result.status : 1,

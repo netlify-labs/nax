@@ -22,7 +22,7 @@ function npmEnv(env) {
 
 const packageRoot = path.resolve(__dirname, '..')
 const scratch = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'netlify-agent-init-smoke-')))
-const npmCache = process.env.npm_config_cache || execFileSync('npm', ['config', 'get', 'cache'], { cwd: os.tmpdir(), env: npmEnv(process.env), encoding: 'utf8' }).trim()
+const npmCache = process.env.npm_config_cache || execFileSync('npm', ['config', 'get', 'cache'], { cwd: os.tmpdir(), env: npmEnv(process.env), encoding: 'utf8', shell: process.platform === 'win32' }).trim()
 
 /**
  * @param {string[]} args
@@ -46,7 +46,7 @@ function git(cwd, args) {
 
 function main() {
 try {
-  const [packed] = JSON.parse(execFileSync('npm', ['pack', '--json', '--pack-destination', scratch], { cwd: packageRoot, env: npmEnv(process.env), encoding: 'utf8' }))
+  const [packed] = JSON.parse(execFileSync('npm', ['pack', '--json', '--pack-destination', scratch], { cwd: packageRoot, env: npmEnv(process.env), encoding: 'utf8', shell: process.platform === 'win32' }))
   const files = packed.files.map((file) => file.path)
   for (const required of ['bin/netlify-agent-init.js', 'src/index.js', 'schema.json', 'README.md']) {
     assert.equal(files.includes(required), true, `${required} is missing from the package`)

@@ -11,9 +11,10 @@ const GUIDE_NAME = 'netlify-agent-kit'
  * and repositories, never values.
  * @param {import('./config').AgentConfig} config
  * @param {string[]} [skills] skills install set up, by folder name
+ * @param {string[]} [files] repo folders install filled from `files`
  * @returns {string}
  */
-function renderGuide(config, skills = []) {
+function renderGuide(config, skills = [], files = []) {
   const lines = [
     '---',
     `name: ${GUIDE_NAME}`,
@@ -32,6 +33,9 @@ function renderGuide(config, skills = []) {
   lines.push(...config.guide)
   if (skills.length > 0) {
     lines.push(`- Skills set up for this repo: ${skills.map((name) => `\`${name}\``).join(', ')}. They're in \`.claude/skills\` and \`.agents/skills\`.`)
+  }
+  if (files.length > 0) {
+    lines.push(`- Folders filled for this run, hidden from git: ${files.map((dir) => `\`${dir}/\``).join(', ')}. Read them, but don't edit or commit them.`)
   }
   if (config.tools.length > 0) {
     lines.push(`- Installed tools, on \`PATH\` in \`~/.local/bin\`: ${config.tools.map((tool) => `\`${tool.name}\``).join(', ')}. There is no root, so never try \`apt-get\`.`)
@@ -53,10 +57,10 @@ function renderGuide(config, skills = []) {
 /**
  * Writes the guide skill into every skill folder the other skills go to. Replaces
  * an earlier copy of its own, and never one the repo or the user already has.
- * @param {{ config: import('./config').AgentConfig, skills?: string[], cwd: string, env?: NodeJS.ProcessEnv, dryRun?: boolean }} options
+ * @param {{ config: import('./config').AgentConfig, skills?: string[], files?: string[], cwd: string, env?: NodeJS.ProcessEnv, dryRun?: boolean }} options
  * @returns {{ step: import('./record').InstallStep, createdPaths: string[] }}
  */
-function writeGuide({ config, skills = [], cwd, env = process.env, dryRun = false }) {
+function writeGuide({ config, skills = [], files = [], cwd, env = process.env, dryRun = false }) {
   const userCopy = path.join(homeDir(env), '.claude', 'skills', GUIDE_NAME)
   const targets = resolveTargets(cwd).map((target) => path.join(cwd, target, GUIDE_NAME))
   const taken = [userCopy, ...targets].find((dir) => fs.existsSync(dir) && !isOurInstall(dir))
@@ -65,7 +69,7 @@ function writeGuide({ config, skills = [], cwd, env = process.env, dryRun = fals
     return { step: { kind: 'guide', name: GUIDE_NAME, status: 'skipped', reason: `a ${GUIDE_NAME} skill already exists in ${where}` }, createdPaths: [] }
   }
   if (dryRun) return { step: { kind: 'guide', name: GUIDE_NAME, status: 'would-write' }, createdPaths: [] }
-  const content = renderGuide(config, skills)
+  const content = renderGuide(config, skills, files)
   for (const dir of targets) {
     fs.mkdirSync(dir, { recursive: true })
     fs.writeFileSync(path.join(dir, 'SKILL.md'), content)

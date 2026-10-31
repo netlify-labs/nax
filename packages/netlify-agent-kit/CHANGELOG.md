@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.4.0
+
+- `files` unpacks sources that aren't skills into folders in the repo, for brand kits, reference docs and fixtures: `{ "from": "https://example.com/brand.zip", "to": "context/brand" }`. Sources are the same as for skills.
+- A `files` source can come from an environment variable, `{ "from": { "env": "BRAND_ZIP_URL" }, "optional": true }`, so a public template can leave the slot empty and each deployment fills it.
+- `files` folders must be untracked: install refuses a folder git tracks files in, or one it didn't create. They're hidden from git and listed in the `netlify-agent-kit` skill.
+
 ## 0.3.1
 
 - The generated `netlify-agent-kit` skill lists the skills install set up. Before, a repo that only installed skills got a guide with no list, ending in "If something above is missing".

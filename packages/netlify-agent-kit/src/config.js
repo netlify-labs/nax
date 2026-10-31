@@ -10,6 +10,7 @@ const PACKAGE_KEY = 'netlifyAgent'
  * @typedef {{ env: string }} AuthRef
  * @typedef {{ name: string, link: string[] }} ToolSpec
  * @typedef {{ from: string, path?: string, names?: string[], registry?: string, auth?: AuthRef }} SkillSpec
+ * @typedef {{ from: string | { env: string }, to: string, path?: string, registry?: string, auth?: AuthRef, optional: boolean }} FileSpec
  * @typedef {{ command: string, cwd?: string }} RunSpec
  * @typedef {{ repo: string, ref?: string, path?: string, auth?: AuthRef }} RepositorySpec
  * @typedef {{ env: string, prefix?: string }} EnvValueRef
@@ -36,6 +37,7 @@ const PACKAGE_KEY = 'netlifyAgent'
  *   repositories: RepositorySpec[],
  *   tools: ToolSpec[],
  *   skills: SkillSpec[],
+ *   files: FileSpec[],
  *   run: RunSpec[],
  *   mcpServers: Record<string, McpServerSpec>,
  *   experimental: { mcpServers: boolean },
@@ -58,6 +60,7 @@ const KNOWN_KEYS = new Set([
   'repositories',
   'tools',
   'skills',
+  'files',
   'run',
   'mcpServers',
   'experimental',
@@ -200,6 +203,7 @@ function normalizeConfig(raw, source) {
     repositories: [],
     tools: [],
     skills: [],
+    files: [],
     run: [],
     mcpServers: {},
     experimental: { mcpServers: false },
@@ -299,21 +303,41 @@ function normalizeConfig(raw, source) {
   }
 
   config.skills.forEach((skill, index) => {
-    const where = `skills[${index}] (${displaySource(skill.from)})`
-    if (skill.from.startsWith('npm:')) {
-      const spec = parseNpmSpec(skill.from)
-      if (!spec) errors.push(`${where}: use "npm:<package>@<exact version>"`)
-      else if (!isExactVersion(spec.version)) warnings.push(`${where}: pin an exact version instead of "${spec.version}"`)
-    } else if (skill.from.startsWith('github:')) {
-      const spec = parseGitHubSpec(skill.from)
-      if (!spec) errors.push(`${where}: use "github:<owner>/<repo>#<tag or sha>"`)
-      else if (!isPinnedRef(spec.ref)) warnings.push(`${where}: "${spec.ref}" looks like a branch; pin a tag or SHA`)
-    } else if (/^https?:\/\//.test(skill.from)) {
-      if (!parseZipUrl(skill.from)) errors.push(`skills[${index}] (${displaySource(skill.from)}): use an https:// URL to a .zip of skills`)
-    } else if (!skill.from.startsWith('./') && !skill.from.startsWith('../') && !path.isAbsolute(skill.from)) {
-      errors.push(`${where}: "from" must start with npm:, github:, https:// or ./`)
-    }
+    checkSource(skill.from, `skills[${index}] (${displaySource(skill.from)})`, errors, warnings)
   })
+
+  if (raw.files !== undefined) {
+    if (!Array.isArray(raw.files)) {
+      errors.push('files must be a list')
+    } else {
+      raw.files.forEach((entry, index) => {
+        const where = `files[${index}]`
+        if (!isPlainObject(entry)) {
+          errors.push(`${where} must be { "from": "...", "to": "folder/in/repo" }`)
+          return
+        }
+        const fromEnv = isPlainObject(entry.from) && typeof entry.from.env === 'string' && entry.from.env ? { env: entry.from.env } : null
+        if (!fromEnv && (typeof entry.from !== 'string' || !entry.from)) {
+          errors.push(`${where}.from must be a source or { "env": "VARIABLE_NAME" }`)
+          return
+        }
+        const to = typeof entry.to === 'string' ? entry.to.replace(/\/+$/, '') : ''
+        if (!to || path.isAbsolute(to) || to.split(/[\\/]/).some((part) => part === '..' || part === '.git') || to === '.') {
+          errors.push(`${where}.to must be a folder inside the repo, like "context/brand"`)
+          return
+        }
+        if (typeof entry.from === 'string') checkSource(entry.from, `${where} (${displaySource(entry.from)})`, errors, warnings)
+        config.files.push({
+          from: fromEnv || /** @type {string} */ (entry.from),
+          to,
+          path: typeof entry.path === 'string' ? entry.path : undefined,
+          registry: typeof entry.registry === 'string' ? entry.registry : undefined,
+          auth: normalizeAuth(entry.auth, where, errors),
+          optional: entry.optional === true,
+        })
+      })
+    }
+  }
 
   if (raw.run !== undefined) {
     if (!Array.isArray(raw.run)) {
@@ -350,6 +374,29 @@ function normalizeConfig(raw, source) {
 }
 
 /**
+ * Checks a source string (skills or files). Errors for unusable sources, warnings for unpinned ones.
+ * @param {string} from
+ * @param {string} where
+ * @param {string[]} errors
+ * @param {string[]} warnings
+ */
+function checkSource(from, where, errors, warnings) {
+  if (from.startsWith('npm:')) {
+    const spec = parseNpmSpec(from)
+    if (!spec) errors.push(`${where}: use "npm:<package>@<exact version>"`)
+    else if (!isExactVersion(spec.version)) warnings.push(`${where}: pin an exact version instead of "${spec.version}"`)
+  } else if (from.startsWith('github:')) {
+    const spec = parseGitHubSpec(from)
+    if (!spec) errors.push(`${where}: use "github:<owner>/<repo>#<tag or sha>"`)
+    else if (!isPinnedRef(spec.ref)) warnings.push(`${where}: "${spec.ref}" looks like a branch; pin a tag or SHA`)
+  } else if (/^https?:\/\//.test(from)) {
+    if (!parseZipUrl(from)) errors.push(`${where}: use an https:// URL to a .zip`)
+  } else if (!from.startsWith('./') && !from.startsWith('../') && !path.isAbsolute(from)) {
+    errors.push(`${where}: "from" must start with npm:, github:, https:// or ./`)
+  }
+}
+
+/**
  * @template T
  * @param {T[]} items
  * @param {(item: T) => string} key
@@ -381,6 +428,7 @@ function loadConfig(cwd) {
 
 module.exports = {
   CONFIG_FILE,
+  checkSource,
   displaySource,
   PACKAGE_KEY,
   isExactVersion,

@@ -94,6 +94,38 @@
         }
       }
     },
+    "files": {
+      "type": "array",
+      "description": "Sources that aren't skills, unpacked into folders in the repo that git doesn't track.",
+      "items": {
+        "type": "object",
+        "required": ["from", "to"],
+        "additionalProperties": false,
+        "properties": {
+          "from": {
+            "oneOf": [
+              {
+                "type": "string",
+                "description": "npm:<package>@<exact version>, github:<owner>/<repo>#<tag or sha>, https://<url to a .zip>, or ./relative/path",
+                "pattern": "^(npm:|github:|https://|\\./|\\.\\./|/)"
+              },
+              {
+                "type": "object",
+                "required": ["env"],
+                "additionalProperties": false,
+                "properties": { "env": { "type": "string", "minLength": 1 } },
+                "description": "Read the source from this environment variable at install time."
+              }
+            ]
+          },
+          "to": { "type": "string", "minLength": 1, "description": "Folder to fill, relative to the repo root, for example context/brand. Must not hold files git tracks." },
+          "path": { "type": "string", "description": "Folder inside the source to use instead of its root." },
+          "registry": { "type": "string", "format": "uri" },
+          "auth": { "$ref": "#/$defs/auth" },
+          "optional": { "type": "boolean", "description": "With an env source, skip when the variable isn't set." }
+        }
+      }
+    },
     "run": {
       "type": "array",
       "items": {

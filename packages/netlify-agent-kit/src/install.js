@@ -3,6 +3,7 @@ const path = require('node:path')
 const { displaySource, loadConfig } = require('./config')
 const { detect } = require('./detect')
 const { excludePaths } = require('./exclude')
+const { installFiles } = require('./files')
 const { writeGuide } = require('./guide')
 const { configureMcpServers } = require('./mcp')
 const { commandEnv } = require('./paths')
@@ -42,7 +43,7 @@ function messageOf(error) {
 }
 
 /**
- * Installs what the agent needs: secrets → repositories → tools → skills → guide skill → MCP → run → exclusions.
+ * Installs what the agent needs: secrets → repositories → tools → skills → files → guide skill → MCP → run → exclusions.
  * Does nothing outside agent runners unless forced; a dry run shows the plan anywhere.
  * Never throws for step failures; they're recorded.
  * @param {InstallOptions} [options]
@@ -91,7 +92,7 @@ async function install({
   /** @param {import('./record').InstallStep} step */
   const addStep = (step) => {
     record.steps.push(step)
-    const label = [step.kind, step.name || step.repo || step.from || step.command].filter(Boolean).join(' ')
+    const label = [step.kind, step.name || step.repo || step.from || step.command, step.to ? `→ ${step.to}` : null].filter(Boolean).join(' ')
     if (step.status === 'error') {
       record.errors.push(`${label}: ${step.error}`)
       log(`✗ ${label}: ${step.error}`)
@@ -104,6 +105,8 @@ async function install({
   const repoPaths = []
   /** @type {string[]} */
   const skillNames = []
+  /** @type {string[]} */
+  const fileFolders = []
 
   if (config && record.errors.length === 0) {
     log(dryRun ? 'would install:' : `installing (${detection.label}: ${detection.reason})`)
@@ -112,6 +115,8 @@ async function install({
       ...config.secrets,
       ...config.skills.map((skill) => skill.auth?.env).filter(Boolean),
       ...config.repositories.map((repo) => repo.auth?.env).filter(Boolean),
+      ...config.files.map((entry) => entry.auth?.env).filter(Boolean),
+      ...config.files.map((entry) => (typeof entry.from === 'string' || entry.optional ? null : entry.from.env)).filter(Boolean),
     ]
     if (secretNames.length > 0) {
       const { present, missing } = checkSecrets(secretNames, env)
@@ -170,7 +175,14 @@ async function install({
       }
     }
 
-    const guide = writeGuide({ config, skills: [...new Set(skillNames)].sort(), cwd, env, dryRun })
+    for (const entry of config.files) {
+      const result = await installFiles(entry, { cwd, env, dryRun, runFile: deps.runFile, sources: deps.sources })
+      addStep(result.step)
+      repoPaths.push(...result.createdPaths)
+      if (result.installed) fileFolders.push(entry.to)
+    }
+
+    const guide = writeGuide({ config, skills: [...new Set(skillNames)].sort(), files: fileFolders, cwd, env, dryRun })
     addStep(guide.step)
     repoPaths.push(...guide.createdPaths)
 

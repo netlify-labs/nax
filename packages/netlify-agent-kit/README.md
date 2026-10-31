@@ -82,6 +82,9 @@ Everything a preset does, you can also list yourself, under the same `netlifyAge
       { "from": "./tools/skills/house-style" }
     ],
 
+    // Other files, unpacked into folders in the repo that git doesn't track.
+    "files": [{ "from": { "env": "BRAND_ZIP_URL" }, "to": "context/brand", "optional": true }],
+
     // Extra commands, in order, after everything above.
     "run": ["npx playwright install chromium"],
 
@@ -115,6 +118,23 @@ Everything a preset does, you can also list yourself, under the same `netlifyAge
 - **Never overwritten:** a skill is never installed over one that already exists, committed in the repo or preinstalled in `~/.claude/skills`.
 - **Marked as ours:** installed copies get `installed-by: netlify-agent-kit` in their frontmatter.
 - **Zip URLs stay private in logs:** logs, the install record and installed skills show only the host and file name (`https://example.com/…/skills.zip`), so a URL with a secret path isn't printed. Add `"auth": { "env": "VARIABLE" }` to send a bearer token.
+
+### Files
+
+`files` puts things that aren't skills where the agent will find them: a brand kit, reference docs, fixtures. Each entry unpacks a source into one folder in the repo.
+
+| Field | Meaning |
+| --- | --- |
+| `from` | Any skill source (npm, GitHub, zip URL, local folder), or `{ "env": "VARIABLE" }` to read the source from an environment variable at install time |
+| `to` | The folder to fill, relative to the repo root, like `context/brand` |
+| `path` | A folder inside the source to use instead of its root |
+| `auth`, `registry` | As for skills |
+| `optional` | With an `env` source: skip quietly when the variable isn't set. Without it, a missing variable is an error |
+
+- **Sources from the environment:** keep a private or per-deployment source out of the committed config. A public template can declare `{ "from": { "env": "BRAND_ZIP_URL" }, "optional": true }`, and each deployment points the variable at its own zip, or leaves it unset.
+- **Only untracked folders:** install refuses a `to` folder that git tracks files in, so nothing it unpacks can change a tracked file or show up in a diff. It also refuses a folder it didn't create. A folder it did create is replaced on every install, so files removed from the source disappear.
+- **Hidden from git** like installed skills, and listed in the `netlify-agent-kit` skill so the agent knows to read them.
+- **Private in logs:** the source shows as `$VARIABLE (https://example.com/…/file.zip)`.
 
 ### Private sources
 
@@ -154,7 +174,7 @@ Agent runner setup runs `npm install` with `BUILD_ID` and `DEPLOY_ID` set but wi
 
 ## What it changes
 
-- **Inside the repo:** installed skills, the `netlify-agent-kit` skill, and any project tool links. Each path goes in a managed block in `.git/info/exclude`, git's per-clone ignore file, so it never shows up in `git status`.
+- **Inside the repo:** installed skills, `files` folders, the `netlify-agent-kit` skill, and any project tool links. Each path goes in a managed block in `.git/info/exclude`, git's per-clone ignore file, so it never shows up in `git status`.
 - **Outside the repo:** tools in `~/.cache/netlify-agent-kit/`, links in `~/.local/bin`, repositories in `~/repos/`, and the record of the last install in `~/.cache/netlify-agent-kit/last-install.json`.
 
 Logs and the record contain environment variable names only, never values.

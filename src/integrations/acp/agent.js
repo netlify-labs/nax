@@ -24,9 +24,19 @@ const DEFAULT_POLL_INTERVAL_MS = 10000
  *
  * @typedef {{ requestResponse: (method: string, apiPath: string) => Promise<{ ok: boolean, status: number, text: string }> }} AcpApiClient
  *
- * @typedef {Record<string, unknown> & { sessionUpdate: string }} AcpSessionUpdate
- *
- * @typedef {{ type: string, text?: string, uri?: string, name?: string, resource?: { uri?: string, text?: string } }} AcpContentBlock
+ * @typedef {import('@agentclientprotocol/sdk', { with: { 'resolution-mode': 'import' } }).SessionUpdate} AcpSessionUpdate
+ * @typedef {import('@agentclientprotocol/sdk', { with: { 'resolution-mode': 'import' } }).ContentBlock} AcpContentBlock
+ * @typedef {import('@agentclientprotocol/sdk', { with: { 'resolution-mode': 'import' } }).InitializeRequest} AcpInitializeRequest
+ * @typedef {import('@agentclientprotocol/sdk', { with: { 'resolution-mode': 'import' } }).InitializeResponse} AcpInitializeResponse
+ * @typedef {import('@agentclientprotocol/sdk', { with: { 'resolution-mode': 'import' } }).NewSessionRequest} AcpNewSessionRequest
+ * @typedef {import('@agentclientprotocol/sdk', { with: { 'resolution-mode': 'import' } }).NewSessionResponse} AcpNewSessionResponse
+ * @typedef {import('@agentclientprotocol/sdk', { with: { 'resolution-mode': 'import' } }).LoadSessionRequest} AcpLoadSessionRequest
+ * @typedef {import('@agentclientprotocol/sdk', { with: { 'resolution-mode': 'import' } }).LoadSessionResponse} AcpLoadSessionResponse
+ * @typedef {import('@agentclientprotocol/sdk', { with: { 'resolution-mode': 'import' } }).SetSessionConfigOptionRequest} AcpSetConfigOptionRequest
+ * @typedef {import('@agentclientprotocol/sdk', { with: { 'resolution-mode': 'import' } }).SetSessionConfigOptionResponse} AcpSetConfigOptionResponse
+ * @typedef {import('@agentclientprotocol/sdk', { with: { 'resolution-mode': 'import' } }).PromptRequest} AcpPromptRequest
+ * @typedef {import('@agentclientprotocol/sdk', { with: { 'resolution-mode': 'import' } }).PromptResponse} AcpPromptResponse
+ * @typedef {import('@agentclientprotocol/sdk', { with: { 'resolution-mode': 'import' } }).CancelNotification} AcpCancelNotification
  *
  * @typedef {{
  *   record: AcpSessionRecord,
@@ -73,8 +83,8 @@ function resolveAcpSite(cwd) {
 function promptText(blocks) {
   return blocks.map((block) => {
     if (block.type === 'text') return block.text || ''
-    if (block.type === 'resource' && block.resource?.text) return `\n<file uri="${block.resource.uri || ''}">\n${block.resource.text}\n</file>\n`
-    if (block.type === 'resource_link') return `@${block.uri || block.name || ''}`
+    if (block.type === 'resource' && 'text' in block.resource) return `\n<file uri="${block.resource.uri}">\n${block.resource.text}\n</file>\n`
+    if (block.type === 'resource_link') return `@${block.uri}`
     return ''
   }).join('').trim()
 }
@@ -228,7 +238,7 @@ function createNaxAcpAgent({
   }
 
   return {
-    /** @param {{ protocolVersion: number }} _params */
+    /** @param {AcpInitializeRequest} _params @returns {Promise<AcpInitializeResponse>} */
     async initialize(_params) {
       return {
         protocolVersion: ACP_PROTOCOL_VERSION,
@@ -241,7 +251,7 @@ function createNaxAcpAgent({
       }
     },
 
-    /** @param {{ cwd: string }} params */
+    /** @param {AcpNewSessionRequest} params @returns {Promise<AcpNewSessionResponse>} */
     async newSession({ cwd }) {
       const { projectRoot, siteId } = resolveSite(cwd)
       const workspace = inspect({ cwd })
@@ -263,7 +273,7 @@ function createNaxAcpAgent({
       return { sessionId: live.record.sessionId, configOptions: sessionConfigOptions(live.record.config) }
     },
 
-    /** @param {{ sessionId: string, cwd: string }} params */
+    /** @param {AcpLoadSessionRequest} params @returns {Promise<AcpLoadSessionResponse>} */
     async loadSession({ sessionId, cwd }) {
       const { projectRoot } = resolveSite(cwd)
       const record = loadAcpSession(projectRoot, sessionId)
@@ -278,15 +288,16 @@ function createNaxAcpAgent({
       return { configOptions: sessionConfigOptions(live.record.config) }
     },
 
-    /** @param {{ sessionId: string, configId: string, value: string }} params */
+    /** @param {AcpSetConfigOptionRequest} params @returns {Promise<AcpSetConfigOptionResponse>} */
     async setConfigOption({ sessionId, configId, value }) {
       const live = liveSession(sessionId)
+      if (typeof value !== 'string') throw new Error(`Session config option "${configId}" takes a string value.`)
       live.record = { ...live.record, config: updateSessionConfig(live.record.config, configId, value) }
       save(live)
       return { configOptions: sessionConfigOptions(live.record.config) }
     },
 
-    /** @param {{ sessionId: string, prompt: AcpContentBlock[] }} params */
+    /** @param {AcpPromptRequest} params @returns {Promise<AcpPromptResponse>} */
     async prompt({ sessionId, prompt }) {
       const live = liveSession(sessionId)
       live.cancelRequested = false
@@ -347,7 +358,7 @@ function createNaxAcpAgent({
       }
     },
 
-    /** @param {{ sessionId: string }} params */
+    /** @param {AcpCancelNotification} params */
     async cancel({ sessionId }) {
       const live = sessions.get(sessionId)
       if (!live || live.cancelRequested) return

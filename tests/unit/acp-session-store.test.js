@@ -15,7 +15,10 @@ function tempProject() {
   return fs.mkdtempSync(path.join(os.tmpdir(), 'nax-acp-store-'))
 }
 
-/** @param {string} projectRoot */
+/**
+ * @param {string} projectRoot
+ * @returns {import('../../src/integrations/acp/session-store').AcpSessionRecord}
+ */
 function record(projectRoot) {
   return {
     version: 1,

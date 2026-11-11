@@ -7,6 +7,12 @@ const {
   updateSessionConfig,
 } = require('../../src/integrations/acp/session-config')
 
+/**
+ * @typedef {import('../../src/integrations/acp/session-config').AcpSessionConfig} AcpSessionConfig
+ * @typedef {import('../../src/integrations/acp/session-config').AcpSelectOption} AcpSelectOption
+ * @typedef {import('../../src/integrations/acp/session-config').AcpSelectGroup} AcpSelectGroup
+ */
+
 test('default config runs Claude on Auto and applies changes locally', () => {
   assert.deepEqual(defaultSessionConfig(), {
     agent: 'claude',
@@ -22,9 +28,10 @@ test('model option groups every agent so ACP clients drive one model picker', ()
   assert.equal(model.type, 'select')
   assert.equal(model.category, 'model')
   assert.equal(model.currentValue, 'claude:auto')
-  const groups = model.options.map((group) => group.group)
+  const modelGroups = /** @type {AcpSelectGroup[]} */ (model.options)
+  const groups = modelGroups.map((group) => group.group)
   assert.deepEqual(groups, ['claude', 'gemini', 'codex', 'opencode'])
-  const claude = model.options[0]
+  const claude = modelGroups[0]
   assert.equal(claude.name, 'Claude')
   assert.deepEqual(claude.options[0], { value: 'claude:auto', name: 'Claude Auto' })
   assert.ok(claude.options.some((option) => option.value === 'claude:claude-opus-5'))
@@ -35,17 +42,18 @@ test('effort option lists the selected model efforts as a thought level', () => 
   const effort = options.find((option) => option.id === 'effort')
   assert.equal(effort.category, 'thought_level')
   assert.equal(effort.currentValue, 'auto')
-  assert.equal(effort.options[0].value, 'auto')
+  assert.equal(/** @type {AcpSelectOption[]} */ (effort.options)[0].value, 'auto')
   assert.ok(effort.options.length > 1, 'a named model offers efforts beyond Auto')
 })
 
 test('changes option offers applying locally or opening a pull request', () => {
   const changes = sessionConfigOptions(defaultSessionConfig()).find((option) => option.id === 'changes')
   assert.equal(changes.currentValue, 'apply')
-  assert.deepEqual(changes.options.map((option) => option.value), ['apply', 'pr'])
+  assert.deepEqual(/** @type {AcpSelectOption[]} */ (changes.options).map((option) => option.value), ['apply', 'pr'])
 })
 
 test('selecting a model from another agent switches agent and resets effort', () => {
+  /** @type {AcpSessionConfig} */
   const start = { agent: 'claude', model: 'claude-opus-5', effort: 'high', changes: 'apply' }
   assert.deepEqual(updateSessionConfig(start, 'model', 'codex:gpt-6.1-sol'), {
     agent: 'codex',
@@ -63,7 +71,8 @@ test('model ids containing slashes and colons keep everything after the agent pr
 
 test('effort and changes accept only offered values', () => {
   const config = { ...defaultSessionConfig(), model: 'claude-opus-5' }
-  const effort = sessionConfigOptions(config).find((option) => option.id === 'effort').options[1].value
+  const effortOptions = /** @type {AcpSelectOption[]} */ (sessionConfigOptions(config).find((option) => option.id === 'effort').options)
+  const effort = effortOptions[1].value
   assert.equal(updateSessionConfig(config, 'effort', effort).effort, effort)
   assert.equal(updateSessionConfig(config, 'changes', 'pr').changes, 'pr')
   assert.throws(() => updateSessionConfig(config, 'effort', 'ludicrous'), /Unsupported effort "ludicrous"/)

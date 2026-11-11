@@ -325,6 +325,7 @@ nax init                  Wire this repo to Netlify + GitHub Actions
 nax handoff               Copy or continue from prior workflow/session results
 nax dashboard [flow]      Open the local workflow dashboard
 nax list                  List available flows
+nax acp                   Serve agent runners to ACP clients (t3code, Zed)
 nax admin sync last       Pull remote updates for the latest local Agent Runner
 nax admin clean blobs     Preview or delete stale prompt blob refs
 nax admin skills install  Install bundled agent skills into detected harness dirs
@@ -482,6 +483,19 @@ duplicate tuples are rejected.
 Pinned or repeated-provider lineups select `netlify-api` under transport Auto.
 Local runs execute in waves of at most four non-terminal runners. A step is
 capped at four resolved agent instances; `--force` does not bypass this limit.
+
+### `nax acp`
+
+`nax acp` serves Netlify agent runners as an [Agent Client Protocol](https://agentclientprotocol.com) agent over stdio, so ACP clients such as [t3code](https://github.com/pingdotgg/t3code) and Zed can use them like any other coding agent.
+
+In t3code: **Settings → Providers → Add provider → Show more → Local ACP command**, executable `nax`, argument `acp`. Set `NETLIFY_AUTH_TOKEN` in the provider's environment, or sign in with the Netlify CLI.
+
+- Each ACP session is one agent runner. The first prompt starts it on the workspace's branch when that branch is pushed; later prompts are follow-up sessions.
+- The project folder must be linked to a Netlify site (`netlify link`), or `NETLIFY_SITE_ID` must be set.
+- The model picker lists every agent (Claude, Codex, Gemini, OpenCode) and its models; effort is the reasoning level.
+- **Changes** decides where each turn's work goes: **Apply locally** (default) applies that session's diff to the workspace, and **Pull request** opens or updates the runner's PR instead. A diff that does not apply cleanly is saved under `.nax/acp-sessions/<session>/` and the workspace is left untouched.
+- Runners work from the pushed branch, so the first turn warns about unpushed commits and uncommitted edits.
+- Progress arrives as the runner's current step, polled every 10 seconds (`--poll-interval <seconds>`); runners do not stream tokens or tool calls. Each session has the platform's 25-minute limit.
 
 ### `nax admin sync`
 

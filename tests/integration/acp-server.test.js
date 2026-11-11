@@ -2,7 +2,8 @@ const test = require('node:test')
 const assert = require('node:assert/strict')
 const fs = require('fs')
 const path = require('path')
-const { PassThrough } = require('stream')
+const { spawn } = require('child_process')
+const { PassThrough, Readable, Writable } = require('stream')
 
 const { createAcpAgentApp, serveAcp } = require('../../src/integrations/acp/server')
 const { createNaxAgentRunnerSdk } = require('../../src/integrations/netlify/agent-runner-sdk')
@@ -111,4 +112,34 @@ test('serveAcp speaks newline-delimited JSON-RPC on the given streams', async ()
   assert.equal(response.result.agentInfo.name, 'nax')
   input.end()
   await served
+})
+
+test('the nax acp process answers an ACP client on stdout with protocol frames only', async () => {
+  const acp = await import('@agentclientprotocol/sdk')
+  const cwd = clonedRepo()
+  const child = spawn(process.execPath, [path.join(__dirname, '..', '..', 'src', 'cli', 'nax.js'), 'acp'], {
+    cwd,
+    env: { ...process.env, NETLIFY_SITE_ID: 'site-from-env' },
+    stdio: ['pipe', 'pipe', 'pipe'],
+  })
+  let stderr = ''
+  child.stderr.on('data', (chunk) => { stderr += chunk.toString('utf8') })
+  const stream = acp.ndJsonStream(
+    /** @type {WritableStream<Uint8Array>} */ (Writable.toWeb(child.stdin)),
+    /** @type {ReadableStream<Uint8Array>} */ (Readable.toWeb(child.stdout)),
+  )
+  const outcome = await acp.client({ name: 'test-client' }).connectWith(stream, async (agent) => {
+    const init = await agent.request(acp.methods.agent.initialize, { protocolVersion: acp.PROTOCOL_VERSION, clientCapabilities: {} })
+    const session = await agent.request(acp.methods.agent.session.new, { cwd, mcpServers: [] })
+    return { init, session }
+  })
+  child.stdin.end()
+  const exitCode = await new Promise((resolve) => child.on('exit', resolve))
+
+  assert.equal(outcome.init.agentInfo.name, 'nax')
+  assert.match(outcome.session.sessionId, /^nax-[0-9a-f-]{36}$/)
+  const saved = JSON.parse(fs.readFileSync(path.join(cwd, '.nax', 'acp-sessions', `${outcome.session.sessionId}.json`), 'utf8'))
+  assert.equal(saved.siteId, 'site-from-env')
+  assert.equal(exitCode, 0)
+  assert.equal(stderr, '')
 })

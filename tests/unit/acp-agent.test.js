@@ -1,9 +1,10 @@
 const test = require('node:test')
 const assert = require('node:assert/strict')
 const fs = require('fs')
+const os = require('os')
 const path = require('path')
 
-const { createNaxAcpAgent } = require('../../src/integrations/acp/agent')
+const { createNaxAcpAgent, resolveAcpSite } = require('../../src/integrations/acp/agent')
 const { createNaxAgentRunnerSdk } = require('../../src/integrations/netlify/agent-runner-sdk')
 const { loadAcpSession } = require('../../src/integrations/acp/session-store')
 const { appendPatch, clonedRepo, runnerApi } = require('../fixtures/acp/harness')
@@ -49,15 +50,34 @@ test('initialize advertises session loading and text prompts', async () => {
   assert.equal(response.agentInfo.name, 'nax')
 })
 
-test('new session saves the site and returns the config options', async () => {
-  const cwd = clonedRepo()
-  const { agent } = harness(cwd, runnerApi({ scripts: {} }))
+test('new session returns config options without touching the site or the disk', async () => {
+  const cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'nax-acp-unlinked-'))
+  let resolved = 0
+  const { agent } = harness(cwd, runnerApi({ scripts: {} }), {
+    resolveSite: () => {
+      resolved += 1
+      throw new Error('No linked Netlify site')
+    },
+  })
   const response = await agent.newSession({ cwd, mcpServers: [] })
   assert.equal(response.sessionId, 'nax-test')
   assert.deepEqual(response.configOptions.map((option) => option.id), ['model', 'effort', 'changes'])
+  await agent.setConfigOption({ sessionId: 'nax-test', configId: 'changes', value: 'pr' })
+  assert.equal(resolved, 0, 'clients probing for models never trigger site discovery')
+  assert.deepEqual(fs.readdirSync(cwd), [], 'probe sessions leave no files behind')
+  await assert.rejects(agent.prompt({ sessionId: 'nax-test', prompt: promptOf('hi') }), /No linked Netlify site/)
+})
+
+test('first prompt saves the session with its site', async () => {
+  const cwd = clonedRepo()
+  const remote = runnerApi({ scripts: { 'session-1': [{ state: 'done', resultText: 'Hi.', hasResultDiff: false }] } })
+  const { agent } = harness(cwd, remote)
+  await agent.newSession({ cwd, mcpServers: [] })
+  assert.equal(loadAcpSession(cwd, 'nax-test'), null)
+  await agent.prompt({ sessionId: 'nax-test', prompt: promptOf('hi') })
   const record = loadAcpSession(cwd, 'nax-test')
   assert.equal(record.siteId, 'site-1')
-  assert.equal(record.handle, null)
+  assert.equal(record.branch, 'main')
 })
 
 test('first prompt starts a runner on the pushed branch, streams progress, and applies its diff', async () => {
@@ -233,4 +253,9 @@ test('loading a session replays its transcript and restores its config', async (
 test('prompting an unknown session fails clearly', async () => {
   const { agent } = harness(clonedRepo(), runnerApi({ scripts: {} }))
   await assert.rejects(agent.prompt({ sessionId: 'nax-nope', prompt: promptOf('hi') }), /Unknown ACP session nax-nope/)
+})
+
+test('site discovery refuses folders outside a git repository instead of scanning them', () => {
+  const outside = fs.mkdtempSync(path.join(os.tmpdir(), 'nax-acp-nogit-'))
+  assert.throws(() => resolveAcpSite(outside), /is not inside a git repository/)
 })

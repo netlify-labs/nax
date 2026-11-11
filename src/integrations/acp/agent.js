@@ -8,7 +8,7 @@ const { formatAgentRunUrl } = require('../../workflows/results/agent-run-results
 const { createNaxAgentRunnerSdk } = require('../netlify/agent-runner-sdk')
 const { createNetlifyApiClient } = require('../netlify/api-client')
 const { resolveNetlifyProjectTarget } = require('../netlify/local-runner')
-const { resolveProjectRoot } = require('../netlify/project-selection')
+const { gitRepositoryRoot, resolveProjectRoot } = require('../netlify/project-selection')
 const { defaultSessionConfig, sessionConfigOptions, updateSessionConfig } = require('./session-config')
 const { loadAcpSession, saveAcpSession } = require('./session-store')
 const { applyPatchFile, inspectWorkspace, workspaceWarnings } = require('./workspace')
@@ -40,11 +40,13 @@ const DEFAULT_POLL_INTERVAL_MS = 10000
  *
  * @typedef {{
  *   record: AcpSessionRecord,
- *   sdk: AgentRunnerSdk,
- *   api: AcpApiClient,
+ *   sdk: AgentRunnerSdk | null,
+ *   api: AcpApiClient | null,
  *   handle: Handle | null,
  *   cancelRequested: boolean,
  * }} LiveSession
+ *
+ * @typedef {LiveSession & { sdk: AgentRunnerSdk, api: AcpApiClient }} ConnectedSession
  *
  * @typedef {{
  *   createSdk?: (input: { siteId: string }) => AgentRunnerSdk,
@@ -63,10 +65,14 @@ const DEFAULT_POLL_INTERVAL_MS = 10000
 
 /**
  * Finds the Netlify site linked to an ACP session's working directory.
+ * Site discovery scans the project tree, so folders outside a git repository are refused rather than scanned.
  * @param {string} cwd
  * @returns {{ projectRoot: string, siteId: string }}
  */
 function resolveAcpSite(cwd) {
+  if (!gitRepositoryRoot(cwd)) {
+    throw new Error(`${cwd} is not inside a git repository. Netlify agent runners work on a site's git repository; open that repository's folder.`)
+  }
   const projectRoot = resolveProjectRoot('', { cwd })
   const target = resolveNetlifyProjectTarget({ projectRoot })
   if (!target.siteId) {
@@ -124,18 +130,38 @@ function createNaxAcpAgent({
   /** @type {Map<string, LiveSession>} */
   const sessions = new Map()
 
-  /** @param {AcpSessionRecord} record @returns {LiveSession} */
+  /**
+   * Tracks a session; one with a known site also gets its runner clients and saved handle.
+   * @param {AcpSessionRecord} record
+   * @returns {LiveSession}
+   */
   function openSession(record) {
-    const sdk = createSdk({ siteId: record.siteId })
+    const sdk = record.siteId ? createSdk({ siteId: record.siteId }) : null
     const live = {
       record,
       sdk,
-      api: createApi({ siteId: record.siteId }),
-      handle: record.handle ? sdk.parseHandle(record.handle) : null,
+      api: record.siteId ? createApi({ siteId: record.siteId }) : null,
+      handle: sdk && record.handle ? sdk.parseHandle(record.handle) : null,
       cancelRequested: false,
     }
     sessions.set(record.sessionId, live)
     return live
+  }
+
+  /**
+   * Resolves the session's site and branch on its first prompt, so clients that only probe sessions cost nothing.
+   * @param {LiveSession} live
+   * @returns {ConnectedSession}
+   */
+  function connectSession(live) {
+    if (!live.sdk || !live.api) {
+      const { projectRoot, siteId } = resolveSite(live.record.cwd)
+      const workspace = inspect({ cwd: live.record.cwd })
+      live.record = { ...live.record, projectRoot, siteId, branch: workspace.remoteSha ? workspace.branch : '' }
+      live.sdk = createSdk({ siteId })
+      live.api = createApi({ siteId })
+    }
+    return /** @type {ConnectedSession} */ (live)
   }
 
   /** @param {string} sessionId @returns {LiveSession} */
@@ -145,7 +171,7 @@ function createNaxAcpAgent({
     return live
   }
 
-  /** @param {LiveSession} live */
+  /** @param {ConnectedSession} live */
   function save(live) {
     live.record = {
       ...live.record,
@@ -157,7 +183,7 @@ function createNaxAcpAgent({
 
   /**
    * Starts the runner on the first turn, or a follow-up session on later turns.
-   * @param {LiveSession} live
+   * @param {ConnectedSession} live
    * @param {string} text
    * @returns {Promise<Handle>}
    */
@@ -176,7 +202,7 @@ function createNaxAcpAgent({
 
   /**
    * Polls the runner to a terminal result, reporting each new step on the turn's tool call.
-   * @param {LiveSession} live
+   * @param {ConnectedSession} live
    * @param {string} toolCallId
    * @returns {Promise<RunResult>}
    */
@@ -201,7 +227,7 @@ function createNaxAcpAgent({
 
   /**
    * Fetches this session's own diff and applies it to the workspace, saving the patch beside the session record.
-   * @param {LiveSession} live
+   * @param {ConnectedSession} live
    * @param {Extract<RunResult, { status: 'succeeded' }>} result
    * @returns {Promise<string>}
    */
@@ -223,7 +249,7 @@ function createNaxAcpAgent({
 
   /**
    * Opens or updates the runner's pull request; the session keeps its own landing policy for later turns.
-   * @param {LiveSession} live
+   * @param {ConnectedSession} live
    * @returns {Promise<string>}
    */
   async function openPullRequest(live) {
@@ -253,23 +279,20 @@ function createNaxAcpAgent({
 
     /** @param {AcpNewSessionRequest} params @returns {Promise<AcpNewSessionResponse>} */
     async newSession({ cwd }) {
-      const { projectRoot, siteId } = resolveSite(cwd)
-      const workspace = inspect({ cwd })
       const timestamp = now().toISOString()
       const live = openSession({
         version: 1,
         sessionId: newSessionId(),
         cwd,
-        projectRoot,
-        siteId,
-        branch: workspace.remoteSha ? workspace.branch : '',
+        projectRoot: '',
+        siteId: '',
+        branch: '',
         config: defaultSessionConfig(),
         handle: null,
         transcript: [],
         createdAt: timestamp,
         updatedAt: timestamp,
       })
-      save(live)
       return { sessionId: live.record.sessionId, configOptions: sessionConfigOptions(live.record.config) }
     },
 
@@ -293,13 +316,13 @@ function createNaxAcpAgent({
       const live = liveSession(sessionId)
       if (typeof value !== 'string') throw new Error(`Session config option "${configId}" takes a string value.`)
       live.record = { ...live.record, config: updateSessionConfig(live.record.config, configId, value) }
-      save(live)
+      if (live.sdk && live.api) save(/** @type {ConnectedSession} */ (live))
       return { configOptions: sessionConfigOptions(live.record.config) }
     },
 
     /** @param {AcpPromptRequest} params @returns {Promise<AcpPromptResponse>} */
     async prompt({ sessionId, prompt }) {
-      const live = liveSession(sessionId)
+      const live = connectSession(liveSession(sessionId))
       live.cancelRequested = false
       const text = promptText(prompt)
       /** @type {string[]} */
@@ -363,7 +386,7 @@ function createNaxAcpAgent({
       const live = sessions.get(sessionId)
       if (!live || live.cancelRequested) return
       live.cancelRequested = true
-      if (live.handle) await live.sdk.stop(live.handle)
+      if (live.sdk && live.handle) await live.sdk.stop(live.handle)
     },
   }
 }

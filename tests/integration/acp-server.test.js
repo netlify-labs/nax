@@ -119,7 +119,6 @@ test('the nax acp process answers an ACP client on stdout with protocol frames o
   const cwd = clonedRepo()
   const child = spawn(process.execPath, [path.join(__dirname, '..', '..', 'src', 'cli', 'nax.js'), 'acp'], {
     cwd,
-    env: { ...process.env, NETLIFY_SITE_ID: 'site-from-env' },
     stdio: ['pipe', 'pipe', 'pipe'],
   })
   let stderr = ''
@@ -138,8 +137,8 @@ test('the nax acp process answers an ACP client on stdout with protocol frames o
 
   assert.equal(outcome.init.agentInfo.name, 'nax')
   assert.match(outcome.session.sessionId, /^nax-[0-9a-f-]{36}$/)
-  const saved = JSON.parse(fs.readFileSync(path.join(cwd, '.nax', 'acp-sessions', `${outcome.session.sessionId}.json`), 'utf8'))
-  assert.equal(saved.siteId, 'site-from-env')
+  assert.equal(outcome.session.configOptions[0].id, 'model')
+  assert.equal(fs.existsSync(path.join(cwd, '.nax')), false, 'a session is saved on its first prompt, not when a client opens it')
   assert.equal(exitCode, 0)
   assert.equal(stderr, '')
 })

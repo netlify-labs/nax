@@ -1,0 +1,364 @@
+// Turn engine behind `nax acp`: maps ACP sessions and prompts onto Netlify Agent Runner runs.
+// One ACP session is one agent runner; its first prompt starts the runner and later prompts are follow-up sessions.
+const fs = require('fs')
+const path = require('path')
+const { randomUUID } = require('crypto')
+const { validateAgentConfig } = require('../../core/agents/configuration')
+const { formatAgentRunUrl } = require('../../workflows/results/agent-run-results')
+const { createNaxAgentRunnerSdk } = require('../netlify/agent-runner-sdk')
+const { createNetlifyApiClient } = require('../netlify/api-client')
+const { resolveNetlifyProjectTarget } = require('../netlify/local-runner')
+const { resolveProjectRoot } = require('../netlify/project-selection')
+const { defaultSessionConfig, sessionConfigOptions, updateSessionConfig } = require('./session-config')
+const { loadAcpSession, saveAcpSession } = require('./session-store')
+const { applyPatchFile, inspectWorkspace, workspaceWarnings } = require('./workspace')
+
+const ACP_PROTOCOL_VERSION = 1
+const DEFAULT_POLL_INTERVAL_MS = 10000
+
+/**
+ * @typedef {import('nax-agent-runner-sdk').AgentRunnerSdk} AgentRunnerSdk
+ * @typedef {import('nax-agent-runner-sdk').Handle} Handle
+ * @typedef {import('nax-agent-runner-sdk').RunResult} RunResult
+ * @typedef {import('./session-store').AcpSessionRecord} AcpSessionRecord
+ *
+ * @typedef {{ requestResponse: (method: string, apiPath: string) => Promise<{ ok: boolean, status: number, text: string }> }} AcpApiClient
+ *
+ * @typedef {Record<string, unknown> & { sessionUpdate: string }} AcpSessionUpdate
+ *
+ * @typedef {{ type: string, text?: string, uri?: string, name?: string, resource?: { uri?: string, text?: string } }} AcpContentBlock
+ *
+ * @typedef {{
+ *   record: AcpSessionRecord,
+ *   sdk: AgentRunnerSdk,
+ *   api: AcpApiClient,
+ *   handle: Handle | null,
+ *   cancelRequested: boolean,
+ * }} LiveSession
+ *
+ * @typedef {{
+ *   createSdk?: (input: { siteId: string }) => AgentRunnerSdk,
+ *   createApi?: (input: { siteId: string }) => AcpApiClient,
+ *   resolveSite?: (cwd: string) => { projectRoot: string, siteId: string },
+ *   inspect?: typeof inspectWorkspace,
+ *   applyPatch?: typeof applyPatchFile,
+ *   sendUpdate: (sessionId: string, update: AcpSessionUpdate) => Promise<void>,
+ *   sleep?: (ms: number) => Promise<unknown>,
+ *   pollIntervalMs?: number,
+ *   newSessionId?: () => string,
+ *   now?: () => Date,
+ *   version?: string,
+ * }} NaxAcpAgentOptions
+ */
+
+/**
+ * Finds the Netlify site linked to an ACP session's working directory.
+ * @param {string} cwd
+ * @returns {{ projectRoot: string, siteId: string }}
+ */
+function resolveAcpSite(cwd) {
+  const projectRoot = resolveProjectRoot('', { cwd })
+  const target = resolveNetlifyProjectTarget({ projectRoot })
+  if (!target.siteId) {
+    throw new Error(`No linked Netlify site for ${cwd}. Run "netlify link" there, or set NETLIFY_SITE_ID in the provider's environment.`)
+  }
+  return { projectRoot, siteId: target.siteId }
+}
+
+/**
+ * Flattens ACP prompt content into the text an agent runner receives.
+ * @param {AcpContentBlock[]} blocks
+ * @returns {string}
+ */
+function promptText(blocks) {
+  return blocks.map((block) => {
+    if (block.type === 'text') return block.text || ''
+    if (block.type === 'resource' && block.resource?.text) return `\n<file uri="${block.resource.uri || ''}">\n${block.resource.text}\n</file>\n`
+    if (block.type === 'resource_link') return `@${block.uri || block.name || ''}`
+    return ''
+  }).join('').trim()
+}
+
+/**
+ * @param {string} text
+ * @returns {AcpSessionUpdate}
+ */
+function agentMessage(text) {
+  return { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text } }
+}
+
+/**
+ * @param {string[]} files
+ * @returns {string}
+ */
+function fileList(files) {
+  return `${files.length} file${files.length === 1 ? '' : 's'}: ${files.join(', ')}`
+}
+
+/**
+ * @param {NaxAcpAgentOptions} options
+ */
+function createNaxAcpAgent({
+  createSdk = ({ siteId }) => createNaxAgentRunnerSdk({ siteId }),
+  createApi = ({ siteId }) => createNetlifyApiClient({ siteId }),
+  resolveSite = resolveAcpSite,
+  inspect = inspectWorkspace,
+  applyPatch = applyPatchFile,
+  sendUpdate,
+  sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+  pollIntervalMs = DEFAULT_POLL_INTERVAL_MS,
+  newSessionId = () => `nax-${randomUUID()}`,
+  now = () => new Date(),
+  version = '',
+}) {
+  /** @type {Map<string, LiveSession>} */
+  const sessions = new Map()
+
+  /** @param {AcpSessionRecord} record @returns {LiveSession} */
+  function openSession(record) {
+    const sdk = createSdk({ siteId: record.siteId })
+    const live = {
+      record,
+      sdk,
+      api: createApi({ siteId: record.siteId }),
+      handle: record.handle ? sdk.parseHandle(record.handle) : null,
+      cancelRequested: false,
+    }
+    sessions.set(record.sessionId, live)
+    return live
+  }
+
+  /** @param {string} sessionId @returns {LiveSession} */
+  function liveSession(sessionId) {
+    const live = sessions.get(sessionId)
+    if (!live) throw new Error(`Unknown ACP session ${sessionId}. Create or load it first.`)
+    return live
+  }
+
+  /** @param {LiveSession} live */
+  function save(live) {
+    live.record = {
+      ...live.record,
+      handle: live.handle ? live.sdk.serializeHandle(live.handle) : null,
+      updatedAt: now().toISOString(),
+    }
+    saveAcpSession(live.record)
+  }
+
+  /**
+   * Starts the runner on the first turn, or a follow-up session on later turns.
+   * @param {LiveSession} live
+   * @param {string} text
+   * @returns {Promise<Handle>}
+   */
+  async function submitTurn(live, text) {
+    const { agent, model, effort } = validateAgentConfig(live.record.config)
+    const runConfig = { agent, ...(model ? { model } : {}), ...(effort ? { effort } : {}) }
+    if (live.handle) return live.sdk.followUp(live.handle, { prompt: text, ...runConfig })
+    return live.sdk.start({
+      siteId: live.record.siteId,
+      prompt: text,
+      ...runConfig,
+      ...(live.record.branch ? { branch: live.record.branch } : {}),
+      land: 'none',
+    })
+  }
+
+  /**
+   * Polls the runner to a terminal result, reporting each new step on the turn's tool call.
+   * @param {LiveSession} live
+   * @param {string} toolCallId
+   * @returns {Promise<RunResult>}
+   */
+  async function waitForResult(live, toolCallId) {
+    const handle = /** @type {Handle} */ (live.handle)
+    let lastStep = ''
+    for (;;) {
+      const snapshot = await live.sdk.getSnapshot(handle)
+      if (snapshot.kind === 'terminal') return snapshot.result
+      if (snapshot.latestStep && snapshot.latestStep !== lastStep) {
+        lastStep = snapshot.latestStep
+        await sendUpdate(live.record.sessionId, { sessionUpdate: 'tool_call_update', toolCallId, status: 'in_progress', title: lastStep })
+      }
+      if (now().getTime() > handle.policy.deadlineAt && !live.cancelRequested) {
+        live.cancelRequested = true
+        await live.sdk.stop(handle)
+        throw new Error(`Netlify agent runner ${handle.runnerId} hit its 25-minute limit and was stopped.`)
+      }
+      await sleep(pollIntervalMs)
+    }
+  }
+
+  /**
+   * Fetches this session's own diff and applies it to the workspace, saving the patch beside the session record.
+   * @param {LiveSession} live
+   * @param {Extract<RunResult, { status: 'succeeded' }>} result
+   * @returns {Promise<string>}
+   */
+  async function applyTurnChanges(live, result) {
+    if (result.changes === 'unchanged') return ''
+    const { runnerId, sessionId } = result
+    const response = await live.api.requestResponse('GET', `/agent_runners/${runnerId}/sessions/${sessionId}/diff/result`)
+    if (response.status === 404 || (response.ok && !response.text.trim())) {
+      return result.changes === 'changed' ? 'The agent runner reported changes, but its diff is not available.' : ''
+    }
+    if (!response.ok) throw new Error(`Could not fetch the diff for agent runner ${runnerId} session ${sessionId} (HTTP ${response.status}).`)
+    const patchPath = path.join(live.record.projectRoot, '.nax', 'acp-sessions', live.record.sessionId, `${sessionId}.patch`)
+    fs.mkdirSync(path.dirname(patchPath), { recursive: true })
+    fs.writeFileSync(patchPath, response.text)
+    const applied = applyPatch({ cwd: live.record.cwd, patchPath })
+    if (applied.status === 'applied') return `Applied changes to ${fileList(applied.files)}`
+    return `The agent runner's changes to ${fileList(applied.files)} did not apply to the local workspace (${applied.detail}). The patch is saved at ${patchPath}`
+  }
+
+  /**
+   * Opens or updates the runner's pull request; the session keeps its own landing policy for later turns.
+   * @param {LiveSession} live
+   * @returns {Promise<string>}
+   */
+  async function openPullRequest(live) {
+    const handle = /** @type {Handle} */ (live.handle)
+    const landed = await live.sdk.land({ ...handle, policy: { ...handle.policy, landing: 'pr' } })
+    live.handle = landed.handle
+    const landing = landed.landing
+    if (landing.kind === 'prOpen' || landing.kind === 'merged') return `Pull request: ${landing.prUrl}`
+    if (landing.kind === 'failed') return `Could not open a pull request: ${landing.failure.message}`
+    if (landing.kind === 'unsupported') return `Could not open a pull request: ${landing.reason}`
+    return ''
+  }
+
+  return {
+    /** @param {{ protocolVersion: number }} _params */
+    async initialize(_params) {
+      return {
+        protocolVersion: ACP_PROTOCOL_VERSION,
+        agentCapabilities: {
+          loadSession: true,
+          promptCapabilities: { image: false, audio: false, embeddedContext: true },
+        },
+        authMethods: [],
+        agentInfo: { name: 'nax', title: 'Netlify Agent Runners', version },
+      }
+    },
+
+    /** @param {{ cwd: string }} params */
+    async newSession({ cwd }) {
+      const { projectRoot, siteId } = resolveSite(cwd)
+      const workspace = inspect({ cwd })
+      const timestamp = now().toISOString()
+      const live = openSession({
+        version: 1,
+        sessionId: newSessionId(),
+        cwd,
+        projectRoot,
+        siteId,
+        branch: workspace.remoteSha ? workspace.branch : '',
+        config: defaultSessionConfig(),
+        handle: null,
+        transcript: [],
+        createdAt: timestamp,
+        updatedAt: timestamp,
+      })
+      save(live)
+      return { sessionId: live.record.sessionId, configOptions: sessionConfigOptions(live.record.config) }
+    },
+
+    /** @param {{ sessionId: string, cwd: string }} params */
+    async loadSession({ sessionId, cwd }) {
+      const { projectRoot } = resolveSite(cwd)
+      const record = loadAcpSession(projectRoot, sessionId)
+      if (!record) throw new Error(`Unknown ACP session ${sessionId} in ${projectRoot}.`)
+      const live = openSession(record)
+      for (const entry of record.transcript) {
+        await sendUpdate(sessionId, {
+          sessionUpdate: entry.role === 'user' ? 'user_message_chunk' : 'agent_message_chunk',
+          content: { type: 'text', text: entry.text },
+        })
+      }
+      return { configOptions: sessionConfigOptions(live.record.config) }
+    },
+
+    /** @param {{ sessionId: string, configId: string, value: string }} params */
+    async setConfigOption({ sessionId, configId, value }) {
+      const live = liveSession(sessionId)
+      live.record = { ...live.record, config: updateSessionConfig(live.record.config, configId, value) }
+      save(live)
+      return { configOptions: sessionConfigOptions(live.record.config) }
+    },
+
+    /** @param {{ sessionId: string, prompt: AcpContentBlock[] }} params */
+    async prompt({ sessionId, prompt }) {
+      const live = liveSession(sessionId)
+      live.cancelRequested = false
+      const text = promptText(prompt)
+      /** @type {string[]} */
+      const reply = []
+      /** @param {string} chunk */
+      const say = async (chunk) => {
+        reply.push(chunk)
+        await sendUpdate(sessionId, agentMessage(chunk))
+      }
+
+      if (!live.handle) {
+        const warnings = workspaceWarnings(inspect({ cwd: live.record.cwd }))
+        if (warnings.length > 0) await say(`${warnings.map((warning) => `> ${warning}`).join('\n')}\n\n`)
+      }
+
+      live.record = { ...live.record, transcript: [...live.record.transcript, { role: 'user', text }] }
+      live.handle = await submitTurn(live, text)
+      save(live)
+      if (live.cancelRequested) await live.sdk.stop(live.handle)
+
+      const runner = await live.sdk.transport.getRunner(live.handle.runnerId)
+      const runUrl = formatAgentRunUrl(runner.siteName || '', live.handle.runnerId, live.handle.currentSessionId)
+      const toolCallId = `run-${live.handle.currentSessionId}`
+      await sendUpdate(sessionId, {
+        sessionUpdate: 'tool_call',
+        toolCallId,
+        title: `Netlify agent runner (${live.record.config.agent})`,
+        kind: 'other',
+        status: 'in_progress',
+        content: [{ type: 'content', content: { type: 'text', text: runUrl || `Agent runner ${live.handle.runnerId}` } }],
+      })
+
+      const result = await waitForResult(live, toolCallId)
+      const succeeded = result.status === 'succeeded'
+      await sendUpdate(sessionId, { sessionUpdate: 'tool_call_update', toolCallId, status: succeeded ? 'completed' : 'failed' })
+
+      try {
+        if (live.cancelRequested || result.status === 'cancelled') return { stopReason: 'cancelled' }
+        if (result.status === 'failed') {
+          throw new Error(`Netlify agent runner ${result.runnerId} failed: ${result.failure.message}`)
+        }
+        if (result.status === 'timedOut') {
+          throw new Error(`Netlify agent runner ${result.runnerId} timed out.`)
+        }
+        if (result.resultText) await say(result.resultText)
+        const changes = live.record.config.changes === 'pr'
+          ? await openPullRequest(live)
+          : await applyTurnChanges(live, result)
+        if (changes) await say(`${result.resultText ? '\n\n' : ''}${changes}`)
+        return { stopReason: 'end_turn' }
+      } finally {
+        if (reply.length > 0) {
+          live.record = { ...live.record, transcript: [...live.record.transcript, { role: 'agent', text: reply.join('') }] }
+        }
+        save(live)
+      }
+    },
+
+    /** @param {{ sessionId: string }} params */
+    async cancel({ sessionId }) {
+      const live = sessions.get(sessionId)
+      if (!live || live.cancelRequested) return
+      live.cancelRequested = true
+      if (live.handle) await live.sdk.stop(live.handle)
+    },
+  }
+}
+
+module.exports = {
+  createNaxAcpAgent,
+  promptText,
+  resolveAcpSite,
+}

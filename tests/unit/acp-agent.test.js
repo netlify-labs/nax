@@ -4,7 +4,7 @@ const fs = require('fs')
 const os = require('os')
 const path = require('path')
 
-const { createNaxAcpAgent, promptText, resolveAcpSite, verifyAcpSiteRepo } = require('../../src/integrations/acp/agent')
+const { createNaxAcpAgent, listAcpSites, promptText, resolveAcpSite, verifyAcpSiteRepo } = require('../../src/integrations/acp/agent')
 const { createNaxAgentRunnerSdk } = require('../../src/integrations/netlify/agent-runner-sdk')
 const { loadAcpSession } = require('../../src/integrations/acp/session-store')
 const { appendPatch, clonedRepo, git, runnerApi } = require('../fixtures/acp/harness')
@@ -391,4 +391,20 @@ test('the first prompt refuses a site that does not build this repository, and s
   await agent.newSession({ cwd, mcpServers: [] })
   await assert.rejects(agent.prompt({ sessionId: 'nax-test', prompt: promptOf('hi') }), /builds another repository/)
   assert.equal(remote.calls.some((call) => call.op === 'createRunner'), false)
+})
+
+test('linked sites are listed once each, with the root link named for people', () => {
+  const cwd = clonedRepo()
+  /** @param {string} dir @param {string} siteId */
+  const link = (dir, siteId) => {
+    fs.mkdirSync(path.join(cwd, dir, '.netlify'), { recursive: true })
+    fs.writeFileSync(path.join(cwd, dir, '.netlify', 'state.json'), JSON.stringify({ siteId }))
+  }
+  link('.', 'site-root')
+  link('sites/docs', 'site-docs')
+  link('sites/platform', 'site-docs')
+  assert.deepEqual(listAcpSites(cwd).map((site) => [site.label, site.siteId]), [
+    ['repository root', 'site-root'],
+    ['sites/docs, sites/platform', 'site-docs'],
+  ])
 })

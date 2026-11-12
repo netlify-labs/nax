@@ -101,9 +101,10 @@ function listAcpSites(cwd) {
   /** @type {Map<string, AcpSiteChoice>} */
   const bySite = new Map()
   for (const linked of listLinkedNetlifySites(repoRoot)) {
+    const label = linked.dir === '.' ? 'repository root' : linked.dir
     const existing = bySite.get(linked.siteId)
-    if (existing) existing.label = `${existing.label}, ${linked.dir}`
-    else bySite.set(linked.siteId, { siteId: linked.siteId, label: linked.dir, dir: path.join(repoRoot, linked.dir) })
+    if (existing) existing.label = `${existing.label}, ${label}`
+    else bySite.set(linked.siteId, { siteId: linked.siteId, label, dir: path.join(repoRoot, linked.dir) })
   }
   return [...bySite.values()]
 }

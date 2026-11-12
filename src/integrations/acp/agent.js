@@ -16,6 +16,8 @@ const { applyPatchFile, inspectWorkspace, runnerWorkspaceNote, workspaceWarnings
 
 const ACP_PROTOCOL_VERSION = 1
 const DEFAULT_POLL_INTERVAL_MS = 10000
+// The platform stops each agent runner session after 25 minutes.
+const TURN_LIMIT_MS = 25 * 60 * 1000
 // Instructions ACP clients add for their own tools and UI, which an agent runner cannot use.
 const CLIENT_INSTRUCTION_BLOCKS = /<(t3_code_instructions|runtime_info|pull_request_linking)>[\s\S]*?<\/\1>/g
 // Where agent runners check out the site repository; runner replies cite files under it.
@@ -319,11 +321,13 @@ function createNaxAcpAgent({
 
   /**
    * Polls the runner to a terminal result, reporting each new step on the turn's tool call.
+   * The handle's own deadline is fixed at runner creation, so each turn tracks its own limit.
    * @param {ConnectedSession} live
    * @param {string} toolCallId
+   * @param {number} turnDeadline
    * @returns {Promise<RunResult>}
    */
-  async function waitForResult(live, toolCallId) {
+  async function waitForResult(live, toolCallId, turnDeadline) {
     const handle = /** @type {Handle} */ (live.handle)
     let lastStep = ''
     for (;;) {
@@ -333,7 +337,7 @@ function createNaxAcpAgent({
         lastStep = snapshot.latestStep
         await sendUpdate(live.record.sessionId, { sessionUpdate: 'tool_call_update', toolCallId, status: 'in_progress', title: lastStep })
       }
-      if (now().getTime() > handle.policy.deadlineAt && !live.cancelRequested) {
+      if (now().getTime() > turnDeadline && !live.cancelRequested) {
         live.cancelRequested = true
         await live.sdk.stop(handle)
         throw new Error(`Netlify agent runner ${handle.runnerId} hit its 25-minute limit and was stopped.`)
@@ -464,6 +468,7 @@ function createNaxAcpAgent({
       }
 
       live.record = { ...live.record, transcript: [...live.record.transcript, { role: 'user', text }] }
+      const turnDeadline = now().getTime() + TURN_LIMIT_MS
       live.handle = await submitTurn(live, runnerText)
       save(live)
       if (live.cancelRequested) await live.sdk.stop(live.handle)
@@ -480,7 +485,7 @@ function createNaxAcpAgent({
         content: [{ type: 'content', content: { type: 'text', text: runUrl || `Agent runner ${live.handle.runnerId}` } }],
       })
 
-      const result = await waitForResult(live, toolCallId)
+      const result = await waitForResult(live, toolCallId, turnDeadline)
       const succeeded = result.status === 'succeeded'
       await sendUpdate(sessionId, { sessionUpdate: 'tool_call_update', toolCallId, status: succeeded ? 'completed' : 'failed' })
 

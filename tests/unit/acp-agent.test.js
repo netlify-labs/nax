@@ -438,3 +438,35 @@ test('the first turn tells the runner about local work it cannot see; later turn
   assert.doesNotMatch(followUp, /local_workspace/)
   assert.equal(loadAcpSession(cwd, 'nax-test').transcript[0].text, 'What is WIP?')
 })
+
+test('the 25-minute limit counts from each turn, so a follow-up the next day runs', async () => {
+  const cwd = clonedRepo()
+  let clock = Date.parse('2026-11-11T21:00:00Z')
+  const remote = runnerApi({
+    scripts: {
+      'session-1': [{ state: 'done', resultText: 'First.', hasResultDiff: false }],
+      'session-2': [{ state: 'running', currentTask: 'Thinking' }, { state: 'done', resultText: 'Next day.', hasResultDiff: false }],
+    },
+  })
+  const { agent, updates } = harness(cwd, remote, { now: () => new Date(clock) })
+  await agent.newSession({ cwd, mcpServers: [] })
+  await agent.prompt({ sessionId: 'nax-test', prompt: promptOf('Today') })
+  clock += 24 * 60 * 60 * 1000
+  const response = await agent.prompt({ sessionId: 'nax-test', prompt: promptOf('yo?') })
+  assert.deepEqual(response, { stopReason: 'end_turn' })
+  assert.match(messages(updates), /Next day\./)
+  assert.equal(remote.calls.some((call) => call.op === 'cancelRunner' || call.op === 'cancelSession'), false)
+})
+
+test('a turn still running 25 minutes after it started is stopped', async () => {
+  const cwd = clonedRepo()
+  let clock = Date.parse('2026-11-11T21:00:00Z')
+  const remote = runnerApi({ scripts: { 'session-1': [{ state: 'running', currentTask: 'Thinking' }] } })
+  const { agent } = harness(cwd, remote, {
+    now: () => new Date(clock),
+    sleep: async () => { clock += 10 * 60 * 1000 },
+  })
+  await agent.newSession({ cwd, mcpServers: [] })
+  await assert.rejects(agent.prompt({ sessionId: 'nax-test', prompt: promptOf('Long') }), /hit its 25-minute limit/)
+  assert.ok(remote.calls.some((call) => call.op === 'cancelRunner' || call.op === 'cancelSession'))
+})

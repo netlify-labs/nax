@@ -11,6 +11,7 @@
   },
   "files": [
     "src",
+    "skills",
     "scripts/run-mcp-agent-canary.mjs",
     "workflows",
     "src/dashboard/web/dist",

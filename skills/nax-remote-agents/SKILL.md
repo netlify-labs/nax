@@ -4,12 +4,39 @@ description: >-
   Use when an agent needs to delegate a single task to a remote Netlify Agent
   Runner (Claude, Codex, Gemini, or OpenCode) with nax, such as a second-opinion
   code or plan review, an investigation, or an implementation on a branch, and
-  then read the result back locally.
+  then read the result back locally. Also when the user says "use a remote
+  agent", "run this on a Netlify agent", "get a Codex/Gemini review", or
+  "nax run agent".
 ---
 
 # Remote Agent Runs with nax
 
-`nax run agent` sends one prompt to one remote Netlify Agent Runner, waits for it to finish, and syncs the result into `.nax/`. The command blocks until the run is terminal. Use this skill when you (an agent) want another model to do a bounded job against this repo. For multi-step, multi-agent pipelines, use the `nax-workflows` skill and `nax run <flow>` instead.
+`nax run agent` sends one prompt to one remote Netlify Agent Runner, waits for it to finish, and syncs the result into `.nax/`. The command blocks until the run is terminal. Use this skill when you (an agent) want another model to do a bounded job against this repo. For multi-step, multi-agent pipelines, use `nax run <flow>` and the `nax-workflows` skill (`npx skills add netlify-labs/nax --skill nax-workflows`) instead.
+
+This needs a shell with `nax`, `netlify` and `gh`, so it works in Claude Code and other local agent harnesses, not in a chat-only client.
+
+## Setup (once per machine)
+
+Check each item and tell the user what's missing; don't install or log in on their behalf without asking.
+
+```bash
+node --version         # needs >= 20
+nax --version          # the nax CLI (npm package: netlify-agent-executor)
+netlify status         # missing/logged out: npm install -g netlify-cli && netlify login
+gh auth status         # missing/logged out: install the GitHub CLI, then gh auth login
+```
+
+**If `nax` isn't installed**, offer the user two options:
+
+- **Install it** (recommended if they'll use it again; ask before running it, since it changes their machine):
+  ```bash
+  npm install -g netlify-agent-executor
+  ```
+- **Run it without installing.** Every `nax ...` command in this skill works as `npx -y netlify-agent-executor ...` with the same arguments. `-y` skips npx's install prompt, which would otherwise hang a non-interactive shell.
+
+Don't use `npx nax`. That's a different npm package.
+
+**Which Netlify site runs it.** Runs bill the team that owns the site nax targets. nax uses the site linked in this repo (`.netlify/state.json`, or `netlifySiteId` in `package.json`; `nax init` sets one up). In a monorepo with several linked sites, or none at the root, auto-detection can pick the wrong site: set `NETLIFY_SITE_ID=<full site id>` on every `nax` and `netlify agents:*`/`netlify api` command. Use the full id; a short prefix returns 404.
 
 ## What the Remote Runner Sees
 
@@ -60,7 +87,7 @@ nax run agent <claude|codex|gemini|opencode> \
 
 - `--force` skips confirmation prompts. Without it, a non-interactive call can hang.
 - `--transport netlify-api` gives local progress and `.nax/` artifacts. Pinned `--model <id>` / `--effort <level>` require it; leave both off for Auto.
-- `--context-file <path>` appends extra context from a local file.
+- Don't use `--context-file` with `nax run agent`. It's accepted but ignored (only `nax issue` flows read it). Put the context in the prompt, or commit the file to the branch and reference it by path.
 - Agent runners have a **maximum runtime of 25 minutes**. Scope each run so the agent can finish well inside that; split large implementation tasks into several runs.
 - nax appends a `## Time Limit` section to every prompt stating the 25-minute max and telling the agent to finish well before it and report back with partial results if it gets close.
 - `--timeout-minutes <n>` (default **25**) is how long nax waits locally. A larger value doesn't give the agent more time. When the wait runs out, nax stops waiting, syncs the session's partial result, prints the runner id and View run link, and exits with `timeout`.
@@ -163,7 +190,8 @@ nax salvage --runner <runner-id> --branch nax/<slug> --pr   # also open a PR int
 |---|---|
 | `Could not resolve remote SHA ... Push the branch` | Push the branch (with approval) or pass an existing `--branch` |
 | Runner reviewed old code / can't find your file | The local work wasn't pushed; do the preflight and rerun |
-| Wrong Netlify account or site errors | `netlify status`, then `nax init` or pass the site with `NETLIFY_SITE_ID` |
+| Wrong Netlify account or site errors, or 404 on the site | `netlify status` (right account?), then `nax init` or pass the full site id with `NETLIFY_SITE_ID` |
+| `nax: command not found` | `npm install -g netlify-agent-executor`, or `npx -y netlify-agent-executor ...`; see Setup |
 | `argument list too long` / oversized prompt | Commit the context into the repo and reference it by path |
 | Command waits forever in a script | Add `--force`; run it in the background and wait on process exit |
 | Runner still running after you stopped nax or cancelled the Actions job | Cancel it on Netlify: see "Stopping a Run" |

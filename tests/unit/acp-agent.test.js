@@ -4,7 +4,7 @@ const fs = require('fs')
 const os = require('os')
 const path = require('path')
 
-const { createNaxAcpAgent, promptText, resolveAcpSite } = require('../../src/integrations/acp/agent')
+const { createNaxAcpAgent, promptText, resolveAcpSite, verifyAcpSiteRepo } = require('../../src/integrations/acp/agent')
 const { createNaxAgentRunnerSdk } = require('../../src/integrations/netlify/agent-runner-sdk')
 const { loadAcpSession } = require('../../src/integrations/acp/session-store')
 const { appendPatch, clonedRepo, git, runnerApi } = require('../fixtures/acp/harness')
@@ -25,6 +25,7 @@ function harness(cwd, remote, overrides = {}) {
     pollIntervalMs: 0,
     newSessionId: () => 'nax-test',
     version: '0.0.0-test',
+    verifySiteRepo: async () => {},
     ...overrides,
   })
   return { agent, updates }
@@ -341,4 +342,53 @@ test('a session opened inside a linked site defaults to that site', async () => 
   const { agent } = harness(inside, runnerApi({ scripts: {} }), { listSites: () => sites })
   const created = await agent.newSession({ cwd: inside, mcpServers: [] })
   assert.equal(created.configOptions.find((option) => option.id === 'site').currentValue, 'site-b')
+})
+
+/** @param {Record<string, unknown> | null} site */
+function siteApi(site) {
+  return {
+    async requestResponse(_method, apiPath) {
+      return site
+        ? { ok: true, status: 200, text: JSON.stringify(site), payload: site, apiPath }
+        : { ok: false, status: 404, text: 'Not Found', payload: null, apiPath }
+    },
+  }
+}
+
+test('a site building the same repository passes, whatever URL form each side uses', async () => {
+  const cwd = clonedRepo()
+  git(cwd, ['remote', 'set-url', 'origin', 'git@github.com:netlify-labs/gtm-services.git'])
+  const api = siteApi({ name: 'gtm-services', build_settings: { repo_url: 'https://github.com/netlify-labs/gtm-services' } })
+  await verifyAcpSiteRepo({ api, siteId: 'site-1', repoRoot: cwd })
+})
+
+test('a site that builds another repository is refused', async () => {
+  const cwd = clonedRepo()
+  git(cwd, ['remote', 'set-url', 'origin', 'git@github.com:netlify-labs/gtm-services.git'])
+  const api = siteApi({ name: 'research-report', build_settings: { repo_url: 'https://hgit.example.net/apps/pqa.git' } })
+  await assert.rejects(
+    verifyAcpSiteRepo({ api, siteId: 'site-1', repoRoot: cwd }),
+    /Netlify site research-report builds hgit\.example\.net\/apps\/pqa, not github\.com\/netlify-labs\/gtm-services/,
+  )
+})
+
+test('a site with no connected repository is refused', async () => {
+  const cwd = clonedRepo()
+  git(cwd, ['remote', 'set-url', 'origin', 'https://github.com/netlify-labs/gtm-services.git'])
+  const api = siteApi({ name: 'fleet-docs', build_settings: {} })
+  await assert.rejects(
+    verifyAcpSiteRepo({ api, siteId: 'site-1', repoRoot: cwd }),
+    /Netlify site fleet-docs is not connected to a git repository/,
+  )
+})
+
+test('the first prompt refuses a site that does not build this repository, and starts no runner', async () => {
+  const cwd = clonedRepo()
+  const remote = runnerApi({ scripts: { 'session-1': [{ state: 'done', resultText: 'Done.', hasResultDiff: false }] } })
+  const { agent } = harness(cwd, remote, {
+    verifySiteRepo: async () => { throw new Error('Netlify site x builds another repository') },
+  })
+  await agent.newSession({ cwd, mcpServers: [] })
+  await assert.rejects(agent.prompt({ sessionId: 'nax-test', prompt: promptOf('hi') }), /builds another repository/)
+  assert.equal(remote.calls.some((call) => call.op === 'createRunner'), false)
 })

@@ -11,6 +11,7 @@ const { listLinkedNetlifySites, resolveNetlifyProjectTarget } = require('../netl
 const { gitRepositoryRoot, resolveProjectRoot } = require('../netlify/project-selection')
 const { defaultSessionConfig, sessionConfigOptions, updateSessionConfig } = require('./session-config')
 const { loadAcpSession, saveAcpSession } = require('./session-store')
+const { runCommand } = require('../git/review-context')
 const { applyPatchFile, inspectWorkspace, workspaceWarnings } = require('./workspace')
 
 const ACP_PROTOCOL_VERSION = 1
@@ -27,7 +28,7 @@ const RUNNER_REPO_PATH = /\/opt\/build\/repo(?![\w-]|\.\w)/g
  * @typedef {import('./session-store').AcpSessionRecord} AcpSessionRecord
  * @typedef {import('./session-config').AcpSiteChoice} AcpSiteChoice
  *
- * @typedef {{ requestResponse: (method: string, apiPath: string) => Promise<{ ok: boolean, status: number, text: string }> }} AcpApiClient
+ * @typedef {{ requestResponse: (method: string, apiPath: string) => Promise<{ ok: boolean, status: number, text: string, payload: unknown }> }} AcpApiClient
  *
  * @typedef {import('@agentclientprotocol/sdk', { with: { 'resolution-mode': 'import' } }).SessionUpdate} AcpSessionUpdate
  * @typedef {import('@agentclientprotocol/sdk', { with: { 'resolution-mode': 'import' } }).ContentBlock} AcpContentBlock
@@ -59,6 +60,7 @@ const RUNNER_REPO_PATH = /\/opt\/build\/repo(?![\w-]|\.\w)/g
  *   createApi?: (input: { siteId: string }) => AcpApiClient,
  *   resolveSite?: (cwd: string) => { projectRoot: string, siteId: string },
  *   listSites?: (cwd: string) => AcpSiteChoice[],
+ *   verifySiteRepo?: (input: { api: AcpApiClient, siteId: string, repoRoot: string }) => Promise<void>,
  *   inspect?: typeof inspectWorkspace,
  *   applyPatch?: typeof applyPatchFile,
  *   sendUpdate: (sessionId: string, update: AcpSessionUpdate) => Promise<void>,
@@ -104,6 +106,40 @@ function listAcpSites(cwd) {
     else bySite.set(linked.siteId, { siteId: linked.siteId, label: linked.dir, dir: path.join(repoRoot, linked.dir) })
   }
   return [...bySite.values()]
+}
+
+/**
+ * Reduces a git remote URL to host/path so SSH and HTTPS forms of one repository compare equal.
+ * @param {string} url
+ * @returns {string}
+ */
+function repoIdentity(url) {
+  const trimmed = url.trim().replace(/\/+$/, '').replace(/\.git$/, '')
+  const scp = trimmed.match(/^[\w.-]+@([^:/]+):(.+)$/)
+  const bare = scp ? `${scp[1]}/${scp[2]}` : trimmed.replace(/^[a-z+]+:\/\//i, '').replace(/^[^@/]+@/, '')
+  return bare.toLowerCase()
+}
+
+/**
+ * Refuses a site whose builds come from another repository: its agent runners would never see this code.
+ * @param {{ api: AcpApiClient, siteId: string, repoRoot: string }} input
+ * @returns {Promise<void>}
+ */
+async function verifyAcpSiteRepo({ api, siteId, repoRoot }) {
+  const origin = runCommand('git', ['remote', 'get-url', 'origin'], { cwd: repoRoot })
+  if (origin.status !== 0 || !origin.stdout) return
+  const response = await api.requestResponse('GET', `/sites/${siteId}`)
+  if (!response.ok) throw new Error(`Could not read Netlify site ${siteId} (HTTP ${response.status}).`)
+  const site = /** @type {{ name?: string, build_settings?: { repo_url?: string } }} */ (response.payload || {})
+  const name = site.name || siteId
+  const local = repoIdentity(origin.stdout)
+  const fix = `Link this folder to a site that builds ${local} with "netlify link", or pick one in the Netlify site option.`
+  const repoUrl = site.build_settings?.repo_url || ''
+  if (!repoUrl) {
+    throw new Error(`Netlify site ${name} is not connected to a git repository, so its agent runners cannot work on ${local}. ${fix}`)
+  }
+  const remote = repoIdentity(repoUrl)
+  if (remote !== local) throw new Error(`Netlify site ${name} builds ${remote}, not ${local}. ${fix}`)
 }
 
 /**
@@ -167,6 +203,7 @@ function createNaxAcpAgent({
   createApi = ({ siteId }) => createNetlifyApiClient({ siteId }),
   resolveSite = resolveAcpSite,
   listSites = listAcpSites,
+  verifySiteRepo = verifyAcpSiteRepo,
   inspect = inspectWorkspace,
   applyPatch = applyPatchFile,
   sendUpdate,
@@ -200,23 +237,26 @@ function createNaxAcpAgent({
   }
 
   /**
-   * Resolves the session's site and branch on its first prompt, so clients that only probe sessions cost nothing.
+   * Resolves and checks the session's site and branch on its first prompt, so clients that only probe sessions cost nothing.
    * @param {LiveSession} live
-   * @returns {ConnectedSession}
+   * @returns {Promise<ConnectedSession>}
    */
-  function connectSession(live) {
+  async function connectSession(live) {
     if (!live.sdk || !live.api) {
       const { projectRoot, siteId } = chooseSite(live)
+      const repoRoot = gitRepositoryRoot(live.record.cwd) || projectRoot
+      const api = createApi({ siteId })
+      await verifySiteRepo({ api, siteId, repoRoot })
       const workspace = inspect({ cwd: live.record.cwd })
       live.record = {
         ...live.record,
         projectRoot,
-        repoRoot: gitRepositoryRoot(live.record.cwd) || projectRoot,
+        repoRoot,
         siteId,
         branch: workspace.remoteSha ? workspace.branch : '',
       }
       live.sdk = createSdk({ siteId })
-      live.api = createApi({ siteId })
+      live.api = api
     }
     return /** @type {ConnectedSession} */ (live)
   }
@@ -401,7 +441,7 @@ function createNaxAcpAgent({
 
     /** @param {AcpPromptRequest} params @returns {Promise<AcpPromptResponse>} */
     async prompt({ sessionId, prompt }) {
-      const live = connectSession(liveSession(sessionId))
+      const live = await connectSession(liveSession(sessionId))
       live.cancelRequested = false
       const text = promptText(prompt)
       /** @type {string[]} */
@@ -475,4 +515,5 @@ module.exports = {
   listAcpSites,
   promptText,
   resolveAcpSite,
+  verifyAcpSiteRepo,
 }

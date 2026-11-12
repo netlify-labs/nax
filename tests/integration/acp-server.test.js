@@ -22,6 +22,7 @@ function engineOptions(cwd, remote) {
     pollIntervalMs: 0,
     newSessionId: () => 'nax-wire',
     version: '0.0.0-test',
+    verifySiteRepo: async () => {},
   }
 }
 

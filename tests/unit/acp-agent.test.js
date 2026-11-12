@@ -408,3 +408,33 @@ test('linked sites are listed once each, with the root link named for people', (
     ['sites/docs, sites/platform', 'site-docs'],
   ])
 })
+
+test('prompt text drops the client runtime and pull request tool blocks', () => {
+  const text = promptText([{
+    type: 'text',
+    text: '<user_request>Ship it</user_request><runtime_info>You run in T3.</runtime_info>\n\n<pull_request_linking>Call link_pull_request.</pull_request_linking>',
+  }])
+  assert.equal(text, '<user_request>Ship it</user_request>')
+})
+
+test('the first turn tells the runner about local work it cannot see; later turns do not', async () => {
+  const cwd = clonedRepo()
+  fs.writeFileSync(path.join(cwd, 'readme.md'), 'local edit\n')
+  const remote = runnerApi({
+    scripts: {
+      'session-1': [{ state: 'done', resultText: 'One.', hasResultDiff: false }],
+      'session-2': [{ state: 'done', resultText: 'Two.', hasResultDiff: false }],
+    },
+  })
+  const { agent } = harness(cwd, remote)
+  await agent.newSession({ cwd, mcpServers: [] })
+  await agent.prompt({ sessionId: 'nax-test', prompt: promptOf('What is WIP?') })
+  await agent.prompt({ sessionId: 'nax-test', prompt: promptOf('And now?') })
+
+  const first = String(remote.calls.find((call) => call.op === 'createRunner').input.prompt)
+  assert.match(first, /^What is WIP\?\n\n<local_workspace>/)
+  assert.match(first, /1 uncommitted file you cannot see: readme\.md/)
+  const followUp = String(remote.calls.find((call) => call.op === 'createSession').input.prompt)
+  assert.doesNotMatch(followUp, /local_workspace/)
+  assert.equal(loadAcpSession(cwd, 'nax-test').transcript[0].text, 'What is WIP?')
+})

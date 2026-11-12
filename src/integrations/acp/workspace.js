@@ -11,6 +11,7 @@ const { runCommand } = require('../git/review-context')
  *   headSha: string,
  *   remoteSha: string,
  *   dirty: boolean,
+ *   changedFiles: string[],
  * }} WorkspaceState
  *
  * @typedef {{
@@ -29,13 +30,33 @@ function inspectWorkspace({ cwd, run = runCommand }) {
   const branch = abbrev.status === 0 && abbrev.stdout !== 'HEAD' ? abbrev.stdout : ''
   const head = run('git', ['rev-parse', 'HEAD'], { cwd })
   const remote = branch ? run('git', ['ls-remote', '--heads', 'origin', branch], { cwd }) : null
-  const status = run('git', ['status', '--porcelain'], { cwd })
+  const changedFiles = listChangedFiles(run, cwd)
   return {
     branch,
     headSha: head.status === 0 ? head.stdout : '',
     remoteSha: remote && remote.status === 0 ? remote.stdout.split(/\s+/)[0] || '' : '',
-    dirty: status.status === 0 && status.stdout !== '',
+    dirty: changedFiles.length > 0,
+    changedFiles,
   }
+}
+
+/**
+ * Lists tracked files changed since HEAD plus untracked files, relative to the repository root.
+ * @param {GitRunner} run
+ * @param {string} cwd
+ * @returns {string[]}
+ */
+function listChangedFiles(run, cwd) {
+  /** @param {string[]} args */
+  const names = (args) => {
+    const result = run('git', ['-c', 'core.quotePath=false', ...args], { cwd })
+    return result.status === 0 ? result.stdout.split('\n').filter(Boolean) : []
+  }
+  const files = new Set([
+    ...names(['diff', '--name-only', 'HEAD']),
+    ...names(['ls-files', '--others', '--exclude-standard', '--full-name', '--', ':/']),
+  ])
+  return [...files].sort()
 }
 
 /**
@@ -57,6 +78,40 @@ function workspaceWarnings(state) {
     warnings.push('Uncommitted local changes are not visible to the agent runner.')
   }
   return warnings
+}
+
+const NOTE_FILE_LIMIT = 20
+
+/**
+ * Tells the remote agent which local work it cannot see, so it can say so instead of guessing.
+ * Empty when the runner works on exactly what the user has locally.
+ * @param {WorkspaceState} state
+ * @returns {string}
+ */
+function runnerWorkspaceNote(state) {
+  const pushed = Boolean(state.branch && state.remoteSha)
+  const drifted = pushed && state.headSha !== state.remoteSha
+  if (pushed && !drifted && state.changedFiles.length === 0) return ''
+  /** @type {string[]} */
+  const lines = []
+  if (!state.branch) {
+    lines.push('The user\'s local checkout is on a detached HEAD, so you are working on the site\'s production branch.')
+  } else if (!pushed) {
+    lines.push(`The user's local branch ${state.branch} is not on origin, so you are working on the site's production branch.`)
+  } else {
+    lines.push(`You are working on origin/${state.branch} at ${state.remoteSha.slice(0, 12)}.`)
+    if (drifted) {
+      lines.push(`The user's local checkout is at ${state.headSha.slice(0, 12)}, which differs from origin/${state.branch}; commits that exist only in their checkout are not visible to you.`)
+    }
+  }
+  const count = state.changedFiles.length
+  if (count > 0) {
+    const shown = state.changedFiles.slice(0, NOTE_FILE_LIMIT).join(', ')
+    const more = count > NOTE_FILE_LIMIT ? `, and ${count - NOTE_FILE_LIMIT} more` : ''
+    lines.push(`Their checkout has ${count} uncommitted file${count === 1 ? '' : 's'} you cannot see: ${shown}${more}.`)
+  }
+  lines.push(`If the request depends on that local work, say so and ask the user to commit and push it to ${state.branch && pushed ? state.branch : 'a branch on origin'}.`)
+  return `<local_workspace>\n${lines.join('\n')}\n</local_workspace>`
 }
 
 /**
@@ -84,5 +139,6 @@ function applyPatchFile({ cwd, patchPath, run = runCommand, readFile = (filePath
 module.exports = {
   applyPatchFile,
   inspectWorkspace,
+  runnerWorkspaceNote,
   workspaceWarnings,
 }

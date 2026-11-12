@@ -6,6 +6,7 @@ const path = require('path')
 const {
   applyPatchFile,
   inspectWorkspace,
+  runnerWorkspaceNote,
   workspaceWarnings,
 } = require('../../src/integrations/acp/workspace')
 const { clonedRepo, git } = require('../fixtures/acp/harness')
@@ -29,9 +30,12 @@ const PATCH = [
 test('inspects the branch, local and remote heads, and dirty state', () => {
   const work = clonedRepo()
   const head = git(work, ['rev-parse', 'HEAD'])
-  assert.deepEqual(inspectWorkspace({ cwd: work }), { branch: 'main', headSha: head, remoteSha: head, dirty: false })
+  assert.deepEqual(inspectWorkspace({ cwd: work }), { branch: 'main', headSha: head, remoteSha: head, dirty: false, changedFiles: [] })
   fs.writeFileSync(path.join(work, 'readme.md'), 'changed\n')
-  assert.equal(inspectWorkspace({ cwd: work }).dirty, true)
+  fs.writeFileSync(path.join(work, 'new file.txt'), 'x\n')
+  const changed = inspectWorkspace({ cwd: work })
+  assert.equal(changed.dirty, true)
+  assert.deepEqual(changed.changedFiles, ['new file.txt', 'readme.md'])
 })
 
 test('a clean workspace at the pushed branch tip has no warnings', () => {
@@ -79,4 +83,42 @@ test('a patch that does not apply leaves the workspace untouched', () => {
   assert.match(result.detail, /patch does not apply/)
   assert.equal(fs.existsSync(path.join(work, 'notes.txt')), false)
   assert.equal(fs.readFileSync(path.join(work, 'readme.md'), 'utf8'), 'diverged\n')
+})
+
+test('the runner note is empty when the runner sees exactly the local checkout', () => {
+  assert.equal(runnerWorkspaceNote(inspectWorkspace({ cwd: clonedRepo() })), '')
+})
+
+test('the runner note tells the remote agent what local work it cannot see', () => {
+  const note = runnerWorkspaceNote({
+    branch: 'master',
+    headSha: 'b86218921dc3aaaa',
+    remoteSha: '3cbe951de7f0bbbb',
+    dirty: true,
+    changedFiles: ['a.js', 'b.js', 'c.js'],
+  })
+  assert.match(note, /^<local_workspace>/)
+  assert.match(note, /You are working on origin\/master at 3cbe951de7f0\./)
+  assert.match(note, /local checkout is at b86218921dc3, which differs from origin\/master/)
+  assert.match(note, /3 uncommitted files you cannot see: a\.js, b\.js, c\.js/)
+  assert.match(note, /commit and push it to master/)
+})
+
+test('the runner note lists at most 20 files and counts the rest', () => {
+  const changedFiles = Array.from({ length: 23 }, (_, index) => `f${index}.js`)
+  const note = runnerWorkspaceNote({ branch: 'main', headSha: 'a', remoteSha: 'a', dirty: true, changedFiles })
+  assert.match(note, /23 uncommitted files you cannot see: f0\.js, .*f19\.js, and 3 more/)
+})
+
+test('the runner note says when the local branch is not pushed', () => {
+  const note = runnerWorkspaceNote({ branch: 'feature', headSha: 'a', remoteSha: '', dirty: false, changedFiles: [] })
+  assert.match(note, /local branch feature is not on origin, so you are working on the site's production branch/)
+})
+
+test('changed files cover the whole repository when inspected from a subfolder', () => {
+  const work = clonedRepo()
+  fs.mkdirSync(path.join(work, 'app'))
+  fs.writeFileSync(path.join(work, 'root-notes.txt'), 'x\n')
+  fs.writeFileSync(path.join(work, 'app', 'page.js'), 'x\n')
+  assert.deepEqual(inspectWorkspace({ cwd: path.join(work, 'app') }).changedFiles, ['app/page.js', 'root-notes.txt'])
 })

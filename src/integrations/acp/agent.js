@@ -12,12 +12,12 @@ const { gitRepositoryRoot, resolveProjectRoot } = require('../netlify/project-se
 const { defaultSessionConfig, sessionConfigOptions, updateSessionConfig } = require('./session-config')
 const { loadAcpSession, saveAcpSession } = require('./session-store')
 const { runCommand } = require('../git/review-context')
-const { applyPatchFile, inspectWorkspace, workspaceWarnings } = require('./workspace')
+const { applyPatchFile, inspectWorkspace, runnerWorkspaceNote, workspaceWarnings } = require('./workspace')
 
 const ACP_PROTOCOL_VERSION = 1
 const DEFAULT_POLL_INTERVAL_MS = 10000
 // Instructions ACP clients add for their own tools and UI, which an agent runner cannot use.
-const CLIENT_INSTRUCTION_BLOCKS = /<t3_code_instructions>[\s\S]*?<\/t3_code_instructions>/g
+const CLIENT_INSTRUCTION_BLOCKS = /<(t3_code_instructions|runtime_info|pull_request_linking)>[\s\S]*?<\/\1>/g
 // Where agent runners check out the site repository; runner replies cite files under it.
 const RUNNER_REPO_PATH = /\/opt\/build\/repo(?![\w-]|\.\w)/g
 
@@ -453,13 +453,18 @@ function createNaxAcpAgent({
         await sendUpdate(sessionId, agentMessage(chunk))
       }
 
+      // Only the first turn compares against the pushed branch; later turns' local changes include the runner's own.
+      let runnerText = text
       if (!live.handle) {
-        const warnings = workspaceWarnings(inspect({ cwd: live.record.cwd }))
+        const workspace = inspect({ cwd: live.record.cwd })
+        const warnings = workspaceWarnings(workspace)
         if (warnings.length > 0) await say(`${warnings.map((warning) => `> ${warning}`).join('\n')}\n\n`)
+        const note = runnerWorkspaceNote(workspace)
+        if (note) runnerText = `${text}\n\n${note}`
       }
 
       live.record = { ...live.record, transcript: [...live.record.transcript, { role: 'user', text }] }
-      live.handle = await submitTurn(live, text)
+      live.handle = await submitTurn(live, runnerText)
       save(live)
       if (live.cancelRequested) await live.sdk.stop(live.handle)
 

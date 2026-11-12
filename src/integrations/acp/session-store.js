@@ -1,4 +1,4 @@
-// Persists nax acp sessions under <projectRoot>/.nax/acp-sessions so ACP clients can reload them.
+// Persists nax acp sessions under <repoRoot>/.nax/acp-sessions so ACP clients can reload them.
 // Each record holds the session's site, config, durable runner handle, and transcript.
 const fs = require('fs')
 const path = require('path')
@@ -14,7 +14,7 @@ const SESSION_ID_PATTERN = /^[A-Za-z0-9_-]+$/
  *   sessionId: string,
  *   cwd: string,
  *   projectRoot: string,
- *   repoRoot?: string,
+ *   repoRoot: string,
  *   siteId: string,
  *   branch: string,
  *   config: import('./session-config').AcpSessionConfig,
@@ -26,22 +26,22 @@ const SESSION_ID_PATTERN = /^[A-Za-z0-9_-]+$/
  */
 
 /**
- * @param {string} projectRoot
+ * @param {string} repoRoot
  * @param {string} sessionId
  * @returns {string}
  */
-function acpSessionPath(projectRoot, sessionId) {
+function acpSessionPath(repoRoot, sessionId) {
   if (!SESSION_ID_PATTERN.test(sessionId)) throw new Error(`Invalid ACP session id "${sessionId}".`)
-  return path.join(projectRoot, '.nax', 'acp-sessions', `${sessionId}.json`)
+  return path.join(repoRoot, '.nax', 'acp-sessions', `${sessionId}.json`)
 }
 
 /**
- * @param {string} projectRoot
+ * @param {string} repoRoot
  * @param {string} sessionId
  * @returns {AcpSessionRecord | null}
  */
-function loadAcpSession(projectRoot, sessionId) {
-  const filePath = acpSessionPath(projectRoot, sessionId)
+function loadAcpSession(repoRoot, sessionId) {
+  const filePath = acpSessionPath(repoRoot, sessionId)
   if (!fs.existsSync(filePath)) return null
   return JSON.parse(fs.readFileSync(filePath, 'utf8'))
 }
@@ -51,8 +51,8 @@ function loadAcpSession(projectRoot, sessionId) {
  * @returns {void}
  */
 function saveAcpSession(record) {
-  const filePath = acpSessionPath(record.projectRoot, record.sessionId)
-  ensureNaxGitignore({ projectRoot: record.projectRoot })
+  const filePath = acpSessionPath(record.repoRoot, record.sessionId)
+  ensureNaxGitignore({ projectRoot: record.repoRoot })
   fs.mkdirSync(path.dirname(filePath), { recursive: true })
   const tempPath = `${filePath}.${process.pid}.tmp`
   fs.writeFileSync(tempPath, `${JSON.stringify(record, null, 2)}\n`)

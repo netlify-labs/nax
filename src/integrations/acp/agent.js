@@ -7,7 +7,7 @@ const { validateAgentConfig } = require('../../core/agents/configuration')
 const { formatAgentRunUrl } = require('../../workflows/results/agent-run-results')
 const { createNaxAgentRunnerSdk } = require('../netlify/agent-runner-sdk')
 const { createNetlifyApiClient } = require('../netlify/api-client')
-const { resolveNetlifyProjectTarget } = require('../netlify/local-runner')
+const { listLinkedNetlifySites, resolveNetlifyProjectTarget } = require('../netlify/local-runner')
 const { gitRepositoryRoot, resolveProjectRoot } = require('../netlify/project-selection')
 const { defaultSessionConfig, sessionConfigOptions, updateSessionConfig } = require('./session-config')
 const { loadAcpSession, saveAcpSession } = require('./session-store')
@@ -25,6 +25,7 @@ const RUNNER_REPO_PATH = /\/opt\/build\/repo(?![\w-]|\.\w)/g
  * @typedef {import('nax-agent-runner-sdk').Handle} Handle
  * @typedef {import('nax-agent-runner-sdk').RunResult} RunResult
  * @typedef {import('./session-store').AcpSessionRecord} AcpSessionRecord
+ * @typedef {import('./session-config').AcpSiteChoice} AcpSiteChoice
  *
  * @typedef {{ requestResponse: (method: string, apiPath: string) => Promise<{ ok: boolean, status: number, text: string }> }} AcpApiClient
  *
@@ -47,6 +48,7 @@ const RUNNER_REPO_PATH = /\/opt\/build\/repo(?![\w-]|\.\w)/g
  *   sdk: AgentRunnerSdk | null,
  *   api: AcpApiClient | null,
  *   handle: Handle | null,
+ *   sites: AcpSiteChoice[],
  *   cancelRequested: boolean,
  * }} LiveSession
  *
@@ -56,6 +58,7 @@ const RUNNER_REPO_PATH = /\/opt\/build\/repo(?![\w-]|\.\w)/g
  *   createSdk?: (input: { siteId: string }) => AgentRunnerSdk,
  *   createApi?: (input: { siteId: string }) => AcpApiClient,
  *   resolveSite?: (cwd: string) => { projectRoot: string, siteId: string },
+ *   listSites?: (cwd: string) => AcpSiteChoice[],
  *   inspect?: typeof inspectWorkspace,
  *   applyPatch?: typeof applyPatchFile,
  *   sendUpdate: (sessionId: string, update: AcpSessionUpdate) => Promise<void>,
@@ -83,6 +86,37 @@ function resolveAcpSite(cwd) {
     throw new Error(`No linked Netlify site for ${cwd}. Run "netlify link" there, or set NETLIFY_SITE_ID in the provider's environment.`)
   }
   return { projectRoot, siteId: target.siteId }
+}
+
+/**
+ * Lists the Netlify sites linked anywhere in the session's repository, one choice per site.
+ * @param {string} cwd
+ * @returns {AcpSiteChoice[]}
+ */
+function listAcpSites(cwd) {
+  const repoRoot = gitRepositoryRoot(cwd)
+  if (!repoRoot) return []
+  /** @type {Map<string, AcpSiteChoice>} */
+  const bySite = new Map()
+  for (const linked of listLinkedNetlifySites(repoRoot)) {
+    const existing = bySite.get(linked.siteId)
+    if (existing) existing.label = `${existing.label}, ${linked.dir}`
+    else bySite.set(linked.siteId, { siteId: linked.siteId, label: linked.dir, dir: path.join(repoRoot, linked.dir) })
+  }
+  return [...bySite.values()]
+}
+
+/**
+ * Picks the linked site whose folder contains the session's folder, if any.
+ * @param {AcpSiteChoice[]} sites
+ * @param {string} cwd
+ * @returns {string}
+ */
+function siteContaining(sites, cwd) {
+  const containing = sites
+    .filter((site) => cwd === site.dir || cwd.startsWith(`${site.dir}${path.sep}`))
+    .sort((a, b) => b.dir.length - a.dir.length)
+  return containing[0]?.siteId || ''
 }
 
 /**
@@ -132,6 +166,7 @@ function createNaxAcpAgent({
   createSdk = ({ siteId }) => createNaxAgentRunnerSdk({ siteId }),
   createApi = ({ siteId }) => createNetlifyApiClient({ siteId }),
   resolveSite = resolveAcpSite,
+  listSites = listAcpSites,
   inspect = inspectWorkspace,
   applyPatch = applyPatchFile,
   sendUpdate,
@@ -147,15 +182,17 @@ function createNaxAcpAgent({
   /**
    * Tracks a session; one with a known site also gets its runner clients and saved handle.
    * @param {AcpSessionRecord} record
+   * @param {AcpSiteChoice[]} sites
    * @returns {LiveSession}
    */
-  function openSession(record) {
+  function openSession(record, sites) {
     const sdk = record.siteId ? createSdk({ siteId: record.siteId }) : null
     const live = {
       record,
       sdk,
       api: record.siteId ? createApi({ siteId: record.siteId }) : null,
       handle: sdk && record.handle ? sdk.parseHandle(record.handle) : null,
+      sites,
       cancelRequested: false,
     }
     sessions.set(record.sessionId, live)
@@ -169,7 +206,7 @@ function createNaxAcpAgent({
    */
   function connectSession(live) {
     if (!live.sdk || !live.api) {
-      const { projectRoot, siteId } = resolveSite(live.record.cwd)
+      const { projectRoot, siteId } = chooseSite(live)
       const workspace = inspect({ cwd: live.record.cwd })
       live.record = {
         ...live.record,
@@ -189,6 +226,25 @@ function createNaxAcpAgent({
     const live = sessions.get(sessionId)
     if (!live) throw new Error(`Unknown ACP session ${sessionId}. Create or load it first.`)
     return live
+  }
+
+  /**
+   * Uses the site picked in the session's config, else the site linked to its folder.
+   * @param {LiveSession} live
+   * @returns {{ projectRoot: string, siteId: string }}
+   */
+  function chooseSite(live) {
+    const chosen = live.sites.find((site) => site.siteId === live.record.config.site)
+    if (chosen) return { projectRoot: chosen.dir, siteId: chosen.siteId }
+    try {
+      return resolveSite(live.record.cwd)
+    } catch (error) {
+      if (live.sites.length === 1) return { projectRoot: live.sites[0].dir, siteId: live.sites[0].siteId }
+      if (live.sites.length > 1) {
+        throw new Error(`This repository links ${live.sites.length} Netlify sites. Choose one in the Netlify site option: ${live.sites.map((site) => site.label).join(', ')}.`)
+      }
+      throw error
+    }
   }
 
   /** @param {ConnectedSession} live */
@@ -259,11 +315,11 @@ function createNaxAcpAgent({
       return result.changes === 'changed' ? 'The agent runner reported changes, but its diff is not available.' : ''
     }
     if (!response.ok) throw new Error(`Could not fetch the diff for agent runner ${runnerId} session ${sessionId} (HTTP ${response.status}).`)
-    const patchPath = path.join(live.record.projectRoot, '.nax', 'acp-sessions', live.record.sessionId, `${sessionId}.patch`)
+    const patchPath = path.join(live.record.repoRoot, '.nax', 'acp-sessions', live.record.sessionId, `${sessionId}.patch`)
     fs.mkdirSync(path.dirname(patchPath), { recursive: true })
     fs.writeFileSync(patchPath, response.text)
     // Runner diffs are relative to the repository root; git apply skips paths outside a subfolder cwd.
-    const applied = applyPatch({ cwd: live.record.repoRoot || live.record.cwd, patchPath })
+    const applied = applyPatch({ cwd: live.record.repoRoot, patchPath })
     if (applied.status === 'applied') return `Applied changes to ${fileList(applied.files)}`
     return `The agent runner's changes to ${fileList(applied.files)} did not apply to the local workspace (${applied.detail}). The patch is saved at ${patchPath}`
   }
@@ -301,6 +357,7 @@ function createNaxAcpAgent({
     /** @param {AcpNewSessionRequest} params @returns {Promise<AcpNewSessionResponse>} */
     async newSession({ cwd }) {
       const timestamp = now().toISOString()
+      const sites = listSites(cwd)
       const live = openSession({
         version: 1,
         sessionId: newSessionId(),
@@ -309,37 +366,37 @@ function createNaxAcpAgent({
         repoRoot: '',
         siteId: '',
         branch: '',
-        config: defaultSessionConfig(),
+        config: { ...defaultSessionConfig(), site: siteContaining(sites, cwd) },
         handle: null,
         transcript: [],
         createdAt: timestamp,
         updatedAt: timestamp,
-      })
-      return { sessionId: live.record.sessionId, configOptions: sessionConfigOptions(live.record.config) }
+      }, sites)
+      return { sessionId: live.record.sessionId, configOptions: sessionConfigOptions(live.record.config, sites) }
     },
 
     /** @param {AcpLoadSessionRequest} params @returns {Promise<AcpLoadSessionResponse>} */
     async loadSession({ sessionId, cwd }) {
-      const { projectRoot } = resolveSite(cwd)
-      const record = loadAcpSession(projectRoot, sessionId)
-      if (!record) throw new Error(`Unknown ACP session ${sessionId} in ${projectRoot}.`)
-      const live = openSession(record)
+      const repoRoot = gitRepositoryRoot(cwd)
+      const record = repoRoot ? loadAcpSession(repoRoot, sessionId) : null
+      if (!record) throw new Error(`Unknown ACP session ${sessionId} in ${cwd}.`)
+      const live = openSession({ ...record, config: { ...defaultSessionConfig(), ...record.config } }, listSites(cwd))
       for (const entry of record.transcript) {
         await sendUpdate(sessionId, {
           sessionUpdate: entry.role === 'user' ? 'user_message_chunk' : 'agent_message_chunk',
           content: { type: 'text', text: entry.text },
         })
       }
-      return { configOptions: sessionConfigOptions(live.record.config) }
+      return { configOptions: sessionConfigOptions(live.record.config, live.sites) }
     },
 
     /** @param {AcpSetConfigOptionRequest} params @returns {Promise<AcpSetConfigOptionResponse>} */
     async setConfigOption({ sessionId, configId, value }) {
       const live = liveSession(sessionId)
       if (typeof value !== 'string') throw new Error(`Session config option "${configId}" takes a string value.`)
-      live.record = { ...live.record, config: updateSessionConfig(live.record.config, configId, value) }
+      live.record = { ...live.record, config: updateSessionConfig(live.record.config, configId, value, live.sites) }
       if (live.sdk && live.api) save(/** @type {ConnectedSession} */ (live))
-      return { configOptions: sessionConfigOptions(live.record.config) }
+      return { configOptions: sessionConfigOptions(live.record.config, live.sites) }
     },
 
     /** @param {AcpPromptRequest} params @returns {Promise<AcpPromptResponse>} */
@@ -389,7 +446,7 @@ function createNaxAcpAgent({
         if (result.status === 'timedOut') {
           throw new Error(`Netlify agent runner ${result.runnerId} timed out.`)
         }
-        if (result.resultText) await say(localizeRunnerPaths(result.resultText, live.record.repoRoot || live.record.projectRoot))
+        if (result.resultText) await say(localizeRunnerPaths(result.resultText, live.record.repoRoot))
         const changes = live.record.config.changes === 'pr'
           ? await openPullRequest(live)
           : await applyTurnChanges(live, result)
@@ -415,6 +472,7 @@ function createNaxAcpAgent({
 
 module.exports = {
   createNaxAcpAgent,
+  listAcpSites,
   promptText,
   resolveAcpSite,
 }

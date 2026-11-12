@@ -303,3 +303,42 @@ test('a session opened in a subfolder applies changes anywhere in the repository
   assert.match(messages(updates), /Applied changes to 1 file: readme\.md/)
   assert.equal(fs.readFileSync(path.join(root, 'readme.md'), 'utf8'), 'hello\nworld\n')
 })
+
+test('a repository with several linked sites asks for one before starting a runner', async () => {
+  const cwd = clonedRepo()
+  const remote = runnerApi({ scripts: { 'session-1': [{ state: 'done', resultText: 'Done.', hasResultDiff: false }] } })
+  const sites = [
+    { siteId: 'site-a', label: 'sites/a', dir: path.join(cwd, 'sites', 'a') },
+    { siteId: 'site-b', label: 'sites/b', dir: path.join(cwd, 'sites', 'b') },
+  ]
+  const { agent } = harness(cwd, remote, {
+    listSites: () => sites,
+    resolveSite: () => { throw new Error('No Netlify site is linked') },
+  })
+  const created = await agent.newSession({ cwd, mcpServers: [] })
+  assert.equal(created.configOptions.find((option) => option.id === 'site').currentValue, 'choose')
+  await assert.rejects(
+    agent.prompt({ sessionId: 'nax-test', prompt: promptOf('hi') }),
+    /This repository links 2 Netlify sites\. Choose one in the Netlify site option: sites\/a, sites\/b/,
+  )
+  await agent.setConfigOption({ sessionId: 'nax-test', configId: 'site', value: 'site-b' })
+  await agent.prompt({ sessionId: 'nax-test', prompt: promptOf('hi') })
+  assert.equal(remote.calls.find((call) => call.op === 'createRunner').input.siteId, 'site-b')
+
+  const reloaded = harness(cwd, remote, { listSites: () => sites, resolveSite: () => { throw new Error('No Netlify site is linked') } })
+  const loaded = await reloaded.agent.loadSession({ sessionId: 'nax-test', cwd, mcpServers: [] })
+  assert.equal(loaded.configOptions.find((option) => option.id === 'site').currentValue, 'site-b')
+})
+
+test('a session opened inside a linked site defaults to that site', async () => {
+  const cwd = clonedRepo()
+  const inside = path.join(cwd, 'sites', 'b', 'src')
+  fs.mkdirSync(inside, { recursive: true })
+  const sites = [
+    { siteId: 'site-a', label: 'sites/a', dir: path.join(cwd, 'sites', 'a') },
+    { siteId: 'site-b', label: 'sites/b', dir: path.join(cwd, 'sites', 'b') },
+  ]
+  const { agent } = harness(inside, runnerApi({ scripts: {} }), { listSites: () => sites })
+  const created = await agent.newSession({ cwd: inside, mcpServers: [] })
+  assert.equal(created.configOptions.find((option) => option.id === 'site').currentValue, 'site-b')
+})

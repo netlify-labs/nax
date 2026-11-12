@@ -19,6 +19,7 @@ test('default config runs Claude on Auto and applies changes locally', () => {
     model: 'auto',
     effort: 'auto',
     changes: 'apply',
+    site: '',
   })
 })
 
@@ -54,12 +55,13 @@ test('changes option offers applying locally or opening a pull request', () => {
 
 test('selecting a model from another agent switches agent and resets effort', () => {
   /** @type {AcpSessionConfig} */
-  const start = { agent: 'claude', model: 'claude-opus-5', effort: 'high', changes: 'apply' }
+  const start = { agent: 'claude', model: 'claude-opus-5', effort: 'high', changes: 'apply', site: '' }
   assert.deepEqual(updateSessionConfig(start, 'model', 'codex:gpt-6.1-sol'), {
     agent: 'codex',
     model: 'gpt-6.1-sol',
     effort: 'auto',
     changes: 'apply',
+    site: '',
   })
 })
 
@@ -79,4 +81,25 @@ test('effort and changes accept only offered values', () => {
   assert.throws(() => updateSessionConfig(config, 'changes', 'push'), /Unsupported changes value "push"/)
   assert.throws(() => updateSessionConfig(config, 'model', 'bard:x'), /Unsupported agent provider "bard"/)
   assert.throws(() => updateSessionConfig(config, 'color', 'red'), /Unknown session config option "color"/)
+})
+
+const SITES = [
+  { siteId: 'site-a', label: 'sites/a', dir: '/repo/sites/a' },
+  { siteId: 'site-b', label: 'sites/b, sites/c', dir: '/repo/sites/b' },
+]
+
+test('site option appears only when a repository links several Netlify sites', () => {
+  assert.equal(sessionConfigOptions(defaultSessionConfig(), [SITES[0]]).some((option) => option.id === 'site'), false)
+  const site = sessionConfigOptions(defaultSessionConfig(), SITES).find((option) => option.id === 'site')
+  assert.equal(site.currentValue, 'choose')
+  assert.deepEqual(/** @type {AcpSelectOption[]} */ (site.options).map((option) => [option.value, option.name]), [
+    ['choose', 'Choose a site…'],
+    ['site-a', 'sites/a'],
+    ['site-b', 'sites/b, sites/c'],
+  ])
+})
+
+test('site accepts only a linked site', () => {
+  assert.equal(updateSessionConfig(defaultSessionConfig(), 'site', 'site-b', SITES).site, 'site-b')
+  assert.throws(() => updateSessionConfig(defaultSessionConfig(), 'site', 'site-z', SITES), /Unknown Netlify site "site-z"/)
 })

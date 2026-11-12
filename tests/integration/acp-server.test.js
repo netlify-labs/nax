@@ -142,3 +142,23 @@ test('the nax acp process answers an ACP client on stdout with protocol frames o
   assert.equal(exitCode, 0)
   assert.equal(stderr, '')
 })
+
+test('a failed request reaches the client with its own message', async () => {
+  const acp = await import('@agentclientprotocol/sdk')
+  const cwd = clonedRepo()
+  const agentApp = await createAcpAgentApp({
+    ...engineOptions(cwd, runnerApi({ scripts: {} })),
+    resolveSite: () => { throw new Error('No Netlify site is linked here.') },
+  })
+  const message = await acp.client({ name: 'test-client' }).connectWith(agentApp, async (agent) => {
+    await agent.request(acp.methods.agent.initialize, { protocolVersion: acp.PROTOCOL_VERSION, clientCapabilities: {} })
+    const { sessionId } = await agent.request(acp.methods.agent.session.new, { cwd, mcpServers: [] })
+    try {
+      await agent.request(acp.methods.agent.session.prompt, { sessionId, prompt: [{ type: 'text', text: 'hi' }] })
+      return 'no error'
+    } catch (error) {
+      return error.message
+    }
+  })
+  assert.equal(message, 'No Netlify site is linked here.')
+})

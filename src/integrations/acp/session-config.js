@@ -1,4 +1,4 @@
-// ACP session config options for nax acp: one grouped agent/model picker, effort, and how changes land.
+// ACP session config options for nax acp: one grouped agent/model picker, effort, how changes land, and the site in monorepos.
 // Values come from the shared agent catalog so ACP clients see the same choices as the CLI and dashboard.
 const {
   AUTO_CONFIGURATION_VALUE,
@@ -8,6 +8,8 @@ const {
   getAgentProviderLabel,
   normalizeAgentProvider,
 } = require('../../core/agents/configuration')
+
+const CHOOSE_SITE = 'choose'
 
 const CHANGES_OPTIONS = [
   { value: 'apply', name: 'Apply locally', description: 'Apply each turn\'s diff to the local workspace' },
@@ -20,7 +22,10 @@ const CHANGES_OPTIONS = [
  *   model: string,
  *   effort: string,
  *   changes: 'apply' | 'pr',
+ *   site: string,
  * }} AcpSessionConfig
+ *
+ * @typedef {{ siteId: string, label: string, dir: string }} AcpSiteChoice
  *
  * @typedef {{ value: string, name: string, description?: string }} AcpSelectOption
  *
@@ -44,6 +49,7 @@ function defaultSessionConfig() {
     model: AUTO_CONFIGURATION_VALUE,
     effort: AUTO_CONFIGURATION_VALUE,
     changes: 'apply',
+    site: '',
   }
 }
 
@@ -57,10 +63,26 @@ function modelValue(agent, model) {
 }
 
 /**
+ * Lists the session's config options; the site option appears only when the repository links several sites.
  * @param {AcpSessionConfig} config
+ * @param {AcpSiteChoice[]} [sites]
  * @returns {AcpConfigOption[]}
  */
-function sessionConfigOptions(config) {
+function sessionConfigOptions(config, sites = []) {
+  /** @type {AcpConfigOption[]} */
+  const siteOption = sites.length > 1
+    ? [{
+        id: 'site',
+        name: 'Netlify site',
+        description: 'The linked site whose agent runners work on this repository',
+        type: 'select',
+        currentValue: config.site || CHOOSE_SITE,
+        options: [
+          { value: CHOOSE_SITE, name: 'Choose a site…' },
+          ...sites.map((site) => ({ value: site.siteId, name: site.label })),
+        ],
+      }]
+    : []
   return [
     {
       id: 'model',
@@ -98,6 +120,7 @@ function sessionConfigOptions(config) {
       currentValue: config.changes,
       options: CHANGES_OPTIONS,
     },
+    ...siteOption,
   ]
 }
 
@@ -106,9 +129,10 @@ function sessionConfigOptions(config) {
  * @param {AcpSessionConfig} config
  * @param {string} configId
  * @param {string} value
+ * @param {AcpSiteChoice[]} [sites]
  * @returns {AcpSessionConfig}
  */
-function updateSessionConfig(config, configId, value) {
+function updateSessionConfig(config, configId, value, sites = []) {
   if (configId === 'model') {
     const separator = value.indexOf(':')
     const rawAgent = separator === -1 ? value : value.slice(0, separator)
@@ -131,6 +155,11 @@ function updateSessionConfig(config, configId, value) {
       throw new Error(`Unsupported changes value "${value}". Use apply or pr.`)
     }
     return { ...config, changes: value }
+  }
+  if (configId === 'site') {
+    if (value === CHOOSE_SITE) return { ...config, site: '' }
+    if (!sites.some((site) => site.siteId === value)) throw new Error(`Unknown Netlify site "${value}" for this repository.`)
+    return { ...config, site: value }
   }
   throw new Error(`Unknown session config option "${configId}".`)
 }

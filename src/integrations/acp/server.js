@@ -22,14 +22,28 @@ async function createAcpAgentApp(engineOptions = {}) {
       await client.notify(acp.methods.client.session.update, { sessionId, update })
     },
   })
+  /**
+   * The SDK reports thrown errors as a bare "Internal error"; keep the message so clients can show what went wrong.
+   * @template P, R
+   * @param {(params: P) => Promise<R>} handler
+   * @returns {(context: { params: P }) => Promise<R>}
+   */
+  const withMessage = (handler) => async ({ params }) => {
+    try {
+      return await handler(params)
+    } catch (error) {
+      if (error instanceof acp.RequestError) throw error
+      throw new acp.RequestError(-32603, error instanceof Error ? error.message : String(error))
+    }
+  }
   const { agent: agentMethods } = acp.methods
   return acp.agent({ name: 'nax' })
     .onConnect((connection) => { client = connection.client })
-    .onRequest(agentMethods.initialize, ({ params }) => engine.initialize(params))
-    .onRequest(agentMethods.session.new, ({ params }) => engine.newSession(params))
-    .onRequest(agentMethods.session.load, ({ params }) => engine.loadSession(params))
-    .onRequest(agentMethods.session.setConfigOption, ({ params }) => engine.setConfigOption(params))
-    .onRequest(agentMethods.session.prompt, ({ params }) => engine.prompt(params))
+    .onRequest(agentMethods.initialize, withMessage(engine.initialize))
+    .onRequest(agentMethods.session.new, withMessage(engine.newSession))
+    .onRequest(agentMethods.session.load, withMessage(engine.loadSession))
+    .onRequest(agentMethods.session.setConfigOption, withMessage(engine.setConfigOption))
+    .onRequest(agentMethods.session.prompt, withMessage(engine.prompt))
     .onNotification(agentMethods.session.cancel, ({ params }) => engine.cancel(params))
 }
 

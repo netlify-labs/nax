@@ -15,6 +15,10 @@ const { applyPatchFile, inspectWorkspace, workspaceWarnings } = require('./works
 
 const ACP_PROTOCOL_VERSION = 1
 const DEFAULT_POLL_INTERVAL_MS = 10000
+// Instructions ACP clients add for their own tools and UI, which an agent runner cannot use.
+const CLIENT_INSTRUCTION_BLOCKS = /<t3_code_instructions>[\s\S]*?<\/t3_code_instructions>/g
+// Where agent runners check out the site repository; runner replies cite files under it.
+const RUNNER_REPO_PATH = /\/opt\/build\/repo(?![\w-]|\.\w)/g
 
 /**
  * @typedef {import('nax-agent-runner-sdk').AgentRunnerSdk} AgentRunnerSdk
@@ -92,7 +96,17 @@ function promptText(blocks) {
     if (block.type === 'resource' && 'text' in block.resource) return `\n<file uri="${block.resource.uri}">\n${block.resource.text}\n</file>\n`
     if (block.type === 'resource_link') return `@${block.uri}`
     return ''
-  }).join('').trim()
+  }).join('').replace(CLIENT_INSTRUCTION_BLOCKS, '').trim()
+}
+
+/**
+ * Points file paths in a runner reply at the local repository.
+ * @param {string} text
+ * @param {string} repoRoot
+ * @returns {string}
+ */
+function localizeRunnerPaths(text, repoRoot) {
+  return repoRoot ? text.replace(RUNNER_REPO_PATH, repoRoot) : text
 }
 
 /**
@@ -157,7 +171,13 @@ function createNaxAcpAgent({
     if (!live.sdk || !live.api) {
       const { projectRoot, siteId } = resolveSite(live.record.cwd)
       const workspace = inspect({ cwd: live.record.cwd })
-      live.record = { ...live.record, projectRoot, siteId, branch: workspace.remoteSha ? workspace.branch : '' }
+      live.record = {
+        ...live.record,
+        projectRoot,
+        repoRoot: gitRepositoryRoot(live.record.cwd) || projectRoot,
+        siteId,
+        branch: workspace.remoteSha ? workspace.branch : '',
+      }
       live.sdk = createSdk({ siteId })
       live.api = createApi({ siteId })
     }
@@ -242,7 +262,8 @@ function createNaxAcpAgent({
     const patchPath = path.join(live.record.projectRoot, '.nax', 'acp-sessions', live.record.sessionId, `${sessionId}.patch`)
     fs.mkdirSync(path.dirname(patchPath), { recursive: true })
     fs.writeFileSync(patchPath, response.text)
-    const applied = applyPatch({ cwd: live.record.cwd, patchPath })
+    // Runner diffs are relative to the repository root; git apply skips paths outside a subfolder cwd.
+    const applied = applyPatch({ cwd: live.record.repoRoot || live.record.cwd, patchPath })
     if (applied.status === 'applied') return `Applied changes to ${fileList(applied.files)}`
     return `The agent runner's changes to ${fileList(applied.files)} did not apply to the local workspace (${applied.detail}). The patch is saved at ${patchPath}`
   }
@@ -285,6 +306,7 @@ function createNaxAcpAgent({
         sessionId: newSessionId(),
         cwd,
         projectRoot: '',
+        repoRoot: '',
         siteId: '',
         branch: '',
         config: defaultSessionConfig(),
@@ -367,7 +389,7 @@ function createNaxAcpAgent({
         if (result.status === 'timedOut') {
           throw new Error(`Netlify agent runner ${result.runnerId} timed out.`)
         }
-        if (result.resultText) await say(result.resultText)
+        if (result.resultText) await say(localizeRunnerPaths(result.resultText, live.record.repoRoot || live.record.projectRoot))
         const changes = live.record.config.changes === 'pr'
           ? await openPullRequest(live)
           : await applyTurnChanges(live, result)

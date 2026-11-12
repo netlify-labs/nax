@@ -14,6 +14,7 @@ const SESSION_ID_PATTERN = /^[A-Za-z0-9_-]+$/
  *   sessionId: string,
  *   cwd: string,
  *   projectRoot: string,
+ *   repoRoot?: string,
  *   siteId: string,
  *   branch: string,
  *   config: import('./session-config').AcpSessionConfig,

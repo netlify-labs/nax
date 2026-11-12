@@ -4,10 +4,10 @@ const fs = require('fs')
 const os = require('os')
 const path = require('path')
 
-const { createNaxAcpAgent, resolveAcpSite } = require('../../src/integrations/acp/agent')
+const { createNaxAcpAgent, promptText, resolveAcpSite } = require('../../src/integrations/acp/agent')
 const { createNaxAgentRunnerSdk } = require('../../src/integrations/netlify/agent-runner-sdk')
 const { loadAcpSession } = require('../../src/integrations/acp/session-store')
-const { appendPatch, clonedRepo, runnerApi } = require('../fixtures/acp/harness')
+const { appendPatch, clonedRepo, git, runnerApi } = require('../fixtures/acp/harness')
 
 /**
  * @param {string} cwd
@@ -258,4 +258,48 @@ test('prompting an unknown session fails clearly', async () => {
 test('site discovery refuses folders outside a git repository instead of scanning them', () => {
   const outside = fs.mkdtempSync(path.join(os.tmpdir(), 'nax-acp-nogit-'))
   assert.throws(() => resolveAcpSite(outside), /is not inside a git repository/)
+})
+
+test('prompt text drops instructions the ACP client wrote for its own tools', () => {
+  const text = promptText([{
+    type: 'text',
+    text: '<t3_code_instructions>\n## T3 Code browser\nUse preview_* tools.\n</t3_code_instructions>\n\nFix the header',
+  }])
+  assert.equal(text, 'Fix the header')
+})
+
+test('runner file links point at the local repository instead of the runner checkout', async () => {
+  const cwd = clonedRepo()
+  const repoRoot = git(cwd, ['rev-parse', '--show-toplevel'])
+  const remote = runnerApi({
+    scripts: {
+      'session-1': [{
+        state: 'done',
+        hasResultDiff: false,
+        resultText: '[nax.js](/opt/build/repo/src/cli/nax.js) and /opt/build/repo/readme.md, root /opt/build/repo.',
+      }],
+    },
+  })
+  const { agent, updates } = harness(cwd, remote)
+  await agent.newSession({ cwd, mcpServers: [] })
+  await agent.prompt({ sessionId: 'nax-test', prompt: promptOf('Where?') })
+  assert.equal(
+    messages(updates),
+    `[nax.js](${repoRoot}/src/cli/nax.js) and ${repoRoot}/readme.md, root ${repoRoot}.`,
+  )
+})
+
+test('a session opened in a subfolder applies changes anywhere in the repository', async () => {
+  const root = clonedRepo()
+  const cwd = path.join(root, 'app')
+  fs.mkdirSync(cwd)
+  const remote = runnerApi({
+    scripts: { 'session-1': [{ state: 'done', resultText: 'Edited.', hasResultDiff: true }] },
+    patches: { 'session-1': appendPatch('world') },
+  })
+  const { agent, updates } = harness(cwd, remote)
+  await agent.newSession({ cwd, mcpServers: [] })
+  await agent.prompt({ sessionId: 'nax-test', prompt: promptOf('Edit the root readme') })
+  assert.match(messages(updates), /Applied changes to 1 file: readme\.md/)
+  assert.equal(fs.readFileSync(path.join(root, 'readme.md'), 'utf8'), 'hello\nworld\n')
 })

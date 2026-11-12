@@ -3,7 +3,7 @@ const path = require('path')
 
 const PACKAGE_ROOT = path.join(__dirname, '..', '..')
 const PACKAGE_JSON_PATH = path.join(PACKAGE_ROOT, 'package.json')
-const BUNDLED_SKILLS_DIR = path.join(__dirname, '..', 'templates', 'skills')
+const BUNDLED_SKILLS_DIR = path.join(PACKAGE_ROOT, 'skills')
 const PROVIDER_DIRS = [
   '.claude',
   '.codex',

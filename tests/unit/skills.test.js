@@ -25,7 +25,7 @@ test('listBundledSkills includes nax-workflows', () => {
 
 test('listBundledSkills includes nax-remote-agents with matching frontmatter name', () => {
   assert.ok(listBundledSkills().includes('nax-remote-agents'))
-  const skillPath = path.join(__dirname, '..', '..', 'src', 'templates', 'skills', 'nax-remote-agents', 'SKILL.md')
+  const skillPath = path.join(__dirname, '..', '..', 'skills', 'nax-remote-agents', 'SKILL.md')
   assert.match(fs.readFileSync(skillPath, 'utf8'), /^---\nname: nax-remote-agents\n/)
 })
 

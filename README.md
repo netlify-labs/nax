@@ -552,6 +552,17 @@ nax admin skills check                         # compare installed versions vs. 
 nax admin skills update                        # reinstall latest
 ```
 
+The skills live in [`skills/`](skills/), so any agent can install them without nax, using the
+[`skills`](https://www.npmjs.com/package/skills) CLI:
+
+```bash
+npx skills add netlify-labs/nax --skill nax-remote-agents   # hand one task to a remote agent runner
+npx skills add netlify-labs/nax --skill nax-workflows       # author and run multi-step flows
+npx skills add netlify-labs/nax --list                      # see what's there
+```
+
+Add `-g` to install for your user instead of the current project.
+
 ---
 
 ## Transports

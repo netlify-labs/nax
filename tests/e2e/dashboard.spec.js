@@ -808,9 +808,9 @@ test('dashboard builds bake-off and effort-sweep lineups with arena presets', as
     expect(new Set(ids).size).toBe(ids.length)
     expect(ids).toEqual(expect.arrayContaining([
       'claude:claude-fable-5:high',
-      'codex:gpt-5.6-sol:low',
-      'codex:gpt-5.6-sol:medium',
-      'codex:gpt-5.6-sol:high',
+      'codex:gpt-6.1-sol:low',
+      'codex:gpt-6.1-sol:medium',
+      'codex:gpt-6.1-sol:high',
     ]))
     expect(ids).toHaveLength(4)
   } finally {

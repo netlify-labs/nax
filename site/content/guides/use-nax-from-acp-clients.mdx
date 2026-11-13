@@ -1,0 +1,71 @@
+---
+title: Use NAX From ACP Clients
+description: Run Netlify Agent Runners from t3code, Zed, and other Agent Client Protocol clients with nax acp.
+---
+
+import { Callout, Steps } from 'nextra/components'
+
+# Use NAX from ACP clients
+
+`nax acp` serves Netlify Agent Runners as an [Agent Client Protocol](https://agentclientprotocol.com) (ACP) agent over stdio. Any ACP client, such as [t3code](https://github.com/pingdotgg/t3code) or Zed, can then pick a runner model, send prompts, and get each turn's changes back in your local checkout or as a pull request.
+
+## How a session maps to runners
+
+- One ACP session is one Agent Runner. The first prompt starts the runner, and every later prompt in the same thread is a follow-up session on it.
+- The runner works on your repository's **pushed** branch: the remote tip of your current branch, or the site's production branch when your branch is not on origin. It never sees unpushed commits or uncommitted files.
+- Progress appears as the runner's current step, checked every 10 seconds. Runners do not stream tokens or tool calls, so you see steps and then the full answer.
+- Each turn can run for up to 25 minutes, the platform limit.
+
+## Prerequisites
+
+- Node.js 20 or newer, with `nax` on the `PATH` your ACP client uses
+- Netlify authentication: the Netlify CLI login, or `NETLIFY_AUTH_TOKEN` in the client's environment for the agent
+- A git repository linked to a Netlify site that builds that same repository
+
+## Set up t3code
+
+<Steps>
+
+### Add the provider
+
+Open **Settings → Providers → Add provider**, choose **Show more**, then **Local ACP command**. Set the executable to `nax` and add one argument, `acp`. Name it, for example, `Netlify Agents`.
+
+If t3code cannot find `nax`, enter its full path (`which nax`). Desktop apps do not always see the `PATH` of your shell.
+
+### Link the repository to the right site
+
+Run `netlify link` in the repository root and choose the site that builds this repository. NAX checks this before the first runner starts and refuses a site deployed without git or built from another repository, because a runner on that site would never see your code.
+
+In a monorepo that links several sites, a **Netlify site** option appears next to the model picker. It defaults to the site that contains the folder you opened.
+
+### Push what the runner should work on
+
+Commit and push the branch you want the runner to use. On the first turn, NAX warns you about unpushed commits and uncommitted files, and tells the remote agent which local work it cannot see so it can ask you to push it.
+
+</Steps>
+
+## Choose a model and where changes go
+
+The model picker lists every agent (Claude, Codex, Gemini, OpenCode) with its models; **Auto** lets Netlify choose. **Effort** sets the reasoning level for a named model.
+
+**Changes** decides where each turn's work goes:
+
+- **Apply locally** (default) applies that turn's diff to your checkout, so it appears in the client's diff view and checkpoints. When a diff does not apply cleanly, your files stay untouched and the patch is saved under `.nax/acp-sessions/<session>/`.
+- **Pull request** opens or updates the runner's pull request and leaves your checkout alone.
+
+<Callout type="info">
+  Stopping a turn in the client cancels the runner session. Sessions are saved under `.nax/acp-sessions/` in the repository on their first prompt, so the client can reload a thread with its transcript.
+</Callout>
+
+## Options
+
+```sh
+nax acp [--poll-interval <seconds>]
+```
+
+`--poll-interval` changes how often NAX checks the runner's status (default `10`).
+
+## See also
+
+- [Commands reference](/reference/commands#nax-acp)
+- [Agent Runner setup](/guides/agent-runner-setup)

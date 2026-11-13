@@ -164,6 +164,18 @@ configuration, project identity, private dashboard registry, health and auth,
 version, selected Netlify target, capabilities, and `context_get`. It never
 plans or starts a remote run.
 
+## `nax acp`
+
+```sh
+nax acp [--poll-interval <seconds>]
+```
+
+Serves Netlify Agent Runners as an Agent Client Protocol agent over stdio. It is
+normally launched by an ACP client such as t3code or Zed. Each ACP session is
+one runner, and each later prompt is a follow-up session. `--poll-interval`
+sets how often runner status is checked (default 10 seconds). See
+[Use NAX from ACP clients](/guides/use-nax-from-acp-clients).
+
 ## `nax admin`
 
 ```sh

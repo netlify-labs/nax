@@ -76,6 +76,7 @@
   },
   "homepage": "https://github.com/netlify-labs/nax#readme",
   "dependencies": {
+    "@agentclientprotocol/sdk": "2.4.0",
     "@clack/prompts": "^1.4.0",
     "@davidwells/box-logger": "^2.0.8",
     "@davidwells/graceful-exit": "^0.0.2",

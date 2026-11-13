@@ -36,6 +36,7 @@ function makeProgram() {
     actionOptions,
     collectOption,
     handlers: {
+      acp: (options) => record('acp', options),
       clean: (target, options) => record('clean', target, options),
       costs: (options) => record('costs', options),
       ci: (commandParts, options) => {
@@ -320,6 +321,16 @@ test('salvage routes its runner, branch, and default-branch options', async () =
   assert.equal(options.branch, 'nax/fix')
   assert.equal(options.session, 'session-1')
   assert.equal(options.allowDefaultBranch, true)
+})
+
+test('acp routes to the ACP agent server with an optional poll interval', async () => {
+  const { calls, program } = makeProgram()
+
+  await parse(program, ['acp', '--poll-interval', '3'])
+
+  assert.equal(calls[0].name, 'acp')
+  const options = /** @type {{ pollInterval?: string }} */ (calls[0].args[0])
+  assert.equal(options.pollInterval, '3')
 })
 
 test('removed root invocations are rejected', async () => {

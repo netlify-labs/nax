@@ -4,6 +4,9 @@
 
 ### Added
 
+- `nax acp` serves Netlify agent runners as an Agent Client Protocol agent
+  over stdio for clients such as t3code and Zed. Sessions map to runners and
+  follow-up sessions; each turn's diff is applied locally or opened as a PR.
 - Structured findings: workflows declare `findings: { step, adapter }`, and
   terminal runs write `artifacts/findings.json` (schema v1) parsed from the
   consensus. The bundled `review` flow declares it and its consensus schema

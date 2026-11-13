@@ -36,6 +36,7 @@ const TEAL_COLOR = '#0d9488'
 /**
  * CLI command handler callbacks owned by the executable entrypoint.
  * @typedef {{
+ *   acp: (options: JsonMap) => CommandActionResult,
  *   clean: (target: string, options: JsonMap) => CommandActionResult,
  *   ci: (commandParts: string[], options: JsonMap) => CiCommandResult,
  *   comment: (prompt: string | undefined, options: JsonMap) => CommandActionResult,
@@ -589,6 +590,12 @@ function buildNaxProgram({
     .addOption(hiddenOption('--site-id <id>', 'Netlify site ID'))
     .addOption(hiddenOption('--filter <app>', 'Netlify CLI monorepo app filter'))
     .action((options, command) => settleAction(handlers.salvage(actionOptions(options, command))))
+
+  program
+    .command('acp')
+    .description('Serve Netlify agent runners as an Agent Client Protocol agent over stdio, for ACP clients such as t3code and Zed')
+    .option('--poll-interval <seconds>', 'Seconds between agent runner status checks', '10')
+    .action((options, command) => settleAction(handlers.acp(actionOptions(options, command))))
 
   program
     .command('costs')

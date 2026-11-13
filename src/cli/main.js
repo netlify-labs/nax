@@ -256,6 +256,7 @@ const {
   waitForLocalAgentRuns,
 } = require('../integrations/netlify/local-runner')
 const { salvageAgentRun } = require('../integrations/netlify/salvage')
+const { serveAcp } = require('../integrations/acp/server')
 const { describeRunChanges, shouldLandRun } = require('./display/run-landing')
 const {
   BODY_FALLBACK_THRESHOLD,
@@ -2589,6 +2590,17 @@ async function handleSalvage(options = {}) {
   console.log(result.baseSha ? `git diff ${result.baseSha.slice(0, 12)}..origin/${result.branch}` : `git log -p origin/${result.branch}`)
 }
 
+/**
+ * Serves Netlify agent runners as an ACP agent on stdin/stdout until the client disconnects.
+ * @param {import('../types').JsonMap} [options]
+ * @returns {Promise<void>}
+ */
+async function handleAcp(options = {}) {
+  const seconds = Number(options.pollInterval)
+  if (!Number.isFinite(seconds) || seconds <= 0) throw new Error('--poll-interval must be a positive number of seconds.')
+  await serveAcp({ pollIntervalMs: Math.round(seconds * 1000), version: packageVersion })
+}
+
 async function handleResume(runId, options) {
   const projectRoot = resolveProjectRoot(String(options.projectRoot || ''), { cwd: process.cwd() })
   return handleResumeCommand(runId, { ...options, projectRoot })
@@ -3299,6 +3311,7 @@ function buildProgram() {
     defaultOrchestrator: DEFAULT_ORCHESTRATOR,
     defaultOutputBudgetBytes: DEFAULT_OUTPUT_BUDGET_BYTES,
     handlers: {
+      acp: handleAcp,
       clean: handleClean,
       ci: handleCi,
       comment: issueHandlers.handleComment,

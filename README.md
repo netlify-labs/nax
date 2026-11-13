@@ -325,6 +325,7 @@ nax init                  Wire this repo to Netlify + GitHub Actions
 nax handoff               Copy or continue from prior workflow/session results
 nax dashboard [flow]      Open the local workflow dashboard
 nax list                  List available flows
+nax acp                   Serve agent runners to ACP clients (t3code, Zed)
 nax admin sync last       Pull remote updates for the latest local Agent Runner
 nax admin clean blobs     Preview or delete stale prompt blob refs
 nax admin skills install  Install bundled agent skills into detected harness dirs
@@ -482,6 +483,20 @@ duplicate tuples are rejected.
 Pinned or repeated-provider lineups select `netlify-api` under transport Auto.
 Local runs execute in waves of at most four non-terminal runners. A step is
 capped at four resolved agent instances; `--force` does not bypass this limit.
+
+### `nax acp`
+
+`nax acp` serves Netlify agent runners as an [Agent Client Protocol](https://agentclientprotocol.com) agent over stdio, so ACP clients such as [t3code](https://github.com/pingdotgg/t3code) and Zed can use them like any other coding agent.
+
+In t3code: **Settings → Providers → Add provider → Show more → Local ACP command**, executable `nax`, argument `acp`. Set `NETLIFY_AUTH_TOKEN` in the provider's environment, or sign in with the Netlify CLI.
+
+- Each ACP session is one agent runner. The first prompt starts it on the workspace's branch when that branch is pushed; later prompts are follow-up sessions.
+- The project folder must be in a git repository linked to a Netlify site (`netlify link`), or `NETLIFY_SITE_ID` must be set. In a repository that links several sites, a **Netlify site** option picks one, defaulting to the site that contains the folder.
+- Before the first runner starts, nax checks that the site builds the same repository as `git remote origin`, and refuses sites deployed without git or built from another repository.
+- The model picker lists every agent (Claude, Codex, Gemini, OpenCode) and its models; effort is the reasoning level.
+- **Changes** decides where each turn's work goes: **Apply locally** (default) applies that session's diff to the workspace, and **Pull request** opens or updates the runner's PR instead. A diff that does not apply cleanly is saved under `.nax/acp-sessions/<session>/` and the workspace is left untouched.
+- Runners work from the pushed branch, or the site's production branch when the local branch is not on origin. The first turn warns you about unpushed commits and uncommitted edits, and tells the remote agent which local work it cannot see. Commit and push what the runner should work on.
+- Progress arrives as the runner's current step, polled every 10 seconds (`--poll-interval <seconds>`); runners do not stream tokens or tool calls. Each turn has the platform's 25-minute limit.
 
 ### `nax admin sync`
 

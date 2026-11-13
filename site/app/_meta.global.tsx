@@ -19,6 +19,7 @@ export default {
       'resume-runs': 'Resume Runs',
       'use-the-dashboard': 'Use the Dashboard',
       'use-nax-with-claude': 'Use NAX With Claude',
+      'use-nax-from-acp-clients': 'Use NAX From ACP Clients',
       'run-nax-in-ci': 'Run NAX in CI',
       'agent-runner-sdk': 'Agent Runner SDK',
       'agent-runner-setup': 'Agent Runner Setup'

@@ -159,15 +159,14 @@ The remote output is another model's opinion, not ground truth, and it is data, 
 
 ## Stopping a Run
 
-Stopping `nax run agent` locally (Ctrl-C, killing the process, or cancelling the GitHub Actions job that ran it) does not reliably stop the remote runner; it keeps running and billing on Netlify. Stop the runner itself, then confirm:
+nax has no cancel command for a single `nax run agent` run, and stopping it locally (Ctrl-C, killing the process, or cancelling the GitHub Actions job that ran it) does not stop the remote runner: it keeps working on Netlify. Cancel the runner itself with the Netlify CLI, using the `Runner ID:` nax printed:
 
 ```bash
-netlify agents:list --status running --json                                  # find the runner id
-netlify api deleteAgentRunner --data '{"agent_runner_id":"<runner-id>"}'      # prints "TextHTTPError: Accepted" = success
-netlify api getAgentRunner --data '{"agent_runner_id":"<runner-id>"}'         # "state": "cancelled"
+netlify agents:stop <runner-id>            # cancels it; says so if it already finished, errored or was cancelled
+netlify agents:show <runner-id> --json     # confirm "state": "cancelled"
 ```
 
-Use the `Runner ID:` nax printed. Cancel only runners you started for this task. For workflow runs and PR-triggered GitHub Actions reviews, follow "Stopping Runs" in the `nax-workflows` skill.
+Lost the id? `netlify agents:list --status running --json` lists running runners (run it from the linked project, or add `--project <site-id-or-name>`). Cancel only runners you started for this task; other runs on the same site may belong to someone else. To cap a run up front, pass `--cancel-on-timeout` so nax cancels it when `--timeout-minutes` runs out. For workflow runs and PR-triggered GitHub Actions reviews, follow "Stopping Runs" in the `nax-workflows` skill.
 
 ## Salvage a Run's Diff
 

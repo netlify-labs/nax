@@ -162,15 +162,14 @@ Remote agents keep running (and billing) on Netlify after the process that start
    ```bash
    netlify agents:list --status running --json
    ```
-3. **Cancel each remaining runner** by id (the `id` field above, also shown as `Runner ID:` in nax output). This is the same `DELETE /agent_runners/<id>` call nax and the SDK use:
+3. **Cancel each remaining runner** by id (the `id` field above, also shown as `Runner ID:` in nax output). `netlify agents:stop` sends the same `DELETE /agent_runners/<id>` call nax and the SDK use, and says so when the runner already finished:
    ```bash
-   netlify api deleteAgentRunner --data '{"agent_runner_id":"<runner-id>"}'
+   netlify agents:stop <runner-id>
    ```
-   The Netlify CLI prints `TextHTTPError: Accepted` for this call. That is the 202 success response, not a failure.
 4. **Confirm** each runner is `cancelled` and nothing is left running:
    ```bash
-   netlify api getAgentRunner --data '{"agent_runner_id":"<runner-id>"}'   # "state": "cancelled"
-   netlify agents:list --status running --json                             # []
+   netlify agents:show <runner-id> --json        # "state": "cancelled"
+   netlify agents:list --status running --json   # []
    ```
 
 Cancel only runners you (or the user) started for the task at hand; other agent runs on the same site may belong to someone else. Cancelling a runner is irreversible, so confirm the ids with the user when they were not started in this session. A cancelled runner shows as `cancelled` in nax run state; `nax run --resume <run-id> --include-cancelled` resubmits it later if needed.

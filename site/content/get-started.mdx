@@ -10,7 +10,7 @@ import { Callout, Steps } from 'nextra/components'
 This tutorial takes a new checkout from install to a working `nax` dry run. It assumes you already have a GitHub repository and a Netlify project, because `nax` submits real repository work to Netlify Agent Runner rather than simulating agents locally.
 
 <Callout type="info">
-  **Prerequisites:** Node 20+, authenticated `netlify-cli`, and a Git repository connected to a Netlify project.
+  **Prerequisites:** Node 20+, authenticated `netlify-cli`, authenticated `gh`, and a Git repository connected to a Netlify project.
 </Callout>
 
 <Steps>
@@ -26,6 +26,13 @@ Verify the command:
 ```sh
 nax --help
 nax list
+```
+
+Confirm the required CLIs are authenticated before initialization:
+
+```sh
+netlify status
+gh auth status
 ```
 
 ### Initialize the project

@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.5.0
+
+- A `skills` source can come from an environment variable, as a `files` source already can: `{ "from": { "env": "TEAM_SKILLS_ZIP_URL" }, "optional": true }`. One variable set for a whole Netlify team then gives every repo the same skills, and the URL stays out of each repo's `package.json`.
+- With `optional`, the entry is skipped when the variable isn't set. Without it, a missing variable is an error and is listed with the missing secrets.
+- Logs, the install record and installed skills show the source as `$VARIABLE (https://example.com/…/skills.zip)`.
+
 ## 0.4.0
 
 - `files` unpacks sources that aren't skills into folders in the repo, for brand kits, reference docs and fixtures: `{ "from": "https://example.com/brand.zip", "to": "context/brand" }`. Sources are the same as for skills.

@@ -55,7 +55,7 @@ function extractTarball(archive, dest, run) {
 }
 
 /**
- * @param {import('../config').SkillSpec} skill
+ * @param {import('../config').SourceSpec} skill
  * @param {SourceOptions} options
  * @returns {Promise<ResolvedSource>}
  */
@@ -91,7 +91,7 @@ async function resolveNpmSource(skill, { env = process.env, runFile: run = runFi
 /**
  * Downloads a GitHub tarball. With a token, the API endpoint is used and the token
  * only travels in the Authorization header.
- * @param {import('../config').SkillSpec} skill
+ * @param {import('../config').SourceSpec} skill
  * @param {SourceOptions} options
  * @returns {Promise<ResolvedSource>}
  */
@@ -141,7 +141,7 @@ async function resolveGitHubSource(skill, {
 /**
  * Downloads a zip of skills from an https URL and unzips it. A zip whose root is a
  * single skill (SKILL.md at the top) is installed under the archive's file name.
- * @param {import('../config').SkillSpec} skill
+ * @param {import('../config').SourceSpec} skill
  * @param {SourceOptions} options
  * @returns {Promise<ResolvedSource>}
  */
@@ -185,7 +185,7 @@ async function resolveZipSource(skill, { env = process.env, fetch: fetchImpl = g
 }
 
 /**
- * @param {import('../config').SkillSpec} skill
+ * @param {import('../config').SourceSpec} skill
  * @param {SourceOptions} options
  * @returns {Promise<ResolvedSource>}
  */

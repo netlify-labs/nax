@@ -84,6 +84,80 @@ test('config accepts https zip URLs, rejects http, and logs only the host and fi
   assert.equal(displaySource('npm:hyperframes@0.8.217'), 'npm:hyperframes@0.8.217')
 })
 
+/**
+ * A committed repo whose only config is one skills entry.
+ * @param {Record<string, unknown>} entry
+ */
+function repoWithSkills(entry) {
+  const repo = makeRepo()
+  fs.writeFileSync(path.join(repo, 'package.json'), JSON.stringify({ private: true, netlifyAgent: { skills: [entry] } }))
+  git(repo, ['add', '-A'])
+  git(repo, ['commit', '--quiet', '-m', 'config'])
+  return repo
+}
+
+test('config accepts an env source for skills and rejects a malformed one', () => {
+  const ok = normalizeConfig({ skills: [{ from: { env: 'TEAM_SKILLS_ZIP_URL' }, optional: true, names: ['alpha'] }] }, 'test')
+  assert.deepEqual(ok.errors, [])
+  assert.deepEqual(ok.warnings, [])
+  assert.deepEqual(ok.config.skills, [{ from: { env: 'TEAM_SKILLS_ZIP_URL' }, path: undefined, names: ['alpha'], registry: undefined, auth: undefined, optional: true }])
+  assert.equal('optional' in normalizeConfig({ skills: [{ from: './skills' }] }, 'test').config.skills[0], false)
+  for (const from of [{ nope: 1 }, { env: '' }, 7, null]) {
+    assert.match(normalizeConfig({ skills: [{ from }] }, 'test').errors.join('\n'), /skills\[0\]\.from is required/, JSON.stringify(from))
+  }
+})
+
+test('skills from an env URL install, and the logs, record and skills name the variable and host but not the secret path', async () => {
+  const src = tempDir()
+  writeSkill(src, 'house-style')
+  writeSkill(src, 'api-rules')
+  const { fetch, requests } = fakeFetch(zipOf(src))
+  const repo = repoWithSkills({ from: { env: 'TEAM_SKILLS_ZIP_URL' }, optional: true })
+  const env = { ...makeEnv(), ...SETUP_ENV, TEAM_SKILLS_ZIP_URL: HIDDEN }
+  /** @type {string[]} */
+  const lines = []
+  const { record } = await install({ cwd: repo, env, log: (line) => lines.push(line), deps: { sources: { fetch } } })
+  assert.deepEqual(record.errors, [])
+  assert.deepEqual(requests.map((request) => request.url), [HIDDEN])
+  const step = record.steps.find((s) => s.kind === 'skills')
+  assert.equal(step.from, '$TEAM_SKILLS_ZIP_URL (https://skills.example.com/…/gtm-skills.zip)')
+  assert.deepEqual(step.installed, ['api-rules', 'house-style'])
+  assert.equal(record.steps.some((s) => s.kind === 'secrets'), false, 'an optional source is not a required secret')
+  const installed = fs.readFileSync(path.join(repo, '.agents', 'skills', 'house-style', 'SKILL.md'), 'utf8')
+  assert.match(installed, /source: "\$TEAM_SKILLS_ZIP_URL \(https:\/\/skills\.example\.com\/…\/gtm-skills\.zip\)"/)
+  const guide = fs.readFileSync(path.join(repo, '.claude', 'skills', 'netlify-agent-kit', 'SKILL.md'), 'utf8')
+  assert.match(guide, /`api-rules`, `house-style`/)
+  for (const text of [installed, guide, lines.join('\n'), JSON.stringify(readRecord(env))]) {
+    assert.equal(text.includes('k9Xq2secretpath'), false)
+  }
+  assert.equal(git(repo, ['status', '--porcelain']), '')
+})
+
+test('an unset env source for skills is skipped when optional, and an error when required', async () => {
+  const never = async () => { throw new Error('no request expected') }
+  const optionalRepo = repoWithSkills({ from: { env: 'TEAM_SKILLS_ZIP_URL' }, optional: true })
+  const optional = await install({ cwd: optionalRepo, env: { ...makeEnv(), ...SETUP_ENV }, log: () => {}, deps: { sources: { fetch: never } } })
+  const skipped = optional.record.steps.find((s) => s.kind === 'skills')
+  assert.deepEqual([skipped.status, skipped.reason, skipped.from], ['skipped', 'TEAM_SKILLS_ZIP_URL is not set', '$TEAM_SKILLS_ZIP_URL'])
+  assert.deepEqual(optional.record.errors, [])
+  assert.deepEqual(optional.record.warnings, [])
+  assert.equal(git(optionalRepo, ['status', '--porcelain']), '')
+
+  const requiredRepo = repoWithSkills({ from: { env: 'TEAM_SKILLS_ZIP_URL' } })
+  const required = await install({ cwd: requiredRepo, env: { ...makeEnv(), ...SETUP_ENV }, log: () => {}, deps: { sources: { fetch: never } } })
+  assert.deepEqual(required.record.errors, ['skills $TEAM_SKILLS_ZIP_URL: TEAM_SKILLS_ZIP_URL is not set'])
+  assert.deepEqual(required.record.steps.find((s) => s.kind === 'secrets').missing, ['TEAM_SKILLS_ZIP_URL'])
+  assert.equal(required.exitCode, 0)
+})
+
+test('an env source for skills holding an unusable value fails without printing it', async () => {
+  const repo = repoWithSkills({ from: { env: 'TEAM_SKILLS_ZIP_URL' } })
+  const env = { ...makeEnv(), ...SETUP_ENV, TEAM_SKILLS_ZIP_URL: 'http://skills.example.com/s/k9Xq2secretpath/a.zip' }
+  const { record } = await install({ cwd: repo, env, log: () => {}, deps: { sources: { fetch: async () => { throw new Error('no request expected') } } } })
+  assert.deepEqual(record.errors, ['skills $TEAM_SKILLS_ZIP_URL (http://skills.example.com/…/a.zip): $TEAM_SKILLS_ZIP_URL: use an https:// URL to a .zip'])
+  assert.equal(JSON.stringify(record).includes('k9Xq2secretpath'), false)
+})
+
 test('install from a zip URL keeps the secret path out of the record, the skills and git', async () => {
   const src = tempDir()
   writeSkill(src, 'using-gtm-platform')

@@ -30,7 +30,7 @@ For a repo with a HyperFrames project in `video/`:
 ```json
 {
   "scripts": { "postinstall": "netlify-agent-kit install || exit 0" },
-  "devDependencies": { "netlify-agent-kit": "^0.3.0" },
+  "devDependencies": { "netlify-agent-kit": "^0.5.0" },
   "netlifyAgent": { "hyperframes": { "version": "0.8.217", "dir": "video" } }
 }
 ```
@@ -79,6 +79,7 @@ Everything a preset does, you can also list yourself, under the same `netlifyAge
     "skills": [
       { "from": "github:my-org/private-skills#v1.4.0", "path": "skills", "auth": { "env": "SKILLS_TOKEN" } },
       { "from": "https://skills.example.com/team-skills.zip" },
+      { "from": { "env": "TEAM_SKILLS_ZIP_URL" }, "optional": true },
       { "from": "./tools/skills/house-style" }
     ],
 
@@ -112,7 +113,9 @@ Everything a preset does, you can also list yourself, under the same `netlifyAge
 | GitHub | `github:<owner>/<repo>#<tag or sha>`, with `path` |
 | Zip | `https://<url>.zip` (or `.skill`): skill folders, or one skill with `SKILL.md` at the root |
 | Local | `./relative/path`, either one skill folder or a folder of skills |
+| Environment variable | `{ "env": "VARIABLE" }`: the variable holds any source above, read at install time |
 
+- **Sources from the environment:** keep a private source out of the committed config, and change it for every repo at once. Set one variable for the whole Netlify team, pointing at a zip of the team's skills, and give each repo the same entry: `{ "from": { "env": "TEAM_SKILLS_ZIP_URL" }, "optional": true }`. With `optional`, install skips the entry quietly when the variable isn't set; without it, a missing variable is an error. The source shows in logs as `$VARIABLE (https://example.com/…/skills.zip)`.
 - **Which skills:** `names` picks skills from the source; leave it out to install every folder with a `SKILL.md`.
 - **Where:** `.claude/skills/` and `.agents/skills/`, plus `.codex/skills/`, `.cursor/skills/` and similar when those folders already exist.
 - **Never overwritten:** a skill is never installed over one that already exists, committed in the repo or preinstalled in `~/.claude/skills`.

@@ -9,8 +9,10 @@ const PACKAGE_KEY = 'netlifyAgent'
 /**
  * @typedef {{ env: string }} AuthRef
  * @typedef {{ name: string, link: string[] }} ToolSpec
- * @typedef {{ from: string, path?: string, names?: string[], registry?: string, auth?: AuthRef }} SkillSpec
- * @typedef {{ from: string | { env: string }, to: string, path?: string, registry?: string, auth?: AuthRef, optional: boolean }} FileSpec
+ * @typedef {{ env: string }} EnvSource
+ * @typedef {{ from: string, path?: string, registry?: string, auth?: AuthRef }} SourceSpec
+ * @typedef {{ from: string | EnvSource, path?: string, names?: string[], registry?: string, auth?: AuthRef, optional?: boolean }} SkillSpec
+ * @typedef {{ from: string | EnvSource, to: string, path?: string, registry?: string, auth?: AuthRef, optional: boolean }} FileSpec
  * @typedef {{ command: string, cwd?: string }} RunSpec
  * @typedef {{ repo: string, ref?: string, path?: string, auth?: AuthRef }} RepositorySpec
  * @typedef {{ env: string, prefix?: string }} EnvValueRef
@@ -164,6 +166,26 @@ function displaySource(from) {
 }
 
 /**
+ * A source read from an environment variable at install time: { "env": "VARIABLE_NAME" }.
+ * @param {unknown} from
+ * @returns {EnvSource | null}
+ */
+function parseEnvSource(from) {
+  return isPlainObject(from) && typeof from.env === 'string' && from.env ? { env: from.env } : null
+}
+
+/**
+ * How a skills or files source appears in logs, records and installed skills. An env
+ * source names the variable, and the URL it holds is shortened like any other.
+ * @param {string | EnvSource} from
+ * @param {string} [resolved] the variable's value, when it is set
+ */
+function displayFrom(from, resolved) {
+  if (typeof from === 'string') return displaySource(from)
+  return resolved ? `$${from.env} (${displaySource(resolved)})` : `$${from.env}`
+}
+
+/**
  * @param {unknown} auth
  * @param {string} where
  * @param {string[]} errors
@@ -283,8 +305,9 @@ function normalizeConfig(raw, source) {
     } else {
       raw.skills.forEach((entry, index) => {
         const where = `skills[${index}]`
-        if (!isPlainObject(entry) || typeof entry.from !== 'string' || !entry.from) {
-          errors.push(`${where}.from is required`)
+        const fromEnv = isPlainObject(entry) ? parseEnvSource(entry.from) : null
+        if (!isPlainObject(entry) || (!fromEnv && (typeof entry.from !== 'string' || !entry.from))) {
+          errors.push(`${where}.from is required: a source, or { "env": "VARIABLE_NAME" }`)
           return
         }
         if (entry.names !== undefined && (!Array.isArray(entry.names) || entry.names.some((name) => typeof name !== 'string'))) {
@@ -292,18 +315,19 @@ function normalizeConfig(raw, source) {
           return
         }
         config.skills.push({
-          from: entry.from,
+          from: fromEnv || /** @type {string} */ (entry.from),
           path: typeof entry.path === 'string' ? entry.path : undefined,
           names: Array.isArray(entry.names) ? entry.names : undefined,
           registry: typeof entry.registry === 'string' ? entry.registry : undefined,
           auth: normalizeAuth(entry.auth, where, errors),
+          ...(entry.optional === true ? { optional: true } : {}),
         })
       })
     }
   }
 
   config.skills.forEach((skill, index) => {
-    checkSource(skill.from, `skills[${index}] (${displaySource(skill.from)})`, errors, warnings)
+    if (typeof skill.from === 'string') checkSource(skill.from, `skills[${index}] (${displaySource(skill.from)})`, errors, warnings)
   })
 
   if (raw.files !== undefined) {
@@ -316,7 +340,7 @@ function normalizeConfig(raw, source) {
           errors.push(`${where} must be { "from": "...", "to": "folder/in/repo" }`)
           return
         }
-        const fromEnv = isPlainObject(entry.from) && typeof entry.from.env === 'string' && entry.from.env ? { env: entry.from.env } : null
+        const fromEnv = parseEnvSource(entry.from)
         if (!fromEnv && (typeof entry.from !== 'string' || !entry.from)) {
           errors.push(`${where}.from must be a source or { "env": "VARIABLE_NAME" }`)
           return
@@ -367,7 +391,7 @@ function normalizeConfig(raw, source) {
   }
 
   config.tools = dedupe(config.tools, (tool) => tool.name, (a, b) => ({ name: a.name, link: [...new Set([...a.link, ...b.link])] }))
-  config.skills = dedupe(config.skills, (skill) => `${skill.from}::${skill.path || ''}::${(skill.names || []).join(',')}`)
+  config.skills = dedupe(config.skills, (skill) => `${displayFrom(skill.from)}::${skill.path || ''}::${(skill.names || []).join(',')}`)
   config.run = dedupe(config.run, (entry) => `${entry.cwd || '.'}::${entry.command}`)
 
   return { config, source, errors, warnings }
@@ -429,6 +453,7 @@ function loadConfig(cwd) {
 module.exports = {
   CONFIG_FILE,
   checkSource,
+  displayFrom,
   displaySource,
   PACKAGE_KEY,
   isExactVersion,

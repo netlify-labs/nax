@@ -83,14 +83,26 @@
         "additionalProperties": false,
         "properties": {
           "from": {
-            "type": "string",
-            "description": "npm:<package>@<exact version>, github:<owner>/<repo>#<tag or sha>, https://<url to a .zip of skills>, or ./relative/path",
-            "pattern": "^(npm:|github:|https://|\\./|\\.\\./|/)"
+            "oneOf": [
+              {
+                "type": "string",
+                "description": "npm:<package>@<exact version>, github:<owner>/<repo>#<tag or sha>, https://<url to a .zip of skills>, or ./relative/path",
+                "pattern": "^(npm:|github:|https://|\\./|\\.\\./|/)"
+              },
+              {
+                "type": "object",
+                "required": ["env"],
+                "additionalProperties": false,
+                "properties": { "env": { "type": "string", "minLength": 1 } },
+                "description": "Read the source from this environment variable at install time."
+              }
+            ]
           },
           "path": { "type": "string", "description": "Folder inside the source that contains skill folders." },
           "names": { "type": "array", "items": { "type": "string" } },
           "registry": { "type": "string", "format": "uri" },
-          "auth": { "$ref": "#/$defs/auth" }
+          "auth": { "$ref": "#/$defs/auth" },
+          "optional": { "type": "boolean", "description": "With an env source, skip when the variable isn't set." }
         }
       }
     },

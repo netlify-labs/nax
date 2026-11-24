@@ -1,7 +1,7 @@
 const fs = require('node:fs')
 const path = require('node:path')
 
-const { checkSource, displaySource } = require('./config')
+const { checkSource, displayFrom } = require('./config')
 const { runFile } = require('./process')
 const { resolveSource } = require('./skills/sources')
 
@@ -20,8 +20,7 @@ function messageOf(error) {
  * @param {string | undefined} [resolved]
  */
 function displayFileSource(entry, resolved) {
-  if (typeof entry.from === 'string') return displaySource(entry.from)
-  return resolved ? `$${entry.from.env} (${displaySource(resolved)})` : `$${entry.from.env}`
+  return displayFrom(entry.from, resolved)
 }
 
 /**

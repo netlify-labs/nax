@@ -1,6 +1,6 @@
 const path = require('node:path')
 
-const { displaySource, loadConfig } = require('./config')
+const { checkSource, displayFrom, loadConfig } = require('./config')
 const { detect } = require('./detect')
 const { excludePaths } = require('./exclude')
 const { installFiles } = require('./files')
@@ -114,6 +114,7 @@ async function install({
     const secretNames = [
       ...config.secrets,
       ...config.skills.map((skill) => skill.auth?.env).filter(Boolean),
+      ...config.skills.map((skill) => (typeof skill.from === 'string' || skill.optional ? null : skill.from.env)).filter(Boolean),
       ...config.repositories.map((repo) => repo.auth?.env).filter(Boolean),
       ...config.files.map((entry) => entry.auth?.env).filter(Boolean),
       ...config.files.map((entry) => (typeof entry.from === 'string' || entry.optional ? null : entry.from.env)).filter(Boolean),
@@ -149,15 +150,33 @@ async function install({
 
     for (const skill of config.skills) {
       const stepStarted = Date.now()
+      // An env source holds the real source (usually a zip URL) in a variable, so it can stay out of the committed config.
+      const envName = typeof skill.from === 'string' ? null : skill.from.env
+      const from = typeof skill.from === 'string' ? skill.from : env[skill.from.env] || ''
+      const shown = displayFrom(skill.from, from || undefined)
+      if (envName && !from) {
+        if (skill.optional) addStep({ kind: 'skills', from: shown, status: 'skipped', reason: `${envName} is not set` })
+        else addStep({ kind: 'skills', from: shown, status: 'error', error: `${envName} is not set` })
+        continue
+      }
+      if (envName) {
+        /** @type {string[]} */
+        const sourceErrors = []
+        checkSource(from, `$${envName}`, sourceErrors, [])
+        if (sourceErrors.length > 0) {
+          addStep({ kind: 'skills', from: shown, status: 'error', error: sourceErrors[0] })
+          continue
+        }
+      }
       try {
-        const source = await resolveSource(skill, { env, cwd, ...deps.sources })
+        const source = await resolveSource({ from, path: skill.path, registry: skill.registry, auth: skill.auth }, { env, cwd, ...deps.sources })
         try {
-          const result = installSkills({ sourceDir: source.dir, from: displaySource(skill.from), names: skill.names, cwd, env, dryRun })
+          const result = installSkills({ sourceDir: source.dir, from: shown, names: skill.names, cwd, env, dryRun })
           repoPaths.push(...result.createdPaths)
           skillNames.push(...result.installed, ...result.skipped.map((entry) => entry.name))
           const step = {
             kind: 'skills',
-            from: displaySource(skill.from),
+            from: shown,
             status: result.missing.length > 0 ? 'error' : dryRun ? 'would-install' : 'ok',
             installed: result.installed,
             skipped: result.skipped,
@@ -171,7 +190,7 @@ async function install({
           source.cleanup()
         }
       } catch (error) {
-        addStep({ kind: 'skills', from: displaySource(skill.from), status: 'error', error: messageOf(error), ms: Date.now() - stepStarted })
+        addStep({ kind: 'skills', from: shown, status: 'error', error: messageOf(error), ms: Date.now() - stepStarted })
       }
     }
 
